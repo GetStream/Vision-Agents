@@ -1439,6 +1439,72 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/agents/voices/library:
+    get:
+      operationId: listLibraryVoices
+      summary: The voices the speech providers offer
+      description: >
+        The catalogue each provider publishes, so a voice can be picked by name rather than
+        by pasting an id. Only providers this deployment holds a key for and that publish a
+        library appear; for the others a voice is still whatever the vendor's own terms
+        call one, and has to be typed. A provider that cannot be reached is reported in
+        `unavailable` rather than emptying the list.
+      parameters:
+        - name: provider
+          in: query
+          description: Only this provider's voices.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The voices, by provider and then name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryVoices"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/agents/voices/library/{provider}/{voice}/preview:
+    get:
+      operationId: previewLibraryVoice
+      summary: Hear a voice from a provider's library
+      description: >
+        The sample the vendor already published, fetched through the router because two of
+        them want the deployment's key to hand it over. Nothing is synthesised, so browsing
+        a library spends no credits.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: voice
+          in: path
+          required: true
+          description: The voice id, as the provider names it.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The sample
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoicePreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/skills:
     get:
       operationId: listSkills
@@ -3172,6 +3238,45 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/sessions/{id}/settings:
+    patch:
+      operationId: setSessionSettings
+      summary: Change the models and voice of one running session
+      description: >
+        Swaps what the agent runs on without leaving the call, for this session only: the
+        agent config it started from is untouched. The new models are opened before
+        anything changes, so a target that does not route is refused and the agent carries
+        on as it was. They take over from the next turn; a reply being spoken finishes on
+        the models it started with.
+
+        Naming sts makes the session native, and an empty sts makes it a cascade again, on
+        whatever llm, stt and tts it names or had before. The conversation carries across:
+        a conversation model is handed the history on every turn, and a speech-to-speech
+        model is opened with the recent transcript in its instructions.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionSettingsRequest"
+      responses:
+        "200":
+          description: The session, on its new models
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/sessions/{id}/events:
     get:
       operationId: watchSession
@@ -3185,7 +3290,7 @@ paths:
         `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`,
         `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`,
         `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-        `conversation_compacted`, `error` and `left`.
+        `conversation_compacted`, `models_changed`, `error` and `left`.
 
         Persistent text sessions also emit `conversation_updated` with conversation_id
         and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at,
@@ -4645,6 +4750,16 @@ components:
           type: string
           description: A provider/model or a capability shortcut.
           example: llm-fast
+        providers:
+          type: array
+          items:
+            type: string
+          description: >
+            A priority list of where to try, in the order given, which wins over target
+            when it holds anything. Each entry is a provider name, a provider/model or a
+            capability shortcut, expanded where it stands. A response that fails is
+            answered by the next entry that will have it.
+          example: ["openai/gpt-5-mini", "llm-fast"]
         max_output_tokens:
           type: integer
         temperature:
@@ -4688,6 +4803,16 @@ components:
           type: string
           description: A provider/model or a capability shortcut.
           example: search-fast
+        providers:
+          type: array
+          items:
+            type: string
+          description: >
+            A priority list of where to try, in the order given, which wins over target
+            and depth when it holds anything. Each entry is a provider name, a
+            provider/model or a capability shortcut, expanded where it stands. A search
+            that fails is asked of the next entry that will have it.
+          example: ["exa", "search-fast"]
         depth:
           $ref: "#/components/schemas/SearchDepth"
         results:
@@ -5231,6 +5356,59 @@ components:
       properties:
         providers:
           type: array
+          items:
+            type: string
+
+    LibraryVoice:
+      type: object
+      required: [provider, id, name]
+      description: >
+        One voice a provider offers. Everything past the name is what that vendor chose to
+        say about it, in its own words, so a field being absent means the vendor did not
+        label it rather than that the voice lacks it.
+      properties:
+        provider:
+          type: string
+        id:
+          type: string
+          description: What to put in the voice field, in the provider's own terms.
+        name:
+          type: string
+        description:
+          type: string
+        gender:
+          type: string
+        accent:
+          type: string
+        language:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        own:
+          type: boolean
+          description: A voice this account made, rather than one from the public library.
+        preview:
+          type: boolean
+          description: Whether the voice can be heard.
+
+    LibraryVoices:
+      type: object
+      required: [voices, providers]
+      properties:
+        voices:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibraryVoice"
+        providers:
+          type: array
+          description: The providers that publish a library, sorted by name.
+          items:
+            type: string
+        unavailable:
+          type: array
+          description: Providers whose library could not be read just now.
           items:
             type: string
 
@@ -5855,6 +6033,11 @@ components:
           type: string
         contact_id:
           type: string
+        user_id:
+          type: string
+          description: >
+            Who the agent spoke to, as the client's own token named them. Empty for a call
+            the customer's backend opened, and for telephony, where the number is the name.
         from_number:
           type: string
         to_number:
@@ -5909,6 +6092,18 @@ components:
           description: >
             The provider/model delegated work ran on. Empty when nothing was handed over,
             or when the thinking target was never reached.
+        voice:
+          type: string
+          description: >
+            The voice the call asked for, in the provider's own terms. Empty means the
+            provider's default.
+        voice_used:
+          type: string
+          description: >
+            The voice that spoke, which is the provider's default when none was asked for.
+            Known only while the call is running.
+        mode:
+          $ref: "#/components/schemas/SessionMode"
         instructions:
           type: string
           description: What the agent was told to be on this call.
@@ -5922,6 +6117,8 @@ components:
         summary:
           type: string
           description: What a model made of the call, written once it was over.
+        usage:
+          $ref: "#/components/schemas/CallUsage"
         review_score:
           type: integer
           description: How well the agent handled it, from 1 to 5.
@@ -5932,6 +6129,36 @@ components:
           additionalProperties:
             type: string
 
+    CallUsage:
+      type: object
+      required:
+        [input_tokens, cached_input_tokens, output_tokens, cost_micros, requests]
+      description: >
+        What the call spent, summed over every request it made. Counted once the call is
+        over, so it is absent while one is still running. Requests that failed are
+        included: a model that read the prompt and then fell over is still billed for it.
+      properties:
+        input_tokens:
+          type: integer
+          format: int64
+          description: Every prompt the models read, the cached part included.
+        cached_input_tokens:
+          type: integer
+          format: int64
+          description: The part of those prompts a provider served from its own cache.
+        output_tokens:
+          type: integer
+          format: int64
+          description: Everything the models generated, reasoning included.
+        cost_micros:
+          type: integer
+          format: int64
+          description: Millionths of a dollar, priced from the providers' configured rates.
+        requests:
+          type: integer
+          format: int64
+          description: How many calls to a model it took, transcription and speech included.
+
     TranscriptMessage:
       type: object
       required: [speaker, text, created_at]
@@ -5939,6 +6166,14 @@ components:
         speaker:
           type: string
           description: Who said it, the agent under its own user id.
+        name:
+          type: string
+          description: That speaker's display name, when they have one.
+        agent:
+          type: boolean
+          description: >
+            Whether the agent said it rather than somebody it was talking to. It is what
+            the line was stored as, so it holds however the agent was named.
         text:
           type: string
         created_at:
@@ -6041,6 +6276,26 @@ components:
           type: number
           format: double
           description: How long the caller waited between finishing and being answered.
+        stt_latency_ms:
+          type: number
+          format: double
+          nullable: true
+          description: The provider's decode time for the transcript that settled the turn.
+        llm_ttft_ms:
+          type: number
+          format: double
+          nullable: true
+          description: The wait between asking the model and its first token.
+        tts_ttfb_ms:
+          type: number
+          format: double
+          nullable: true
+          description: The wait between sending the first sentence and the first audio.
+        speech_end_to_audio_ms:
+          type: number
+          format: double
+          nullable: true
+          description: Voice in to voice out, which is the whole of what the caller felt.
         audio_out_ms:
           type: number
           format: double
@@ -6478,6 +6733,13 @@ components:
         subagent:
           type: string
           description: The provider and model delegated work runs on.
+        voice:
+          type: string
+          description: >
+            The voice speaking, in the provider's own terms. It is the provider's default
+            when the session asked for none.
+        mode:
+          $ref: "#/components/schemas/SessionMode"
         video:
           $ref: "#/components/schemas/SessionVideo"
         instructions:
@@ -6735,6 +6997,50 @@ components:
       properties:
         instructions:
           type: string
+
+    SessionSettingsRequest:
+      type: object
+      description: >
+        What to change about one running session's models. A field left out is left as it
+        is. The same safe knobs as ModelOverwrites, plus the voice.
+      properties:
+        llm:
+          type: string
+          description: The conversation model, a provider/model or a capability shortcut.
+        stt:
+          type: string
+        tts:
+          type: string
+        sts:
+          type: string
+          description: >
+            A speech-to-speech target, which makes the session native. Empty makes it a
+            cascade again.
+        subagent:
+          type: string
+        voice:
+          type: string
+          description: >
+            The voice to speak in, in the provider's own terms. Empty returns to the
+            provider's default.
+        thinking:
+          type: string
+          enum: [none, minimal, low, medium, high]
+        temperature:
+          type: number
+          format: double
+        max_output_tokens:
+          type: integer
+        verbosity:
+          type: string
+          enum: [low, medium, high]
+
+    SessionMode:
+      type: string
+      enum: [cascade, native, text]
+      description: >
+        How the session hears and speaks: a transcriber, a conversation model and a voice;
+        one speech-to-speech model; or in writing.
 
     HealthStatus:
       type: object

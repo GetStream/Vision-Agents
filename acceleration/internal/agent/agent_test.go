@@ -174,6 +174,10 @@ type stubLLM struct {
 	// is returned, so a test can interrupt while Create has not come back.
 	holdCreate <-chan struct{}
 
+	// refuses, if set, is returned instead of a response: the model a session opens onto
+	// happily but that answers nothing, which is what a rejected key looks like.
+	refuses error
+
 	// scripts are the responses handed out, keyed by the id the caller correlates on, so
 	// a test can write one as it goes and see which were abandoned.
 	scripts map[string]*llmtest.Script
@@ -187,8 +191,12 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	hold := s.holdCreate
+	hold, refuses := s.holdCreate, s.refuses
 	s.mu.Unlock()
+
+	if refuses != nil {
+		return nil, refuses
+	}
 
 	if hold != nil {
 		select {
@@ -273,6 +281,18 @@ func (s *stubLLM) requests() []llm.ResponseParams {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]llm.ResponseParams(nil), s.asked...)
+}
+
+// turns is what the model was asked on behalf of the caller, leaving out the one-word
+// request a swap makes to prove the model can answer at all.
+func (s *stubLLM) turns() []llm.ResponseParams {
+	var asked []llm.ResponseParams
+	for _, request := range s.requests() {
+		if request.ID != "" {
+			asked = append(asked, request)
+		}
+	}
+	return asked
 }
 
 // interrupted is how many responses the agent closed part-way through.

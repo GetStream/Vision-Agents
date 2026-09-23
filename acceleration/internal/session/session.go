@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,6 +108,9 @@ type Session struct {
 	persisted  *persistent.Conversation
 	voiceAgent *agent.Agent
 	tools      *bridge
+	// calls records the call's row when it moves onto other models. Nil when the
+	// deployment keeps no calls.
+	calls      *callRecorder
 	transcript Transcript
 	// skills are what the fast model may hand over, resolved once when the session was
 	// created. Kept so the call's row can say what was on offer: the spec carries names
@@ -200,6 +204,39 @@ func (s *Session) Resolved() (stt, llm, tts, subagent string) {
 		subagent = think.Provider() + "/" + think.Model()
 	}
 	return stt, llm, tts, subagent
+}
+
+// Voice is the voice the session asked for, empty for the provider's default, and the one
+// speaking, which is that default when it asked for none. The one speaking is empty when
+// the provider picked it on its side and cannot say which.
+func (s *Session) Voice() (asked, used string) {
+	asked = s.spec.Voice
+	if s.voiceAgent == nil {
+		return asked, ""
+	}
+	if voice := s.voiceAgent.TTS(); voice != nil {
+		used = voice.Voice()
+	}
+	if model := s.voiceAgent.STS(); model != nil {
+		used = model.Voice()
+	}
+	if used == "" {
+		used = asked
+	}
+	return asked, used
+}
+
+// Mode is what holds the conversation: "text", "native" for one speech-to-speech model, or
+// "cascade" for a transcriber, a conversation model and a voice.
+func (s *Session) Mode() string {
+	switch {
+	case s.spec.Text:
+		return "text"
+	case s.voiceAgent != nil && s.voiceAgent.Native(), s.voiceAgent == nil && s.spec.Native():
+		return "native"
+	default:
+		return "cascade"
+	}
 }
 
 // Speech names the speech-to-speech model routing picked for a native call, and nothing
@@ -444,6 +481,75 @@ func (s *Session) Busy() bool { return s.voiceAgent.Busy() }
 func (s *Session) SetInstructions(text string) {
 	s.spec.Instructions = text
 	s.voiceAgent.SetInstructions(s.spec.prompt())
+}
+
+// Settings is what a running session is moved onto. A nil field is left as it is, and an
+// empty STS moves a native session back onto the cascade.
+type Settings struct {
+	LLM             *string
+	STT             *string
+	TTS             *string
+	STS             *string
+	Subagent        *string
+	Voice           *string
+	Thinking        *string
+	Temperature     *float64
+	MaxOutputTokens *int
+	Verbosity       *string
+}
+
+// SetSettings moves this session onto other models or another voice, and between the
+// cascade and a speech-to-speech model. The agent config it started from is untouched,
+// and nothing changes when it fails.
+func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
+	next := s.spec
+	if next.Text && (settings.STT != nil || settings.TTS != nil || settings.STS != nil || settings.Voice != nil) {
+		return errors.New("session: a text session has no voice, so it has no speech models to change")
+	}
+	set := func(target *string, value *string) {
+		if value != nil {
+			*target = *value
+		}
+	}
+	set(&next.LLMTarget, settings.LLM)
+	set(&next.STTTarget, settings.STT)
+	set(&next.TTSTarget, settings.TTS)
+	set(&next.STSTarget, settings.STS)
+	set(&next.SubagentTarget, settings.Subagent)
+	set(&next.Voice, settings.Voice)
+	set(&next.ModelOverwrites.Thinking, settings.Thinking)
+	set(&next.ModelOverwrites.Verbosity, settings.Verbosity)
+	if settings.Temperature != nil {
+		next.ModelOverwrites.Temperature = settings.Temperature
+	}
+	if settings.MaxOutputTokens != nil {
+		next.ModelOverwrites.MaxOutputTokens = settings.MaxOutputTokens
+	}
+	if next.Native() && strings.TrimSpace(next.Guardrail) != "" {
+		return errors.New(
+			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns")
+	}
+	if next.ControllerTarget == "" && !next.Native() {
+		next.ControllerTarget = defaultControllerTarget
+	}
+
+	if err := s.voiceAgent.SetSettings(ctx, agent.Settings{
+		LLMTarget:        next.LLMTarget,
+		ControllerTarget: next.ControllerTarget,
+		STTTarget:        next.STTTarget,
+		TTSTarget:        next.TTSTarget,
+		STSTarget:        next.STSTarget,
+		SubagentTarget:   next.SubagentTarget,
+		Voice:            next.Voice,
+		Overwrites:       next.LLMOverwrites(),
+	}); err != nil {
+		return err
+	}
+	s.spec = next
+	if s.calls != nil {
+		s.calls.Changed(row(s))
+	}
+	return nil
 }
 
 // ResolveTool hands a tool result back to the model waiting for it, reporting whether

@@ -516,6 +516,9 @@ func (s *STS) Provider() string { return ProviderName }
 // Model implements sts.STS.
 func (s *STS) Model() string { return s.options.Model }
 
+// Voice is the prebuilt voice asked for, or empty when the vendor picks it.
+func (s *STS) Voice() string { return s.options.Voice }
+
 // SampleRate is the rate the model speaks at.
 func (s *STS) SampleRate() int { return OutputSampleRate }
 

@@ -626,6 +626,10 @@ type Call struct {
 	ConfigID   string `bun:"config_id,nullzero"`
 	CampaignID string `bun:"campaign_id,nullzero"`
 	ContactID  string `bun:"contact_id,nullzero"`
+	// UserID is who the agent spoke to, as the client's token named them. Empty for a
+	// call the customer's own backend opened, and for telephony, where the number below
+	// is the name.
+	UserID     string `bun:"user_id,nullzero"`
 	FromNumber string `bun:"from_number,nullzero"`
 	ToNumber   string `bun:"to_number,nullzero"`
 	// Direction is inbound or outbound: who rang whom.
@@ -644,6 +648,8 @@ type Call struct {
 	// STS is the speech-to-speech target a native call ran with, in place of the three
 	// above.
 	STS string `bun:"sts,nullzero"`
+	// Voice is the voice the call asked for, empty for the provider's default.
+	Voice string `bun:"voice,nullzero"`
 	// Instructions is what the agent was told to be on this call.
 	Instructions string `bun:"instructions,nullzero"`
 	// Skills names what the fast model could hand to the subagent. The instructions

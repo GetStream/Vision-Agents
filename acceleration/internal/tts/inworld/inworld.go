@@ -409,6 +409,9 @@ func (t *TTS) Provider() string { return ProviderName }
 
 func (t *TTS) Model() string { return t.options.Model }
 
+// Voice is the voice id used for utterances that do not name one.
+func (t *TTS) Voice() string { return t.options.VoiceID }
+
 func (t *TTS) Streaming() bool { return true }
 
 func (t *TTS) Performs() bool { return false }

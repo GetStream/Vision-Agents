@@ -89,7 +89,7 @@ def sync_detailed(
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
     `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `error` and `left`.
+    `conversation_compacted`, `models_changed`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -175,7 +175,7 @@ def sync(
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
     `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `error` and `left`.
+    `conversation_compacted`, `models_changed`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -256,7 +256,7 @@ async def asyncio_detailed(
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
     `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `error` and `left`.
+    `conversation_compacted`, `models_changed`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -340,7 +340,7 @@ async def asyncio(
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
     `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `error` and `left`.
+    `conversation_compacted`, `models_changed`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each

@@ -944,7 +944,7 @@ export type paths = {
         /**
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
-         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `error` and `left`.
+         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
          *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
          *     A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
@@ -1107,6 +1107,27 @@ export type paths = {
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change the models and voice of one running session
+         * @description Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+         *     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+         */
+        readonly patch: operations["setSessionSettings"];
         readonly trace?: never;
     };
     readonly "/v1/agents/sessions/search": {
@@ -1435,6 +1456,46 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["addVoiceSample"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/voices/library": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The voices the speech providers offer
+         * @description The catalogue each provider publishes, so a voice can be picked by name rather than by pasting an id. Only providers this deployment holds a key for and that publish a library appear; for the others a voice is still whatever the vendor's own terms call one, and has to be typed. A provider that cannot be reached is reported in `unavailable` rather than emptying the list.
+         */
+        readonly get: operations["listLibraryVoices"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/voices/library/{provider}/{voice}/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Hear a voice from a provider's library
+         * @description The sample the vendor already published, fetched through the router because two of them want the deployment's key to hand it over. Nothing is synthesised, so browsing a library spends no credits.
+         */
+        readonly get: operations["previewLibraryVoice"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2138,6 +2199,7 @@ export type components = {
             readonly llm?: string;
             /** @description The provider/model that held the conversation. */
             readonly llm_used?: string;
+            readonly mode?: components["schemas"]["SessionMode"];
             readonly review_notes?: string;
             /** @description How well the agent handled it, from 1 to 5. */
             readonly review_score?: number;
@@ -2167,6 +2229,13 @@ export type components = {
             readonly tts?: string;
             /** @description The provider/model that spoke, on the same terms as stt_used. */
             readonly tts_used?: string;
+            readonly usage?: components["schemas"]["CallUsage"];
+            /** @description Who the agent spoke to, as the client's own token named them. Empty for a call the customer's backend opened, and for telephony, where the number is the name. */
+            readonly user_id?: string;
+            /** @description The voice the call asked for, in the provider's own terms. Empty means the provider's default. */
+            readonly voice?: string;
+            /** @description The voice that spoke, which is the provider's default when none was asked for. Known only while the call is running. */
+            readonly voice_used?: string;
         };
         readonly CallEvent: {
             /** Format: date-time */
@@ -2203,6 +2272,34 @@ export type components = {
             readonly user_id?: string;
             /** @description The name the other participants see. Defaults to the user id. */
             readonly user_name?: string;
+        };
+        /** @description What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it. */
+        readonly CallUsage: {
+            /**
+             * Format: int64
+             * @description The part of those prompts a provider served from its own cache.
+             */
+            readonly cached_input_tokens: number;
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced from the providers' configured rates.
+             */
+            readonly cost_micros: number;
+            /**
+             * Format: int64
+             * @description Every prompt the models read, the cached part included.
+             */
+            readonly input_tokens: number;
+            /**
+             * Format: int64
+             * @description Everything the models generated, reasoning included.
+             */
+            readonly output_tokens: number;
+            /**
+             * Format: int64
+             * @description How many calls to a model it took, transcription and speech included.
+             */
+            readonly requests: number;
         };
         readonly Campaign: {
             readonly concurrency: number;
@@ -2612,6 +2709,29 @@ export type components = {
          * @enum {string}
          */
         readonly KnowledgeUrlState: "pending" | "indexed" | "failed";
+        /** @description One voice a provider offers. Everything past the name is what that vendor chose to say about it, in its own words, so a field being absent means the vendor did not label it rather than that the voice lacks it. */
+        readonly LibraryVoice: {
+            readonly accent?: string;
+            readonly description?: string;
+            readonly gender?: string;
+            /** @description What to put in the voice field, in the provider's own terms. */
+            readonly id: string;
+            readonly language?: string;
+            readonly name: string;
+            /** @description A voice this account made, rather than one from the public library. */
+            readonly own?: boolean;
+            /** @description Whether the voice can be heard. */
+            readonly preview?: boolean;
+            readonly provider: string;
+            readonly tags?: readonly string[];
+        };
+        readonly LibraryVoices: {
+            /** @description The providers that publish a library, sorted by name. */
+            readonly providers: readonly string[];
+            /** @description Providers whose library could not be read just now. */
+            readonly unavailable?: readonly string[];
+            readonly voices: readonly components["schemas"]["LibraryVoice"][];
+        };
         /** @description How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model answers under belongs to the agent asking, not to the config that decides where the asking goes. */
         readonly LlmOptions: {
             /**
@@ -2626,6 +2746,14 @@ export type components = {
             };
             /** @description What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are read from the cache rather than charged in full. */
             readonly prompt_cache_key?: string;
+            /**
+             * @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A response that fails is answered by the next entry that will have it.
+             * @example [
+             *       "openai/gpt-5-mini",
+             *       "llm-fast"
+             *     ]
+             */
+            readonly providers?: readonly string[];
             /**
              * @description How long the model may think before answering, on the models that think.
              * @enum {string}
@@ -2939,6 +3067,14 @@ export type components = {
             readonly output_schema?: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * @description A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.
+             * @example [
+             *       "exa",
+             *       "search-fast"
+             *     ]
+             */
+            readonly providers?: readonly string[];
             /** @description How many hits to return. */
             readonly results?: number;
             /**
@@ -3008,6 +3144,7 @@ export type components = {
             readonly last_response_at?: string;
             /** @description The provider and model answering, once routing has picked one. */
             readonly llm?: string;
+            readonly mode?: components["schemas"]["SessionMode"];
             readonly model_overwrites?: components["schemas"]["ModelOverwrites"];
             /** @description Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
             readonly persist_conversation?: boolean;
@@ -3026,6 +3163,8 @@ export type components = {
             readonly tts?: string;
             readonly user_id: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none. */
+            readonly voice?: string;
         };
         /** @description Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it. */
         readonly SessionMemory: {
@@ -3038,6 +3177,11 @@ export type components = {
             /** @description Who the memories belong to. Empty means the customer. */
             readonly user_id?: string;
         };
+        /**
+         * @description How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
+         * @enum {string}
+         */
+        readonly SessionMode: "cascade" | "native" | "text";
         /** @description The number the session acts from, which is what turns transferring on. */
         readonly SessionPhone: {
             /** @description One of the customer's own numbers, written as +15551234567. */
@@ -3054,6 +3198,25 @@ export type components = {
             readonly text: string;
             /** @enum {string} */
             readonly type: "respond";
+        };
+        /** @description What to change about one running session's models. A field left out is left as it is. The same safe knobs as ModelOverwrites, plus the voice. */
+        readonly SessionSettingsRequest: {
+            /** @description The conversation model, a provider/model or a capability shortcut. */
+            readonly llm?: string;
+            readonly max_output_tokens?: number;
+            /** @description A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
+            readonly sts?: string;
+            readonly stt?: string;
+            readonly subagent?: string;
+            /** Format: double */
+            readonly temperature?: number;
+            /** @enum {string} */
+            readonly thinking?: "none" | "minimal" | "low" | "medium" | "high";
+            readonly tts?: string;
+            /** @enum {string} */
+            readonly verbosity?: "low" | "medium" | "high";
+            /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
+            readonly voice?: string;
         };
         /** @description A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under. */
         readonly SessionSkill: {
@@ -3623,13 +3786,33 @@ export type components = {
             readonly interrupted?: boolean;
             /**
              * Format: double
+             * @description The wait between asking the model and its first token.
+             */
+            readonly llm_ttft_ms?: number | null;
+            /**
+             * Format: double
              * @description How long the caller waited between finishing and being answered.
              */
             readonly roundtrip_ms?: number;
             /** @description What the agent answered. */
             readonly said?: string;
+            /**
+             * Format: double
+             * @description Voice in to voice out, which is the whole of what the caller felt.
+             */
+            readonly speech_end_to_audio_ms?: number | null;
             /** Format: date-time */
             readonly started_at: string;
+            /**
+             * Format: double
+             * @description The provider's decode time for the transcript that settled the turn.
+             */
+            readonly stt_latency_ms?: number | null;
+            /**
+             * Format: double
+             * @description The wait between sending the first sentence and the first audio.
+             */
+            readonly tts_ttfb_ms?: number | null;
             readonly turn_id: string;
         };
         readonly ToolResultCommand: {
@@ -3710,8 +3893,12 @@ export type components = {
             };
         };
         readonly TranscriptMessage: {
+            /** @description Whether the agent said it rather than somebody it was talking to. It is what the line was stored as, so it holds however the agent was named. */
+            readonly agent?: boolean;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description That speaker's display name, when they have one. */
+            readonly name?: string;
             /** @description Who said it, the agent under its own user id. */
             readonly speaker: string;
             readonly text: string;
@@ -5896,6 +6083,37 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly setSessionSettings: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: components["parameters"]["SessionID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionSettingsRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The session, on its new models */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Session"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
     readonly searchSessions: {
         readonly parameters: {
             readonly query?: {
@@ -6561,6 +6779,60 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["Voice"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly listLibraryVoices: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Only this provider's voices. */
+                readonly provider?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The voices, by provider and then name */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LibraryVoices"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly previewLibraryVoice: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+                /** @description The voice id, as the provider names it. */
+                readonly voice: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The sample */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VoicePreview"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

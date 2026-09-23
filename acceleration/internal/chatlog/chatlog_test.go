@@ -256,6 +256,25 @@ func (s *ChatLogSuite) TestSomethingTheAgentWroteRatherThanSaidIsStillTheAgents(
 	s.Equal(SourceAgent, waiting[0].source)
 }
 
+func (s *ChatLogSuite) TestTheTranscriptSaysWhichLinesTheAgentSaid() {
+	// Speakers are user ids, and an agent can be named anything, so whoever reads the
+	// transcript back cannot work out which side of the conversation a line is from.
+	s.log.client = chattest.Client(s.T())
+	writer := newWriter(s.log)
+	writer.handle(message{author: User{ID: "alice"}, text: "hello", kind: whole, source: SourceSpeech})
+	writer.handle(message{author: s.log.agent, text: "hi there", kind: whole, source: SourceAgent})
+	reader := &Reader{client: s.log.client}
+
+	said, err := reader.Transcript(context.Background(), "agent-1")
+
+	s.Require().NoError(err)
+	s.Require().Len(said, 2)
+	s.Equal("alice", said[0].Speaker)
+	s.False(said[0].Agent)
+	s.Equal("vision-agent", said[1].Speaker)
+	s.True(said[1].Agent)
+}
+
 func (s *ChatLogSuite) TestAnEmptyWrittenReplyIsNotStored() {
 	s.log.Reply("")
 

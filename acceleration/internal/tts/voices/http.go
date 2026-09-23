@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -102,6 +103,60 @@ func speak(
 		return Speech{}, fmt.Errorf("voices: %s answered with no audio", provider)
 	}
 	return Speech{Audio: audio, ContentType: contentType}, nil
+}
+
+// fetchPreview downloads a sample a vendor has already made. The content type is taken
+// from the response when it labels one, since a preview is a file rather than the raw PCM
+// a session streams and the browser has to be told which.
+func fetchPreview(
+	ctx context.Context,
+	httpClient *http.Client,
+	provider, url string,
+	header http.Header,
+	contentType string,
+) (Speech, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return Speech{}, err
+	}
+	if header != nil {
+		request.Header = header
+	}
+
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return Speech{}, fmt.Errorf("voices: %s preview: %w", provider, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Speech{}, refused(provider, response)
+	}
+	audio, err := io.ReadAll(response.Body)
+	if err != nil {
+		return Speech{}, fmt.Errorf("voices: %s preview: %w", provider, err)
+	}
+	if len(audio) == 0 {
+		return Speech{}, fmt.Errorf("voices: %s answered with no audio", provider)
+	}
+	// Only a label that claims to be audio is believed: ElevenLabs serves its samples from
+	// a bucket that calls every one of them text/plain, and a browser handed that plays
+	// nothing at all.
+	if labelled := response.Header.Get("Content-Type"); strings.HasPrefix(labelled, "audio/") {
+		contentType = labelled
+	}
+	return Speech{Audio: audio, ContentType: contentType}, nil
+}
+
+// labelTags collects the labels worth showing beside a voice, skipping the empty ones.
+func labelTags(labels map[string]string, keys ...string) []string {
+	var tags []string
+	for _, key := range keys {
+		if value := labels[key]; value != "" {
+			tags = append(tags, value)
+		}
+	}
+	return tags
 }
 
 // refused turns a non-2xx response into an error that says what the provider said, which

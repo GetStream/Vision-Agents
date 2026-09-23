@@ -313,11 +313,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if conv != nil {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
 	}
-	var conversing *stsrouter.Router
-	if spec.Native() {
-		conversing = m.options.STS
-	}
-
 	screening, err := m.guardrail(ctx, spec)
 	if err != nil {
 		return nil, err
@@ -331,23 +326,25 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		})
 	}
 	created.voiceAgent, err = agent.New(agent.Options{
-		OnToolStarted:      toolStarted,
-		Edge:               edge,
-		Text:               spec.Text,
-		Instructions:       spec.prompt(),
-		CustomerID:         spec.CustomerID,
-		Caller:             spec.Caller,
-		AgentID:            spec.AgentID,
-		ConfigID:           spec.ConfigID,
-		CallID:             spec.CallID,
-		Tags:               spec.Tags,
-		LLM:                m.options.LLM,
-		LLMTarget:          spec.LLMTarget,
-		STT:                m.options.STT,
-		STTTarget:          spec.STTTarget,
-		TTS:                m.options.TTS,
-		TTSTarget:          spec.TTSTarget,
-		STS:                conversing,
+		OnToolStarted: toolStarted,
+		Edge:          edge,
+		Text:          spec.Text,
+		Instructions:  spec.prompt(),
+		CustomerID:    spec.CustomerID,
+		Caller:        spec.Caller,
+		AgentID:       spec.AgentID,
+		ConfigID:      spec.ConfigID,
+		CallID:        spec.CallID,
+		Tags:          spec.Tags,
+		LLM:           m.options.LLM,
+		LLMTarget:     spec.LLMTarget,
+		STT:           m.options.STT,
+		STTTarget:     spec.STTTarget,
+		TTS:           m.options.TTS,
+		TTSTarget:     spec.TTSTarget,
+		// Every router the deployment has is handed over, whichever pipeline the session
+		// starts on, so it can be moved onto the other one mid-call.
+		STS:                m.options.STS,
 		STSTarget:          spec.STSTarget,
 		SubagentTarget:     spec.SubagentTarget,
 		ControllerTarget:   spec.ControllerTarget,
@@ -449,6 +446,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The row is queued before the session is reachable, so the call cannot be recorded
 	// as ending before it is recorded as starting.
 	if m.calls != nil {
+		created.calls = m.calls
 		created.closers = append(created.closers, func() {
 			m.calls.Ended(created.id, time.Now().UTC())
 			// The review runs on a model rather than in this closer, so it is started

@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -86,6 +87,13 @@ func (s *APIIntegrationSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.T().Cleanup(voice.Close)
 
+	finding, err := searchrouter.New(searchrouter.Options{
+		Config:   config[routing.Search],
+		Registry: searchrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(finding.Close)
+
 	// The recording paths are wired against providers that answer in process: what a real
 	// batch endpoint makes of a real file is the provider package's own suite, and what is
 	// under test here is the job - a row, a result and a callback.
@@ -118,8 +126,9 @@ func (s *APIIntegrationSuite) SetupSuite() {
 	s.knowledge = newBase()
 	server, err := NewServer(Options{
 		Routers: map[routing.Modality]routing.Inspector{
-			routing.STT: speech,
-			routing.TTS: voice,
+			routing.STT:    speech,
+			routing.TTS:    voice,
+			routing.Search: finding,
 		},
 		Streams: &Streams{
 			STT:            speech,
@@ -1064,8 +1073,8 @@ func (s *APIIntegrationSuite) TestARouterConfigSurvivesBeingStoredAndReadBack() 
 		"name":"healthcare",
 		"stt":{"target":"en-recorded","providers":["deepgram/nova-3","en-recorded"],"diarize":true,"keyterms":["perioperative"]},
 		"tts":{"target":"en-low-latency","voice":"aurora","speed":1.1},
-		"llm":{"target":"llm-fast","temperature":0.2},
-		"search":{"depth":"standard","include_domains":["nice.org.uk"]}
+		"llm":{"providers":["gemini/gemini-3.8-flash","llm-fast"],"temperature":0.2},
+		"search":{"providers":["tavily/advanced","exa"],"depth":"standard","include_domains":["nice.org.uk"]}
 	}`)
 	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
 
@@ -1089,8 +1098,23 @@ func (s *APIIntegrationSuite) TestARouterConfigSurvivesBeingStoredAndReadBack() 
 	s.InDelta(1.1, *read.Tts.Speed, 0.001)
 	s.Require().NotNil(read.Llm)
 	s.InDelta(0.2, *read.Llm.Temperature, 0.001)
+	s.Require().NotNil(read.Llm.Providers)
+	s.Equal([]string{"gemini/gemini-3.8-flash", "llm-fast"}, *read.Llm.Providers)
 	s.Require().NotNil(read.Search)
 	s.Equal([]string{"nice.org.uk"}, *read.Search.IncludeDomains)
+	s.Require().NotNil(read.Search.Providers)
+	s.Equal([]string{"tavily/advanced", "exa"}, *read.Search.Providers)
+}
+
+func (s *APIIntegrationSuite) TestAConfigFallingBackToASearchNobodyOffersIsRefused() {
+	response, payload := s.do(http.MethodPost, "/v1/router/configs",
+		`{"name":"clinic","search":{"providers":["exa","altavista"]}}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "altavista")
 }
 
 func (s *APIIntegrationSuite) TestARouterConfigIsFoundByNameAsWellAsById() {
@@ -1859,6 +1883,55 @@ func (s *APIIntegrationSuite) TestFinishedNativeCallIncludesConversationAndSubag
 	s.Nil(rendered.SttUsed)
 	s.Nil(rendered.LlmUsed)
 	s.Nil(rendered.TtsUsed)
+}
+
+func (s *APIIntegrationSuite) TestAFinishedCallReportsWhatItSpentAndWhoItSpokeTo() {
+	call := store.Call{
+		ID: "session-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-1", AgentID: "agent-1", UserID: "ada", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &store.Request{
+		CustomerID: s.customerID, AgentID: call.AgentID,
+		Modality: "llm", Provider: "openai", Model: "gpt-5.6-sol",
+		StartedAt:   s.base.Add(time.Second),
+		InputTokens: 900, CachedInputTokens: 400, OutputTokens: 150,
+		CostMicros: 2500, Success: true,
+	}))
+	s.Require().NoError(s.store.FinishCall(s.ctx, call.ID, s.base.Add(time.Minute)))
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/calls/"+call.ID, "")
+
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	var rendered Call
+	s.Require().NoError(json.Unmarshal(payload, &rendered))
+	s.Equal("ada", value(rendered.UserId))
+	s.Require().NotNil(rendered.Usage)
+	s.Equal(int64(900), rendered.Usage.InputTokens)
+	s.Equal(int64(400), rendered.Usage.CachedInputTokens)
+	s.Equal(int64(150), rendered.Usage.OutputTokens)
+	s.Equal(int64(2500), rendered.Usage.CostMicros)
+	s.Equal(int64(1), rendered.Usage.Requests)
+}
+
+func (s *APIIntegrationSuite) TestACallStillRunningIsNotToldWhatItHasSpentSoFar() {
+	call := store.Call{
+		ID: "session-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-1", AgentID: "agent-1", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &store.Request{
+		CustomerID: s.customerID, AgentID: call.AgentID,
+		Modality: "llm", Provider: "openai", Model: "gpt-5.6-sol",
+		StartedAt: s.base.Add(time.Second), InputTokens: 900, Success: true,
+	}))
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/calls/"+call.ID, "")
+
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	var rendered Call
+	s.Require().NoError(json.Unmarshal(payload, &rendered))
+	s.Nil(rendered.Usage, "what a conversation cost is a question asked after it")
 }
 
 func (s *APIIntegrationSuite) TestAnotherCustomersCallIsNotFound() {

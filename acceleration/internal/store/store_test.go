@@ -507,6 +507,75 @@ func (s *StoreSuite) TestACallReportsTheModelsThatServedIt() {
 	}, used)
 }
 
+func (s *StoreSuite) TestACallAddsUpWhatEveryOneOfItsRequestsSpent() {
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base.Add(time.Second),
+		InputTokens: 800, CachedInputTokens: 500, OutputTokens: 120,
+		CostMicros: 1400, Success: true,
+	}))
+	// A turn the model read and then failed on is still billed for the reading.
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base.Add(2 * time.Second),
+		InputTokens: 200, OutputTokens: 0, CostMicros: 100,
+		Success: false, ErrorCode: "overloaded",
+	}))
+	// Another agent's spend is not this call's.
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-2",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base.Add(time.Second),
+		InputTokens: 9000, OutputTokens: 9000, CostMicros: 90000, Success: true,
+	}))
+
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", s.base, nil)
+
+	s.Require().NoError(err)
+	s.Equal(CallUsage{
+		InputTokens: 1000, CachedInputTokens: 500, OutputTokens: 120,
+		CostMicros: 1500, Requests: 2,
+	}, spent)
+}
+
+func (s *StoreSuite) TestACallThatMadeNoRequestsSpentNothing() {
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-with-no-work", s.base, nil)
+
+	s.Require().NoError(err)
+	s.Equal(CallUsage{}, spent)
+}
+
+func (s *StoreSuite) TestWhatWasSpentAfterACallEndedIsNotTheCallsToPayFor() {
+	ended := s.base.Add(10 * time.Second)
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base.Add(time.Second),
+		InputTokens: 300, CostMicros: 400, Success: true,
+	}))
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: ended.Add(time.Minute),
+		InputTokens: 7000, CostMicros: 8000, Success: true,
+	}))
+
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", s.base, &ended)
+
+	s.Require().NoError(err)
+	s.Equal(int64(300), spent.InputTokens)
+	s.Equal(int64(1), spent.Requests)
+}
+
+func (s *StoreSuite) TestACallRemembersWhoTheAgentSpokeTo() {
+	s.Require().NoError(s.store.StartCall(s.ctx, &Call{
+		ID: "call-with-a-user", CustomerID: "acme", CallID: "stream-1",
+		AgentID: "agent-1", UserID: "ada", StartedAt: s.base,
+	}))
+
+	found, err := s.store.Call(s.ctx, "acme", "call-with-a-user")
+
+	s.Require().NoError(err)
+	s.Equal("ada", found.UserID)
+}
+
 func (s *StoreSuite) TestRecordingNoDecisionsIsNotAnError() {
 	s.Require().NoError(s.store.RecordCallEvents(s.ctx, nil))
 }

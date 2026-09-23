@@ -157,6 +157,124 @@ func (c *Cartesia) Speak(ctx context.Context, externalID, text string) (Speech, 
 	return speak(ctx, c.client, cartesia.ProviderName, url, "audio/wav", header, payload)
 }
 
+// cartesiaPageLimit is the largest page the endpoint serves, and cartesiaPages bounds how
+// many are read: a library that needs more than a thousand entries to find a voice needs
+// a search box, not a longer list.
+const (
+	cartesiaPageLimit = 100
+	cartesiaPages     = 10
+)
+
+// List reads Cartesia's library a page at a time. The preview URL is asked for by name,
+// because Cartesia only fills it in when it is expanded.
+func (c *Cartesia) List(ctx context.Context) ([]Library, error) {
+	var (
+		found []Library
+		after string
+	)
+	for page := 0; page < cartesiaPages; page++ {
+		url := fmt.Sprintf("%s/voices?limit=%d&expand[]=preview_file_url",
+			strings.TrimSuffix(c.options.BaseURL, "/"), cartesiaPageLimit)
+		if after != "" {
+			url += "&starting_after=" + after
+		}
+		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		c.authorize(httpRequest)
+
+		response, err := c.client.Do(httpRequest)
+		if err != nil {
+			return nil, fmt.Errorf("voices: cartesia list: %w", err)
+		}
+		var listed struct {
+			Data []struct {
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				Tagline     string `json:"tagline"`
+				Gender      string `json:"gender"`
+				Accent      string `json:"accent"`
+				Language    string `json:"language"`
+				IsOwner     bool   `json:"is_owner"`
+				Preview     string `json:"preview_file_url"`
+			} `json:"data"`
+			HasMore  bool   `json:"has_more"`
+			NextPage string `json:"next_page"`
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			err = refused(cartesia.ProviderName, response)
+			response.Body.Close()
+			return nil, err
+		}
+		err = json.NewDecoder(response.Body).Decode(&listed)
+		response.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("voices: cartesia list: decode: %w", err)
+		}
+
+		for _, voice := range listed.Data {
+			if voice.ID == "" {
+				continue
+			}
+			description := voice.Description
+			if description == "" {
+				description = voice.Tagline
+			}
+			found = append(found, Library{
+				ID:          voice.ID,
+				Name:        voice.Name,
+				Description: description,
+				Gender:      voice.Gender,
+				Accent:      voice.Accent,
+				Language:    voice.Language,
+				Own:         voice.IsOwner,
+				Preview:     voice.Preview != "",
+			})
+		}
+		if !listed.HasMore || listed.NextPage == "" {
+			break
+		}
+		after = listed.NextPage
+	}
+	return found, nil
+}
+
+// Preview fetches the sample Cartesia holds for the voice. The URL it hands out wants the
+// same key the listing did, so the audio is read here rather than handed to a browser.
+func (c *Cartesia) Preview(ctx context.Context, id string) (Speech, error) {
+	url := strings.TrimSuffix(c.options.BaseURL, "/") + "/voices/" + id + "?expand[]=preview_file_url"
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return Speech{}, err
+	}
+	c.authorize(httpRequest)
+
+	response, err := c.client.Do(httpRequest)
+	if err != nil {
+		return Speech{}, fmt.Errorf("voices: cartesia preview: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Speech{}, refused(cartesia.ProviderName, response)
+	}
+	var voice struct {
+		Preview string `json:"preview_file_url"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&voice); err != nil {
+		return Speech{}, fmt.Errorf("voices: cartesia preview: decode: %w", err)
+	}
+	if voice.Preview == "" {
+		return Speech{}, fmt.Errorf("voices: cartesia has published no sample of %s", id)
+	}
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+c.options.APIKey)
+	header.Set("Cartesia-Version", cartesiaAPIVersion)
+	return fetchPreview(ctx, c.client, cartesia.ProviderName, voice.Preview, header, "audio/wav")
+}
+
 func (c *Cartesia) authorize(request *http.Request) {
 	request.Header.Set("Authorization", "Bearer "+c.options.APIKey)
 	request.Header.Set("Cartesia-Version", cartesiaAPIVersion)

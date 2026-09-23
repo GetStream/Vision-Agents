@@ -268,10 +268,12 @@ func sameMessage(a, b llm.Message) bool {
 // Respond asks the fast model to answer a turn and returns the stream the reply arrives
 // on. The caller drains it and passes each delta through Filter.
 func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
-	if h.options.Model == nil {
+	h.mu.Lock()
+	session, overwrites := h.options.Model, h.options.Overwrites
+	if session == nil {
+		h.mu.Unlock()
 		return nil, errors.New("harness: no text conversation model")
 	}
-	h.mu.Lock()
 	h.history = append([]llm.Message(nil), turn.History...)
 	instructions := h.instructions(turn.Instructions, turn.Note)
 	// A colleague asks only for what the caller alone can say, so a reply carrying its
@@ -282,10 +284,10 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		tools = nil
 	}
 	input, previous := h.resume(instructions, answerable(turn.History))
-	model := h.options.Model.Capabilities()
+	model := session.Capabilities()
 	h.mu.Unlock()
 
-	return h.options.Model.Create(ctx, llm.ResponseParams{
+	return session.Create(ctx, llm.ResponseParams{
 		ID:                 turn.ID,
 		Instructions:       instructions,
 		Input:              input,
@@ -297,7 +299,40 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		// they are written to the provider's cache once under a key the agent owns and
 		// read back from there on every turn after.
 		PromptCacheKey: h.options.CacheKey,
-	}.Overwrite(h.options.Overwrites))
+	}.Overwrite(overwrites))
+}
+
+// SetModel moves the conversation, and the flow controller when one is given, onto other
+// sessions from the next turn. The new model has read nothing, so the next turn sends the
+// whole conversation. The caller still owns and closes the model it replaced; a replaced
+// controller closes with the harness, once what it was deciding has settled.
+func (h *Harness) SetModel(model, controller *llmrouter.Session) {
+	h.mu.Lock()
+	h.options.Model = model
+	h.stored = stored{}
+	h.mu.Unlock()
+
+	if controller != nil && h.flow != nil {
+		h.flow.setModel(controller)
+	}
+}
+
+// SetSubagent opens delegated work on another model in the background. Tasks already
+// running finish on the one they started with.
+func (h *Harness) SetSubagent(open func(context.Context) (*llmrouter.Session, error)) {
+	if h.tasks != nil {
+		h.tasks.open(open)
+	}
+}
+
+// SetOverwrites changes how the model answers from the next turn and the next task.
+func (h *Harness) SetOverwrites(overwrites llmoptions.LLM) {
+	h.mu.Lock()
+	h.options.Overwrites = overwrites
+	h.mu.Unlock()
+	if h.tasks != nil {
+		h.tasks.setOverwrites(overwrites)
+	}
 }
 
 // resumption is what a turn nobody prompted is asked, when the conversation so far ends
@@ -422,9 +457,10 @@ func (h *Harness) Subagent() *llmrouter.Session {
 	if h.tasks == nil {
 		return nil
 	}
+	current := h.tasks.current()
 	select {
-	case <-h.tasks.subagent.ready:
-		return h.tasks.subagent.session
+	case <-current.ready:
+		return current.session
 	default:
 		return nil
 	}

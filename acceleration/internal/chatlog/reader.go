@@ -39,8 +39,11 @@ type Spoken struct {
 	Speaker string
 	// Name is that user's display name, when they have one.
 	Name string
-	Text string
-	At   time.Time
+	// Agent is whether the agent wrote the line rather than somebody it was talking to.
+	// It is what the line was stored as, so it holds however the agent was named.
+	Agent bool
+	Text  string
+	At    time.Time
 }
 
 // NewReader validates the options and returns a Reader.
@@ -95,7 +98,11 @@ func (r *Reader) Transcript(ctx context.Context, agentID string) ([]Spoken, erro
 		if stored.Text == "" || stored.DeletedAt != nil {
 			continue
 		}
-		line := Spoken{Speaker: stored.User.ID, Text: stored.Text}
+		line := Spoken{
+			Speaker: stored.User.ID,
+			Text:    stored.Text,
+			Agent:   stored.Custom[SourceField] == SourceAgent,
+		}
 		if stored.User.Name != nil {
 			line.Name = *stored.User.Name
 		}

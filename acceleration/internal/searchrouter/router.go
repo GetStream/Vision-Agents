@@ -7,6 +7,8 @@ package searchrouter
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -72,6 +74,11 @@ func New(options Options) (*Router, error) {
 
 // Start selects a provider and opens a session, falling back to the next candidate when
 // one fails to start. One session answers many searches.
+//
+// A search that fails is retried further down only when the caller wrote a priority list.
+// On a live call a second provider's latency on top of the first one's failure is a
+// longer silence than saying it could not check, and a list is the caller choosing that
+// wait; a single target has not.
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	core := routing.Request{
 		CustomerID:    request.CustomerID,
@@ -79,6 +86,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		CallID:        request.CallID,
 		Tags:          request.Tags,
 		Target:        request.Target,
+		Providers:     request.Options.Providers,
 		LanguageHints: request.LanguageHints,
 		Terms:         request.Options.Terms(),
 		Search:        request.Options,
@@ -87,5 +95,43 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSession(provider, config, core.Owner(), r.Recorder()), nil
+
+	session := newSession(provider, config, core.Owner(), r.Recorder())
+	if len(core.Providers) == 0 {
+		return session, nil
+	}
+	session.fallback = func(ctx context.Context, query search.Query, failed routing.ProviderConfig) (*Session, search.Result, error) {
+		candidates, err := r.Candidates(ctx, core)
+		if err != nil {
+			return nil, search.Result{}, err
+		}
+		var failures []error
+		for _, candidate := range candidates {
+			if ctx.Err() != nil {
+				return nil, search.Result{}, ctx.Err()
+			}
+			if candidate.Config.Name() == failed.Name() {
+				continue
+			}
+			// The list would win over the target, so it is cleared to ask this one alone.
+			alternative := core
+			alternative.Target = candidate.Config.Name()
+			alternative.Providers = nil
+			provider, selected, err := r.Select(ctx, alternative)
+			if err != nil {
+				failures = append(failures, err)
+				continue
+			}
+			next := newSession(provider, selected, core.Owner(), r.Recorder())
+			found, err := next.ask(ctx, provider, selected, query)
+			if err != nil {
+				_ = provider.Close()
+				failures = append(failures, fmt.Errorf("%s: %w", selected.Name(), err))
+				continue
+			}
+			return next, found, nil
+		}
+		return nil, search.Result{}, errors.Join(append(failures, errors.New("searchrouter: no fallback provider available"))...)
+	}
+	return session, nil
 }

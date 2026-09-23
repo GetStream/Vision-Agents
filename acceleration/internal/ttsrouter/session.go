@@ -72,6 +72,15 @@ func (s *Session) Provider() string { return s.config.Provider }
 // Model is the model serving this session.
 func (s *Session) Model() string { return s.config.Model }
 
+// Voice is the voice speaking, the provider's default included. Empty when the provider
+// cannot say.
+func (s *Session) Voice() string {
+	if voiced, ok := s.provider.(tts.Voiced); ok {
+		return voiced.Voice()
+	}
+	return ""
+}
+
 // Streaming reports whether the provider accepts partial text deltas.
 func (s *Session) Streaming() bool { return s.provider.Streaming() }
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -27,6 +27,10 @@ class LlmOptions:
 
         Attributes:
             target (str | Unset): A provider/model or a capability shortcut. Example: llm-fast.
+            providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target when
+                it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it
+                stands. A response that fails is answered by the next entry that will have it.
+                 Example: ['openai/gpt-5-mini', 'llm-fast'].
             max_output_tokens (int | Unset):
             temperature (float | Unset):
             reasoning_effort (LlmOptionsReasoningEffort | Unset): How long the model may think before answering, on the
@@ -42,6 +46,7 @@ class LlmOptions:
     """
 
     target: str | Unset = UNSET
+    providers: list[str] | Unset = UNSET
     max_output_tokens: int | Unset = UNSET
     temperature: float | Unset = UNSET
     reasoning_effort: LlmOptionsReasoningEffort | Unset = UNSET
@@ -55,6 +60,10 @@ class LlmOptions:
 
     def to_dict(self) -> dict[str, Any]:
         target = self.target
+
+        providers: list[str] | Unset = UNSET
+        if not isinstance(self.providers, Unset):
+            providers = self.providers
 
         max_output_tokens = self.max_output_tokens
 
@@ -87,6 +96,8 @@ class LlmOptions:
         field_dict.update({})
         if target is not UNSET:
             field_dict["target"] = target
+        if providers is not UNSET:
+            field_dict["providers"] = providers
         if max_output_tokens is not UNSET:
             field_dict["max_output_tokens"] = max_output_tokens
         if temperature is not UNSET:
@@ -114,6 +125,8 @@ class LlmOptions:
 
         d = dict(src_dict)
         target = d.pop("target", UNSET)
+
+        providers = cast(list[str], d.pop("providers", UNSET))
 
         max_output_tokens = d.pop("max_output_tokens", UNSET)
 
@@ -155,6 +168,7 @@ class LlmOptions:
 
         llm_options = cls(
             target=target,
+            providers=providers,
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             reasoning_effort=reasoning_effort,

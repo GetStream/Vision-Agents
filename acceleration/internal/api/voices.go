@@ -12,6 +12,9 @@ import (
 // noVoices is what the voice paths say on a deployment that cannot hold a recording.
 const noVoices = "voices of your own are not available: this deployment has no object storage configured"
 
+// noLibrary is what the library path says where no provider publishes a catalogue here.
+const noLibrary = "no speech provider configured here publishes a voice library, so a voice is whatever id the provider knows it by"
+
 // unknownVoice is what a caller is told about a voice that is not theirs, or not there.
 const unknownVoice = "there is no such voice"
 
@@ -228,6 +231,79 @@ func (s *Server) ListVoiceProviders(ctx context.Context, _ ListVoiceProvidersReq
 		return ListVoiceProviders400JSONResponse{badRequest(noVoices)}, nil
 	}
 	return ListVoiceProviders200JSONResponse{Providers: s.voices.Providers()}, nil
+}
+
+// ListLibraryVoices returns the voices the speech providers themselves offer.
+func (s *Server) ListLibraryVoices(ctx context.Context, request ListLibraryVoicesRequestObject) (ListLibraryVoicesResponseObject, error) {
+	if _, ok := CustomerFrom(ctx); !ok {
+		return ListLibraryVoices401JSONResponse{missingCustomer()}, nil
+	}
+	if s.library == nil {
+		return ListLibraryVoices400JSONResponse{badRequest(noLibrary)}, nil
+	}
+
+	provider := text(request.Params.Provider)
+	found, err := s.library.List(ctx, provider)
+	// Some providers answering is enough to fill a picker, so a failure only refuses the
+	// request when it left nothing to show.
+	if len(found) == 0 && err != nil {
+		return ListLibraryVoices400JSONResponse{badRequest(err.Error())}, nil
+	}
+	if err != nil {
+		s.logger.Warn("a voice library could not be read", "error", err)
+	}
+
+	listed := make([]LibraryVoice, 0, len(found))
+	for _, voice := range found {
+		listed = append(listed, LibraryVoice{
+			Provider:    voice.Provider,
+			Id:          voice.ID,
+			Name:        voice.Name,
+			Description: optional(voice.Description),
+			Gender:      optional(voice.Gender),
+			Accent:      optional(voice.Accent),
+			Language:    optional(voice.Language),
+			Tags:        &voice.Tags,
+			Own:         &voice.Own,
+			Preview:     &voice.Preview,
+		})
+	}
+	answered := map[string]struct{}{}
+	for _, voice := range found {
+		answered[voice.Provider] = struct{}{}
+	}
+	providers := s.library.Providers()
+	var unavailable []string
+	for _, name := range providers {
+		if _, ok := answered[name]; !ok && (provider == "" || provider == name) {
+			unavailable = append(unavailable, name)
+		}
+	}
+	return ListLibraryVoices200JSONResponse{
+		Voices:      listed,
+		Providers:   providers,
+		Unavailable: &unavailable,
+	}, nil
+}
+
+// PreviewLibraryVoice hands back the sample a provider published for one of its voices.
+func (s *Server) PreviewLibraryVoice(ctx context.Context, request PreviewLibraryVoiceRequestObject) (PreviewLibraryVoiceResponseObject, error) {
+	if _, ok := CustomerFrom(ctx); !ok {
+		return PreviewLibraryVoice401JSONResponse{missingCustomer()}, nil
+	}
+	if s.library == nil {
+		return PreviewLibraryVoice400JSONResponse{badRequest(noLibrary)}, nil
+	}
+
+	spoken, err := s.library.Preview(ctx, request.Provider, request.Voice)
+	if err != nil {
+		return PreviewLibraryVoice404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+	}
+	return PreviewLibraryVoice200JSONResponse{
+		Provider:    request.Provider,
+		ContentType: spoken.ContentType,
+		Audio:       spoken.Audio,
+	}, nil
 }
 
 // PreviewVoice says a short line in the voice through one provider.

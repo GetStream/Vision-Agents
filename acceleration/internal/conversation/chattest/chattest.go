@@ -72,6 +72,9 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if _, exists := db.messages[id]; !exists {
 			db.order = append(db.order, id)
 			message["cid"] = "agent:" + parts[len(parts)-2]
+			// Chat answers with the author it resolved the id to, which is how a reader
+			// learns who spoke: a stored message carries a user, not a user id.
+			message["user"] = map[string]any{"id": message["user_id"]}
 			if _, ok := message["custom"].(map[string]any); !ok {
 				message["custom"] = map[string]any{}
 			}

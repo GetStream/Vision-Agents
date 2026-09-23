@@ -480,7 +480,10 @@ func (o TTS) Terms() []Term {
 // parameters the providers already speak rather than a second vocabulary for the same
 // things, so nothing here has to be translated on the way through.
 type LLM struct {
-	Target          string            `json:"target,omitempty"`
+	Target string `json:"target,omitempty"`
+	// Providers is a priority list of where to try, in the order given, on the same terms
+	// as the other modalities. Empty leaves the choice to Target.
+	Providers       []string          `json:"providers,omitempty"`
 	Instructions    string            `json:"instructions,omitempty"`
 	MaxOutputTokens *int              `json:"max_output_tokens,omitempty"`
 	Temperature     *float64          `json:"temperature,omitempty"`
@@ -497,6 +500,7 @@ type LLM struct {
 func (o LLM) Merge(over LLM) LLM {
 	merged := o
 	overwrite(&merged.Target, over.Target)
+	overwriteSlice(&merged.Providers, over.Providers)
 	overwrite(&merged.Instructions, over.Instructions)
 	overwritePointer(&merged.MaxOutputTokens, over.MaxOutputTokens)
 	overwritePointer(&merged.Temperature, over.Temperature)
@@ -519,7 +523,10 @@ func (o LLM) Terms() []Term { return nil }
 
 // Search is how a caller wants a question answered.
 type Search struct {
-	Target         string   `json:"target,omitempty"`
+	Target string `json:"target,omitempty"`
+	// Providers is a priority list of where to try, in the order given, on the same terms
+	// as the other modalities. Empty leaves the choice to Target, or to the depth.
+	Providers      []string `json:"providers,omitempty"`
 	Depth          string   `json:"depth,omitempty"`
 	Results        *int     `json:"results,omitempty"`
 	IncludeDomains []string `json:"include_domains,omitempty"`
@@ -535,6 +542,7 @@ type Search struct {
 func (o Search) Merge(over Search) Search {
 	merged := o
 	overwrite(&merged.Target, over.Target)
+	overwriteSlice(&merged.Providers, over.Providers)
 	overwrite(&merged.Depth, over.Depth)
 	overwritePointer(&merged.Results, over.Results)
 	overwriteSlice(&merged.IncludeDomains, over.IncludeDomains)

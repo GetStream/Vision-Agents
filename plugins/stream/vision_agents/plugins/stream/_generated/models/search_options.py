@@ -24,6 +24,10 @@ class SearchOptions:
 
     Attributes:
         target (str | Unset): A provider/model or a capability shortcut. Example: search-fast.
+        providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target and
+            depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded
+            where it stands. A search that fails is asked of the next entry that will have it.
+             Example: ['exa', 'search-fast'].
         depth (SearchDepth | Unset): How much work a search is worth. instant answers from the index in a few hundred
             milliseconds; deep crawls and reasons over what it finds and can take tens of seconds. Providers offer different
             ladders, so each one maps these four onto its own.
@@ -41,6 +45,7 @@ class SearchOptions:
     """
 
     target: str | Unset = UNSET
+    providers: list[str] | Unset = UNSET
     depth: SearchDepth | Unset = UNSET
     results: int | Unset = UNSET
     include_domains: list[str] | Unset = UNSET
@@ -54,6 +59,10 @@ class SearchOptions:
 
     def to_dict(self) -> dict[str, Any]:
         target = self.target
+
+        providers: list[str] | Unset = UNSET
+        if not isinstance(self.providers, Unset):
+            providers = self.providers
 
         depth: str | Unset = UNSET
         if not isinstance(self.depth, Unset):
@@ -91,6 +100,8 @@ class SearchOptions:
         field_dict.update({})
         if target is not UNSET:
             field_dict["target"] = target
+        if providers is not UNSET:
+            field_dict["providers"] = providers
         if depth is not UNSET:
             field_dict["depth"] = depth
         if results is not UNSET:
@@ -120,6 +131,8 @@ class SearchOptions:
 
         d = dict(src_dict)
         target = d.pop("target", UNSET)
+
+        providers = cast(list[str], d.pop("providers", UNSET))
 
         _depth = d.pop("depth", UNSET)
         depth: SearchDepth | Unset
@@ -158,6 +171,7 @@ class SearchOptions:
 
         search_options = cls(
             target=target,
+            providers=providers,
             depth=depth,
             results=results,
             include_domains=include_domains,

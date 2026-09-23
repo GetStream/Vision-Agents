@@ -115,6 +115,10 @@ type Options struct {
 	// no object storage, in which case there is nowhere to keep a recording and the voice
 	// paths say so.
 	Voices *voices.Service
+	// VoiceLibrary reads the voices the speech providers themselves offer. Absent when no
+	// provider that publishes one has a key here, in which case the library path says so
+	// rather than answering with an empty catalogue.
+	VoiceLibrary *voices.Catalogue
 	// Dispatch holds the workers waiting to answer inbound calls. Absent when nothing is
 	// meant to answer a phone, in which case the dispatch socket says so rather than
 	// accepting a worker whose calls would never arrive.
@@ -166,6 +170,7 @@ type Server struct {
 	knowledge     knowledge.Writer
 	pages         *urls.Service
 	voices        *voices.Service
+	library       *voices.Catalogue
 	dispatch      *dispatch.Pool
 	streamSecret  string
 	streamKey     string
@@ -246,6 +251,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		knowledge:     options.Knowledge,
 		pages:         options.KnowledgeURLs,
 		voices:        options.Voices,
+		library:       options.VoiceLibrary,
 		dispatch:      options.Dispatch,
 		streamSecret:  options.StreamSecret,
 		streamKey:     options.StreamKey,

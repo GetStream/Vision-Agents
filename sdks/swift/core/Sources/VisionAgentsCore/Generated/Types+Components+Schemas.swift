@@ -264,6 +264,11 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/SearchOptions/target`.
             internal var target: Swift.String?
+            /// A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/providers`.
+            internal var providers: [Swift.String]?
             /// - Remark: Generated from `#/components/schemas/SearchOptions/depth`.
             internal var depth: Components.Schemas.SearchDepth?
             /// How many hits to return.
@@ -334,6 +339,7 @@ extension Components {
             ///
             /// - Parameters:
             ///   - target: A provider/model or a capability shortcut.
+            ///   - providers: A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.
             ///   - depth:
             ///   - results: How many hits to return.
             ///   - includeDomains: Only answer from these domains.
@@ -345,6 +351,7 @@ extension Components {
             ///   - outputSchema: A JSON schema the answer must fit, for the providers that can be asked to structure what they found.
             internal init(
                 target: Swift.String? = nil,
+                providers: [Swift.String]? = nil,
                 depth: Components.Schemas.SearchDepth? = nil,
                 results: Swift.Int? = nil,
                 includeDomains: [Swift.String]? = nil,
@@ -356,6 +363,7 @@ extension Components {
                 outputSchema: Components.Schemas.SearchOptions.OutputSchemaPayload? = nil
             ) {
                 self.target = target
+                self.providers = providers
                 self.depth = depth
                 self.results = results
                 self.includeDomains = includeDomains
@@ -368,6 +376,7 @@ extension Components {
             }
             internal enum CodingKeys: String, CodingKey {
                 case target
+                case providers
                 case depth
                 case results
                 case includeDomains = "include_domains"
@@ -1105,6 +1114,13 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/subagent`.
             internal var subagent: Swift.String?
+            /// The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/voice`.
+            internal var voice: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Session/mode`.
+            internal var mode: Components.Schemas.SessionMode?
             /// - Remark: Generated from `#/components/schemas/Session/video`.
             internal var video: Components.Schemas.SessionVideo?
             /// - Remark: Generated from `#/components/schemas/Session/instructions`.
@@ -1183,6 +1199,8 @@ extension Components {
             ///   - sts: The provider and model holding a native conversation, once routing has picked one.
             ///   - stt: The provider and model transcribing, once somebody has been heard.
             ///   - subagent: The provider and model delegated work runs on.
+            ///   - voice: The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
+            ///   - mode:
             ///   - video:
             ///   - instructions:
             ///   - agent: The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
@@ -1213,6 +1231,8 @@ extension Components {
                 sts: Swift.String? = nil,
                 stt: Swift.String? = nil,
                 subagent: Swift.String? = nil,
+                voice: Swift.String? = nil,
+                mode: Components.Schemas.SessionMode? = nil,
                 video: Components.Schemas.SessionVideo? = nil,
                 instructions: Swift.String? = nil,
                 agent: Swift.String? = nil,
@@ -1243,6 +1263,8 @@ extension Components {
                 self.sts = sts
                 self.stt = stt
                 self.subagent = subagent
+                self.voice = voice
+                self.mode = mode
                 self.video = video
                 self.instructions = instructions
                 self.agent = agent
@@ -1274,6 +1296,8 @@ extension Components {
                 case sts
                 case stt
                 case subagent
+                case voice
+                case mode
                 case video
                 case instructions
                 case agent
@@ -1288,6 +1312,15 @@ extension Components {
                 case closedAt = "closed_at"
                 case lastResponseAt = "last_response_at"
             }
+        }
+        /// How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/SessionMode`.
+        internal enum SessionMode: String, Codable, Hashable, Sendable, CaseIterable {
+            case cascade = "cascade"
+            case native = "native"
+            case text = "text"
         }
     }
 }

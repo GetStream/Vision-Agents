@@ -402,6 +402,7 @@ func (s *Server) streamLLM(
 		CallID:        request.CallID,
 		Tags:          request.Tags,
 		Target:        held.Target,
+		Providers:     held.Providers,
 		LanguageHints: nil,
 	})
 	if err != nil {

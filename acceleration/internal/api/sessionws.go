@@ -520,6 +520,23 @@ func frameOf(event session.Event) (frame, bool) {
 	case agent.Left:
 		return frame{"type": "left", "at": typed.At}, true
 
+	case agent.ModelsChanged:
+		mode := "cascade"
+		if typed.Native {
+			mode = "native"
+		}
+		return frame{
+			"type":     "models_changed",
+			"at":       typed.At,
+			"mode":     mode,
+			"llm":      typed.LLM,
+			"stt":      typed.STT,
+			"tts":      typed.TTS,
+			"sts":      typed.STS,
+			"subagent": typed.Subagent,
+			"voice":    typed.Voice,
+		}, true
+
 	default:
 		return nil, false
 	}

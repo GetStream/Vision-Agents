@@ -360,6 +360,22 @@ type Left struct {
 
 func (Left) isAgentEvent() {}
 
+// ModelsChanged means the session moved onto other models mid-call. Each model is the
+// provider/model serving it, empty for the ones the pipeline does not run. Speech
+// recognition is the target, since a transcriber opens per participant on first hearing.
+type ModelsChanged struct {
+	At       time.Time
+	Native   bool
+	LLM      string
+	STT      string
+	TTS      string
+	STS      string
+	Subagent string
+	Voice    string
+}
+
+func (ModelsChanged) isAgentEvent() {}
+
 // Emitter fans agent events out to a single consumer channel.
 type Emitter = emit.Emitter[Event]
 

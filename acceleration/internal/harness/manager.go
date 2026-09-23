@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -39,10 +40,12 @@ const codeDeadline = 60 * time.Second
 // later.
 type manager struct {
 	subagent *opening
-	capture  func(context.Context, CaptureRequest) ([]llm.ContentPart, error)
-	ctx      context.Context
-	cancel   context.CancelFunc
-	warming  sync.WaitGroup
+	// retired are subagents a swap replaced, kept open for the tasks still running on them.
+	retired []*opening
+	capture func(context.Context, CaptureRequest) ([]llm.ContentPart, error)
+	ctx     context.Context
+	cancel  context.CancelFunc
+	warming sync.WaitGroup
 	// limit caps how much work may be in flight at once, because a model that asks for
 	// help on every sentence would otherwise open a session's worth of completions.
 	limit int
@@ -237,9 +240,18 @@ func (m *manager) ask(running *task, messages []llm.Message) (*llm.Stream, error
 	if err != nil {
 		return nil, err
 	}
+	m.mu.Lock()
+	overwrites := m.overwrites
+	m.mu.Unlock()
 	return model.Create(running.ctx, llm.ResponseParams{
 		ID: running.id, Instructions: running.instructions, Input: messages, Tools: m.tools(),
-	}.Overwrite(m.overwrites))
+	}.Overwrite(overwrites))
+}
+
+func (m *manager) setOverwrites(overwrites options.LLM) {
+	m.mu.Lock()
+	m.overwrites = overwrites
+	m.mu.Unlock()
 }
 
 // hold records the stream a task is answering on, closing it straight away when the task
@@ -369,9 +381,16 @@ func (m *manager) Close() error {
 		m.CancelAll(ReasonClosed)
 		m.cancel()
 		m.warming.Wait()
-		if m.subagent != nil && m.subagent.session != nil {
-			err = m.subagent.session.Close()
+		var failures []error
+		for _, opened := range append(m.retired, m.subagent) {
+			if opened == nil || opened.session == nil {
+				continue
+			}
+			if failure := opened.session.Close(); failure != nil {
+				failures = append(failures, failure)
+			}
 		}
+		err = errors.Join(failures...)
 		m.drainers.Wait()
 		m.results.Close()
 	})

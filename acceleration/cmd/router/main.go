@@ -48,6 +48,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
@@ -628,6 +629,7 @@ func run(logger *slog.Logger) error {
 	options := api.Options{
 		Routers:        routers,
 		Voices:         voiceService,
+		VoiceLibrary:   buildLibrary(logger),
 		KnowledgeURLs:  pages,
 		Store:          pgStore,
 		Live:           liveClient,
@@ -823,6 +825,32 @@ func buildKnowledgeURLs(
 		Writer: base,
 		Logger: logger,
 	})
+}
+
+// buildLibrary wires the catalogues the speech providers publish, so a voice can be picked
+// by name. It needs neither a database nor a bucket: the voices belong to the vendor, and
+// all this reads them.
+//
+// It returns nil when no provider that publishes one has a key here, since an empty
+// catalogue and a deployment that cannot browse are not the same thing to somebody
+// choosing a voice.
+func buildLibrary(logger *slog.Logger) *voices.Catalogue {
+	catalogue := voices.NewCatalogue()
+	if lister, err := voices.NewElevenLabs(voices.ElevenLabsOptions{}); err == nil {
+		catalogue.Register(elevenlabs.ProviderName, lister)
+	}
+	if lister, err := voices.NewCartesia(voices.CartesiaOptions{}); err == nil {
+		catalogue.Register(cartesia.ProviderName, lister)
+	}
+	if lister, err := voices.NewInworld(voices.InworldOptions{}); err == nil {
+		catalogue.Register(inworld.ProviderName, lister)
+	}
+	if len(catalogue.Providers()) == 0 {
+		logger.Debug("no provider here publishes a voice library")
+		return nil
+	}
+	logger.Debug("serving voice libraries", "providers", catalogue.Providers())
+	return catalogue
 }
 
 // buildVoices wires the control plane for voices a customer brought with them.

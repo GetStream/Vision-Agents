@@ -168,6 +168,29 @@ func (s *Server) routerConfigComplaint(request RouterConfigRequest) (string, boo
 	if message, ok := s.stsComplaint(conversation); !ok {
 		return message, false
 	}
+	if message, ok := s.chainComplaint(routing.LLM, llmOptionsOf(request.Llm).Providers); !ok {
+		return message, false
+	}
+	if message, ok := s.chainComplaint(routing.Search, searchOptionsOf(request.Search).Providers); !ok {
+		return message, false
+	}
+	return "", true
+}
+
+// chainComplaint is the priority list half of sttComplaint, for the modalities whose
+// configs hold nothing else only their router can check.
+func (s *Server) chainComplaint(modality routing.Modality, providers []string) (string, bool) {
+	routed, ok := s.routerFor(Modality(modality))
+	if !ok {
+		return "", true
+	}
+	config := routed.Config()
+	for _, target := range providers {
+		if !config.Names(target) {
+			return fmt.Sprintf(
+				"%q is not a provider, a provider/model or a capability shortcut this deployment offers", target), false
+		}
+	}
 	return "", true
 }
 

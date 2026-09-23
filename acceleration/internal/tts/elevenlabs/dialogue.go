@@ -281,6 +281,9 @@ func (d *Dialogue) Provider() string { return ProviderName }
 // Model implements tts.TTS.
 func (d *Dialogue) Model() string { return d.options.Model }
 
+// Voice is the voice id every line is spoken in.
+func (d *Dialogue) Voice() string { return d.options.VoiceID }
+
 // Streaming reports true: the model generates from partial text.
 func (d *Dialogue) Streaming() bool { return true }
 

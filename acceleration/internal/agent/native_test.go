@@ -49,16 +49,17 @@ func (e *heldPlayback) Leave() error {
 
 func (s *AgentSuite) TestNativeInterruptionStopsBlockedPlaybackAndKeepsTheNextReply() {
 	edge := &heldPlayback{loopbackEdge: newLoopbackEdge(), released: make(chan struct{})}
-	agent, err := New(Options{CustomerID: "acme", Edge: edge, STS: &stsrouter.Router{}})
+	agent, err := New(Options{CustomerID: "acme", Edge: edge, STS: &stsrouter.Router{}, STSTarget: "openai/gpt-realtime-2"})
 	s.Require().NoError(err)
 	agent.ctx, agent.cancel = context.WithCancel(s.ctx)
 	s.T().Cleanup(func() { agent.Close() })
 	seen := collect(agent)
 	source := make(chan sts.Event, 8)
 	ordered := make(chan sts.Event, 8)
-	agent.running.Add(2)
-	go agent.receiveSTS(source, ordered)
-	go agent.consumeSTS(ordered)
+	agent.pipe = newPipeline(agent.ctx, true)
+	agent.pipe.running.Add(2)
+	go agent.receiveSTS(agent.pipe, source, ordered)
+	go agent.consumeSTS(agent.pipe, ordered)
 	s.T().Cleanup(func() { close(source) })
 
 	pcm := audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24000, Channels: 1}
@@ -258,8 +259,9 @@ func (s *AgentSuite) TestNativeToolCancellationBeforeExecution() {
 	source := make(chan sts.Event, 1)
 	source <- sts.ToolCancel{CallIDs: []string{requested.Call.ID}}
 	close(source)
-	s.agent.running.Add(1)
-	s.agent.receiveSTS(source, make(chan sts.Event, 1))
+	stopped := newPipeline(s.ctx, true)
+	stopped.running.Add(1)
+	s.agent.receiveSTS(stopped, source, make(chan sts.Event, 1))
 	s.agent.executeTool(ctx, cancel, requested)
 	s.Eventually(func() bool { return countOf[ToolRan](s.reported()) == 1 }, time.Second, time.Millisecond)
 	result, _ := firstOf[ToolRan](s.reported())

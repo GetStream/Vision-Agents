@@ -478,6 +478,76 @@ func (s *SessionAPISuite) TestSayingSomethingSpeaksItWithoutTheModel() {
 	s.Contains(s.voice.spoken(), "Hi, I'm listening.")
 }
 
+func (s *SessionAPISuite) TestChangingASessionsModelsRunsItOnThemWithoutTouchingOthers() {
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
+	other := s.creates(CreateSessionRequest{CallId: callID("call-2")})
+	events := s.watches(created.Id, "acme")
+	model, voice := "vision/vision-model", "ada"
+
+	response := s.send(http.MethodPatch, "/v1/agents/sessions/"+created.Id+"/settings", "acme",
+		SessionSettingsRequest{Llm: &model, Voice: &voice})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	var changed Session
+	s.decodeBody(response, &changed)
+	s.Require().NotNil(changed.Llm)
+	s.Equal(model, *changed.Llm)
+	s.Require().NotNil(changed.Voice)
+	s.Equal("ada", *changed.Voice)
+	s.Require().NotNil(changed.Mode)
+	s.Equal(SessionModeCascade, *changed.Mode)
+
+	frame := s.await(events, "models_changed")
+	s.Equal("vision/vision-model", frame["llm"])
+	s.Equal("cascade", frame["mode"])
+
+	var fetched Session
+	s.decodeBody(s.send(http.MethodGet, "/v1/agents/sessions/"+created.Id, "acme", nil), &fetched)
+	s.Require().NotNil(fetched.Llm)
+	s.Equal(model, *fetched.Llm)
+	var untouched Session
+	s.decodeBody(s.send(http.MethodGet, "/v1/agents/sessions/"+other.Id, "acme", nil), &untouched)
+	s.Require().NotNil(untouched.Llm)
+	s.Equal("stub/stub-model", *untouched.Llm, "only the session asked about changes")
+}
+
+func (s *SessionAPISuite) TestASpeechToSpeechModelIsRefusedWhereNoneIsDeployed() {
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
+	target := "openai/gpt-realtime-2"
+
+	response := s.send(http.MethodPatch, "/v1/agents/sessions/"+created.Id+"/settings", "acme",
+		SessionSettingsRequest{Sts: &target})
+
+	s.Equal(http.StatusBadRequest, response.StatusCode)
+	var fetched Session
+	s.decodeBody(s.send(http.MethodGet, "/v1/agents/sessions/"+created.Id, "acme", nil), &fetched)
+	s.Require().NotNil(fetched.Mode)
+	s.Equal(SessionModeCascade, *fetched.Mode, "a refused change leaves the session as it was")
+}
+
+func (s *SessionAPISuite) TestATextSessionHasNoVoiceToChange() {
+	target := "en-low-latency"
+	text := true
+	var created Session
+	s.decodeBody(s.send(http.MethodPost, "/v1/agents/sessions", "acme",
+		CreateSessionRequest{Text: &text, Llm: &target}), &created)
+	voice := "stub/stub-model"
+
+	response := s.send(http.MethodPatch, "/v1/agents/sessions/"+created.Id+"/settings", "acme",
+		SessionSettingsRequest{Tts: &voice})
+
+	s.Equal(http.StatusBadRequest, response.StatusCode)
+}
+
+func (s *SessionAPISuite) TestChangingAnUnknownSessionIsNotFound() {
+	model := "vision/vision-model"
+
+	response := s.send(http.MethodPatch, "/v1/agents/sessions/nobody/settings", "acme",
+		SessionSettingsRequest{Llm: &model})
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
 func (s *SessionAPISuite) TestSayingNothingIsRefused() {
 	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
 

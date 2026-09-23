@@ -76,6 +76,30 @@ func (s *Store) FinishCall(ctx context.Context, id string, at time.Time) error {
 	return nil
 }
 
+// ChangeCallModels rewrites the targets and voice a running call is on, after it was moved
+// onto other models mid-call.
+func (s *Store) ChangeCallModels(ctx context.Context, call *Call) error {
+	if call.ID == "" {
+		return errors.New("store: a call id is required")
+	}
+
+	// Set rather than Column: the fields are nullzero, and a target a call no longer runs
+	// is the empty string these columns hold, never NULL.
+	_, err := s.db.NewUpdate().Model((*Call)(nil)).
+		Set("stt = ?", call.STT).
+		Set("tts = ?", call.TTS).
+		Set("llm = ?", call.LLM).
+		Set("subagent = ?", call.Subagent).
+		Set("sts = ?", call.STS).
+		Set("voice = ?", call.Voice).
+		Where("id = ?", call.ID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: change call models: %w", err)
+	}
+	return nil
+}
+
 // ReviewCall writes what a model made of the call once it was over.
 func (s *Store) ReviewCall(ctx context.Context, customerID, id, summary string, score *int, notes string) error {
 	if customerID == "" || id == "" {
@@ -248,6 +272,47 @@ func (s *Store) CallUsedModels(ctx context.Context, customerID, agentID string, 
 		return nil, fmt.Errorf("store: call used models: %w", err)
 	}
 	return used, nil
+}
+
+// CallUsage is what a call spent, summed over every request it made.
+type CallUsage struct {
+	InputTokens       int64 `bun:"input_tokens"`
+	CachedInputTokens int64 `bun:"cached_input_tokens"`
+	OutputTokens      int64 `bun:"output_tokens"`
+	CostMicros        int64 `bun:"cost_micros"`
+	Requests          int64 `bun:"requests"`
+}
+
+// CallUsage totals the work one call paid for. Like the models it used, it is keyed by
+// agent and window rather than by call, because a request row carries the Stream call
+// rather than the session that recorded it.
+//
+// Failed requests are counted: a model that read the prompt and then fell over is still
+// billed for having read it.
+func (s *Store) CallUsage(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) (CallUsage, error) {
+	if customerID == "" || agentID == "" {
+		return CallUsage{}, errors.New("store: a customer and an agent id are required")
+	}
+
+	query := s.db.NewSelect().
+		TableExpr("requests").
+		ColumnExpr("COALESCE(SUM(input_tokens), 0) AS input_tokens").
+		ColumnExpr("COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens").
+		ColumnExpr("COALESCE(SUM(output_tokens), 0) AS output_tokens").
+		ColumnExpr("COALESCE(SUM(cost_micros), 0) AS cost_micros").
+		ColumnExpr("COUNT(*) AS requests").
+		Where("customer_id = ?", customerID).
+		Where("agent_id = ?", agentID).
+		Where("started_at >= ?", from)
+	if to != nil {
+		query = query.Where("started_at <= ?", *to)
+	}
+
+	var spent CallUsage
+	if err := query.Scan(ctx, &spent); err != nil {
+		return CallUsage{}, fmt.Errorf("store: call usage: %w", err)
+	}
+	return spent, nil
 }
 
 // RecordCallEvents writes a batch of judgements. They are written together because they

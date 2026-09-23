@@ -80,7 +80,30 @@ func (s *Server) GetCall(ctx context.Context, request GetCallRequestObject) (Get
 	}
 	rendered := callOf(call)
 	s.attachUsed(ctx, customerID, call, &rendered)
+	s.attachUsage(ctx, customerID, call, &rendered)
 	return GetCall200JSONResponse(rendered), nil
+}
+
+// attachUsage totals what the call spent, once there is a total to give. A running call is
+// left without one: the sum would be read again on every poll and be wrong by a turn each
+// time, and what a conversation cost is a question asked after it, not during.
+func (s *Server) attachUsage(ctx context.Context, customerID string, call store.Call, rendered *Call) {
+	if call.EndedAt == nil || s.store == nil {
+		return
+	}
+
+	spent, err := s.store.CallUsage(ctx, customerID, call.AgentID, call.StartedAt, call.EndedAt)
+	if err != nil {
+		s.logger.Error("could not read what a call spent", "call", call.ID, "error", err)
+		return
+	}
+	rendered.Usage = &CallUsage{
+		InputTokens:       spent.InputTokens,
+		CachedInputTokens: spent.CachedInputTokens,
+		OutputTokens:      spent.OutputTokens,
+		CostMicros:        spent.CostMicros,
+		Requests:          spent.Requests,
+	}
 }
 
 // CreateCallToken mints what a browser needs to join a call and talk to the agent.
@@ -259,6 +282,8 @@ func (s *Server) GetCallTranscript(ctx context.Context, request GetCallTranscrip
 	for _, line := range said {
 		messages = append(messages, TranscriptMessage{
 			Speaker:   line.Speaker,
+			Name:      optional(line.Name),
+			Agent:     &line.Agent,
 			Text:      line.Text,
 			CreatedAt: line.At,
 		})
@@ -347,11 +372,15 @@ func timelineOf(turns []store.Turn, said []chatlog.Spoken) []TimelineEntry {
 	timeline := make([]TimelineEntry, 0, len(turns))
 	for index, turn := range turns {
 		entry := TimelineEntry{
-			TurnId:      turn.TurnID,
-			StartedAt:   turn.StartedAt,
-			RoundtripMs: turn.RoundtripMs,
-			AudioOutMs:  turn.AudioOutMs,
-			Interrupted: &turn.Interrupted,
+			TurnId:             turn.TurnID,
+			StartedAt:          turn.StartedAt,
+			RoundtripMs:        turn.RoundtripMs,
+			SttLatencyMs:       turn.STTLatencyMs,
+			LlmTtftMs:          turn.LLMTTFTMs,
+			TtsTtfbMs:          turn.TTSTTFBMs,
+			SpeechEndToAudioMs: turn.SpeechEndToAudioMs,
+			AudioOutMs:         turn.AudioOutMs,
+			Interrupted:        &turn.Interrupted,
 		}
 
 		var until time.Time
@@ -397,6 +426,7 @@ func callOf(call store.Call) Call {
 	rendered.ConfigId = optional(call.ConfigID)
 	rendered.CampaignId = optional(call.CampaignID)
 	rendered.ContactId = optional(call.ContactID)
+	rendered.UserId = optional(call.UserID)
 	rendered.FromNumber = optional(call.FromNumber)
 	rendered.ToNumber = optional(call.ToNumber)
 	rendered.Stt = optional(call.STT)
@@ -404,6 +434,12 @@ func callOf(call store.Call) Call {
 	rendered.Sts = optional(call.STS)
 	rendered.Llm = optional(call.LLM)
 	rendered.Subagent = optional(call.Subagent)
+	rendered.Voice = optional(call.Voice)
+	mode := SessionModeCascade
+	if call.STS != "" {
+		mode = SessionModeNative
+	}
+	rendered.Mode = &mode
 	rendered.Instructions = optional(call.Instructions)
 	rendered.Summary = optional(call.Summary)
 	rendered.ReviewNotes = optional(call.ReviewNotes)
@@ -428,6 +464,19 @@ func callOf(call store.Call) Call {
 func (s *Server) attachUsed(ctx context.Context, customerID string, call store.Call, rendered *Call) {
 	if s.sessions != nil {
 		if found, ok := s.sessions.Get(call.ID, OwnerFrom(ctx)); ok {
+			// The row is written off the request path, so what a running session is on
+			// now is read from it rather than from a row a swap may not have reached yet.
+			spec := found.Spec()
+			rendered.Stt = optional(spec.STTTarget)
+			rendered.Tts = optional(spec.TTSTarget)
+			rendered.Llm = optional(spec.LLMTarget)
+			rendered.Sts = optional(spec.STSTarget)
+			rendered.Subagent = optional(spec.SubagentTarget)
+			asked, voiceUsed := found.Voice()
+			rendered.Voice = optional(asked)
+			rendered.VoiceUsed = optional(voiceUsed)
+			mode := SessionMode(found.Mode())
+			rendered.Mode = &mode
 			stt, llm, tts, subagent := found.Resolved()
 			rendered.SttUsed = optional(stt)
 			rendered.LlmUsed = optional(llm)

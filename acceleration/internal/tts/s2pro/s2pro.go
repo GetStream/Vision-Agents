@@ -297,6 +297,9 @@ func (t *TTS) Provider() string { return ProviderName }
 // Model implements tts.TTS.
 func (t *TTS) Model() string { return t.options.Model }
 
+// Voice is the session's voice, or empty when the server picks one.
+func (t *TTS) Voice() string { return t.options.Voice }
+
 // Streaming reports true: the deployment accumulates deltas and generates on flush.
 func (t *TTS) Streaming() bool { return true }
 

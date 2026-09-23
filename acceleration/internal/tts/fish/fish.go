@@ -246,6 +246,9 @@ func (t *TTS) Provider() string { return ProviderName }
 // Model implements tts.TTS.
 func (t *TTS) Model() string { return t.options.Model }
 
+// Voice is the session's voice, or empty when Fish picks one.
+func (t *TTS) Voice() string { return t.options.Voice }
+
 // Streaming reports false: Fish synthesises a whole utterance per request, so a caller
 // must send complete sentences rather than deltas.
 func (t *TTS) Streaming() bool { return false }

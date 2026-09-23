@@ -71,3 +71,43 @@ func TestRequestFailureFallsBackThroughAccelerate(t *testing.T) {
 	require.Error(t, err)
 	require.Empty(t, requests)
 }
+
+func TestAPriorityListFallsBackInTheOrderItWasWritten(t *testing.T) {
+	var asked atomic.Int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"error":{"message":"primary unavailable","type":"server_error"}}`)
+	}))
+	defer primary.Close()
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"fallback\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Opus answer\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3}}\n\ndata: [DONE]\n\n")
+	}))
+	defer backup.Close()
+	registry := NewRegistry()
+	registry.Register("openai", func(spec routing.Spec) (Provider, error) {
+		return Started(openai.New(openai.Options{APIKey: "test", BaseURL: primary.URL, Model: spec.Model}))
+	})
+	registry.Register("anthropic", func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: backup.URL, Model: spec.Model}))
+	})
+	// Config order puts anthropic first, so only the list can send the first response to
+	// openai.
+	router, err := New(Options{Registry: registry, Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{Provider: "anthropic", Model: "claude-opus-5", Languages: []string{"en"}}, {Provider: "openai", Model: "gpt-5.6-luna", Languages: []string{"en"}}}}})
+	require.NoError(t, err)
+	defer router.Close()
+	session, err := router.Start(t.Context(), Request{CustomerID: "customer", Providers: []string{"openai/gpt-5.6-luna", "anthropic/claude-opus-5"}})
+	require.NoError(t, err)
+	defer session.Close()
+	require.Equal(t, "openai", session.Provider())
+
+	stream, err := session.Create(t.Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "Hello"}}})
+	require.NoError(t, err)
+	response, err := llm.Collect(stream)
+	require.NoError(t, err)
+	require.Equal(t, "Opus answer", response.OutputText)
+	require.Equal(t, "anthropic", response.Provider)
+	require.Positive(t, asked.Load(), "the first entry was asked before the second answered")
+}

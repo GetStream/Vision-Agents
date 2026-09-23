@@ -374,6 +374,39 @@ func (s *Server) SetSessionInstructions(ctx context.Context, request SetSessionI
 	return SetSessionInstructions204Response{}, nil
 }
 
+// SetSessionSettings moves one running session onto other models or another voice. The
+// agent config it started from is untouched.
+func (s *Server) SetSessionSettings(ctx context.Context, request SetSessionSettingsRequestObject) (SetSessionSettingsResponseObject, error) {
+	found, failure := s.session(ctx, request.Id)
+	if failure != nil {
+		if failure.status == unauthorized {
+			return SetSessionSettings401JSONResponse{missingCustomer()}, nil
+		}
+		return SetSessionSettings404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+	}
+	if request.Body == nil {
+		return SetSessionSettings400JSONResponse{badRequest("a request body is required")}, nil
+	}
+
+	body := request.Body
+	settings := session.Settings{
+		LLM: body.Llm, STT: body.Stt, TTS: body.Tts, STS: body.Sts, Subagent: body.Subagent,
+		Voice: body.Voice, Temperature: body.Temperature, MaxOutputTokens: body.MaxOutputTokens,
+	}
+	if body.Thinking != nil {
+		thinking := string(*body.Thinking)
+		settings.Thinking = &thinking
+	}
+	if body.Verbosity != nil {
+		verbosity := string(*body.Verbosity)
+		settings.Verbosity = &verbosity
+	}
+	if err := found.SetSettings(ctx, settings); err != nil {
+		return SetSessionSettings400JSONResponse{badRequest(err.Error())}, nil
+	}
+	return SetSessionSettings200JSONResponse(sessionOf(found)), nil
+}
+
 // lookupStatus says which way finding a session failed.
 type lookupStatus int
 
@@ -693,6 +726,10 @@ func sessionOf(found *session.Session) Session {
 	if speech := found.Speech(); speech != "" {
 		rendered.Sts = &speech
 	}
+	_, speaking := found.Voice()
+	rendered.Voice = optional(speaking)
+	mode := SessionMode(found.Mode())
+	rendered.Mode = &mode
 	if instructions != "" {
 		rendered.Instructions = &instructions
 	}

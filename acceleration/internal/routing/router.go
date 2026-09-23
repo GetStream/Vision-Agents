@@ -284,7 +284,7 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		return zero, ProviderConfig{}, err
 	}
 
-	candidates, err := r.candidates(ctx, request)
+	candidates, err := r.Candidates(ctx, request)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
@@ -322,9 +322,10 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		request.Target, errors.Join(failures...))
 }
 
-// candidates is where a request may go, best first: a priority list where one was given,
-// and the ranked resolution of a single target otherwise.
-func (r *Router[P]) candidates(ctx context.Context, request Request) ([]Candidate, error) {
+// Candidates is where a request may go, best first: a priority list where one was given,
+// and the ranked resolution of a single target otherwise. A modality that fails over after
+// it has started walks this, so it falls back in the order the caller wrote.
+func (r *Router[P]) Candidates(ctx context.Context, request Request) ([]Candidate, error) {
 	if len(request.Providers) == 0 {
 		return r.Resolve(ctx, request.Target, request.LanguageHints)
 	}

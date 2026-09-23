@@ -79,7 +79,10 @@ type flow struct {
 	// request open until headers or a 429 retry, and waiting for that used to leave the
 	// follow-up never asked.
 	inFlight string
-	running  sync.WaitGroup
+	// retired are controllers a swap replaced, closed with the flow so a decision they
+	// were still making can settle.
+	retired []*llmrouter.Session
+	running sync.WaitGroup
 }
 
 // flowDeadline bounds one floor decision. The conversation model may sit for minutes;
@@ -189,7 +192,10 @@ func (f *flow) run(asked *candidate) {
 	defer f.running.Done()
 	defer f.advance(turn.ID)
 
-	stream, err := f.model.Create(asked.ctx, llm.ResponseParams{
+	f.mu.Lock()
+	model := f.model
+	f.mu.Unlock()
+	stream, err := model.Create(asked.ctx, llm.ResponseParams{
 		ID:           turn.ID,
 		Instructions: flowInstructions + "\n\nThe agent has been told:\n" + turn.Instructions,
 		Input:        []llm.Message{{Role: llm.User, Content: flowQuestion(turn)}},
@@ -348,13 +354,27 @@ func (f *flow) Close() error {
 		asked.cancel()
 	}
 	clear(f.pending)
+	sessions := append([]*llmrouter.Session{f.model}, f.retired...)
 	f.mu.Unlock()
 
 	// Closing the session abandons whatever the controller is still deciding, which is
 	// what lets every consumer reach the end of its stream.
-	err := f.model.Close()
+	var failures []error
+	for _, session := range sessions {
+		if err := session.Close(); err != nil {
+			failures = append(failures, err)
+		}
+	}
 	f.running.Wait()
-	return err
+	return errors.Join(failures...)
+}
+
+// setModel decides from the next candidate on another session.
+func (f *flow) setModel(model *llmrouter.Session) {
+	f.mu.Lock()
+	f.retired = append(f.retired, f.model)
+	f.model = model
+	f.mu.Unlock()
 }
 
 // consume waits for one decision and reports it.

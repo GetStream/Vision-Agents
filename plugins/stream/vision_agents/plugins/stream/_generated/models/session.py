@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.session_mode import SessionMode
 from ..models.session_state import SessionState
 from ..types import UNSET, Unset
 
@@ -41,6 +42,10 @@ class Session:
         sts (str | Unset): The provider and model holding a native conversation, once routing has picked one.
         stt (str | Unset): The provider and model transcribing, once somebody has been heard.
         subagent (str | Unset): The provider and model delegated work runs on.
+        voice (str | Unset): The voice speaking, in the provider's own terms. It is the provider's default when the
+            session asked for none.
+        mode (SessionMode | Unset): How the session hears and speaks: a transcriber, a conversation model and a voice;
+            one speech-to-speech model; or in writing.
         video (SessionVideo | Unset):
         instructions (str | Unset):
         agent (str | Unset): The name the agent was addressed as. Recorded on the session as well as the config id, so
@@ -81,6 +86,8 @@ class Session:
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
     subagent: str | Unset = UNSET
+    voice: str | Unset = UNSET
+    mode: SessionMode | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     instructions: str | Unset = UNSET
     agent: str | Unset = UNSET
@@ -128,6 +135,12 @@ class Session:
         stt = self.stt
 
         subagent = self.subagent
+
+        voice = self.voice
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
@@ -196,6 +209,10 @@ class Session:
             field_dict["stt"] = stt
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
+        if voice is not UNSET:
+            field_dict["voice"] = voice
+        if mode is not UNSET:
+            field_dict["mode"] = mode
         if video is not UNSET:
             field_dict["video"] = video
         if instructions is not UNSET:
@@ -263,6 +280,15 @@ class Session:
         stt = d.pop("stt", UNSET)
 
         subagent = d.pop("subagent", UNSET)
+
+        voice = d.pop("voice", UNSET)
+
+        _mode = d.pop("mode", UNSET)
+        mode: SessionMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = SessionMode(_mode)
 
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
@@ -332,6 +358,8 @@ class Session:
             sts=sts,
             stt=stt,
             subagent=subagent,
+            voice=voice,
+            mode=mode,
             video=video,
             instructions=instructions,
             agent=agent,

@@ -139,6 +139,7 @@ func llmOptionsOf(sent *LlmOptions) options.LLM {
 	}
 	return options.LLM{
 		Target:          value(sent.Target),
+		Providers:       value(sent.Providers),
 		MaxOutputTokens: sent.MaxOutputTokens,
 		Temperature:     wider(sent.Temperature),
 		ReasoningEffort: string(value(sent.ReasoningEffort)),
@@ -154,6 +155,7 @@ func llmOptionsOf(sent *LlmOptions) options.LLM {
 func llmOptionsFor(held options.LLM) *LlmOptions {
 	sent := &LlmOptions{
 		Target:          optional(held.Target),
+		Providers:       list(held.Providers),
 		MaxOutputTokens: held.MaxOutputTokens,
 		Temperature:     narrower(held.Temperature),
 		ToolChoice:      optional(held.ToolChoice),
@@ -234,6 +236,7 @@ func searchOptionsOf(sent *SearchOptions) options.Search {
 	}
 	held := options.Search{
 		Target:         value(sent.Target),
+		Providers:      value(sent.Providers),
 		Depth:          string(value(sent.Depth)),
 		Results:        sent.Results,
 		IncludeDomains: value(sent.IncludeDomains),
@@ -258,6 +261,7 @@ func searchOptionsOf(sent *SearchOptions) options.Search {
 func searchOptionsFor(held options.Search) *SearchOptions {
 	sent := &SearchOptions{
 		Target:         optional(held.Target),
+		Providers:      list(held.Providers),
 		Results:        held.Results,
 		IncludeDomains: list(held.IncludeDomains),
 		ExcludeDomains: list(held.ExcludeDomains),

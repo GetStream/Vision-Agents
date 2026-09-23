@@ -400,6 +400,9 @@ func (t *TTS) Provider() string { return ProviderName }
 // Model implements tts.TTS.
 func (t *TTS) Model() string { return t.options.Model }
 
+// Voice is the voice id used for utterances that do not name one.
+func (t *TTS) Voice() string { return t.options.VoiceID }
+
 // Streaming reports true: the model generates from partial text.
 func (t *TTS) Streaming() bool { return true }
 

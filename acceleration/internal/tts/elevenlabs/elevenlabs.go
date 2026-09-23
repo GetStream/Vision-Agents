@@ -360,6 +360,9 @@ func (t *TTS) Provider() string { return ProviderName }
 // Model implements tts.TTS.
 func (t *TTS) Model() string { return t.options.Model }
 
+// Voice is the voice id the connection is bound to.
+func (t *TTS) Voice() string { return t.options.VoiceID }
+
 // Streaming reports true: the model generates from partial text.
 func (t *TTS) Streaming() bool { return true }
 

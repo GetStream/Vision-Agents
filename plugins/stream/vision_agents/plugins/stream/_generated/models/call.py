@@ -9,10 +9,12 @@ from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..models.call_direction import CallDirection
+from ..models.session_mode import SessionMode
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.call_tags import CallTags
+    from ..models.call_usage import CallUsage
 
 
 T = TypeVar("T", bound="Call")
@@ -30,6 +32,8 @@ class Call:
         config_id (str | Unset):
         campaign_id (str | Unset):
         contact_id (str | Unset):
+        user_id (str | Unset): Who the agent spoke to, as the client's own token named them. Empty for a call the
+            customer's backend opened, and for telephony, where the number is the name.
         from_number (str | Unset):
         to_number (str | Unset):
         ended_at (datetime.datetime | Unset): Absent while the call is still running.
@@ -48,10 +52,19 @@ class Call:
         llm_used (str | Unset): The provider/model that held the conversation.
         subagent_used (str | Unset): The provider/model delegated work ran on. Empty when nothing was handed over, or
             when the thinking target was never reached.
+        voice (str | Unset): The voice the call asked for, in the provider's own terms. Empty means the provider's
+            default.
+        voice_used (str | Unset): The voice that spoke, which is the provider's default when none was asked for. Known
+            only while the call is running.
+        mode (SessionMode | Unset): How the session hears and speaks: a transcriber, a conversation model and a voice;
+            one speech-to-speech model; or in writing.
         instructions (str | Unset): What the agent was told to be on this call.
         skills (list[str] | Unset): What the fast model could hand to the subagent. The instructions behind each name
             are in the skill registry.
         summary (str | Unset): What a model made of the call, written once it was over.
+        usage (CallUsage | Unset): What the call spent, summed over every request it made. Counted once the call is
+            over, so it is absent while one is still running. Requests that failed are included: a model that read the
+            prompt and then fell over is still billed for it.
         review_score (int | Unset): How well the agent handled it, from 1 to 5.
         review_notes (str | Unset):
         tags (CallTags | Unset):
@@ -65,6 +78,7 @@ class Call:
     config_id: str | Unset = UNSET
     campaign_id: str | Unset = UNSET
     contact_id: str | Unset = UNSET
+    user_id: str | Unset = UNSET
     from_number: str | Unset = UNSET
     to_number: str | Unset = UNSET
     ended_at: datetime.datetime | Unset = UNSET
@@ -78,9 +92,13 @@ class Call:
     sts_used: str | Unset = UNSET
     llm_used: str | Unset = UNSET
     subagent_used: str | Unset = UNSET
+    voice: str | Unset = UNSET
+    voice_used: str | Unset = UNSET
+    mode: SessionMode | Unset = UNSET
     instructions: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
     summary: str | Unset = UNSET
+    usage: CallUsage | Unset = UNSET
     review_score: int | Unset = UNSET
     review_notes: str | Unset = UNSET
     tags: CallTags | Unset = UNSET
@@ -102,6 +120,8 @@ class Call:
         campaign_id = self.campaign_id
 
         contact_id = self.contact_id
+
+        user_id = self.user_id
 
         from_number = self.from_number
 
@@ -131,6 +151,14 @@ class Call:
 
         subagent_used = self.subagent_used
 
+        voice = self.voice
+
+        voice_used = self.voice_used
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
         instructions = self.instructions
 
         skills: list[str] | Unset = UNSET
@@ -138,6 +166,10 @@ class Call:
             skills = self.skills
 
         summary = self.summary
+
+        usage: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.usage, Unset):
+            usage = self.usage.to_dict()
 
         review_score = self.review_score
 
@@ -164,6 +196,8 @@ class Call:
             field_dict["campaign_id"] = campaign_id
         if contact_id is not UNSET:
             field_dict["contact_id"] = contact_id
+        if user_id is not UNSET:
+            field_dict["user_id"] = user_id
         if from_number is not UNSET:
             field_dict["from_number"] = from_number
         if to_number is not UNSET:
@@ -190,12 +224,20 @@ class Call:
             field_dict["llm_used"] = llm_used
         if subagent_used is not UNSET:
             field_dict["subagent_used"] = subagent_used
+        if voice is not UNSET:
+            field_dict["voice"] = voice
+        if voice_used is not UNSET:
+            field_dict["voice_used"] = voice_used
+        if mode is not UNSET:
+            field_dict["mode"] = mode
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
         if skills is not UNSET:
             field_dict["skills"] = skills
         if summary is not UNSET:
             field_dict["summary"] = summary
+        if usage is not UNSET:
+            field_dict["usage"] = usage
         if review_score is not UNSET:
             field_dict["review_score"] = review_score
         if review_notes is not UNSET:
@@ -208,6 +250,7 @@ class Call:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.call_tags import CallTags
+        from ..models.call_usage import CallUsage
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -225,6 +268,8 @@ class Call:
         campaign_id = d.pop("campaign_id", UNSET)
 
         contact_id = d.pop("contact_id", UNSET)
+
+        user_id = d.pop("user_id", UNSET)
 
         from_number = d.pop("from_number", UNSET)
 
@@ -257,11 +302,29 @@ class Call:
 
         subagent_used = d.pop("subagent_used", UNSET)
 
+        voice = d.pop("voice", UNSET)
+
+        voice_used = d.pop("voice_used", UNSET)
+
+        _mode = d.pop("mode", UNSET)
+        mode: SessionMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = SessionMode(_mode)
+
         instructions = d.pop("instructions", UNSET)
 
         skills = cast(list[str], d.pop("skills", UNSET))
 
         summary = d.pop("summary", UNSET)
+
+        _usage = d.pop("usage", UNSET)
+        usage: CallUsage | Unset
+        if isinstance(_usage, Unset):
+            usage = UNSET
+        else:
+            usage = CallUsage.from_dict(_usage)
 
         review_score = d.pop("review_score", UNSET)
 
@@ -283,6 +346,7 @@ class Call:
             config_id=config_id,
             campaign_id=campaign_id,
             contact_id=contact_id,
+            user_id=user_id,
             from_number=from_number,
             to_number=to_number,
             ended_at=ended_at,
@@ -296,9 +360,13 @@ class Call:
             sts_used=sts_used,
             llm_used=llm_used,
             subagent_used=subagent_used,
+            voice=voice,
+            voice_used=voice_used,
+            mode=mode,
             instructions=instructions,
             skills=skills,
             summary=summary,
+            usage=usage,
             review_score=review_score,
             review_notes=review_notes,
             tags=tags,

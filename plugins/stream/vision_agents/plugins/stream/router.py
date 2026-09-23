@@ -271,8 +271,9 @@ class Router:
 
         Args:
             query: The question, in your own words.
-            **options: Any field of the config's search block - `depth`, `results`,
-                `include_domains`, `category`, `max_age_hours`, `location`, `contents`.
+            **options: Any field of the config's search block - `providers`, `depth`,
+                `results`, `include_domains`, `category`, `max_age_hours`, `location`,
+                `contents`.
 
         Returns:
             What was found, and the provider's own answer where it wrote one.
@@ -626,7 +627,7 @@ class Completions:
         """An answering session, configured and not yet started.
 
         Args:
-            **options: Any field of the config's llm block - `target`,
+            **options: Any field of the config's llm block - `target`, `providers`,
                 `max_output_tokens`, `temperature`, `reasoning_effort`, `format`,
                 `verbosity`, `tool_choice`.
 

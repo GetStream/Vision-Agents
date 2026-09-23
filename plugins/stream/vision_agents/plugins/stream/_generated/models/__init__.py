@@ -29,6 +29,7 @@ from .call_event import CallEvent
 from .call_tags import CallTags
 from .call_token import CallToken
 from .call_token_request import CallTokenRequest
+from .call_usage import CallUsage
 from .campaign import Campaign
 from .campaign_request import CampaignRequest
 from .campaign_request_tags import CampaignRequestTags
@@ -76,6 +77,8 @@ from .knowledge_passage import KnowledgePassage
 from .knowledge_url import KnowledgeUrl
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
+from .library_voice import LibraryVoice
+from .library_voices import LibraryVoices
 from .list_agent_logs_severity import ListAgentLogsSeverity
 from .list_sessions_state import ListSessionsState
 from .list_simulation_runs_state import ListSimulationRunsState
@@ -131,9 +134,13 @@ from .session import Session
 from .session_custom import SessionCustom
 from .session_memory import SessionMemory
 from .session_memory_filter import SessionMemoryFilter
+from .session_mode import SessionMode
 from .session_phone import SessionPhone
 from .session_respond_command import SessionRespondCommand
 from .session_respond_command_type import SessionRespondCommandType
+from .session_settings_request import SessionSettingsRequest
+from .session_settings_request_thinking import SessionSettingsRequestThinking
+from .session_settings_request_verbosity import SessionSettingsRequestVerbosity
 from .session_skill import SessionSkill
 from .session_state import SessionState
 from .session_tool import SessionTool
@@ -231,6 +238,7 @@ __all__ = (
     "CallTags",
     "CallToken",
     "CallTokenRequest",
+    "CallUsage",
     "Campaign",
     "CampaignRequest",
     "CampaignRequestTags",
@@ -278,6 +286,8 @@ __all__ = (
     "KnowledgeUrl",
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
+    "LibraryVoice",
+    "LibraryVoices",
     "ListAgentLogsSeverity",
     "ListSessionsState",
     "ListSimulationRunsState",
@@ -333,9 +343,13 @@ __all__ = (
     "SessionCustom",
     "SessionMemory",
     "SessionMemoryFilter",
+    "SessionMode",
     "SessionPhone",
     "SessionRespondCommand",
     "SessionRespondCommandType",
+    "SessionSettingsRequest",
+    "SessionSettingsRequestThinking",
+    "SessionSettingsRequestVerbosity",
     "SessionSkill",
     "SessionState",
     "SessionTool",

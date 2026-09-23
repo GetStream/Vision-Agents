@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 )
@@ -146,9 +147,10 @@ func (s *SearchRouterSuite) TestNoProviderAtAllSaysWhatEachOneComplainedAbout() 
 }
 
 func (s *SearchRouterSuite) TestASearchThatFailedIsReportedRatherThanRetriedElsewhere() {
-	// Failover is start-time only, as it is for a model: the caller is mid-sentence, and
-	// a second provider's latency on top of the first one's failure is a longer silence
-	// than saying it could not check.
+	// A single target fails over only when a provider cannot start: the caller is
+	// mid-sentence, and a second provider's latency on top of the first one's failure is
+	// a longer silence than saying it could not check. A priority list is the caller
+	// choosing that wait, which the next test covers.
 	provider := &stubSearch{model: "fast", err: errors.New("rate limited")}
 	router := s.newRouter(map[string]routing.Factory[search.Provider]{
 		"quick": func(routing.Spec) (search.Provider, error) { return provider, nil },
@@ -161,6 +163,57 @@ func (s *SearchRouterSuite) TestASearchThatFailedIsReportedRatherThanRetriedElse
 
 	s.ErrorContains(err, "rate limited")
 	s.Equal("quick", session.Provider(), "the session stays on the provider it chose")
+}
+
+func (s *SearchRouterSuite) TestAPriorityListAnswersASearchItsFirstEntryFailed() {
+	// Written against config order, so the list is what decides who is asked first.
+	spare := &stubSearch{model: "fast", err: errors.New("rate limited")}
+	quick := &stubSearch{model: "fast", found: search.Result{Answer: "I-70 is clear."}}
+	router := s.newRouter(map[string]routing.Factory[search.Provider]{
+		"quick": func(routing.Spec) (search.Provider, error) { return quick, nil },
+		"spare": func(routing.Spec) (search.Provider, error) { return spare, nil },
+	})
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options:    options.Search{Providers: []string{"spare", "quick"}},
+	})
+	s.Require().NoError(err)
+	s.Equal("spare", session.Provider())
+
+	answered, err := session.Search(s.ctx, search.Query{Text: "traffic on I-70"})
+	s.Require().NoError(err)
+	s.Equal("I-70 is clear.", answered.Answer)
+	s.Equal("quick", session.Provider(), "the session reports who answered")
+
+	_, err = session.Search(s.ctx, search.Query{Text: "and on US-36"})
+	s.Require().NoError(err)
+	s.Len(spare.asked, 1, "a provider that failed is not asked again once the session has moved on")
+	s.Len(quick.asked, 2)
+	s.True(spare.closed)
+}
+
+func (s *SearchRouterSuite) TestAPriorityListThatFailsThroughSaysWhatEachEntrySaid() {
+	router := s.newRouter(map[string]routing.Factory[search.Provider]{
+		"quick": func(routing.Spec) (search.Provider, error) {
+			return &stubSearch{model: "fast", err: errors.New("quick is rate limited")}, nil
+		},
+		"spare": func(routing.Spec) (search.Provider, error) {
+			return &stubSearch{model: "fast", err: errors.New("spare timed out")}, nil
+		},
+	})
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options:    options.Search{Providers: []string{"quick", "spare"}},
+	})
+	s.Require().NoError(err)
+
+	_, err = session.Search(s.ctx, search.Query{Text: "traffic"})
+
+	s.ErrorContains(err, "quick is rate limited")
+	s.ErrorContains(err, "spare timed out")
+	s.Equal("quick", session.Provider(), "nothing answered, so the session stays where it was")
 }
 
 func (s *SearchRouterSuite) TestClosingASessionClosesTheProvider() {

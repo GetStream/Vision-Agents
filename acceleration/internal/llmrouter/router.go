@@ -73,6 +73,9 @@ type Request struct {
 	Tags routing.Tags
 	// Target is a "provider/model" name or a capability shortcut.
 	Target string
+	// Providers is a priority list of where to try, in the order given, and it wins over
+	// Target when it holds anything. A response that fails falls back down it in order.
+	Providers []string
 	// LanguageHints narrow the candidates to models that cover them.
 	LanguageHints []string
 	// InputModalities restrict candidates to models that accept those extra input kinds.
@@ -119,6 +122,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		CallID:          request.CallID,
 		Tags:            request.Tags,
 		Target:          request.Target,
+		Providers:       request.Providers,
 		LanguageHints:   request.LanguageHints,
 		InputModalities: request.InputModalities,
 	}
@@ -129,7 +133,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 
 	session := newSession(provider, config, core.Owner(), r.Recorder(), r.quota)
 	session.fallback = func(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
-		candidates, err := r.Resolve(ctx, request.Target, request.LanguageHints)
+		candidates, err := r.Candidates(ctx, core)
 		if err != nil {
 			return nil, err
 		}
@@ -141,8 +145,10 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 			if candidate.Config.Name() == config.Name() {
 				continue
 			}
+			// The list would win over the target, so it is cleared to ask this one alone.
 			alternative := core
 			alternative.Target = candidate.Config.Name()
+			alternative.Providers = nil
 			provider, selected, err := r.Select(ctx, alternative)
 			if err != nil {
 				failures = append(failures, err)
