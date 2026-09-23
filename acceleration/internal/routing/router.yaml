@@ -1033,6 +1033,132 @@ tts:
       price:
         per_million_chars: 110.0
 
+    # Gemini 3.8 Flash TTS, second on the Artificial Analysis voice arena behind Sonic 3.6
+    # and first on pronunciation robustness. It takes a whole sentence per request and
+    # streams the speech back, about a second to first audio, which is why it is
+    # high-quality rather than low-latency.
+    #
+    # Google bill it in tokens: $0.50/1M text in and $9/1M audio out through 2026,
+    # doubling on January 1, 2027. Audio out measured at about 39 tokens a second, so
+    # $1.26 an hour of speech, plus roughly four characters to a text token.
+    #
+    # The languages are the two-letter codes in Google's table, which stops at Uyghur
+    # while claiming 130 languages, plus Vietnamese, which the launch post ranks it top
+    # in. Google do not train on paid Developer API traffic, and there is no
+    # zero-retention path on it, as with the Live entry under sts.
+    - provider: gemini
+      model: gemini-3.8-flash-tts
+      description: "Second on the Artificial Analysis voice arena and first on pronunciation. A whole sentence per request, about a second to first audio."
+      languages:
+        [
+          af,
+          ak,
+          am,
+          ar,
+          as,
+          az,
+          ba,
+          be,
+          bg,
+          bn,
+          bs,
+          ca,
+          cs,
+          da,
+          de,
+          dz,
+          el,
+          en,
+          es,
+          et,
+          eu,
+          fa,
+          fi,
+          fil,
+          fr,
+          gl,
+          gn,
+          gu,
+          ha,
+          he,
+          hi,
+          hr,
+          ht,
+          hu,
+          hy,
+          id,
+          ig,
+          is,
+          it,
+          ja,
+          jv,
+          ka,
+          kg,
+          ki,
+          kk,
+          km,
+          kn,
+          ko,
+          ks,
+          ky,
+          lb,
+          lg,
+          ln,
+          lo,
+          lt,
+          lv,
+          mk,
+          ml,
+          mn,
+          mr,
+          ms,
+          mt,
+          my,
+          nb,
+          ne,
+          nl,
+          nn,
+          no,
+          ny,
+          oc,
+          or,
+          pa,
+          pl,
+          ps,
+          pt,
+          ro,
+          ru,
+          rw,
+          sd,
+          si,
+          sk,
+          sl,
+          so,
+          sq,
+          sr,
+          ss,
+          st,
+          sv,
+          sw,
+          ta,
+          te,
+          tg,
+          th,
+          ti,
+          ug,
+          uz,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: high-quality
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_chars: 0.125
+        per_audio_hour: 1.26
+
     # Fish's hosted S2 Pro. 80+ languages; the common ones are listed.
     - provider: fish
       model: s2-pro
