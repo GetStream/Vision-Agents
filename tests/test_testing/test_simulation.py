@@ -129,6 +129,25 @@ class ScriptedLLM(LLM):
         return line
 
 
+class RemoteStubLLM(ScriptedLLM):
+    """A ``ScriptedLLM`` that also satisfies the ``RemotePipeline`` protocol."""
+
+    async def join_remote(self, call):
+        pass
+
+    def remote_events(self):
+        raise NotImplementedError
+
+    async def say_remote(self, text, interrupt=False):
+        pass
+
+    async def respond_remote(self, text, interrupt=True, images=None):
+        pass
+
+    async def leave_remote(self):
+        pass
+
+
 def _agent_factory(llm_factory):
     async def create_agent() -> Agent:
         return Agent(
@@ -367,6 +386,19 @@ class TestSimulator:
         assert "provider exploded" in case.error
         assert case.criteria == []
         assert report.state == "errored"
+        assert report.exit_code == 2
+
+    async def test_remote_pipeline_agent_marks_case_errored(self):
+        simulator = Simulator(
+            _agent_factory(RemoteStubLLM), ScriptedLLM, judge_target=JUDGE
+        )
+        report = await simulator.run([_scenario()])
+
+        case = report.runs[0].conversations[0]
+        assert case.state == "errored"
+        assert case.error is not None
+        assert "remote pipeline" in case.error
+        assert case.transcript == []
         assert report.exit_code == 2
 
     async def test_unparsable_judge_output_marks_case_errored(self):

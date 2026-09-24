@@ -88,8 +88,9 @@ variations = 1   # optional, default 1
 | `--report DIR` | Where `report.json` and `report.md` go (default `simulation-report/`). |
 | `--filter NAME` | Only run scenarios whose name contains `NAME`. |
 
-Simulations run the agent's LLM in text mode, so the agent needs a text LLM such as `gemini.LLM`; realtime
-(audio) LLMs are not supported.
+Simulations run the agent's LLM locally in text mode, so the agent needs a text LLM such as `gemini.LLM`.
+Realtime (audio) LLMs and agents that hand their calls to a remote pipeline are not supported here; use the
+hosted simulations on the dashboard for those.
 
 ## See It In Action
 

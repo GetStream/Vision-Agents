@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.llm.events import LLMErrorEvent
+from vision_agents.core.llm import RemotePipeline
 from vision_agents.core.llm.llm import LLM
 from vision_agents.core.llm.realtime import Realtime
 
@@ -497,6 +498,12 @@ class Simulator:
                     raise SimulationError(
                         "the agent uses a Realtime LLM, which needs an audio session; "
                         "simulate runs in text mode and needs a text LLM"
+                    )
+                if isinstance(agent.llm, RemotePipeline):
+                    raise SimulationError(
+                        "the agent hands its calls to a remote pipeline; simulate runs "
+                        "the LLM locally in text mode, so use the hosted simulations "
+                        "on the dashboard for this agent"
                     )
                 ended = await self._converse(
                     agent, brief, scenario.max_turns, transcript
