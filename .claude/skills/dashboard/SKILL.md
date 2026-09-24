@@ -57,7 +57,11 @@ choice in bold ("gemini / gemini-3.8-flash"), a muted detail line ("Pinned model
 "The router's default.", "Now provider / model" for a route), and a **Change** button.
 Change opens a dialog with two sections: **Routers** (route cards from
 `/v1/<modality>/routes`, default first) and **Models** (a table of pinnable models from
-`/v1/<modality>/providers`, with popularity, latency, error rate, languages and speed).
+`/v1/<modality>/providers`). The columns follow the modality: LLM shows popularity, TTS
+Elo and characters per second, STT WER and latency, search the search index and cost
+per task (Artificial Analysis numbers from
+`benchmark`, refreshed with the `refresh_model_stats` skill), anything else the live
+popularity, latency, error rate, languages and speed.
 
 - In a react-hook-form form: `AgentModelSelect` (`agent-model-select.tsx`) with `name`,
   `label`, `modality`, `purpose` (dialog description), `defaultRoute`, optional `hint`.
@@ -83,9 +87,9 @@ rather than reaching for `dnd-kit`.
 
 Use it for anything routing tries in order. A modality block's `providers` is a priority
 list that wins over `target`, so write one entry back as `target` and several as
-`providers`, clearing whichever is unused. Only STT, TTS and STS read a list
-(`routerChainTypes` in `utils/agents/routers.ts`); LLM and search resolve a single target
-and never read one, so pass `fallbacks={false}` for those and offer no Add fallback.
+`providers`, clearing whichever is unused. Every type reads a list. LLM falls back down it
+per failed response; search retries a failed search elsewhere only when a list is written,
+a single target reports the failure instead.
 
 ## Changing the router API
 
