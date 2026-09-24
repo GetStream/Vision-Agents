@@ -16,7 +16,7 @@ Some general docs tips
 - Content: `getstream.io/content/docs` (repo GetStream/docs-content). Agents work happens on its `agents` branch
 - Pages: `agents/<framework>/*.md`; pages shared by every SDK go in `agents/_default/`
 - Sidebars: `_sidebars/[agents][<framework>].json` (`baseURL`, `defaultLanguages`, `items` of `{ title, slug, markdown }`). `[agents][default].json` is the `/agents/docs/` home
-- Framework slugs: `javascript`, `ios` (shown as Swift), `python`, `go-golang`
+- Framework slugs: `javascript`, `ios` (shown as Swift), `android` (Kotlin), `flutter` (Dart), `python`, `go-golang`, `dotnet-csharp`, `ruby`, `rust`, `php`. A new slug needs a label in `routing.ts` and a logo in `public/docs-assets/icons/`
 - SDK switcher and product menu: `getstream.io/src/docs/utils/routing.ts` and `productMenu.ts`. A new sidebar must be reachable from them
 
 ## Writing
@@ -28,7 +28,8 @@ Some general docs tips
 
 ## Gotchas
 
-- Go and Python differ: Python reads `agent.yaml` and syncs it automatically, but Go builds the config in code and calls `Sync`. Say which SDK a behaviour applies to
+- Every server SDK reads `agent.yaml` and syncs the directory in one request, skipping it when `.agent_sync` matches. They differ in when: Python syncs automatically on starting, the others when you call `sync`. Say which SDK a behaviour applies to
+- Client SDKs (JavaScript in the browser, Swift, Android, Flutter) never sync or configure agents. Swift and browser JavaScript are handed a config id by the backend; Android and Flutter open an agent by its stored name
 - `SyncRouters` rejects unknown keys in `routers/*.yaml` (including `description`)
 
 ## Preview and ship
