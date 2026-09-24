@@ -102,12 +102,14 @@ func (s *STSRouterSuite) newStubbedRouter(built *[]routing.Spec) *Router {
 	s.Require().NoError(err)
 
 	registry := NewRegistry()
+	// One provider name can serve models from more than one package, so the stub takes the
+	// capabilities of the model it is built for rather than of the provider.
 	for _, provider := range config[routing.STS].Providers {
-		capabilities, _ := capabilitiesFor(provider.Provider, provider.Model)
-		registry.Register(provider.Provider, func(spec routing.Spec) (sts.STS, error) {
+		name := provider.Provider
+		registry.Register(name, func(spec routing.Spec) (sts.STS, error) {
 			*built = append(*built, spec)
 			stub := newStubSTS()
-			stub.capabilities = capabilities
+			stub.capabilities, _ = capabilitiesFor(name, spec.Model)
 			return stub, nil
 		})
 	}
@@ -191,6 +193,21 @@ func (s *STSRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 		s.Truef(registry.Has(provider.Provider),
 			"%s is configured but has no factory, so it can never serve a request", provider.Provider)
 	}
+}
+
+func (s *STSRouterSuite) TestOpenAIServesLiveAndRealtimeModelsFromOneName() {
+	s.T().Setenv("OPENAI_API_KEY", "sk-test")
+	registry := DefaultRegistry()
+
+	live, err := registry.Build("openai", routing.Spec{Model: "gpt-live-1"})
+	s.Require().NoError(err)
+	s.False(live.Capabilities().SemanticTurns, "the Live API has no turn detector to tune")
+	s.False(live.Capabilities().Accepts("image"), "the Live API does not see")
+
+	realtime, err := registry.Build("openai", routing.Spec{Model: "gpt-realtime-2"})
+	s.Require().NoError(err)
+	s.True(realtime.Capabilities().SemanticTurns, "a Realtime model keeps its semantic turn detector")
+	s.True(realtime.Capabilities().Accepts("image"), "a Realtime model keeps its eyes")
 }
 
 func (s *STSRouterSuite) TestAConfigPromisingWhatItsProviderCannotSendIsRefusedAtBoot() {

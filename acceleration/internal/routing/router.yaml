@@ -1284,7 +1284,7 @@ sts:
     # and keep it thirty days for abuse monitoring; zero retention is an enterprise setting.
     - provider: openai
       model: gpt-realtime-2
-      description: "The only model here with semantic turn detection. Sees images. The dearest by far."
+      description: "The only model here with semantic turn detection. Sees images. Among the dearest."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1297,6 +1297,30 @@ sts:
         per_million_input_tokens: 32.0
         per_million_cached_input_tokens: 0.40
         per_million_output_tokens: 64.0
+
+    # GPT-Live-1 is not a Realtime model: it is served by the Live API at /v1/live/sessions,
+    # which is its own package. It listens and speaks at once, has no turn detector to tune,
+    # does not see, and hands reasoning and tools to a Responses backend, gpt-5.6-terra
+    # unless overwrites name another in backend_model. Tools therefore run while the model
+    # keeps talking. It debuted top of the Artificial Analysis speech-to-speech index at
+    # 81.5 with a GPT-6 Astra backend, but at 1.24-1.34s to first audio there. The voice
+    # layer is $0.05 a minute of session, billed per second, priced here by the caller's
+    # audio; the backend's tokens are billed on top and not counted, so this undercounts.
+    # OpenAI name voices in English and Portuguese only and publish no language list.
+    # They do not train on API traffic. Retention is unknown: the Live API is missing
+    # from their per-endpoint table, and what the backend calls it makes keep is not said.
+    - provider: openai
+      model: gpt-live-1
+      description: "Tops the Artificial Analysis board and keeps talking while a tool runs, but is slower to first audio and cannot see. Backend tokens are billed on top."
+      languages: [en, pt]
+      realtime: true
+      tier: high-quality
+      supports: [tools, text, input_transcript, output_transcript]
+      data_policy:
+        trains_on_data: "no"
+        retention: unknown
+      price:
+        per_audio_hour: 3.0
 
     # xAI's Grok Voice over its OpenAI-compatible socket. It does not see, and it reports
     # no usage, so it is priced by the caller's audio: $0.05 a minute of conversation on
