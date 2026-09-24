@@ -1437,6 +1437,70 @@ pub struct ForkSessionRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub title: ::std::option::Option<::std::string::String>,
 }
+///`GeneratedImage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct GeneratedImage {
+    ///The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
+    pub data: ::std::string::String,
+    pub height: i64,
+    ///What the picture is, read off the picture itself rather than the provider's label.
+    pub media_type: GeneratedImageMediaType,
+    ///The seed the provider reports, which draws the same picture again. Absent when it reports none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub seed: ::std::option::Option<i64>,
+    pub width: i64,
+}
+///What the picture is, read off the picture itself rather than the provider's label.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum GeneratedImageMediaType {
+    #[serde(rename = "image/png")]
+    ImagePng,
+    #[serde(rename = "image/jpeg")]
+    ImageJpeg,
+}
+impl ::std::fmt::Display for GeneratedImageMediaType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ImagePng => f.write_str("image/png"),
+            Self::ImageJpeg => f.write_str("image/jpeg"),
+        }
+    }
+}
+impl ::std::str::FromStr for GeneratedImageMediaType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "image/png" => Ok(Self::ImagePng),
+            "image/jpeg" => Ok(Self::ImageJpeg),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for GeneratedImageMediaType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for GeneratedImageMediaType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`Granularity`
 #[derive(
     ::serde::Deserialize,
@@ -1621,6 +1685,236 @@ impl ::std::convert::TryFrom<&str> for ImageContentPartType {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ImageContentPartType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+/**Why a generation drew nothing, absent when it completed. content_filtered is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
+*/
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ImageErrorCode {
+    #[serde(rename = "content_filtered")]
+    ContentFiltered,
+    #[serde(rename = "unsupported_option")]
+    UnsupportedOption,
+    #[serde(rename = "provider_failed")]
+    ProviderFailed,
+    #[serde(rename = "timeout")]
+    Timeout,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for ImageErrorCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ContentFiltered => f.write_str("content_filtered"),
+            Self::UnsupportedOption => f.write_str("unsupported_option"),
+            Self::ProviderFailed => f.write_str("provider_failed"),
+            Self::Timeout => f.write_str("timeout"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for ImageErrorCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "content_filtered" => Ok(Self::ContentFiltered),
+            "unsupported_option" => Ok(Self::UnsupportedOption),
+            "provider_failed" => Ok(Self::ProviderFailed),
+            "timeout" => Ok(Self::Timeout),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ImageErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ImageErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ImageGeneration`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ImageGeneration {
+    ///Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed.
+    pub cost_micros: i64,
+    ///What went wrong, in words. Absent when the generation completed.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_code: ::std::option::Option<ImageErrorCode>,
+    ///This response's own id, for logs. Nothing is stored under it.
+    pub id: ::std::string::String,
+    ///The pictures, as many as were asked for. Empty when the generation failed.
+    pub images: ::std::vec::Vec<GeneratedImage>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
+    ///Who drew it, or who refused to. Absent when nothing got as far as a provider.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider: ::std::option::Option<::std::string::String>,
+    pub status: ImageGenerationStatus,
+}
+///`ImageGenerationRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ImageGenerationRequest {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub options: ::std::option::Option<ImageOptions>,
+    ///What to draw, in the caller's own words.
+    pub prompt: ::std::string::String,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+}
+///Whether the pictures were drawn. A failed generation says why in error_code and error.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ImageGenerationStatus {
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for ImageGenerationStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for ImageGenerationStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ImageGenerationStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ImageGenerationStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+/**Where to draw and what the picture should be. A size, shape, seed, negative prompt or format narrows the candidates to the models that declared it, so it is either honoured or the request is refused.
+*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct ImageOptions {
+    ///The shape, for the models that are asked for one rather than a size.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub aspect_ratio: ::std::option::Option<::std::string::String>,
+    ///How many pictures to draw.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub n: ::std::option::Option<i64>,
+    ///What to keep out of the picture.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub negative_prompt: ::std::option::Option<::std::string::String>,
+    ///The encoding, on a model that can be asked for one.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub output_format: ::std::option::Option<ImageOptionsOutputFormat>,
+    /**A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
+    */
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub providers: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///Draws the same picture again from the same prompt, on a model that reads one.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub seed: ::std::option::Option<i64>,
+    ///Width by height in pixels, for the models that take a size.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub size: ::std::option::Option<::std::string::String>,
+    ///A provider/model or a capability shortcut. Defaults to image-fast.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target: ::std::option::Option<::std::string::String>,
+}
+///The encoding, on a model that can be asked for one.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ImageOptionsOutputFormat {
+    #[serde(rename = "png")]
+    Png,
+    #[serde(rename = "jpeg")]
+    Jpeg,
+}
+impl ::std::fmt::Display for ImageOptionsOutputFormat {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Png => f.write_str("png"),
+            Self::Jpeg => f.write_str("jpeg"),
+        }
+    }
+}
+impl ::std::str::FromStr for ImageOptionsOutputFormat {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "png" => Ok(Self::Png),
+            "jpeg" => Ok(Self::Jpeg),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ImageOptionsOutputFormat {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ImageOptionsOutputFormat {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -2113,7 +2407,7 @@ impl ::std::convert::From<::std::vec::Vec<ContentPart>> for MessageContent {
         Self::Array(value)
     }
 }
-/**What kind of work was done. The first six are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+/**What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 */
 #[derive(
     ::serde::Deserialize,
@@ -2140,6 +2434,8 @@ pub enum Modality {
     Search,
     #[serde(rename = "lcm")]
     Lcm,
+    #[serde(rename = "image")]
+    Image,
     #[serde(rename = "memory")]
     Memory,
     #[serde(rename = "knowledge")]
@@ -2156,6 +2452,7 @@ impl ::std::fmt::Display for Modality {
             Self::Sts => f.write_str("sts"),
             Self::Search => f.write_str("search"),
             Self::Lcm => f.write_str("lcm"),
+            Self::Image => f.write_str("image"),
             Self::Memory => f.write_str("memory"),
             Self::Knowledge => f.write_str("knowledge"),
             Self::Phone => f.write_str("phone"),
@@ -2172,6 +2469,7 @@ impl ::std::str::FromStr for Modality {
             "sts" => Ok(Self::Sts),
             "search" => Ok(Self::Search),
             "lcm" => Ok(Self::Lcm),
+            "image" => Ok(Self::Image),
             "memory" => Ok(Self::Memory),
             "knowledge" => Ok(Self::Knowledge),
             "phone" => Ok(Self::Phone),
@@ -4293,6 +4591,8 @@ pub struct StatsBucket {
     ///Millionths of a dollar, priced from the configured rates.
     pub cost_micros_total: i64,
     pub error_count: i64,
+    ///Pictures drawn. Zero outside image.
+    pub images_total: i64,
     ///Prompt tokens read, cached ones included. Zero outside llm.
     pub input_tokens_total: i64,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -4591,6 +4891,7 @@ pub struct TagStatsBucket {
     ///Millionths of a dollar, priced from the configured rates.
     pub cost_micros_total: i64,
     pub error_count: i64,
+    pub images_total: i64,
     pub input_tokens_total: i64,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub latency_p50_ms: ::std::option::Option<f64>,

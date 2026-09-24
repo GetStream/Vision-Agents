@@ -1565,6 +1565,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/image/generations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Draw pictures from a prompt, and return them
+         * @description Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+         *     The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+         *     A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
+         */
+        readonly post: operations["generateImage"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/phone/calls": {
         readonly parameters: {
             readonly query?: never;
@@ -2574,6 +2596,25 @@ export type components = {
             readonly response_id?: string;
             readonly title?: string;
         };
+        readonly GeneratedImage: {
+            /**
+             * Format: byte
+             * @description The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
+             */
+            readonly data: string;
+            readonly height: number;
+            /**
+             * @description What the picture is, read off the picture itself rather than the provider's label.
+             * @enum {string}
+             */
+            readonly media_type: "image/png" | "image/jpeg";
+            /**
+             * Format: int64
+             * @description The seed the provider reports, which draws the same picture again. Absent when it reports none.
+             */
+            readonly seed?: number;
+            readonly width: number;
+        };
         /**
          * @default hourly
          * @enum {string}
@@ -2620,6 +2661,95 @@ export type components = {
             readonly image_url: components["schemas"]["ImageSource"];
             /** @enum {string} */
             readonly type: "image_url";
+        };
+        /**
+         * @description Why a generation drew nothing, absent when it completed. content_filtered is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
+         * @enum {string}
+         */
+        readonly ImageErrorCode: "content_filtered" | "unsupported_option" | "provider_failed" | "timeout" | "cancelled";
+        readonly ImageGeneration: {
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed.
+             */
+            readonly cost_micros: number;
+            /** @description What went wrong, in words. Absent when the generation completed. */
+            readonly error?: string;
+            readonly error_code?: components["schemas"]["ImageErrorCode"];
+            /**
+             * @description This response's own id, for logs. Nothing is stored under it.
+             * @example img_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+             */
+            readonly id: string;
+            /** @description The pictures, as many as were asked for. Empty when the generation failed. */
+            readonly images: readonly components["schemas"]["GeneratedImage"][];
+            /** @example alibaba/qwen-image-3/text-to-image */
+            readonly model?: string;
+            /**
+             * @description Who drew it, or who refused to. Absent when nothing got as far as a provider.
+             * @example fal
+             */
+            readonly provider?: string;
+            readonly status: components["schemas"]["ImageGenerationStatus"];
+        };
+        readonly ImageGenerationRequest: {
+            readonly options?: components["schemas"]["ImageOptions"];
+            /**
+             * @description What to draw, in the caller's own words.
+             * @example A yellow watering can beside a seedling, flat illustration, no text
+             */
+            readonly prompt: string;
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+        };
+        /**
+         * @description Whether the pictures were drawn. A failed generation says why in error_code and error.
+         * @enum {string}
+         */
+        readonly ImageGenerationStatus: "completed" | "failed";
+        /** @description Where to draw and what the picture should be. A size, shape, seed, negative prompt or format narrows the candidates to the models that declared it, so it is either honoured or the request is refused. */
+        readonly ImageOptions: {
+            /**
+             * @description The shape, for the models that are asked for one rather than a size.
+             * @example 1:1
+             */
+            readonly aspect_ratio?: string;
+            /**
+             * @description How many pictures to draw.
+             * @default 1
+             */
+            readonly n?: number;
+            /** @description What to keep out of the picture. */
+            readonly negative_prompt?: string;
+            /**
+             * @description The encoding, on a model that can be asked for one.
+             * @enum {string}
+             */
+            readonly output_format?: "png" | "jpeg";
+            /**
+             * @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
+             * @example [
+             *       "fal",
+             *       "image-quality"
+             *     ]
+             */
+            readonly providers?: readonly string[];
+            /**
+             * Format: int64
+             * @description Draws the same picture again from the same prompt, on a model that reads one.
+             */
+            readonly seed?: number;
+            /**
+             * @description Width by height in pixels, for the models that take a size.
+             * @example 1024x1024
+             */
+            readonly size?: string;
+            /**
+             * @description A provider/model or a capability shortcut. Defaults to image-fast.
+             * @example image-fast
+             */
+            readonly target?: string;
         };
         readonly ImageSource: {
             /** @enum {string} */
@@ -2806,11 +2936,11 @@ export type components = {
         };
         readonly MessageContent: string | readonly components["schemas"]["ContentPart"][];
         /**
-         * @description What kind of work was done. The first six are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+         * @description What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
          * @example tts
          * @enum {string}
          */
-        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "lcm" | "memory" | "knowledge" | "phone";
+        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "lcm" | "image" | "memory" | "knowledge" | "phone";
         /**
          * @description What to change about the models for one session, over whatever its agent config decided.
          *     It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
@@ -3581,6 +3711,11 @@ export type components = {
             readonly error_count: number;
             /**
              * Format: int64
+             * @description Pictures drawn. Zero outside image.
+             */
+            readonly images_total: number;
+            /**
+             * Format: int64
              * @description Prompt tokens read, cached ones included. Zero outside llm.
              */
             readonly input_tokens_total: number;
@@ -3808,6 +3943,8 @@ export type components = {
             readonly cost_micros_total: number;
             /** Format: int64 */
             readonly error_count: number;
+            /** Format: int64 */
+            readonly images_total: number;
             /** Format: int64 */
             readonly input_tokens_total: number;
             /** Format: double */
@@ -6985,6 +7122,34 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly generateImage: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ImageGenerationRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description What was drawn, or why nothing was */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ImageGeneration"];
+                };
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];

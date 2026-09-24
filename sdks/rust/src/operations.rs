@@ -1281,6 +1281,22 @@ impl Client {
         )
         .await
     }
+    /// Draw pictures from a prompt, and return them
+    ///
+    /// `POST /v1/image/generations` (`generateImage`).
+    pub async fn generate_image(
+        &self,
+        body: &types::ImageGenerationRequest,
+    ) -> Result<types::ImageGeneration> {
+        self.send(
+            Method::POST,
+            "/v1/image/generations",
+            None::<&()>,
+            Some(body),
+            "generateImage",
+        )
+        .await
+    }
     /// Place an outbound call and bridge it into a Stream call
     ///
     /// `POST /v1/phone/calls` (`placePhoneCall`).

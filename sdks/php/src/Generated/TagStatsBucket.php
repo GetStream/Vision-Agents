@@ -19,6 +19,7 @@ final readonly class TagStatsBucket
         public int $inputTokensTotal,
         public int $cachedInputTokensTotal,
         public int $outputTokensTotal,
+        public int $imagesTotal,
         // Millionths of a dollar, priced from the configured rates.
         public int $costMicrosTotal,
         public int $requestCount,
@@ -43,6 +44,7 @@ final readonly class TagStatsBucket
             inputTokensTotal: Json::int($data, 'input_tokens_total'),
             cachedInputTokensTotal: Json::int($data, 'cached_input_tokens_total'),
             outputTokensTotal: Json::int($data, 'output_tokens_total'),
+            imagesTotal: Json::int($data, 'images_total'),
             costMicrosTotal: Json::int($data, 'cost_micros_total'),
             requestCount: Json::int($data, 'request_count'),
             errorCount: Json::int($data, 'error_count'),
@@ -68,6 +70,7 @@ final readonly class TagStatsBucket
         $out['input_tokens_total'] = $this->inputTokensTotal;
         $out['cached_input_tokens_total'] = $this->cachedInputTokensTotal;
         $out['output_tokens_total'] = $this->outputTokensTotal;
+        $out['images_total'] = $this->imagesTotal;
         $out['cost_micros_total'] = $this->costMicrosTotal;
         $out['request_count'] = $this->requestCount;
         $out['error_count'] = $this->errorCount;

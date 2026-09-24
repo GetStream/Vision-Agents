@@ -7,13 +7,13 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Generated;
 
 /**
- * What kind of work was done. The first six are routed across providers; sts is speech to
+ * What kind of work was done. The first seven are routed across providers; sts is speech to
  * speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a
  * large classifier model: it answers a question about a piece of text with a typed value and
  * the probability behind it rather than with prose, which is what a guardrail asks before a
- * reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one
- * memory store, one knowledge base and one vendor per number, so the provider paths do not
- * serve them while the statistics paths do.
+ * reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are
+ * recorded but not routed, since there is one memory store, one knowledge base and one vendor
+ * per number, so the provider paths do not serve them while the statistics paths do.
  */
 enum Modality: string
 {
@@ -23,6 +23,7 @@ enum Modality: string
     case Sts = 'sts';
     case Search = 'search';
     case Lcm = 'lcm';
+    case Image = 'image';
     case Memory = 'memory';
     case Knowledge = 'knowledge';
     case Phone = 'phone';

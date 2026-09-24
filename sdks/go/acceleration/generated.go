@@ -287,6 +287,24 @@ func (e Endpointing) Valid() bool {
 	}
 }
 
+// Defines values for GeneratedImageMediaType.
+const (
+	Imagejpeg GeneratedImageMediaType = "image/jpeg"
+	Imagepng  GeneratedImageMediaType = "image/png"
+)
+
+// Valid indicates whether the value is a known member of the GeneratedImageMediaType enum.
+func (e GeneratedImageMediaType) Valid() bool {
+	switch e {
+	case Imagejpeg:
+		return true
+	case Imagepng:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Granularity.
 const (
 	GranularityDaily  Granularity = "daily"
@@ -332,6 +350,69 @@ const (
 func (e ImageContentPartType) Valid() bool {
 	switch e {
 	case ImageUrl:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImageErrorCode.
+const (
+	ImageErrorCodeCancelled         ImageErrorCode = "cancelled"
+	ImageErrorCodeContentFiltered   ImageErrorCode = "content_filtered"
+	ImageErrorCodeProviderFailed    ImageErrorCode = "provider_failed"
+	ImageErrorCodeTimeout           ImageErrorCode = "timeout"
+	ImageErrorCodeUnsupportedOption ImageErrorCode = "unsupported_option"
+)
+
+// Valid indicates whether the value is a known member of the ImageErrorCode enum.
+func (e ImageErrorCode) Valid() bool {
+	switch e {
+	case ImageErrorCodeCancelled:
+		return true
+	case ImageErrorCodeContentFiltered:
+		return true
+	case ImageErrorCodeProviderFailed:
+		return true
+	case ImageErrorCodeTimeout:
+		return true
+	case ImageErrorCodeUnsupportedOption:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImageGenerationStatus.
+const (
+	ImageGenerationStatusCompleted ImageGenerationStatus = "completed"
+	ImageGenerationStatusFailed    ImageGenerationStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the ImageGenerationStatus enum.
+func (e ImageGenerationStatus) Valid() bool {
+	switch e {
+	case ImageGenerationStatusCompleted:
+		return true
+	case ImageGenerationStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImageOptionsOutputFormat.
+const (
+	Jpeg ImageOptionsOutputFormat = "jpeg"
+	Png  ImageOptionsOutputFormat = "png"
+)
+
+// Valid indicates whether the value is a known member of the ImageOptionsOutputFormat enum.
+func (e ImageOptionsOutputFormat) Valid() bool {
+	switch e {
+	case Jpeg:
+		return true
+	case Png:
 		return true
 	default:
 		return false
@@ -445,6 +526,7 @@ func (e LlmOptionsVerbosity) Valid() bool {
 
 // Defines values for Modality.
 const (
+	Image     Modality = "image"
 	Knowledge Modality = "knowledge"
 	Lcm       Modality = "lcm"
 	Llm       Modality = "llm"
@@ -459,6 +541,8 @@ const (
 // Valid indicates whether the value is a known member of the Modality enum.
 func (e Modality) Valid() bool {
 	switch e {
+	case Image:
+		return true
 	case Knowledge:
 		return true
 	case Lcm:
@@ -1906,6 +1990,23 @@ type ForkSessionRequest struct {
 	Title      *string `json:"title,omitempty"`
 }
 
+// GeneratedImage defines model for GeneratedImage.
+type GeneratedImage struct {
+	// Data The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
+	Data   []byte `json:"data"`
+	Height int    `json:"height"`
+
+	// MediaType What the picture is, read off the picture itself rather than the provider's label.
+	MediaType GeneratedImageMediaType `json:"media_type"`
+
+	// Seed The seed the provider reports, which draws the same picture again. Absent when it reports none.
+	Seed  *int64 `json:"seed,omitempty"`
+	Width int    `json:"width"`
+}
+
+// GeneratedImageMediaType What the picture is, read off the picture itself rather than the provider's label.
+type GeneratedImageMediaType string
+
 // Granularity defines model for Granularity.
 type Granularity string
 
@@ -1953,6 +2054,94 @@ type ImageContentPart struct {
 
 // ImageContentPartType defines model for ImageContentPart.Type.
 type ImageContentPartType string
+
+// ImageErrorCode Why a generation drew nothing, absent when it completed. content_filtered is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
+type ImageErrorCode string
+
+// ImageGeneration defines model for ImageGeneration.
+type ImageGeneration struct {
+	// CostMicros Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed.
+	CostMicros int64 `json:"cost_micros"`
+
+	// Error What went wrong, in words. Absent when the generation completed.
+	Error *string `json:"error,omitempty"`
+
+	// ErrorCode Why a generation drew nothing, absent when it completed. content_filtered is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
+	ErrorCode *ImageErrorCode `json:"error_code,omitempty"`
+
+	// Id This response's own id, for logs. Nothing is stored under it.
+	//
+	// Example: img_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+	Id string `json:"id"`
+
+	// Images The pictures, as many as were asked for. Empty when the generation failed.
+	Images []GeneratedImage `json:"images"`
+
+	// Model Example: alibaba/qwen-image-3/text-to-image
+	Model *string `json:"model,omitempty"`
+
+	// Provider Who drew it, or who refused to. Absent when nothing got as far as a provider.
+	//
+	// Example: fal
+	Provider *string `json:"provider,omitempty"`
+
+	// Status Whether the pictures were drawn. A failed generation says why in error_code and error.
+	Status ImageGenerationStatus `json:"status"`
+}
+
+// ImageGenerationRequest defines model for ImageGenerationRequest.
+type ImageGenerationRequest struct {
+	// Options Where to draw and what the picture should be. A size, shape, seed, negative prompt or format narrows the candidates to the models that declared it, so it is either honoured or the request is refused.
+	Options *ImageOptions `json:"options,omitempty"`
+
+	// Prompt What to draw, in the caller's own words.
+	//
+	// Example: A yellow watering can beside a seedling, flat illustration, no text
+	Prompt string             `json:"prompt"`
+	Tags   *map[string]string `json:"tags,omitempty"`
+}
+
+// ImageGenerationStatus Whether the pictures were drawn. A failed generation says why in error_code and error.
+type ImageGenerationStatus string
+
+// ImageOptions Where to draw and what the picture should be. A size, shape, seed, negative prompt or format narrows the candidates to the models that declared it, so it is either honoured or the request is refused.
+type ImageOptions struct {
+	// AspectRatio The shape, for the models that are asked for one rather than a size.
+	//
+	// Example: 1:1
+	AspectRatio *string `json:"aspect_ratio,omitempty"`
+
+	// N How many pictures to draw.
+	N *int `json:"n,omitempty"`
+
+	// NegativePrompt What to keep out of the picture.
+	NegativePrompt *string `json:"negative_prompt,omitempty"`
+
+	// OutputFormat The encoding, on a model that can be asked for one.
+	OutputFormat *ImageOptionsOutputFormat `json:"output_format,omitempty"`
+
+	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
+	//
+	//
+	// Example: ["fal","image-quality"]
+	Providers *[]string `json:"providers,omitempty"`
+
+	// Seed Draws the same picture again from the same prompt, on a model that reads one.
+	Seed *int64 `json:"seed,omitempty"`
+
+	// Size Width by height in pixels, for the models that take a size.
+	//
+	// Example: 1024x1024
+	Size *string `json:"size,omitempty"`
+
+	// Target A provider/model or a capability shortcut. Defaults to image-fast.
+	//
+	// Example: image-fast
+	Target *string `json:"target,omitempty"`
+}
+
+// ImageOptionsOutputFormat The encoding, on a model that can be asked for one.
+type ImageOptionsOutputFormat string
 
 // ImageSource defines model for ImageSource.
 type ImageSource struct {
@@ -2188,7 +2377,7 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first six are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 //
 // Example: tts
 type Modality string
@@ -3073,6 +3262,9 @@ type StatsBucket struct {
 	CostMicrosTotal int64 `json:"cost_micros_total"`
 	ErrorCount      int64 `json:"error_count"`
 
+	// ImagesTotal Pictures drawn. Zero outside image.
+	ImagesTotal int64 `json:"images_total"`
+
 	// InputTokensTotal Prompt tokens read, cached ones included. Zero outside llm.
 	InputTokensTotal int64    `json:"input_tokens_total"`
 	LatencyP50Ms     *float64 `json:"latency_p50_ms,omitempty"`
@@ -3316,6 +3508,7 @@ type TagStatsBucket struct {
 	// CostMicrosTotal Millionths of a dollar, priced from the configured rates.
 	CostMicrosTotal   int64    `json:"cost_micros_total"`
 	ErrorCount        int64    `json:"error_count"`
+	ImagesTotal       int64    `json:"images_total"`
 	InputTokensTotal  int64    `json:"input_tokens_total"`
 	LatencyP50Ms      *float64 `json:"latency_p50_ms,omitempty"`
 	LatencyP95Ms      *float64 `json:"latency_p95_ms,omitempty"`
@@ -4156,6 +4349,9 @@ type PreviewVoiceJSONRequestBody = VoicePreviewRequest
 
 // AddVoiceSampleJSONRequestBody defines body for AddVoiceSample for application/json ContentType.
 type AddVoiceSampleJSONRequestBody = VoiceSampleRequest
+
+// GenerateImageJSONRequestBody defines body for GenerateImage for application/json ContentType.
+type GenerateImageJSONRequestBody = ImageGenerationRequest
 
 // PlacePhoneCallJSONRequestBody defines body for PlacePhoneCall for application/json ContentType.
 type PlacePhoneCallJSONRequestBody = PlaceCallRequest
@@ -5345,6 +5541,28 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GenerateImageWithBody Draw pictures from a prompt, and return them
+	//
+	// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+	// The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+	// A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
+	GenerateImageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GenerateImage Draw pictures from a prompt, and return them
+	//
+	// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+	// The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+	// A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
+	GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PlacePhoneCallWithBody Place an outbound call and bridge it into a Stream call
 	//
@@ -7760,6 +7978,48 @@ func (c *Client) AddVoiceSampleWithBody(ctx context.Context, id ResourceID, cont
 // Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 func (c *Client) AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddVoiceSampleRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GenerateImageWithBody Draw pictures from a prompt, and return them
+//
+// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+// The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+// A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
+func (c *Client) GenerateImageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGenerateImageRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GenerateImage Draw pictures from a prompt, and return them
+//
+// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+// The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+// A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
+func (c *Client) GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGenerateImageRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12699,6 +12959,46 @@ func NewAddVoiceSampleRequestWithBody(server string, id ResourceID, contentType 
 	return req, nil
 }
 
+// NewGenerateImageRequest calls the generic GenerateImage builder with application/json body
+func NewGenerateImageRequest(server string, body GenerateImageJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGenerateImageRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewGenerateImageRequestWithBody constructs an http.Request for the GenerateImage method, with any body, and a specified content type
+func NewGenerateImageRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/image/generations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPlacePhoneCallRequest calls the generic PlacePhoneCall builder with application/json body
 func NewPlacePhoneCallRequest(server string, body PlacePhoneCallJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -15349,6 +15649,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSampleWithResponse(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
+
+	// GenerateImageWithBodyWithResponse Draw pictures from a prompt, and return them
+	//
+	// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+	// The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+	// A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
+	GenerateImageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error)
+
+	// GenerateImageWithResponse Draw pictures from a prompt, and return them
+	//
+	// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+	// The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+	// A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
+	GenerateImageWithResponse(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error)
 
 	// PlacePhoneCallWithBodyWithResponse Place an outbound call and bridge it into a Stream call
 	//
@@ -21216,6 +21538,75 @@ func (r AddVoiceSampleResponse) ContentType() string {
 	return ""
 }
 
+type GenerateImageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ImageGeneration
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GenerateImageResponse) GetJSON200() *ImageGeneration {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GenerateImageResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GenerateImageResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GenerateImageResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GenerateImageResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GenerateImageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GenerateImageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GenerateImageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GenerateImageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PlacePhoneCallResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -24858,6 +25249,40 @@ func (c *ClientWithResponses) AddVoiceSampleWithResponse(ctx context.Context, id
 		return nil, err
 	}
 	return ParseAddVoiceSampleResponse(rsp)
+}
+
+// GenerateImageWithBodyWithResponse Draw pictures from a prompt, and return them
+//
+// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+// The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+// A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
+func (c *ClientWithResponses) GenerateImageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error) {
+	rsp, err := c.GenerateImageWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGenerateImageResponse(rsp)
+}
+
+// GenerateImageWithResponse Draw pictures from a prompt, and return them
+//
+// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+// The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+// A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
+func (c *ClientWithResponses) GenerateImageWithResponse(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error) {
+	rsp, err := c.GenerateImage(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGenerateImageResponse(rsp)
 }
 
 // PlacePhoneCallWithBodyWithResponse Place an outbound call and bridge it into a Stream call
@@ -29680,6 +30105,60 @@ func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, e
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGenerateImageResponse parses an HTTP response from a GenerateImageWithResponse call
+func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GenerateImageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImageGeneration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest

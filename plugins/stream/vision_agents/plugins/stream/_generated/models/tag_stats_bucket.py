@@ -25,6 +25,7 @@ class TagStatsBucket:
         input_tokens_total (int):
         cached_input_tokens_total (int):
         output_tokens_total (int):
+        images_total (int):
         cost_micros_total (int): Millionths of a dollar, priced from the configured rates.
         request_count (int):
         error_count (int):
@@ -41,6 +42,7 @@ class TagStatsBucket:
     input_tokens_total: int
     cached_input_tokens_total: int
     output_tokens_total: int
+    images_total: int
     cost_micros_total: int
     request_count: int
     error_count: int
@@ -65,6 +67,8 @@ class TagStatsBucket:
         cached_input_tokens_total = self.cached_input_tokens_total
 
         output_tokens_total = self.output_tokens_total
+
+        images_total = self.images_total
 
         cost_micros_total = self.cost_micros_total
 
@@ -102,6 +106,7 @@ class TagStatsBucket:
                 "input_tokens_total": input_tokens_total,
                 "cached_input_tokens_total": cached_input_tokens_total,
                 "output_tokens_total": output_tokens_total,
+                "images_total": images_total,
                 "cost_micros_total": cost_micros_total,
                 "request_count": request_count,
                 "error_count": error_count,
@@ -134,6 +139,8 @@ class TagStatsBucket:
         cached_input_tokens_total = d.pop("cached_input_tokens_total")
 
         output_tokens_total = d.pop("output_tokens_total")
+
+        images_total = d.pop("images_total")
 
         cost_micros_total = d.pop("cost_micros_total")
 
@@ -177,6 +184,7 @@ class TagStatsBucket:
             input_tokens_total=input_tokens_total,
             cached_input_tokens_total=cached_input_tokens_total,
             output_tokens_total=output_tokens_total,
+            images_total=images_total,
             cost_micros_total=cost_micros_total,
             request_count=request_count,
             error_count=error_count,

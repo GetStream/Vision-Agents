@@ -55,6 +55,8 @@ from .endpointing import Endpointing
 from .error import Error
 from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
+from .generated_image import GeneratedImage
+from .generated_image_media_type import GeneratedImageMediaType
 from .get_conversation_messages_response_200 import GetConversationMessagesResponse200
 from .granularity import Granularity
 from .guest_user import GuestUser
@@ -66,6 +68,13 @@ from .health_status_dependencies import HealthStatusDependencies
 from .health_status_status import HealthStatusStatus
 from .image_content_part import ImageContentPart
 from .image_content_part_type import ImageContentPartType
+from .image_error_code import ImageErrorCode
+from .image_generation import ImageGeneration
+from .image_generation_request import ImageGenerationRequest
+from .image_generation_request_tags import ImageGenerationRequestTags
+from .image_generation_status import ImageGenerationStatus
+from .image_options import ImageOptions
+from .image_options_output_format import ImageOptionsOutputFormat
 from .image_source import ImageSource
 from .image_source_detail import ImageSourceDetail
 from .indexed_knowledge_document import IndexedKnowledgeDocument
@@ -267,6 +276,8 @@ __all__ = (
     "Error",
     "ForkSessionRequest",
     "ForkSessionRequestCustom",
+    "GeneratedImage",
+    "GeneratedImageMediaType",
     "GetConversationMessagesResponse200",
     "Granularity",
     "GuestUser",
@@ -278,6 +289,13 @@ __all__ = (
     "HealthStatusStatus",
     "ImageContentPart",
     "ImageContentPartType",
+    "ImageErrorCode",
+    "ImageGeneration",
+    "ImageGenerationRequest",
+    "ImageGenerationRequestTags",
+    "ImageGenerationStatus",
+    "ImageOptions",
+    "ImageOptionsOutputFormat",
     "ImageSource",
     "ImageSourceDetail",
     "IndexedKnowledgeDocument",

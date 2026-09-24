@@ -2,6 +2,7 @@ from enum import StrEnum
 
 
 class Modality(StrEnum):
+    IMAGE = "image"
     KNOWLEDGE = "knowledge"
     LCM = "lcm"
     LLM = "llm"

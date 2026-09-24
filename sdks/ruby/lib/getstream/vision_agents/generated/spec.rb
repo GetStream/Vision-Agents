@@ -188,6 +188,12 @@ module GetStream
           body: "ForkSessionRequest", body_required: false,
           socket: false, client_accessible: true
         }.freeze,
+        "generateImage" => {
+          method: :post, path: "/v1/image/generations",
+          path_params: [].freeze, query: [].freeze,
+          body: "ImageGenerationRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "getActivity" => {
           method: :get, path: "/v1/stats/activity",
           path_params: [].freeze, query: %w[granularity from to].freeze,
@@ -847,6 +853,10 @@ module GetStream
           properties: %w[agent config_id title description project custom model_overwrites instructions incognito messages response_id call_id].freeze,
           required: [].freeze, open: false
         }.freeze,
+        "GeneratedImage" => {
+          properties: %w[media_type width height seed data].freeze,
+          required: %w[media_type width height data].freeze, open: false
+        }.freeze,
         "GuestUser" => {
           properties: %w[id token name custom expires_at].freeze,
           required: %w[id token].freeze, open: false
@@ -862,6 +872,18 @@ module GetStream
         "ImageContentPart" => {
           properties: %w[type image_url].freeze,
           required: %w[type image_url].freeze, open: false
+        }.freeze,
+        "ImageGeneration" => {
+          properties: %w[id status provider model images cost_micros error_code error].freeze,
+          required: %w[id status images cost_micros].freeze, open: false
+        }.freeze,
+        "ImageGenerationRequest" => {
+          properties: %w[prompt options tags].freeze,
+          required: %w[prompt].freeze, open: false
+        }.freeze,
+        "ImageOptions" => {
+          properties: %w[target providers size aspect_ratio n seed negative_prompt output_format].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "ImageSource" => {
           properties: %w[url detail].freeze,
@@ -1100,8 +1122,8 @@ module GetStream
           required: %w[bucket value cost_micros_total request_count].freeze, open: false
         }.freeze,
         "StatsBucket" => {
-          properties: %w[provider model bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total cost_micros_total request_count error_count latency_p50_ms latency_p95_ms uptime].freeze,
-          required: %w[provider model bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total cost_micros_total request_count error_count].freeze, open: false
+          properties: %w[provider model bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total images_total cost_micros_total request_count error_count latency_p50_ms latency_p95_ms uptime].freeze,
+          required: %w[provider model bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total images_total cost_micros_total request_count error_count].freeze, open: false
         }.freeze,
         "StsOptions" => {
           properties: %w[target providers instructions voice languages turn_detection silence_ms prefix_padding_ms interrupt_response input_transcript output_transcript tools text images data_policy overwrites].freeze,
@@ -1124,8 +1146,8 @@ module GetStream
           required: %w[key value_count cost_micros_total request_count coverage top_values].freeze, open: false
         }.freeze,
         "TagStatsBucket" => {
-          properties: %w[tag_key tag_value bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total cost_micros_total request_count error_count latency_p50_ms latency_p95_ms uptime].freeze,
-          required: %w[tag_key tag_value bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total cost_micros_total request_count error_count].freeze, open: false
+          properties: %w[tag_key tag_value bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total images_total cost_micros_total request_count error_count latency_p50_ms latency_p95_ms uptime].freeze,
+          required: %w[tag_key tag_value bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total images_total cost_micros_total request_count error_count].freeze, open: false
         }.freeze,
         "TagValueSummary" => {
           properties: %w[value cost_micros_total request_count share].freeze,

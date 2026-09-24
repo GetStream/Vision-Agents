@@ -1278,6 +1278,198 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// Where to draw and what the picture should be. A size, shape, seed, negative prompt or format narrows the candidates to the models that declared it, so it is either honoured or the request is refused.
+    /// <br/>
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ImageOptions
+    {
+
+        /// <summary>
+        /// A provider/model or a capability shortcut. Defaults to image-fast.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("target")]
+        public string? Target { get; set; } = default!;
+
+        /// <summary>
+        /// A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("providers")]
+        public System.Collections.Generic.List<string>? Providers { get; set; } = default!;
+
+        /// <summary>
+        /// Width by height in pixels, for the models that take a size.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("size")]
+        public string? Size { get; set; } = default!;
+
+        /// <summary>
+        /// The shape, for the models that are asked for one rather than a size.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("aspect_ratio")]
+        public string? AspectRatio { get; set; } = default!;
+
+        /// <summary>
+        /// How many pictures to draw.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("n")]
+        public int? N { get; set; } = default!;
+
+        /// <summary>
+        /// Draws the same picture again from the same prompt, on a model that reads one.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("seed")]
+        public long? Seed { get; set; } = default!;
+
+        /// <summary>
+        /// What to keep out of the picture.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("negative_prompt")]
+        public string? NegativePrompt { get; set; } = default!;
+
+        /// <summary>
+        /// The encoding, on a model that can be asked for one.
+        /// <br/>
+        /// <br/>One of `png`, `jpeg`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("output_format")]
+        public string? OutputFormat { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ImageGenerationRequest
+    {
+
+        /// <summary>
+        /// What to draw, in the caller's own words.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("prompt")]
+        public string Prompt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("options")]
+        public ImageOptions? Options { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class GeneratedImage
+    {
+
+        /// <summary>
+        /// What the picture is, read off the picture itself rather than the provider's label.
+        /// <br/>
+        /// <br/>One of `image/png`, `image/jpeg`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("media_type")]
+        public string MediaType { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("width")]
+        public int Width { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("height")]
+        public int Height { get; set; } = default!;
+
+        /// <summary>
+        /// The seed the provider reports, which draws the same picture again. Absent when it reports none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("seed")]
+        public long? Seed { get; set; } = default!;
+
+        /// <summary>
+        /// The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("data")]
+        public byte[] Data { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ImageGeneration
+    {
+
+        /// <summary>
+        /// This response's own id, for logs. Nothing is stored under it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = default!;
+
+        /// <summary>
+        /// Who drew it, or who refused to. Absent when nothing got as far as a provider.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string? Provider { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
+
+        /// <summary>
+        /// The pictures, as many as were asked for. Empty when the generation failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("images")]
+        public System.Collections.Generic.List<GeneratedImage> Images { get; set; } = new System.Collections.Generic.List<GeneratedImage>();
+
+        /// <summary>
+        /// Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long CostMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("error_code")]
+        public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// What went wrong, in words. Absent when the generation completed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first.
     /// <br/>
     /// </summary>
@@ -5134,6 +5326,12 @@ namespace GetStream.VisionAgents.Models
         public long OutputTokensTotal { get; set; } = default!;
 
         /// <summary>
+        /// Pictures drawn. Zero outside image.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("images_total")]
+        public long ImagesTotal { get; set; } = default!;
+
+        /// <summary>
         /// Millionths of a dollar, priced from the configured rates.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("cost_micros_total")]
@@ -5195,6 +5393,9 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("output_tokens_total")]
         public long OutputTokensTotal { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("images_total")]
+        public long ImagesTotal { get; set; } = default!;
 
         /// <summary>
         /// Millionths of a dollar, priced from the configured rates.
