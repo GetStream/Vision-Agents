@@ -170,7 +170,7 @@ func (s *LLMRouterSuite) TestLLMThinkingGoesToTheModelItPins() {
 	candidates, err := router.Resolve(s.ctx, "llm-thinking", nil)
 	s.Require().NoError(err)
 
-	s.Equal("openai/gpt-5.6-sol", candidates[0].Config.Name())
+	s.Equal("openai/gpt-6-sol", candidates[0].Config.Name())
 	s.Greater(len(candidates), 1, "the rest of the tier has to stay behind it as failover")
 }
 

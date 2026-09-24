@@ -1428,6 +1428,33 @@ llm:
         per_million_cached_input_tokens: 0.02
         per_million_output_tokens: 1.20
 
+    # GPT-6 Luna, which takes over from GPT-5.6 Luna as what vlm prefers: half the input
+    # price and well under half the output, and Artificial Analysis put it at the lowest cost
+    # per task of any model on their board. OpenAI default it to medium reasoning effort; the
+    # provider asks for none unless a request names one, so the first word of the answer is
+    # the first thing that arrives.
+    #
+    # OpenAI do not train on API traffic unless the organisation opts in, so that half is a
+    # no. Retention is the gap. Abuse-monitoring logs are kept for up to 30 days, but a
+    # response sent without store: false - which is how this provider sends one unless asked
+    # to store it - is kept as application state for "at least 30 days", a floor with no
+    # ceiling, so it is unspecified. Zero Data Retention would bring it to none, and it is an
+    # approval OpenAI grant per organisation rather than a flag sent with a request.
+    - provider: openai
+      model: gpt-6-luna
+      description: "OpenAI's most efficient model, and what Vision prefers. Reads images, and the cheapest OpenAI model here."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 0.10
+        per_million_cached_input_tokens: 0.01
+        per_million_output_tokens: 0.50
+
     # What llm-fast prefers, so this is the model a conversation gets unless it is down. It
     # is the dearest of this tier by some way and its thinking is billed as output, which is
     # why the provider asks for the low thinking level rather than the medium it defaults to.
@@ -1496,12 +1523,12 @@ llm:
         per_million_cached_input_tokens: 0.20
         per_million_output_tokens: 12.00
 
-    # Sol is the frontier tier, and what llm-thinking prefers, so this is the model the
-    # skills run on unless it is down. OpenAI defaults it to medium reasoning effort, which
-    # the provider also sends explicitly when this concrete model is selected.
+    # GPT-5.6 Sol, which GPT-6 Sol below replaces as what llm-thinking prefers. It stays
+    # declared because callers name it outright as their subagent, and a name that is no
+    # longer declared is an unknown target rather than a failover.
     - provider: openai
       model: gpt-5.6-sol
-      description: "OpenAI's frontier model, and what llm-smart prefers. The strongest here and the dearest."
+      description: "OpenAI's previous frontier model, and still what llm-smart prefers. GPT-6 Sol is stronger and cheaper."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1538,6 +1565,46 @@ llm:
         per_million_input_tokens: 4.00
         per_million_cached_input_tokens: 0.20
         per_million_output_tokens: 20.00
+
+    # GPT-6 Sol is built for complex coding and agentic work, and what llm-thinking prefers,
+    # so this is the model the skills run on unless it is down. Artificial Analysis score it
+    # 48 at roughly half the cost per task of GPT-5.6 Sol. OpenAI default it to medium
+    # reasoning effort; the provider asks for none unless a request names one. OpenAI's
+    # account, so the same data policy as GPT-6 Luna above.
+    - provider: openai
+      model: gpt-6-sol
+      description: "OpenAI's model for coding and agentic work, and what llm-thinking prefers. Reads images."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 2.00
+        per_million_cached_input_tokens: 0.20
+        per_million_output_tokens: 10.00
+
+    # GPT-6 Astra is OpenAI's most capable model, for the hardest end-to-end work, and 53 on
+    # the Artificial Analysis Intelligence Index, the top of the non-Anthropic field. It
+    # cannot be told not to think: none is a 400, so the provider asks for low when a request
+    # names no effort. At five times Sol's price nothing prefers it; it is reached by name or
+    # as failover in the quality tier. The same data policy as GPT-6 Luna above.
+    - provider: openai
+      model: gpt-6-astra
+      description: "OpenAI's most capable model, for the hardest reasoning. Always thinks first. The dearest here."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 10.00
+        per_million_cached_input_tokens: 1.00
+        per_million_output_tokens: 50.00
 
   # A title offers a shortcut to someone picking a model, in the order written here, so
   # the one a conversation gets by default comes first.
@@ -1601,7 +1668,7 @@ llm:
 
     vlm:
       require_input_modalities: [image]
-      prefer: openai/gpt-5.6-luna
+      prefer: openai/gpt-6-luna
 
     # What the flow controller runs on: it classifies every transcript revision into one
     # small JSON object saying who holds the floor, and it is asked constantly, including
@@ -1619,12 +1686,12 @@ llm:
     # answer itself. The conversation carries on while it thinks, so this is the shorthand
     # for quality over speed, and nothing here is chosen for how soon it starts.
     #
-    # GPT-5.6 Sol is preferred outright rather than left to the ranking, for the same reason
+    # GPT-6 Sol is preferred outright rather than left to the ranking, for the same reason
     # llm-fast pins its own: the model that does the thinking is the one this deployment
     # chose. The rest of the tier is still here to catch it being down.
     llm-thinking:
       tier: high-quality
-      prefer: openai/gpt-5.6-sol
+      prefer: openai/gpt-6-sol
 
     # What product data is analysed on: the model that reads a week of calls, tickets and
     # threads and writes what customers are asking for. That is a different intent from
