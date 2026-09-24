@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>GetStream.VisionAgents</RootNamespace>
+    <AssemblyName>GetStream.VisionAgents</AssemblyName>
+    <PackageId>getstream-vision-agents-net</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>GetStream</Authors>
+    <Description>Server-side .NET SDK for Stream Vision Agents: configure agents, join calls, answer dispatched calls and messages, and route STT, TTS, LLM and search.</Description>
+    <PackageTags>getstream;vision-agents;voice;agents;stt;tts;llm</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/GetStream/Vision-Agents</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/GetStream/Vision-Agents</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="getstream-net" />
+    <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="GetStream.VisionAgents.Tests" />
+  </ItemGroup>
+
+</Project>
