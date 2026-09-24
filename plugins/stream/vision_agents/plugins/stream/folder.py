@@ -18,6 +18,7 @@ INSTRUCTIONS_FILE = "instructions.md"
 GUARDRAIL_FILE = "guardrail.md"
 SKILLS_DIR = "skills"
 KNOWLEDGE_DIR = "knowledge"
+KNOWLEDGE_URLS_FILE = "urls.yaml"
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,15 @@ class Document:
 
     source: str
     text: str
+
+
+@dataclass
+class KnowledgeURL:
+    """One page from `knowledge/urls.yaml`, which the knowledge base is kept filled from."""
+
+    url: str
+    title: str = ""
+    description: str = ""
 
 
 @dataclass
@@ -82,6 +92,7 @@ class Folder:
           guardrail.md
           skills/think.md
           knowledge/pricing.md
+          knowledge/urls.yaml
     """
 
     path: Path
@@ -94,15 +105,17 @@ class Folder:
     guardrail: str = ""
     skills: list[Skill] = field(default_factory=list)
     knowledge: list[Document] = field(default_factory=list)
+    knowledge_urls: list[KnowledgeURL] = field(default_factory=list)
 
     def knowledge_namespace(self) -> str:
         """Where the directory's knowledge is looked up, which is the agent's own name."""
-        if not self.knowledge:
+        if not self.knowledge and not self.knowledge_urls:
             return ""
         return self.name
 
     def hash(self) -> str:
-        """A fingerprint of the directory. The same files produce the same hash."""
+        """A fingerprint of the directory. The same files produce the same hash, and the
+        Go SDK takes it the same way."""
         hasher = hashlib.md5()
         hasher.update(self.declaration.encode())
         hasher.update(b"\n")
@@ -125,25 +138,34 @@ class Folder:
             hasher.update(document.source.encode())
             hasher.update(b"\n")
             hasher.update(document.text.encode())
+        for page in self.knowledge_urls:
+            hasher.update(b"\nurl:")
+            hasher.update(page.url.encode())
+            hasher.update(b"\n")
+            hasher.update(page.title.encode())
+            hasher.update(b"\n")
+            hasher.update(page.description.encode())
         return hasher.hexdigest()
 
 
 def load(path: str | Path) -> Folder:
     """Read an agent directory.
 
-    Everything but the name is optional: a directory with only instructions.md is a
-    valid agent, and so is one with only skills.
+    `agent.yaml` is what makes a directory an agent, so it is required. Everything else
+    is optional: a directory with only instructions.md beside it is a valid agent, and
+    so is one with only skills.
     """
     root = Path(path)
     if not root.is_dir():
         raise ValueError(f"{root} is not an agent directory")
+    declaration = root / AGENT_FILE
+    if not declaration.is_file():
+        raise ValueError(f"{root} has no {AGENT_FILE}, so it is not an agent directory")
 
     folder = Folder(path=root, name=root.name)
-    declaration = root / AGENT_FILE
-    if declaration.is_file():
-        folder.declaration = declaration.read_text().strip()
-        folder.settings = _declare(declaration)
-        folder.name = folder.settings.name or root.name
+    folder.declaration = declaration.read_text().strip()
+    folder.settings = _declare(declaration)
+    folder.name = folder.settings.name or root.name
     instructions = root / INSTRUCTIONS_FILE
     if instructions.is_file():
         folder.instructions = instructions.read_text().strip()
@@ -152,6 +174,9 @@ def load(path: str | Path) -> Folder:
         folder.guardrail = guardrail.read_text().strip()
     folder.skills = _load_skills(root / SKILLS_DIR)
     folder.knowledge = _load_knowledge(root / KNOWLEDGE_DIR)
+    folder.knowledge_urls = _load_knowledge_urls(
+        root / KNOWLEDGE_DIR / KNOWLEDGE_URLS_FILE
+    )
     return folder
 
 
@@ -213,14 +238,14 @@ def read_stamp(path: Path, filename: str) -> str:
         return ""
     if not isinstance(recorded, dict):
         return ""
-    return str(recorded.get("md5", ""))
+    return str(recorded.get("hash", ""))
 
 
-def write_stamp(path: Path, filename: str, md5: str) -> None:
+def write_stamp(path: Path, filename: str, fingerprint: str) -> None:
     """Record what was synced and when, so a second launch can do nothing."""
     stamp = path / filename
     synced_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    stamp.write_text(json.dumps({"md5": md5, "synced_at": synced_at}) + "\n")
+    stamp.write_text(json.dumps({"hash": fingerprint, "synced_at": synced_at}) + "\n")
 
 
 def _declare(path: Path) -> Settings:
@@ -396,6 +421,10 @@ def _load_knowledge(path: Path) -> list[Document]:
             file = Path(dirpath) / filename
             if file.suffix.lower() not in _READABLE:
                 continue
+            # The declaration of what pages to read is not itself something to look
+            # things up in. Only the one at the root is; deeper, it is a document.
+            if file == path / KNOWLEDGE_URLS_FILE:
+                continue
             text = file.read_text()
             if not text.strip():
                 continue
@@ -403,3 +432,38 @@ def _load_knowledge(path: Path) -> list[Document]:
             documents.append(Document(source=source, text=text))
     documents.sort(key=lambda item: item.source)
     return documents
+
+
+def _load_knowledge_urls(path: Path) -> list[KnowledgeURL]:
+    """Read the pages a knowledge base is kept filled from, as urls or mappings.
+
+    A bad url or a key nobody knows is refused here, before anything is written.
+    """
+    if not path.is_file():
+        return []
+    declared = yaml.safe_load(path.read_text()) or []
+    if not isinstance(declared, list):
+        raise ValueError(f"{path} should list pages")
+
+    pages: list[KnowledgeURL] = []
+    for item in declared:
+        if isinstance(item, str):
+            page = KnowledgeURL(url=item)
+        elif isinstance(item, dict):
+            extra = set(item) - {"url", "title", "description"}
+            if extra:
+                raise ValueError(
+                    f"{path}: {sorted(extra)[0]!r} is not something a page says; "
+                    "url, title and description are"
+                )
+            page = KnowledgeURL(
+                url=_word(item.get("url")),
+                title=_word(item.get("title")),
+                description=_word(item.get("description")),
+            )
+        else:
+            raise ValueError(f"{path}: a page is a url, or a mapping naming one")
+        if not page.url.startswith(("http://", "https://")):
+            raise ValueError(f"{path}: {page.url!r} is not an http or https url")
+        pages.append(page)
+    return pages

@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.knowledge_document import KnowledgeDocument
+    from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
     from ..models.session_video import SessionVideo
     from ..models.skill_request import SkillRequest
     from ..models.sync_agent_request_tags import SyncAgentRequestTags
@@ -35,6 +36,8 @@ class SyncAgentRequest:
                 policy in prose. Empty means every turn is answered.
             skills (list[SkillRequest] | Unset):
             knowledge (list[KnowledgeDocument] | Unset):
+            knowledge_urls (list[KnowledgeUrlDeclaration] | Unset): The pages the directory's knowledge/urls.yaml declares.
+                They are subscribed to in the same knowledge base as the files, so one lookup covers both.
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
                 speech target and a session created from it needs no call to join.
@@ -62,6 +65,7 @@ class SyncAgentRequest:
     guardrail: str | Unset = UNSET
     skills: list[SkillRequest] | Unset = UNSET
     knowledge: list[KnowledgeDocument] | Unset = UNSET
+    knowledge_urls: list[KnowledgeUrlDeclaration] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
     stt: str | Unset = UNSET
     tts: str | Unset = UNSET
@@ -100,6 +104,13 @@ class SyncAgentRequest:
             for knowledge_item_data in self.knowledge:
                 knowledge_item = knowledge_item_data.to_dict()
                 knowledge.append(knowledge_item)
+
+        knowledge_urls: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.knowledge_urls, Unset):
+            knowledge_urls = []
+            for knowledge_urls_item_data in self.knowledge_urls:
+                knowledge_urls_item = knowledge_urls_item_data.to_dict()
+                knowledge_urls.append(knowledge_urls_item)
 
         mode: str | Unset = UNSET
         if not isinstance(self.mode, Unset):
@@ -157,6 +168,8 @@ class SyncAgentRequest:
             field_dict["skills"] = skills
         if knowledge is not UNSET:
             field_dict["knowledge"] = knowledge
+        if knowledge_urls is not UNSET:
+            field_dict["knowledge_urls"] = knowledge_urls
         if mode is not UNSET:
             field_dict["mode"] = mode
         if stt is not UNSET:
@@ -191,6 +204,9 @@ class SyncAgentRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.knowledge_document import KnowledgeDocument
+        from ..models.knowledge_url_declaration import (
+            KnowledgeUrlDeclaration,
+        )
         from ..models.session_video import SessionVideo
         from ..models.skill_request import SkillRequest
         from ..models.sync_agent_request_tags import (
@@ -223,6 +239,17 @@ class SyncAgentRequest:
                 knowledge_item = KnowledgeDocument.from_dict(knowledge_item_data)
 
                 knowledge.append(knowledge_item)
+
+        _knowledge_urls = d.pop("knowledge_urls", UNSET)
+        knowledge_urls: list[KnowledgeUrlDeclaration] | Unset = UNSET
+        if _knowledge_urls is not UNSET:
+            knowledge_urls = []
+            for knowledge_urls_item_data in _knowledge_urls:
+                knowledge_urls_item = KnowledgeUrlDeclaration.from_dict(
+                    knowledge_urls_item_data
+                )
+
+                knowledge_urls.append(knowledge_urls_item)
 
         _mode = d.pop("mode", UNSET)
         mode: AgentMode | Unset
@@ -279,6 +306,7 @@ class SyncAgentRequest:
             guardrail=guardrail,
             skills=skills,
             knowledge=knowledge,
+            knowledge_urls=knowledge_urls,
             mode=mode,
             stt=stt,
             tts=tts,

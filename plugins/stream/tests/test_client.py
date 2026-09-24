@@ -41,6 +41,7 @@ class Router:
         app.router.add_post("/v1/agents/sessions/{id}/responses", self._respond)
         app.router.add_get("/v1/agents/sessions/{id}/responses", self._responses)
         app.router.add_get("/v1/agents/sessions/{id}/responses/items", self._items)
+        app.router.add_post("/v1/agents/sessions/{id}/rewind", self._rewind)
         app.router.add_post("/v1/agents/guests", self._guest)
         app.router.add_post("/v1/agents/guests/claim", self._claim)
         app.router.add_get("/v1/agents/sessions/{id}/events", self._events)
@@ -101,6 +102,18 @@ class Router:
         page = self.pages[self.given]
         self.given += 1
         return web.json_response(page)
+
+    async def _rewind(self, request: web.Request) -> web.Response:
+        await self._record(request)
+        # A persistent conversation is what the real router refuses to rewind.
+        if request.match_info["id"] == "persistent":
+            return web.json_response(
+                status=400,
+                data={
+                    "error": "a persistent conversation keeps its transcript in Chat"
+                },
+            )
+        return web.Response(status=204)
 
     async def _guest(self, request: web.Request) -> web.Response:
         await self._record(request)
@@ -324,6 +337,47 @@ class TestResponses:
         assert [turn.id for turn in turns] == ["response-1"]
         assert router.requests("GET", "/v1/agents/sessions/session-9/responses") == 1
 
+    async def test_rewinding_carries_on_from_the_response_given(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create()
+        try:
+            answer = await session.responses.create("Is Stream better?")
+            await session.responses.rewind(answer)
+        finally:
+            await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions/session-1/rewind")
+        assert body == {"response_id": "response-1"}
+
+    async def test_rewinding_to_an_item_goes_back_to_its_response(
+        self, api: stream.Client, router: Router
+    ):
+        router.pages = [[_item(0)]]
+        responses = api.agent("docs").sessions.responses("session-1")
+        [item] = await responses.items.all()
+
+        await responses.rewind(item)
+
+        body = router.body("POST", "/v1/agents/sessions/session-1/rewind")
+        assert body == {"response_id": "response-1"}
+
+    async def test_a_rewind_the_router_refuses_is_raised(
+        self, api: stream.Client, router: Router
+    ):
+        responses = api.agent("docs").sessions.responses("persistent")
+
+        with pytest.raises(stream.RouterError, match="transcript in Chat"):
+            await responses.rewind("response-1")
+
+    async def test_a_response_that_was_never_recorded_cannot_be_rewound_to(
+        self, api: stream.Client
+    ):
+        responses = api.agent("docs").sessions.responses("session-1")
+
+        with pytest.raises(ValueError, match="no id"):
+            await responses.rewind("")
+
 
 class TestFork:
     async def test_forking_continues_the_conversation_as_a_new_one(
@@ -362,6 +416,20 @@ class TestFork:
             router.body("POST", "/v1/agents/sessions/session-1/fork")["messages"]
             is False
         )
+
+    async def test_forking_at_a_response_branches_from_there(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create()
+        try:
+            forked = await session.fork(stream.ForkOptions(response_id="response-1"))
+            await forked.close()
+        finally:
+            await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions/session-1/fork")
+        assert body["response_id"] == "response-1"
+        assert body["messages"] is True
 
     async def test_a_fork_inherits_the_parents_functions(
         self, api: stream.Client, router: Router

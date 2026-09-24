@@ -469,6 +469,10 @@ class Accelerated(OmniLLM):
         call_id = frame.get("id", "")
         name = frame.get("name", "")
         result: dict[str, Any] = {"type": "tool_result", "tool_call_id": call_id}
+        # A durable command's result is only accepted back with the command and turn it names.
+        for key in ("command_id", "turn_id"):
+            if frame.get(key):
+                result[key] = frame[key]
 
         try:
             arguments = json.loads(frame.get("arguments") or "{}")

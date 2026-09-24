@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional, Union
 
 from ._backend import Backend
-from ._generated.api.default import create_response, list_response_items, list_responses
+from ._generated.api.default import (
+    create_response,
+    list_response_items,
+    list_responses,
+    rewind_session,
+)
 from ._generated.models import (
     AgentResponse as ResponseRow,
     AgentResponseItem,
     CreateResponseRequest,
     Error,
     ImageSource,
+    RewindSessionRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -142,6 +148,37 @@ class Responses:
             **_set(limit=limit, offset=offset),
         )
         return _unwrapped(listed, f"reading the turns of {self._session_id}")
+
+    async def rewind(
+        self, to: Union[AgentResponse, ResponseRow, AgentResponseItem, str]
+    ) -> None:
+        """Go back to a response and carry on from there.
+
+        The reply being spoken is abandoned and the conversation continues as though nothing
+        after that response had been said: later turns are no longer listed, and the next
+        question is answered from that point. The response itself is kept. A persistent
+        conversation cannot be rewound, because its transcript lives in Chat; fork it at the
+        response instead.
+
+        Args:
+            to: The response to carry on from, any item of it, or its id.
+        """
+        response_id = to.response_id if isinstance(to, AgentResponseItem) else to
+        if not isinstance(response_id, str):
+            response_id = response_id.id
+        if not response_id:
+            raise ValueError(
+                "that response has no id, which is what a session that records nothing "
+                "hands back; there is nothing to rewind to"
+            )
+
+        answered = await rewind_session.asyncio(
+            self._session_id,
+            client=self._backend.client(),
+            body=RewindSessionRequest(response_id=response_id),
+        )
+        if isinstance(answered, Error):
+            raise RouterError(f"rewinding {self._session_id}: {answered.error}")
 
 
 def _unwrapped(answer: Any, what: str) -> Any:

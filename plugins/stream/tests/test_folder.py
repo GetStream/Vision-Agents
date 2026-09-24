@@ -152,6 +152,7 @@ class TestFolder:
 
     def test_a_skill_without_a_description_is_refused(self, tmp_path: Path):
         root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
         write(
             root,
             "skills/think.md",
@@ -163,6 +164,7 @@ class TestFolder:
 
     def test_nested_knowledge_keeps_the_path_it_was_found_at(self, tmp_path: Path):
         root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
         write(root, "knowledge/reference/api.md", "# API\n\nthe endpoints\n")
         write(root, "knowledge/logo.png", "not a document")
         write(root, "knowledge/empty.md", "   \n")
@@ -172,6 +174,65 @@ class TestFolder:
         assert [document.source for document in folder.knowledge] == [
             "reference/api.md"
         ]
+
+    def test_declared_pages_are_read_without_being_ingested(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            "- https://example.com/pricing\n"
+            "- url: https://example.com/plans\n"
+            "  title: Plans\n"
+            "  description: What each plan includes.\n",
+        )
+        write(root, "knowledge/reference/urls.yaml", "the urls we used to have\n")
+
+        folder = load(root)
+
+        assert [document.source for document in folder.knowledge] == [
+            "reference/urls.yaml"
+        ]
+        assert [(page.url, page.title) for page in folder.knowledge_urls] == [
+            ("https://example.com/pricing", ""),
+            ("https://example.com/plans", "Plans"),
+        ]
+        assert folder.knowledge_urls[1].description == "What each plan includes."
+        assert folder.knowledge_namespace() == "jean"
+
+    @pytest.mark.parametrize(
+        "declaration",
+        [
+            "- example.com/pricing\n",
+            "- url: https://example.com/plans\n  heading: Plans\n",
+            "- [https://example.com/plans]\n",
+        ],
+    )
+    def test_a_page_that_cannot_be_fetched_or_described_is_refused(
+        self, tmp_path: Path, declaration: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "knowledge/urls.yaml", declaration)
+
+        with pytest.raises(ValueError):
+            load(root)
+
+    def test_declaring_a_page_changes_the_hash(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        before = load(root).hash()
+
+        write(root, "knowledge/urls.yaml", "- https://example.com/plans\n")
+
+        assert load(root).hash() != before
+
+    def test_a_directory_without_a_declaration_cannot_be_loaded(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "instructions.md", "You are Jean.\n")
+
+        with pytest.raises(ValueError, match="agent.yaml"):
+            load(root)
 
     def test_resolve_finds_examples_voice_agents(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

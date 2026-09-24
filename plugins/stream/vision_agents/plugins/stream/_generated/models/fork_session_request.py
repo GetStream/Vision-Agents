@@ -43,6 +43,10 @@ class ForkSessionRequest:
                 was already said. False starts the same configuration over from nothing, which is what comparing two answers to
                 the same opening question wants.
                  Default: True.
+            response_id (str | Unset): Carry the parent's history only up to the end of this response, so the fork continues
+                from that point rather than from where the parent is now. The history is read from what the parent recorded,
+                which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with
+                messages false.
             call_id (str | Unset): The call the fork joins. A voice session cannot be forked into a text one or the other
                 way about, so this is required when the parent held a call and refused when it did not.
     """
@@ -57,6 +61,7 @@ class ForkSessionRequest:
     instructions: str | Unset = UNSET
     incognito: bool | Unset = UNSET
     messages: bool | Unset = True
+    response_id: str | Unset = UNSET
     call_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -85,6 +90,8 @@ class ForkSessionRequest:
 
         messages = self.messages
 
+        response_id = self.response_id
+
         call_id = self.call_id
 
         field_dict: dict[str, Any] = {}
@@ -110,6 +117,8 @@ class ForkSessionRequest:
             field_dict["incognito"] = incognito
         if messages is not UNSET:
             field_dict["messages"] = messages
+        if response_id is not UNSET:
+            field_dict["response_id"] = response_id
         if call_id is not UNSET:
             field_dict["call_id"] = call_id
 
@@ -153,6 +162,8 @@ class ForkSessionRequest:
 
         messages = d.pop("messages", UNSET)
 
+        response_id = d.pop("response_id", UNSET)
+
         call_id = d.pop("call_id", UNSET)
 
         fork_session_request = cls(
@@ -166,6 +177,7 @@ class ForkSessionRequest:
             instructions=instructions,
             incognito=incognito,
             messages=messages,
+            response_id=response_id,
             call_id=call_id,
         )
 

@@ -129,6 +129,8 @@ class ForkOptions:
             it did not: a voice conversation cannot be forked into a written one.
         messages: Carry the parent's history across. False starts the same configuration over
             from nothing, which is what comparing two answers to one opening question wants.
+        response_id: Carry the history only up to the end of this response, so the fork
+            branches from that point rather than from where the parent is now.
     """
 
     agent: str = ""
@@ -141,6 +143,7 @@ class ForkOptions:
     model_overwrites: Optional[ModelOverwrites] = None
     call_id: str = ""
     messages: bool = True
+    response_id: str = ""
 
     interim: bool = False
     decisions: bool = False
@@ -412,6 +415,7 @@ class Session:
             "project",
             "instructions",
             "call_id",
+            "response_id",
         ):
             if getattr(options, name):
                 setattr(request, name, getattr(options, name))
@@ -567,6 +571,10 @@ class Session:
             "type": "tool_result",
             "tool_call_id": frame.get("id", ""),
         }
+        # A durable command's result is only accepted back with the command and turn it names.
+        for key in ("command_id", "turn_id"):
+            if frame.get(key):
+                result[key] = frame[key]
         try:
             arguments = json.loads(frame.get("arguments") or "{}")
             output = await self._functions.call_function(name, arguments)

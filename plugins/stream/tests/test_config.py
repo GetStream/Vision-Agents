@@ -15,7 +15,14 @@ EXPLAIN = Skill(
 
 # What a sync request carries because the directory holds it, as opposed to what the
 # declaration decided. Everything else in the body is a setting.
-DIRECTORY_CONTENTS = {"name", "hash", "instructions", "skills", "knowledge"}
+DIRECTORY_CONTENTS = {
+    "name",
+    "hash",
+    "instructions",
+    "skills",
+    "knowledge",
+    "knowledge_urls",
+}
 
 
 class Router:
@@ -98,6 +105,9 @@ class Router:
             self._store(self.skills, skill)
         if body.get("knowledge"):
             self.knowledge.append(body["knowledge"])
+        for page in body.get("knowledge_urls") or []:
+            self.pages.append({"namespace": body["name"], **page})
+        has_knowledge = bool(body.get("knowledge") or body.get("knowledge_urls"))
 
         # What the declaration named is applied over what is already stored, the way the
         # router does it: a directory that names no model leaves the one it found.
@@ -112,7 +122,7 @@ class Router:
                 "name": body["name"],
                 "instructions": body.get("instructions", ""),
                 "skills": [skill["name"] for skill in skills],
-                "knowledge_namespace": body["name"] if body.get("knowledge") else "",
+                "knowledge_namespace": body["name"] if has_knowledge else "",
                 "sync_hash": body["hash"],
                 **declared,
             },
@@ -367,6 +377,30 @@ class TestSyncAgent:
         assert stored["skills"] == ["refund"]
         assert stored["knowledge_namespace"] == "support"
         assert router.knowledge[0][0]["source"] == "policy.md"
+
+    async def test_a_directorys_pages_are_synced_with_it(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "knowledge" / "urls.yaml").write_text(
+            "- https://example.com/pricing\n"
+            "- url: https://example.com/plans\n  title: Plans\n"
+        )
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.pages == [
+            {"namespace": "support", "url": "https://example.com/pricing"},
+            {
+                "namespace": "support",
+                "url": "https://example.com/plans",
+                "title": "Plans",
+            },
+        ]
+        assert [document["source"] for document in router.knowledge[0]] == [
+            "policy.md"
+        ], "the declaration of pages is not itself looked things up in"
 
     async def test_syncing_the_same_directory_twice_does_nothing(
         self, router: Router, support_dir

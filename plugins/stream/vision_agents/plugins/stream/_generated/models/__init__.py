@@ -75,6 +75,7 @@ from .instructions_request import InstructionsRequest
 from .knowledge_document import KnowledgeDocument
 from .knowledge_passage import KnowledgePassage
 from .knowledge_url import KnowledgeUrl
+from .knowledge_url_declaration import KnowledgeUrlDeclaration
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
 from .library_voice import LibraryVoice
@@ -115,6 +116,7 @@ from .provider_health import ProviderHealth
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
 from .respond_request import RespondRequest
+from .rewind_session_request import RewindSessionRequest
 from .rollup_request import RollupRequest
 from .rollup_result import RollupResult
 from .route import Route
@@ -285,6 +287,7 @@ __all__ = (
     "KnowledgeDocument",
     "KnowledgePassage",
     "KnowledgeUrl",
+    "KnowledgeUrlDeclaration",
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
     "LibraryVoice",
@@ -325,6 +328,7 @@ __all__ = (
     "RecordingSource",
     "RecordingStatus",
     "RespondRequest",
+    "RewindSessionRequest",
     "RollupRequest",
     "RollupResult",
     "Route",

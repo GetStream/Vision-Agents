@@ -21,6 +21,7 @@ from ._generated.models import (
     AgentMode,
     Error,
     KnowledgeDocument,
+    KnowledgeUrlDeclaration,
     SkillRequest,
     SessionVideo,
     SyncAgentRequest,
@@ -100,6 +101,16 @@ async def sync_agent(
         body.skills = skills
     if knowledge:
         body.knowledge = knowledge
+    if folder.knowledge_urls:
+        pages = []
+        for page in folder.knowledge_urls:
+            declared = KnowledgeUrlDeclaration(url=page.url)
+            if page.title:
+                declared.title = page.title
+            if page.description:
+                declared.description = page.description
+            pages.append(declared)
+        body.knowledge_urls = pages
     _declare_settings(body, folder.settings)
 
     result = _answer(await sync_agent_request.asyncio(client=client, body=body))
