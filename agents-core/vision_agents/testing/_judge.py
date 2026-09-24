@@ -4,14 +4,13 @@ Defines the ``Judge`` protocol and the default ``LLMJudge`` implementation
 that uses a separate LLM instance with a structured JSON prompt.
 """
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from vision_agents.core.llm.llm import LLM
 from vision_agents.testing import ChatMessageEvent
-from vision_agents.testing._utils import collect_simple_response
+from vision_agents.testing._utils import collect_simple_response, parse_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +29,10 @@ _JUDGE_SYSTEM_PROMPT = (
 )
 
 
+class JudgeError(Exception):
+    """The judge could not produce a verdict (LLM failure or malformed output)."""
+
+
 @dataclass
 class JudgeVerdict:
     """Result of a judge evaluation."""
@@ -43,7 +46,11 @@ class Judge(Protocol):
     """Evaluates whether an agent message fulfils a given intent."""
 
     async def evaluate(self, event: ChatMessageEvent, intent: str) -> JudgeVerdict:
-        """Return a verdict for *event* against *intent*."""
+        """Return a verdict for *event* against *intent*.
+
+        Raises:
+            JudgeError: If the judge itself fails rather than the message.
+        """
         ...
 
 
@@ -83,43 +90,42 @@ class LLMJudge:
             _, response = await collect_simple_response(
                 self._llm.simple_response(text=prompt)
             )
-
-            if not response.text:
-                return JudgeVerdict(
-                    success=False, reason="LLM returned an empty response."
-                )
-
-            return self._parse_verdict(response.text)
-
         except (OSError, ValueError, RuntimeError) as exc:
             logger.exception("Judge evaluation failed")
-            return JudgeVerdict(success=False, reason=f"Judge evaluation error: {exc}")
+            raise JudgeError(f"Judge evaluation error: {exc}") from exc
+
+        if not response.text:
+            raise JudgeError("Judge LLM returned an empty response.")
+
+        return self._parse_verdict(response.text)
 
     @staticmethod
     def _parse_verdict(text: str) -> JudgeVerdict:
-        """Parse a JSON verdict from the LLM response text."""
-        cleaned = text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        """Parse a JSON verdict from the LLM response text.
 
+        Raises:
+            JudgeError: If the text is not a recognisable verdict.
+        """
         try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError:
-            logger.exception("Could not parse JSON from LLM response")
-            return JudgeVerdict(
-                success=False,
-                reason=f"Could not parse JSON from LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}",
-            )
+            data = parse_json_object(text)
+        except ValueError as exc:
+            raise JudgeError(
+                f"Could not parse JSON from LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}"
+            ) from exc
 
-        verdict = data.get("verdict", "").lower()
+        verdict = data.get("verdict")
         reason = data.get("reason", "")
+        if not isinstance(verdict, str) or not isinstance(reason, str):
+            raise JudgeError(
+                f"Malformed verdict in LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}"
+            )
+        verdict = verdict.lower()
 
         if verdict == "pass":
             return JudgeVerdict(success=True, reason=reason or "Passed.")
         if verdict == "fail":
             return JudgeVerdict(success=False, reason=reason or "Failed.")
 
-        return JudgeVerdict(
-            success=False,
-            reason=f"Unknown verdict '{verdict}' in LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}",
+        raise JudgeError(
+            f"Unknown verdict '{verdict}' in LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}"
         )

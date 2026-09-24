@@ -24,13 +24,62 @@ Verify tool calls::
             verdict = await judge.evaluate(response.chat_messages[0], intent="Reports weather for Tokyo")
             assert verdict.success, verdict.reason
 
+Simulate a multi-turn conversation from a YAML scenario::
+
+    async def test_reschedule():
+        scenario = load_scenario("scenarios/reschedule.yaml")
+        simulation = Simulation(user_llm=lambda: gemini.LLM(MODEL))
+        result = await simulation.run(
+            lambda: setup_llm(MODEL),
+            scenario,
+            LLMJudge(gemini.LLM(MODEL)),
+            instructions=INSTRUCTIONS,
+        )
+        assert result.passed, result.summary()
+
+A scenario file holds one scenario::
+
+    name: reschedule-appointment
+    mode: text
+    persona:
+      impatient: true
+    context:
+      name: Alice
+      appointment: Tuesday 3pm
+    goal: Move appointment to Friday morning.
+    constraints:
+      - Reject anything after 11am.
+    success:
+      - appointment_rescheduled
+      - correct_time_confirmed
+    variations: 1
+    repeat: 1
+
+``variations: N`` holds N conversations with reworded briefs (the first is
+always the scenario as written). ``repeat: k`` runs each variation k times
+and reports ``pass@k`` and ``pass^k``. A judge failure marks a trial invalid
+rather than failed. LLMs keep chat history, so pass factories (``lambda:
+gemini.LLM(...)``) whenever a scenario runs more than one conversation.
+
+For pytest, register ``vision_agents.testing.pytest_plugin`` and use the
+``simulate`` fixture; see that module's docstring.
+
 Key exports:
     TestSession: async context manager that wraps an LLM for testing.
     TestResponse: returned by ``simple_response()`` — carries events and assertions.
     Judge: protocol for intent evaluation strategies.
     JudgeVerdict: dataclass returned by ``Judge.evaluate()``.
+    JudgeError: raised by a judge that could not produce a verdict.
     LLMJudge: default judge backed by an LLM instance.
     RunEvent: union of ChatMessageEvent, FunctionCallEvent, FunctionCallOutputEvent.
+    Scenario: validated scenario definition; ``load_scenario`` reads one from YAML.
+    SimulatedUser: LLM that plays the user from a scenario brief.
+    Simulation: runs scenarios against an agent or LLM and judges the outcome.
+    SimulationResult: trials plus ``passed``, ``pass_rate``, ``pass_at_k``, ``pass_pow_k``.
+    Trial: one conversation — transcript, tool calls, turns, latencies, verdicts.
+    Turn: one user message and the agent's ``TestResponse``.
+    generate_variations: reword a scenario N times keeping every fact.
+    pass_at_k, pass_pow_k: estimators used for repeat reporting.
 """
 
 from vision_agents.testing._events import (
@@ -39,13 +88,26 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
-from vision_agents.testing._judge import Judge, JudgeVerdict, LLMJudge
+from vision_agents.testing._judge import Judge, JudgeError, JudgeVerdict, LLMJudge
 from vision_agents.testing._run_result import TestResponse
+from vision_agents.testing._scenario import Scenario, load_scenario
 from vision_agents.testing._session import TestSession
+from vision_agents.testing._simulated_user import SimulatedUser, SimulatedUserError
+from vision_agents.testing._simulation import (
+    Simulation,
+    SimulationResult,
+    Trial,
+    Turn,
+    pass_at_k,
+    pass_pow_k,
+    render_transcript,
+)
 from vision_agents.testing._utils import collect_simple_response
+from vision_agents.testing._variations import generate_variations
 
 __all__ = [
     "Judge",
+    "JudgeError",
     "JudgeVerdict",
     "LLMJudge",
     "TestSession",
@@ -54,5 +116,17 @@ __all__ = [
     "FunctionCallEvent",
     "FunctionCallOutputEvent",
     "RunEvent",
+    "Scenario",
+    "load_scenario",
+    "SimulatedUser",
+    "SimulatedUserError",
+    "Simulation",
+    "SimulationResult",
+    "Trial",
+    "Turn",
+    "generate_variations",
+    "pass_at_k",
+    "pass_pow_k",
+    "render_transcript",
     "collect_simple_response",
 ]

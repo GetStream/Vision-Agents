@@ -6449,6 +6449,7 @@ dependencies = [
     { name = "onnxruntime" },
     { name = "pillow" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "urllib3" },
     { name = "uvicorn" },
 ]
@@ -6601,6 +6602,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-json-report", marker = "extra == 'dev'" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "redis", extras = ["hiredis"], marker = "extra == 'redis'", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "urllib3", specifier = ">=2.6.3" },
