@@ -6,6 +6,10 @@ description: How to build an SDK for the acceleration backend
 * we use openAPI, so generate your SDK from the openAPI spec
 * some endpoints are server side only. such as configuring agents, or listening to agent dispatch
 
+## Supported SDKs
+
+Client side: JS, swift, kotlin, dart/flutter
+Backend: Go, .net, Ruby, .net, Rust, PHP, Node
 
 ## SDK best practices
 
@@ -22,18 +26,23 @@ The structure of an agent folder is like this
 
 - agent.yaml (use this to detect/validate the folder for syncing)
 - instructions.md
-- guardrails.md
+- guardrail.md
 - skills 
 - knowledge (markdown files and urls)
 
 For a router a folder can also contain router.yaml
 
 Every backend SDK has a sync method which syncs the folder to the go acceleration backend
-In agent.yaml store the sync status:
+In .agent_sync store the sync status:
 - hash of the files last synced
 - when the last sync happened
 
 This setup prevents duplicate syncs when they nothing changed.
+
+## SDK updates
+
+For each sdk, have an .sdk_update_log folder which stores a copy of this skill, and the openAPI spec that was last used when updating the SDK
+this makes it easier to update an SDK and know that you just need to add a few fields etc. 
 
 ## Client side SDKs
 

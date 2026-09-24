@@ -197,9 +197,11 @@ would have to be found and undone by whoever fixes it.
   number.
 - What is written in code wins over what a `folder` says. A directory is a starting point.
 - `sync` uses **`POST /v1/agents/sync`**, one request carrying the whole directory, not the
-  configs/skills/knowledge sequence the Go SDK hand-rolls. It sends a SHA-256 `fingerprint` of
-  everything in the body, so syncing on startup does nothing when nothing changed, and it
-  writes the knowledge urls only when the router says something did.
+  configs/skills/knowledge sequence, with the directory's knowledge urls as `knowledge_urls` in
+  the same body. It sends a SHA-256 `fingerprint` of everything in the body, and a folder
+  from `loadFolder` records it in `.agent_sync`, so syncing on startup sends nothing when
+  nothing changed. The stamp's file access is handed in as `Folder.stamp` by `./node`, which
+  keeps `Agent.sync` free of `node:fs` in the browser entry.
 - `resolveConfig` turns a config *name* into an id once and caches it. A name matching nothing
   stored is passed through, because it is then either an id or a mistake the router can report
   better than a guess here.

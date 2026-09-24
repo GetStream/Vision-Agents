@@ -14,6 +14,8 @@ When running an agent using @acceleration/ or an example using @acceleration/ re
 | `sdks/swift/`     | Three iOS packages: `core` (state and API), `ui` (SwiftUI), `rtc` (voice over Stream Video) |
 | `examples/voice_agents/` | Runnable agents. `simple_voice_ai` is the smallest one                  |
 | `tui/`            | Go terminal UI for a conversation with an agent: the terminal counterpart of `dashboard/` |
+| `sdks/kotlin/`, `sdks/dart/` | Client-side SDKs for Android and Flutter, each a core, ui and rtc package like Swift's |
+| `sdks/dotnet/`, `sdks/ruby/`, `sdks/rust/`, `sdks/php/` | Server-side SDKs: agents, dispatch, folder sync and the router. Built and tested in Docker; each has an `sdk-<lang>` skill |
 | `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
 
 ## Local dev
