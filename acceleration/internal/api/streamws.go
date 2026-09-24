@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -40,8 +41,8 @@ const startWait = 30 * time.Second
 //
 // It is the same routers a session uses. What differs is only who holds the conversation:
 // here the caller does, and the router is one piece of their pipeline rather than the
-// whole of it. Four of them are sockets, and search and the two recording jobs are plain
-// requests, because nothing about them arrives in pieces.
+// whole of it. Four of them are sockets, and search, image generation and the two
+// recording jobs are plain requests, because nothing about them arrives in pieces.
 type Streams struct {
 	STT *sttrouter.Router
 	TTS *ttsrouter.Router
@@ -55,6 +56,8 @@ type Streams struct {
 	// vendor rather than the streaming one.
 	Transcriptions *sttrouter.Recordings
 	Speech         *ttsrouter.Recordings
+	// Image draws pictures at /v1/image/generations.
+	Image *imagerouter.Router
 }
 
 // start is the first frame on every modality socket. It says what to route to and what to

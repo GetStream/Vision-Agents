@@ -3628,6 +3628,47 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/image/generations:
+    post:
+      operationId: generateImage
+      summary: Draw pictures from a prompt, and return them
+      description: >
+        Routed like search: a target or a priority list picks the model, failover and
+        billing work as they do everywhere else, and one request is one stat row counting
+        its pictures. The pictures come back in the response as bytes, never as a link,
+        and nothing is stored, so the id cannot be fetched again.
+
+        The request is answered when the pictures are drawn, within 240 seconds; a caller
+        that hangs up cancels the job at the provider. A generation that got as far as a
+        provider answers 200 whether it drew or not: a failed one carries status failed,
+        an error_code and the error, and costs nothing. A request that could not be
+        routed at all, or that asks for something no model could draw, is a 400.
+
+        A failed generation is asked of the next candidate only when the provider never
+        accepted the job, and never after a safety filter refused it, since asking the
+        next vendor is shopping for a laxer filter.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImageGenerationRequest"
+      responses:
+        "200":
+          description: What was drawn, or why nothing was
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageGeneration"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/dispatch:
     get:
       operationId: dispatchCalls
@@ -4955,6 +4996,137 @@ components:
           type: number
           format: float
           description: How relevant the provider judged it.
+
+    ImageOptions:
+      type: object
+      description: >
+        Where to draw and what the picture should be. A size, shape, seed, negative prompt
+        or format narrows the candidates to the models that declared it, so it is either
+        honoured or the request is refused.
+      properties:
+        target:
+          type: string
+          description: A provider/model or a capability shortcut. Defaults to image-fast.
+          example: image-fast
+        providers:
+          type: array
+          items:
+            type: string
+          description: >
+            A priority list of where to try, in the order given, which wins over target
+            when it holds anything. Each entry is a provider name, a provider/model or a
+            capability shortcut, expanded where it stands.
+          example: ["fal", "image-quality"]
+        size:
+          type: string
+          pattern: "^[0-9]+x[0-9]+$"
+          description: Width by height in pixels, for the models that take a size.
+          example: 1024x1024
+        aspect_ratio:
+          type: string
+          pattern: "^[0-9]+:[0-9]+$"
+          description: The shape, for the models that are asked for one rather than a size.
+          example: "1:1"
+        n:
+          type: integer
+          minimum: 1
+          maximum: 4
+          default: 1
+          description: How many pictures to draw.
+        seed:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Draws the same picture again from the same prompt, on a model that reads one.
+        negative_prompt:
+          type: string
+          description: What to keep out of the picture.
+        output_format:
+          type: string
+          enum: [png, jpeg]
+          description: The encoding, on a model that can be asked for one.
+
+    ImageGenerationRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          description: What to draw, in the caller's own words.
+          example: A yellow watering can beside a seedling, flat illustration, no text
+        options:
+          $ref: "#/components/schemas/ImageOptions"
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+
+    ImageGenerationStatus:
+      type: string
+      enum: [completed, failed]
+      description: Whether the pictures were drawn. A failed generation says why in error_code and error.
+
+    ImageErrorCode:
+      type: string
+      enum: [content_filtered, unsupported_option, provider_failed, timeout, cancelled]
+      description: >
+        Why a generation drew nothing, absent when it completed. content_filtered is a
+        safety filter refusing the prompt or the picture; unsupported_option a size, shape
+        or setting no candidate could honour; provider_failed anything else a provider did
+        wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
+
+    GeneratedImage:
+      type: object
+      required: [media_type, width, height, data]
+      properties:
+        media_type:
+          type: string
+          enum: [image/png, image/jpeg]
+          description: What the picture is, read off the picture itself rather than the provider's label.
+        width:
+          type: integer
+        height:
+          type: integer
+        seed:
+          type: integer
+          format: int64
+          description: The seed the provider reports, which draws the same picture again. Absent when it reports none.
+        data:
+          type: string
+          format: byte
+          description: The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
+
+    ImageGeneration:
+      type: object
+      required: [id, status, images, cost_micros]
+      properties:
+        id:
+          type: string
+          description: This response's own id, for logs. Nothing is stored under it.
+          example: img_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+        status:
+          $ref: "#/components/schemas/ImageGenerationStatus"
+        provider:
+          type: string
+          description: Who drew it, or who refused to. Absent when nothing got as far as a provider.
+          example: fal
+        model:
+          type: string
+          example: alibaba/qwen-image-3/text-to-image
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/GeneratedImage"
+          description: The pictures, as many as were asked for. Empty when the generation failed.
+        cost_micros:
+          type: integer
+          format: int64
+          description: Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed.
+        error_code:
+          $ref: "#/components/schemas/ImageErrorCode"
+        error:
+          type: string
+          description: What went wrong, in words. Absent when the generation completed.
 
     RecordingSource:
       type: object
@@ -7130,13 +7302,14 @@ components:
 
     Modality:
       type: string
-      enum: [stt, tts, llm, sts, search, lcm, memory, knowledge, phone]
+      enum: [stt, tts, llm, sts, search, lcm, image, memory, knowledge, phone]
       description: >
-        What kind of work was done. The first six are routed across providers; sts is
+        What kind of work was done. The first seven are routed across providers; sts is
         speech to speech, one native audio model in place of a transcriber, a text model
         and a voice. lcm is a large classifier model: it answers a question about a piece
         of text with a typed value and the probability behind it rather than with prose,
-        which is what a guardrail asks before a reply is spoken. Memory, knowledge and
+        which is what a guardrail asks before a reply is spoken. image is pictures drawn
+        from a prompt. Memory, knowledge and
         phone are recorded but not routed, since there is one memory store, one knowledge
         base and one vendor per number, so the provider paths do not serve them while the
         statistics paths do.
@@ -7282,6 +7455,7 @@ components:
           input_tokens_total,
           cached_input_tokens_total,
           output_tokens_total,
+          images_total,
           cost_micros_total,
           request_count,
           error_count,
@@ -7314,6 +7488,10 @@ components:
           type: integer
           format: int64
           description: Generated tokens, reasoning included. Zero outside llm.
+        images_total:
+          type: integer
+          format: int64
+          description: Pictures drawn. Zero outside image.
         cost_micros_total:
           type: integer
           format: int64
@@ -7350,6 +7528,7 @@ components:
           input_tokens_total,
           cached_input_tokens_total,
           output_tokens_total,
+          images_total,
           cost_micros_total,
           request_count,
           error_count,
@@ -7377,6 +7556,9 @@ components:
           type: integer
           format: int64
         output_tokens_total:
+          type: integer
+          format: int64
+        images_total:
           type: integer
           format: int64
         cost_micros_total:

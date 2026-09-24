@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/environment"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -515,6 +516,25 @@ func run(logger *slog.Logger) error {
 		}
 		defer judging.Close()
 		routers[routing.LCM] = judging
+	}
+
+	// Image generation is served when the config has a section for it, and a deployment
+	// with no key for either provider still inspects and reports on them: what stops a
+	// picture being drawn is a candidate refusing to be built.
+	if section, ok := config[routing.Image]; ok {
+		imaging, err := imagerouter.New(imagerouter.Options{
+			Config:   section,
+			Registry: imagerouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer imaging.Close()
+		routers[routing.Image] = imaging
+		streams.Image = imaging
 	}
 
 	telephony, err := buildPhone(pgStore, liveClient, logger)
