@@ -44,6 +44,7 @@ stt:
     - provider: deepgram
       model: flux-general-en
       description: "Deepgram's live transcriber with built-in turn detection, the one the others are measured against. English only."
+      benchmark: { word_error_rate: 0.074, latency_ms: 21 }
       languages: [en]
       realtime: true
       tier: low-latency
@@ -74,6 +75,7 @@ stt:
     - provider: gemini
       model: gemini-3.5-transcribe-live
       description: "Detects the language itself and can tidy the transcript as it writes it. About -e.009 an audio minute."
+      benchmark: { word_error_rate: 0.04, latency_ms: 395 }
       languages:
         [
           ar,
@@ -234,6 +236,7 @@ stt:
     - provider: together-nemotron
       model: nvidia/nemotron-3-asr-streaming-0.6b
       description: "NVIDIA's Nemotron 3 on Together. English only, at -e.0015 a minute."
+      benchmark: { word_error_rate: 0.07, latency_ms: 70 }
       languages: [en]
       realtime: true
       tier: low-latency
@@ -308,6 +311,7 @@ stt:
     - provider: grok
       model: grok-stt
       description: "xAI's transcriber. Tells a bystander's voice from the caller's without being asked."
+      benchmark: { word_error_rate: 0.027, latency_ms: 490 }
       languages:
         [
           ar,
@@ -364,6 +368,7 @@ stt:
     - provider: muse
       model: muse-voice-transcribe-1.0
       description: "Meta's transcriber, with speaker labels and endpointing built into the model."
+      benchmark: { word_error_rate: 0.031, latency_ms: 163 }
       languages:
         [
           ar,
@@ -418,6 +423,7 @@ stt:
     - provider: cartesia
       model: ink-2
       description: "Cartesia's live transcriber with its own turn detection, much like Flux. English only."
+      benchmark: { word_error_rate: 0.034, latency_ms: 431 }
       languages: [en]
       realtime: true
       tier: low-latency
@@ -448,6 +454,7 @@ stt:
     - provider: inworld
       model: inworld-stt-1
       description: "Inworld's own streaming transcriber, at -e.15 an audio hour."
+      benchmark: { word_error_rate: 0.042, latency_ms: 71 }
       languages:
         [
           ar,
@@ -513,6 +520,7 @@ stt:
     - provider: elevenlabs
       model: scribe_v2_realtime
       description: "ElevenLabs' live Scribe, built for the 150 ms a live call needs."
+      benchmark: { word_error_rate: 0.036, latency_ms: 141 }
       languages:
         [
           az,
@@ -600,6 +608,7 @@ stt:
     - provider: deepgram
       model: nova-3
       description: "Deepgram's batch model for recordings. Cheaper and more accurate, but not for live calls."
+      benchmark: { word_error_rate: 0.066, latency_ms: 66 }
       languages: [de, en, es, fr, hi, it, ja, nl, pt, ru]
       realtime: false
       tier: high-quality
@@ -629,6 +638,56 @@ stt:
         per_audio_hour: 0.258
 
   aliases:
+    # The two groups Vision Agents maintains so that a config does not have to, and the
+    # only ones offered as a choice. A customer who wants the models we would pick for a
+    # live call names one of these and gets the list as it is reviewed here, rather than
+    # copying today's answer into their own config and keeping it.
+    #
+    # Both name their members outright, which everything below avoids and the field's own
+    # documentation warns about: a name here is a judgement about which models are wanted
+    # rather than a fact about what they can do, so it goes stale in the way a requirement
+    # does not. That is what these are for, and the cost of it is that the lists have to be
+    # re-read rather than trusted. Last reviewed 2026-09.
+
+    # Fast: answering before the caller wonders whether the line dropped. Flux is pinned
+    # because Deepgram's turn detector is the one the other three are measured against,
+    # with the multilingual Flux beside it so a caller who is not speaking English still
+    # lands on Deepgram; then Ink 2, whose migration guide is written from that exact
+    # model, then Inworld, then Nemotron on Together, the cheapest of them by a factor of
+    # six. Health orders the four behind the pin, which is what naming a group means.
+    stt-fast:
+      title: Speed
+      description: "Stream's pick for a live call: Deepgram Flux first, then Ink 2, Inworld and Nemotron as failover."
+      require_realtime: true
+      tier: low-latency
+      prefer: deepgram/flux-general-en
+      only:
+        - deepgram/flux-general-en
+        - deepgram/flux-general-multi
+        - cartesia/ink-2
+        - inworld/inworld-stt-1
+        - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
+
+    # Accurate: the same live path, ordered by how well it hears rather than how quickly.
+    # Muse is pinned because it is the one of the four that names the voice as well, so a
+    # config that goes on to ask for diarize: true narrows to the model this group already
+    # starts with rather than to a different one.
+    #
+    # No tier requirement, for the reason en-high-accuracy gives: accuracy is worth waiting
+    # for, so a slower live model belongs here. All four happen to be low-latency today, and
+    # declaring that would turn replacing one of them with a better, slower model into a
+    # config that refuses to load.
+    stt-accurate:
+      title: Accuracy
+      description: "Stream's pick for hearing every word: Muse first, which also labels speakers, then Scribe, Ink 2 and Nemotron."
+      require_realtime: true
+      prefer: muse/muse-voice-transcribe-1.0
+      only:
+        - muse/muse-voice-transcribe-1.0
+        - elevenlabs/scribe_v2_realtime
+        - cartesia/ink-2
+        - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
+
     # The transcribers an English call is trusted to. Every live model here is realtime
     # and low-latency and speaks English, so nothing any of them declares tells these
     # apart from the rest and the names have to be given outright. Gemini, the two
@@ -637,8 +696,6 @@ stt:
     # without being asked, and so the one that can tell a bystander at the caller's
     # microphone from the caller.
     en-low-latency:
-      title: Fast English
-      description: "The transcribers an English call is trusted to, ordered by live health."
       languages: [en]
       require_realtime: true
       tier: low-latency
@@ -649,8 +706,6 @@ stt:
         - muse/muse-voice-transcribe-1.0
 
     multilingual-low-latency:
-      title: Fast multilingual
-      description: "The fastest live transcribers that handle more than one language."
       multilingual: true
       require_realtime: true
       tier: low-latency
@@ -676,61 +731,6 @@ stt:
     multilingual-high-accuracy:
       multilingual: true
       require_realtime: true
-
-    # The two groups Vision Agents maintains so that a config does not have to. A customer
-    # who wants the models we would pick for a live call names one of these and gets the
-    # list as it is reviewed here, rather than copying today's answer into their own config
-    # and keeping it.
-    #
-    # base/ marks them as ours. It is not a vendor, and nothing is declared under it: the
-    # prefix is there because a customer's own stored config may well be called
-    # stt-realtime-fast, and a priority list saying base/stt-realtime-fast is naming this
-    # group rather than that config.
-    #
-    # Both name their members outright, which everything above avoids and the field's own
-    # documentation warns about: a name here is a judgement about which models are wanted
-    # rather than a fact about what they can do, so it goes stale in the way a requirement
-    # does not. That is what these are for, and the cost of it is that the lists have to be
-    # re-read rather than trusted. Last reviewed 2026-09.
-
-    # Fast: answering before the caller wonders whether the line dropped. Flux is pinned
-    # because Deepgram's turn detector is the one the other three are measured against,
-    # with the multilingual Flux beside it so a caller who is not speaking English still
-    # lands on Deepgram; then Ink 2, whose migration guide is written from that exact
-    # model, then Inworld, then Nemotron on Together, the cheapest of them by a factor of
-    # six. Health orders the four behind the pin, which is what naming a group means.
-    base/stt-realtime-fast:
-      title: Fast conversational
-      description: "Stream's pick for a live call: Deepgram Flux first, then Ink 2, Inworld and Nemotron as failover."
-      require_realtime: true
-      tier: low-latency
-      prefer: deepgram/flux-general-en
-      only:
-        - deepgram/flux-general-en
-        - deepgram/flux-general-multi
-        - cartesia/ink-2
-        - inworld/inworld-stt-1
-        - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
-
-    # Accurate: the same live path, ordered by how well it hears rather than how quickly.
-    # Muse is pinned because it is the one of the four that names the voice as well, so a
-    # config that goes on to ask for diarize: true narrows to the model this group already
-    # starts with rather than to a different one.
-    #
-    # No tier requirement, for the reason en-high-accuracy gives: accuracy is worth waiting
-    # for, so a slower live model belongs here. All four happen to be low-latency today, and
-    # declaring that would turn replacing one of them with a better, slower model into a
-    # config that refuses to load.
-    base/stt-realtime-accurate:
-      title: Most accurate
-      description: "Stream's pick for hearing every word: Muse first, which also labels speakers, then Scribe, Ink 2 and Nemotron."
-      require_realtime: true
-      prefer: muse/muse-voice-transcribe-1.0
-      only:
-        - muse/muse-voice-transcribe-1.0
-        - elevenlabs/scribe_v2_realtime
-        - cartesia/ink-2
-        - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
 
     # The names sprint 1 shipped, kept so existing callers keep working.
     en-realtime-best:
@@ -758,6 +758,7 @@ tts:
     - provider: cartesia
       model: sonic-preview
       description: "Sonic 3.6 tops both Artificial Analysis speech arenas and is the fastest to first audio."
+      benchmark: { elo: 1273, characters_per_second: 115 }
       languages:
         [
           ar,
@@ -823,6 +824,7 @@ tts:
     - provider: inworld
       model: inworld-tts-2-flash
       description: "Inworld's low-latency voice, around 25 ms to first audio on their side."
+      benchmark: { elo: 1210, characters_per_second: 215 }
       languages:
         [
           ar,
@@ -887,6 +889,7 @@ tts:
     - provider: elevenlabs
       model: eleven_flash_v2_5
       description: "ElevenLabs' low-latency voice, streamed as it is generated."
+      benchmark: { elo: 1074, characters_per_second: 480 }
       languages:
         [
           ar,
@@ -940,6 +943,7 @@ tts:
     - provider: elevenlabs
       model: eleven_multilingual_v2
       description: "ElevenLabs' quality voice. Better prosody, slower to first audio."
+      benchmark: { elo: 1092, characters_per_second: 96 }
       languages:
         [
           ar,
@@ -990,6 +994,7 @@ tts:
     - provider: elevenlabs
       model: eleven_v3_conversational
       description: "Performs audio tags such as [laughs] instead of reading them out. Slower to first audio."
+      benchmark: { elo: 1196, characters_per_second: 67 }
       languages:
         [
           ar,
@@ -1037,6 +1042,7 @@ tts:
     - provider: fish
       model: s2-pro
       description: "Fish's hosted S2 Pro, in more than 80 languages."
+      benchmark: { elo: 1120, characters_per_second: 96 }
       languages:
         [
           ar,
@@ -1075,6 +1081,7 @@ tts:
     - provider: s2pro
       model: s2-pro
       description: "The same S2 Pro weights on our own GPUs."
+      benchmark: { elo: 1120 }
       languages:
         [
           ar,
@@ -1119,6 +1126,7 @@ tts:
     - provider: breeze
       model: breeze-tts-2
       description: "Expressive and performs vocal events, in two languages. On our own GPUs."
+      benchmark: { elo: 1204 }
       languages: [en, zh]
       realtime: true
       tier: high-quality
@@ -1136,6 +1144,7 @@ tts:
     - provider: elevenlabs
       model: eleven_v3
       description: "ElevenLabs v3 as a whole file, for recordings rather than live calls."
+      benchmark: { elo: 1167, characters_per_second: 45 }
       languages:
         [
           ar,
@@ -1181,16 +1190,37 @@ tts:
         per_million_chars: 110.0
 
   aliases:
+    # Fast: the whole live tier, with Sonic pinned because it is the quickest of them to
+    # first audio. Health orders the rest behind it.
+    tts-fast:
+      title: Speed
+      description: "The quickest live voices. Prefers Cartesia Sonic 3.6 and fails over to the rest of the fast tier."
+      require_realtime: true
+      tier: low-latency
+      prefer: cartesia/sonic-preview
+
+    # Quality: the live voices that win the Artificial Analysis speech arena, in the order
+    # they placed - Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2, ElevenLabs v3
+    # Conversational. Like the STT groups this names its members, so it is only as current
+    # as the leaderboard it was read from. No tier requirement: the arena ranks how a voice
+    # sounds, and two of the four are low-latency anyway. Last reviewed 2026-09.
+    tts-quality:
+      title: Quality
+      description: "The live voices listeners rate best in the Artificial Analysis arena. Prefers Cartesia Sonic 3.6, then Inworld, Breeze and ElevenLabs v3."
+      require_realtime: true
+      prefer: cartesia/sonic-preview
+      only:
+        - cartesia/sonic-preview
+        - inworld/inworld-tts-2-flash
+        - breeze/breeze-tts-2
+        - elevenlabs/eleven_v3_conversational
+
     en-low-latency:
-      title: Fast English
-      description: "The quickest English voices, ordered by live health."
       languages: [en]
       require_realtime: true
       tier: low-latency
 
     multilingual-low-latency:
-      title: Fast multilingual
-      description: "The quickest voices that speak more than one language."
       multilingual: true
       require_realtime: true
       tier: low-latency
@@ -1204,15 +1234,11 @@ tts:
       require_recorded: true
 
     en-high-accuracy:
-      title: Best English voice
-      description: "English voices that sound best, at some cost in time to first audio."
       languages: [en]
       require_realtime: true
       tier: high-quality
 
     multilingual-high-accuracy:
-      title: Best multilingual voice
-      description: "Multilingual voices that sound best, at some cost in time to first audio."
       multilingual: true
       require_realtime: true
       tier: high-quality
@@ -1384,7 +1410,7 @@ llm:
     # These are Google's introductory rates and double on 1 January 2027.
     - provider: gemini
       model: gemini-3.8-flash
-      description: "Quick and strong, and what Fast conversational prefers. Reads images. The dearest of the fast tier."
+      description: "Quick and strong, and what llm-fast prefers. Reads images. The dearest of the fast tier."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1451,7 +1477,7 @@ llm:
     # the provider also sends explicitly when this concrete model is selected.
     - provider: openai
       model: gpt-5.6-sol
-      description: "OpenAI's frontier model, and what Deep reasoning prefers. The strongest here and the dearest."
+      description: "OpenAI's frontier model, and what llm-smart prefers. The strongest here and the dearest."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1464,6 +1490,22 @@ llm:
   # A title offers a shortcut to someone picking a model, in the order written here, so
   # the one a conversation gets by default comes first.
   aliases:
+    # Small talk, as cheaply and quickly as it can be had: the smallest models here, for
+    # an agent whose turns are short and whose instructions are simple. Gemma 4 26B, with
+    # 4B active per token, is preferred; Gemma 4 31B on Cerebras and GPT-5.6 Luna catch it
+    # being down. Like the STT groups this names its members, since being small is not
+    # something a model declares.
+    llm-conversational:
+      title: Conversational
+      description: "Super lightweight models for simple, short turns. Prefers Gemma 4 26B-A4B, then Gemma 4 31B on Cerebras and GPT-5.6 Luna."
+      require_realtime: true
+      tier: low-latency
+      prefer: gemma/gemma-4-26B-A4B-it
+      only:
+        - gemma/gemma-4-26B-A4B-it
+        - cerebras/gemma-4-31b
+        - openai/gpt-5.6-luna
+
     # A fast answer, in whatever language. The shorthand a caller reaches for when the only
     # thing that matters is that the answer starts arriving.
     #
@@ -1471,11 +1513,19 @@ llm:
     # conversation gets is the one this deployment chose. The rest of the tier is still here
     # to catch it being down.
     llm-fast:
-      title: Fast conversational
-      description: "The quickest answer in any language, for a live conversation. Prefers Gemini 3.8 Flash and fails over to the rest of the fast tier."
+      title: Fast
+      description: "The quickest strong answer in any language, for a live conversation. Prefers Gemini 3.8 Flash and fails over to the rest of the fast tier."
       require_realtime: true
       tier: low-latency
       prefer: gemini/gemini-3.8-flash
+
+    # The best answers a conversation can have, at the cost of waiting for them. GPT-5.6
+    # Sol is preferred, with the rest of the quality tier as failover.
+    llm-smart:
+      title: Smart
+      description: "The strongest models, for agents that must get hard questions right. Slower to answer. Prefers GPT-5.6 Sol."
+      tier: high-quality
+      prefer: openai/gpt-5.6-sol
 
     en-low-latency:
       languages: [en]
@@ -1485,8 +1535,6 @@ llm:
     # With no model preferred, the fast tier is ordered on health alone, so this is
     # whichever of them is answering quickest right now.
     multilingual-low-latency:
-      title: Lowest latency
-      description: "Whichever fast model is answering quickest right now, with no preferred model."
       multilingual: true
       require_realtime: true
       tier: low-latency
@@ -1500,8 +1548,6 @@ llm:
       tier: high-quality
 
     vlm:
-      title: Vision
-      description: "For conversations that include images. Prefers GPT-5.6 Luna."
       require_input_modalities: [image]
       prefer: openai/gpt-5.6-luna
 
@@ -1525,8 +1571,6 @@ llm:
     # llm-fast pins its own: the model that does the thinking is the one this deployment
     # chose. The rest of the tier is still here to catch it being down.
     llm-thinking:
-      title: Deep reasoning
-      description: "The best answers, for work a caller can wait on. Too slow for most live turns. Prefers GPT-5.6 Sol."
       tier: high-quality
       prefer: openai/gpt-5.6-sol
 
@@ -1574,6 +1618,7 @@ search:
     - provider: exa
       model: fast
       description: "Exa's own index with no crawl and no model. The quickest way to put sources in front of a conversation."
+      benchmark: { search_index: 68, cost_per_task: 0.159 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1598,6 +1643,7 @@ search:
     - provider: tavily
       model: basic
       description: "Searches and summarises in one round trip, so it answers in a sentence and stays fast."
+      benchmark: { search_index: 66, cost_per_task: 0.193 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1609,6 +1655,7 @@ search:
     - provider: exa
       model: auto
       description: "Exa picks neural or keyword search. Better on spoken questions, slower than fast."
+      benchmark: { search_index: 74, cost_per_task: 0.127 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality

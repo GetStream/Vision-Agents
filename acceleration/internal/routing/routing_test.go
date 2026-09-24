@@ -221,10 +221,10 @@ func (s *RoutingSuite) TestTheShippedConversationShortcutComesFirst() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 
-	s.Equal("llm-fast", config[LLM].Offered()[0])
+	s.Equal([]string{"llm-conversational", "llm-fast", "llm-smart"}, config[LLM].Offered())
 	s.Equal("sts-fast", config[STS].Offered()[0])
-	s.Equal("en-low-latency", config[STT].Offered()[0])
-	s.Equal("en-low-latency", config[TTS].Offered()[0])
+	s.Equal([]string{"stt-fast", "stt-accurate"}, config[STT].Offered())
+	s.Equal([]string{"tts-fast", "tts-quality"}, config[TTS].Offered())
 	s.Equal("search-fast", config[Search].Offered()[0])
 	s.NotContains(config[LLM].Offered(), "llm-flow", "the flow controller's shortcut is not a choice")
 	s.NotContains(config[LLM].Offered(), "llm-judge", "a simulation's default is not a choice for a conversation")
@@ -259,7 +259,7 @@ func (s *RoutingSuite) shippedSTT() *Router[*stubProvider] {
 
 func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
 	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
-		Providers: []string{"base/stt-realtime-fast"},
+		Providers: []string{"stt-fast"},
 	})
 	s.Require().NoError(err)
 
@@ -277,7 +277,7 @@ func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
 
 func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoice() {
 	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
-		Providers: []string{"base/stt-realtime-accurate"},
+		Providers: []string{"stt-accurate"},
 	})
 	s.Require().NoError(err)
 
@@ -294,11 +294,11 @@ func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoic
 func (s *RoutingSuite) TestABaseGroupIsALiveGroupOnly() {
 	batch := false
 	_, err := s.shippedSTT().resolveChain(s.ctx, Request{
-		Providers: []string{"base/stt-realtime-accurate"},
+		Providers: []string{"stt-accurate"},
 		Realtime:  &batch,
 	})
 
-	s.ErrorContains(err, "nothing in the priority list base/stt-realtime-accurate",
+	s.ErrorContains(err, "nothing in the priority list stt-accurate",
 		"a recording belongs at en-recorded, where the batch models are")
 }
 
@@ -307,7 +307,7 @@ func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
 	// its options. Of the accurate group only Muse declares diarize, so a config that names
 	// the group and then asks to be told who spoke gets that one rather than all four.
 	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
-		Providers: []string{"base/stt-realtime-accurate"},
+		Providers: []string{"stt-accurate"},
 	})
 	s.Require().NoError(err)
 

@@ -69,6 +69,24 @@ const (
 	HighQuality Tier = "high-quality"
 )
 
+// Benchmark holds the Artificial Analysis numbers for a model. A field the model was
+// not measured on is zero.
+type Benchmark struct {
+	// Elo is the speech arena rating of a voice model.
+	Elo int `yaml:"elo"`
+	// CharactersPerSecond is how fast a voice model synthesises on the vendor's API.
+	CharactersPerSecond float64 `yaml:"characters_per_second"`
+	// WordErrorRate is the streaming AA-WER of a transcriber, from 0 to 1.
+	WordErrorRate float64 `yaml:"word_error_rate"`
+	// LatencyMs is how long a transcriber takes to its final transcript after speech ends.
+	LatencyMs int `yaml:"latency_ms"`
+	// SearchIndex is the Artificial Analysis Search Index of a search provider, 0 to 100.
+	SearchIndex int `yaml:"search_index"`
+	// CostPerTask is what one task of that benchmark cost in US dollars, the searches and
+	// the answering model's tokens together.
+	CostPerTask float64 `yaml:"cost_per_task"`
+}
+
 // Price is what a provider charges, in US dollars. Providers bill by different units, so
 // a model sets whichever rates apply to it and leaves the rest at zero.
 type Price struct {
@@ -194,6 +212,9 @@ type ProviderConfig struct {
 	// a model that meets it.
 	DataPolicy options.DataHandling `yaml:"data_policy"`
 	Price      Price                `yaml:"price"`
+	// Benchmark is what Artificial Analysis measured, for someone choosing a model.
+	// Routing never reads it.
+	Benchmark Benchmark `yaml:"benchmark"`
 	// InputModalities are extra input kinds this model accepts, e.g. "image". Empty
 	// means text only, and a request carrying anything else is not routed here.
 	InputModalities []string `yaml:"input_modalities"`

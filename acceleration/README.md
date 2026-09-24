@@ -363,27 +363,28 @@ tells one from another, and it names both Deepgram Flux models, Grok and Muse ou
 `only`. Gemini, the two Parakeets, Ink 2, Inworld and Scribe stay reachable by
 `provider/model` and through the other shortcuts.
 
-### The base groups
+### The default groups
 
-Speech-to-text adds two shortcuts of a different kind, for the caller who wants the models we
-would pick rather than a list of their own to keep:
+These are the shortcuts offered as a choice, for the caller who wants the models we would
+pick rather than a list of their own to keep:
 
-| Group                         | What it is                                                        |
-| ----------------------------- | ----------------------------------------------------------------- |
-| `base/stt-realtime-fast`      | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en` |
-| `base/stt-realtime-accurate`  | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse       |
+| Group                | What it is                                                                      |
+| -------------------- | ------------------------------------------------------------------------------- |
+| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B, Gemma 4 31B on Cerebras and GPT-5.6 Luna, pinned to Gemma 4 26B |
+| `llm-fast`           | The low-latency tier, pinned to Gemini 3.8 Flash                                |
+| `llm-smart`          | The high-quality tier, pinned to GPT-5.6 Sol                                    |
+| `stt-fast`           | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en`         |
+| `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
+| `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
+| `tts-quality`        | The top of the Artificial Analysis arena: Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
 
 ```yaml
 stt:
   providers:
-    - base/stt-realtime-accurate
+    - stt-accurate
 ```
 
-`base/` marks them as ours. It is not a vendor and nothing is declared under it; the prefix is
-there because a customer's own stored config may well be called `stt-realtime-fast`, and a
-priority list naming `base/stt-realtime-fast` means this group rather than that config.
-
-Both name their members with `only`, which is the thing the field exists for and the thing it
+The ones that name their members do so with `only`, which is the thing the field exists for and the thing it
 warns about: a name is a judgement about which models are wanted rather than a fact about what
 they can do, so it goes stale in a way a requirement does not. That is what these are — an
 opinion with a date on it — and the date is in the config beside them.

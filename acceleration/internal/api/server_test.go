@@ -353,8 +353,8 @@ func (s *ServerSuite) TestRoutesOfferTheTitledShortcutsWithTheModelsTheyResolveT
 	var routes []Route
 	s.decode(recorder, &routes)
 	s.Require().NotEmpty(routes)
-	s.Equal("en-low-latency", routes[0].Id, "the default comes first")
-	s.Equal("Fast English", routes[0].Title)
+	s.Equal("stt-fast", routes[0].Id, "the default comes first")
+	s.Equal("Speed", routes[0].Title)
 	s.NotEmpty(routes[0].Description)
 	s.Require().NotEmpty(routes[0].Candidates)
 	s.Equal("deepgram", routes[0].Candidates[0].Provider)
@@ -371,6 +371,26 @@ func (s *ServerSuite) TestProvidersHaveNoShareWithoutStatistics() {
 	s.Require().NotEmpty(providers)
 	s.Require().NotNil(providers[0].UsageShare)
 	s.Zero(*providers[0].UsageShare)
+}
+
+func (s *ServerSuite) TestProvidersCarryWhatWasBenchmarked() {
+	recorder := s.get("/v1/stt/providers", "acme")
+
+	var providers []Provider
+	s.decode(recorder, &providers)
+	names := map[string]Provider{}
+	for _, provider := range providers {
+		names[provider.Provider+"/"+provider.Model] = provider
+	}
+
+	flux := names["deepgram/flux-general-en"].Benchmark
+	s.Require().NotNil(flux)
+	s.Require().NotNil(flux.WordErrorRate)
+	s.Positive(*flux.WordErrorRate)
+	s.Require().NotNil(flux.LatencyMs)
+	s.Positive(*flux.LatencyMs)
+	s.Nil(flux.Elo, "a transcriber has no arena rating")
+	s.Nil(names["parakeet/parakeet-tdt-0.6b-v3"].Benchmark, "our own deployment was not measured")
 }
 
 func (s *ServerSuite) TestResolveReturnsCandidatesBestFirst() {

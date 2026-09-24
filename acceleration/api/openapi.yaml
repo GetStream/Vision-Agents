@@ -7110,6 +7110,42 @@ components:
             This model's share of the modality's requests over the last seven days, across
             every customer, from 0 to 1. It is how popular the model is, and is 0 when
             nothing was served or the deployment keeps no statistics.
+        benchmark:
+          $ref: "#/components/schemas/ProviderBenchmark"
+
+    ProviderBenchmark:
+      type: object
+      description: >
+        What Artificial Analysis measured for this model, refreshed by hand rather than
+        live. A field is absent when the model was not measured on it.
+      properties:
+        elo:
+          type: integer
+          description: Speech arena Elo rating of a text-to-speech model.
+          example: 1273
+        characters_per_second:
+          type: number
+          format: double
+          description: Characters a text-to-speech model synthesises per second on the vendor's API.
+          example: 115
+        word_error_rate:
+          type: number
+          format: double
+          description: Streaming AA-WER of a speech-to-text model, from 0 to 1.
+          example: 0.027
+        latency_ms:
+          type: integer
+          description: Milliseconds a speech-to-text model takes to its final transcript after speech ends.
+          example: 490
+        search_index:
+          type: integer
+          description: Artificial Analysis Search Index of a search provider, from 0 to 100.
+          example: 74
+        cost_per_task:
+          type: number
+          format: double
+          description: US dollars one task of the search benchmark cost, searches and the answering model's tokens together.
+          example: 0.127
 
     Route:
       type: object

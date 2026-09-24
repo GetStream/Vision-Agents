@@ -2356,6 +2356,9 @@ type PressDigitsRequest struct {
 
 // Provider defines model for Provider.
 type Provider struct {
+	// Benchmark What Artificial Analysis measured for this model, refreshed by hand rather than live. A field is absent when the model was not measured on it.
+	Benchmark *ProviderBenchmark `json:"benchmark,omitempty"`
+
 	// Description What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none.
 	Description *string        `json:"description,omitempty"`
 	Health      ProviderHealth `json:"health"`
@@ -2373,6 +2376,39 @@ type Provider struct {
 
 	// UsageShare This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics.
 	UsageShare *float64 `json:"usage_share,omitempty"`
+}
+
+// ProviderBenchmark What Artificial Analysis measured for this model, refreshed by hand rather than live. A field is absent when the model was not measured on it.
+type ProviderBenchmark struct {
+	// CharactersPerSecond Characters a text-to-speech model synthesises per second on the vendor's API.
+	//
+	// Example: 115
+	CharactersPerSecond *float64 `json:"characters_per_second,omitempty"`
+
+	// CostPerTask US dollars one task of the search benchmark cost, searches and the answering model's tokens together.
+	//
+	// Example: 0.127
+	CostPerTask *float64 `json:"cost_per_task,omitempty"`
+
+	// Elo Speech arena Elo rating of a text-to-speech model.
+	//
+	// Example: 1273
+	Elo *int `json:"elo,omitempty"`
+
+	// LatencyMs Milliseconds a speech-to-text model takes to its final transcript after speech ends.
+	//
+	// Example: 490
+	LatencyMs *int `json:"latency_ms,omitempty"`
+
+	// SearchIndex Artificial Analysis Search Index of a search provider, from 0 to 100.
+	//
+	// Example: 74
+	SearchIndex *int `json:"search_index,omitempty"`
+
+	// WordErrorRate Streaming AA-WER of a speech-to-text model, from 0 to 1.
+	//
+	// Example: 0.027
+	WordErrorRate *float64 `json:"word_error_rate,omitempty"`
 }
 
 // ProviderHealth defines model for ProviderHealth.

@@ -25,6 +25,15 @@ against refuses to start and says which piece is missing.
 
 A local deployment naming `noauth` explicitly, and sending `X-Customer-Id`, is unaffected.
 
+### The default router groups are renamed
+
+`GET /v1/{modality}/routes` now offers seven groups: `llm-conversational`, `llm-fast`,
+`llm-smart`, `stt-fast`, `stt-accurate`, `tts-fast` and `tts-quality`.
+`base/stt-realtime-fast` and `base/stt-realtime-accurate` are now `stt-fast` and
+`stt-accurate`, with the same models; a config naming the old names must be updated. The
+shortcuts that used to be offered (`en-low-latency`, `vlm`, `llm-thinking` and the rest)
+still route, but are no longer listed.
+
 ### An app may turn away anonymous and guest users
 
 `apps` gains a `settings` JSONB column, read in the same query that resolves an API key.

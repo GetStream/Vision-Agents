@@ -110,6 +110,7 @@ from .plugin_connection_status import PluginConnectionStatus
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
 from .provider import Provider
+from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
@@ -319,6 +320,7 @@ __all__ = (
     "PrepareVoiceRequest",
     "PressDigitsRequest",
     "Provider",
+    "ProviderBenchmark",
     "ProviderHealth",
     "RecordingSource",
     "RecordingStatus",

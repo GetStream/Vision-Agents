@@ -710,6 +710,7 @@ func (s *Server) ListProviders(ctx context.Context, request ListProvidersRequest
 			Tier:        tierOf(candidate.Config),
 			Health:      providerHealth(candidate.Health),
 			UsageShare:  &share,
+			Benchmark:   providerBenchmark(candidate.Config.Benchmark),
 		})
 	}
 	return ListProviders200JSONResponse(providers), nil
@@ -1126,6 +1127,34 @@ func providerHealth(health live.Health) ProviderHealth {
 		Errors:       health.Errors,
 		ErrorRate:    health.ErrorRate(),
 		LatencyMsAvg: health.LatencyMsAvg,
+	}
+}
+
+// providerBenchmark leaves out what was not measured, and is nil for a model with no
+// measurements at all.
+func providerBenchmark(benchmark routing.Benchmark) *ProviderBenchmark {
+	if benchmark == (routing.Benchmark{}) {
+		return nil
+	}
+	measured := func(v float64) *float64 {
+		if v == 0 {
+			return nil
+		}
+		return &v
+	}
+	counted := func(v int) *int {
+		if v == 0 {
+			return nil
+		}
+		return &v
+	}
+	return &ProviderBenchmark{
+		Elo:                 counted(benchmark.Elo),
+		CharactersPerSecond: measured(benchmark.CharactersPerSecond),
+		WordErrorRate:       measured(benchmark.WordErrorRate),
+		LatencyMs:           counted(benchmark.LatencyMs),
+		SearchIndex:         counted(benchmark.SearchIndex),
+		CostPerTask:         measured(benchmark.CostPerTask),
 	}
 }
 

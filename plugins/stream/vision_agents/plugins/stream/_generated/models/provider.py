@@ -11,6 +11,7 @@ from ..models.tier import Tier
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.provider_benchmark import ProviderBenchmark
     from ..models.provider_health import ProviderHealth
 
 
@@ -32,6 +33,8 @@ class Provider:
         usage_share (float | Unset): This model's share of the modality's requests over the last seven days, across
             every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment
             keeps no statistics.
+        benchmark (ProviderBenchmark | Unset): What Artificial Analysis measured for this model, refreshed by hand
+            rather than live. A field is absent when the model was not measured on it.
     """
 
     provider: str
@@ -42,6 +45,7 @@ class Provider:
     health: ProviderHealth
     description: str | Unset = UNSET
     usage_share: float | Unset = UNSET
+    benchmark: ProviderBenchmark | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +65,10 @@ class Provider:
 
         usage_share = self.usage_share
 
+        benchmark: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.benchmark, Unset):
+            benchmark = self.benchmark.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -77,11 +85,14 @@ class Provider:
             field_dict["description"] = description
         if usage_share is not UNSET:
             field_dict["usage_share"] = usage_share
+        if benchmark is not UNSET:
+            field_dict["benchmark"] = benchmark
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.provider_benchmark import ProviderBenchmark
         from ..models.provider_health import ProviderHealth
 
         d = dict(src_dict)
@@ -101,6 +112,13 @@ class Provider:
 
         usage_share = d.pop("usage_share", UNSET)
 
+        _benchmark = d.pop("benchmark", UNSET)
+        benchmark: ProviderBenchmark | Unset
+        if isinstance(_benchmark, Unset):
+            benchmark = UNSET
+        else:
+            benchmark = ProviderBenchmark.from_dict(_benchmark)
+
         provider = cls(
             provider=provider,
             model=model,
@@ -110,6 +128,7 @@ class Provider:
             health=health,
             description=description,
             usage_share=usage_share,
+            benchmark=benchmark,
         )
 
         provider.additional_properties = d

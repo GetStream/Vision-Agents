@@ -2931,6 +2931,7 @@ export type components = {
             readonly vendor: string;
         };
         readonly Provider: {
+            readonly benchmark?: components["schemas"]["ProviderBenchmark"];
             /** @description What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none. */
             readonly description?: string;
             readonly health: components["schemas"]["ProviderHealth"];
@@ -2946,6 +2947,42 @@ export type components = {
              * @description This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics.
              */
             readonly usage_share?: number;
+        };
+        /** @description What Artificial Analysis measured for this model, refreshed by hand rather than live. A field is absent when the model was not measured on it. */
+        readonly ProviderBenchmark: {
+            /**
+             * Format: double
+             * @description Characters a text-to-speech model synthesises per second on the vendor's API.
+             * @example 115
+             */
+            readonly characters_per_second?: number;
+            /**
+             * Format: double
+             * @description US dollars one task of the search benchmark cost, searches and the answering model's tokens together.
+             * @example 0.127
+             */
+            readonly cost_per_task?: number;
+            /**
+             * @description Speech arena Elo rating of a text-to-speech model.
+             * @example 1273
+             */
+            readonly elo?: number;
+            /**
+             * @description Milliseconds a speech-to-text model takes to its final transcript after speech ends.
+             * @example 490
+             */
+            readonly latency_ms?: number;
+            /**
+             * @description Artificial Analysis Search Index of a search provider, from 0 to 100.
+             * @example 74
+             */
+            readonly search_index?: number;
+            /**
+             * Format: double
+             * @description Streaming AA-WER of a speech-to-text model, from 0 to 1.
+             * @example 0.027
+             */
+            readonly word_error_rate?: number;
         };
         readonly ProviderHealth: {
             /** @description False once the error rate crosses the configured threshold. */
