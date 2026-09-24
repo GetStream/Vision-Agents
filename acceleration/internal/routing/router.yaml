@@ -2074,3 +2074,67 @@ lcm:
     classify-fast:
       require_realtime: true
       tier: low-latency
+
+# Pictures drawn from a prompt, returned as bytes rather than links and kept by nobody.
+# Every model here is off the live path: a picture takes seconds, not a turn.
+image:
+  providers:
+    # Qwen Image 3 through FAL's queue. FAL publishes $0.04 a picture at 1K and $0.075 at
+    # 2K (fal.ai/models/alibaba/qwen-image-3/text-to-image, read 2026-09-24). The rate is
+    # the 1K one, so a size above about a megapixel is billed here below what FAL charges.
+    # Qwen reads English and Chinese prompts, which is what it is trained to write text in.
+    - provider: fal
+      model: alibaba/qwen-image-3/text-to-image
+      description: "Qwen Image 3 on FAL. Quick, cheap, and takes a size, a seed and a negative prompt."
+      languages: [en, zh]
+      realtime: false
+      tier: low-latency
+      supports: [size, aspect_ratio, seed, negative_prompt, format]
+      price:
+        per_image: 0.04
+
+    # Gemini 3.1 Flash Image, asked for 1K pictures. Google bills output images at $60 per
+    # million tokens, which it quotes as $0.067 a 1K picture on the standard tier
+    # (ai.google.dev/gemini-api/docs/pricing, read 2026-09-24). It takes a shape and
+    # nothing else. input_modalities records that it can also be shown a picture, for the
+    # edit endpoint that is not built yet.
+    - provider: google
+      model: gemini-3.1-flash-image
+      description: "Gemini 3.1 Flash Image. Better at following a long prompt and at text in the picture, slower and dearer."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: high-quality
+      input_modalities: [image]
+      supports: [aspect_ratio]
+      price:
+        per_image: 0.067
+
+  aliases:
+    # The default: whoever draws quickest.
+    image-fast:
+      title: Fast images
+      description: "The quickest picture. Takes a size, a seed and a negative prompt."
+      tier: low-latency
+
+    image-quality:
+      title: Best images
+      description: "Follows a long prompt more closely and writes legible text. Slower and dearer."
+      tier: high-quality
+
+    # The four shortcuts every modality answers to. None of them asks for a realtime
+    # model, since no image model is one.
+    en-low-latency:
+      languages: [en]
+      tier: low-latency
+
+    multilingual-low-latency:
+      multilingual: true
+      tier: low-latency
+
+    en-high-accuracy:
+      languages: [en]
+      tier: high-quality
+
+    multilingual-high-accuracy:
+      multilingual: true
+      tier: high-quality
