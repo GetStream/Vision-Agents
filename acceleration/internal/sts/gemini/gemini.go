@@ -9,7 +9,8 @@
 // a resume loop that the other must not have.
 //
 // The Live API has no response ids and no event for the caller falling silent. A reply is
-// whatever the model says between one turnComplete and the next, numbered here; the caller
+// whatever the model says between one turnComplete and the next, numbered here, except that
+// a turnComplete sent while the interaction is still in progress does not end it; the caller
 // is taken to have stopped at the last piece of transcript before the model began.
 package gemini
 
@@ -64,6 +65,16 @@ const maxDuration = 15 * time.Minute
 // conversation is given up on.
 const resumeAttempts = 3
 
+// requiredThinking is the level a model that refuses a setup without one is given when
+// nobody asked: its floor, since thinking spends the latency budget before the first word.
+// 3.8 Live Extended Thinking takes LOW, MEDIUM or HIGH and closes the socket otherwise.
+var requiredThinking = map[string]string{"gemini-3.8-live-extended-thinking": "LOW"}
+
+// interactionInProgress is what a model that reasons or runs tools in the background sends
+// with a turnComplete that is not the end of its answer: it spoke a filler, and more of the
+// same reply is coming.
+const interactionInProgress = "IN_PROGRESS"
+
 // Options configures the provider. APIKey falls back to GOOGLE_API_KEY.
 type Options struct {
 	APIKey string
@@ -86,7 +97,8 @@ type Options struct {
 	// as START_SENSITIVITY_HIGH, which is how this vendor spells a threshold.
 	StartSensitivity string
 	EndSensitivity   string
-	// ThinkingLevel is how long a 3.1 model may think before speaking. Empty leaves it.
+	// ThinkingLevel is how long a 3.1 model may think before speaking. Empty leaves it,
+	// or takes the floor for a model that will not open without one.
 	ThinkingLevel string
 	// ProactiveAudio and AffectiveDialog are the 2.5 models' extras.
 	ProactiveAudio  *bool
@@ -235,6 +247,7 @@ type serverContent struct {
 	TurnComplete        bool           `json:"turnComplete"`
 	GenerationComplete  bool           `json:"generationComplete"`
 	Interrupted         bool           `json:"interrupted"`
+	InteractionStatus   string         `json:"interactionStatus"`
 }
 
 type transcription struct {
@@ -300,10 +313,12 @@ type STS struct {
 	lastHeardAt time.Time
 	heardAt     time.Time
 	// turn is the reply in flight, generation counts them, and usage is what the server
-	// has reported for the turn so far.
+	// has reported for the turn so far. carried is what the earlier turns of a reply that
+	// spans several cost, since the server reports each turn on its own.
 	turn       *sts.Turn
 	generation int
 	usage      sts.Usage
+	carried    sts.Usage
 	// muted drops the rest of a reply the caller cut off from this side, since the API
 	// has no way to tell the model to stop.
 	muted bool
@@ -326,6 +341,9 @@ func New(settings Options) (*STS, error) {
 	}
 	if settings.Model == "" {
 		settings.Model = DefaultModel
+	}
+	if settings.ThinkingLevel == "" {
+		settings.ThinkingLevel = requiredThinking[settings.Model]
 	}
 	if settings.URL == "" {
 		settings.URL = DefaultURL
@@ -782,11 +800,27 @@ func (s *STS) handleContent(server serverContent) {
 		s.settleTurn(true)
 		s.unmute()
 	}
-	if server.TurnComplete {
+	// A turn that ends with the interaction still in progress is a filler spoken while
+	// the model reasons or waits on a tool, so the reply stays open and a local interrupt
+	// in the pause still has something to cut off.
+	if server.TurnComplete && server.InteractionStatus == interactionInProgress {
+		s.finishHearing()
+		s.carryUsage()
+	} else if server.TurnComplete {
 		s.finishHearing()
 		s.settleTurn(false)
 		s.unmute()
 	}
+}
+
+// carryUsage keeps what the turn that just ended cost for the reply it belongs to.
+func (s *STS) carryUsage() {
+	s.mu.Lock()
+	if s.turn != nil {
+		s.carried = sumUsage(s.carried, s.usage)
+	}
+	s.usage = sts.Usage{}
+	s.mu.Unlock()
 }
 
 func (s *STS) unmute() {
@@ -904,9 +938,10 @@ func (s *STS) currentTurn() *sts.Turn {
 func (s *STS) settleTurn(interrupted bool) {
 	s.mu.Lock()
 	turn := s.turn
-	usage := s.usage
+	usage := sumUsage(s.carried, s.usage)
 	s.turn = nil
 	s.usage = sts.Usage{}
+	s.carried = sts.Usage{}
 	s.mu.Unlock()
 	if turn == nil {
 		return
@@ -932,4 +967,14 @@ func usageOf(reported usageMetadata) sts.Usage {
 		}
 	}
 	return cost
+}
+
+func sumUsage(a, b sts.Usage) sts.Usage {
+	return sts.Usage{
+		InputTokens:       a.InputTokens + b.InputTokens,
+		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens,
+		OutputTokens:      a.OutputTokens + b.OutputTokens,
+		InputAudioTokens:  a.InputAudioTokens + b.InputAudioTokens,
+		OutputAudioTokens: a.OutputAudioTokens + b.OutputAudioTokens,
+	}
 }
