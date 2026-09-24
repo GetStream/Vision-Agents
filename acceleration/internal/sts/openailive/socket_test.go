@@ -228,11 +228,61 @@ func (s *OpenAILiveSocketSuite) TestATypedTurnGoesToTheBackendAndAPromptToTheLiv
 	s.Equal("response.create", s.nextFrame(conn)["type"])
 
 	s.Require().NoError(provider.Prompt("Greet the caller."))
-	prompt := s.nextFrame(conn)
+	prompt := s.spokenTo(conn)
 	s.Equal("session.instructions.append", prompt["type"])
 	s.Contains(prompt, "delegation_id", "required even when it names no delegation")
 	s.Nil(prompt["delegation_id"])
 	s.True(strings.HasPrefix(prompt["content"].(string), "Greet the caller."))
+
+	// An instruction only steers the speech a turn would have produced. The commentary is
+	// what starts the model talking when no turn is under way.
+	commentary := s.spokenTo(conn)
+	s.Equal("session.commentary.append", commentary["type"])
+	s.Nil(commentary["delegation_id"])
+	s.Equal("Greet the caller.", commentary["content"])
+}
+
+// A Live session injects an append at a point on a clock that only input audio advances, so
+// nothing appended is spoken until silence carries the session there.
+func (s *OpenAILiveSocketSuite) TestSilenceCarriesTheSessionClockUntilTheModelSpeaks() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer func() { _ = provider.Close() }()
+
+	s.Require().NoError(provider.Prompt("Greet the caller."))
+	s.Equal("session.instructions.append", s.spokenTo(conn)["type"])
+	s.Equal("session.commentary.append", s.spokenTo(conn)["type"])
+
+	silence := s.nextFrame(conn)
+	s.Require().Equal("session.input_audio.append", silence["type"], "silence should follow a prompt")
+	decoded, err := base64.StdEncoding.DecodeString(silence["audio"].(string))
+	s.Require().NoError(err)
+	s.Len(decoded, SampleRate/50*2, "20ms of silence at the session rate")
+	for _, sample := range decoded {
+		s.Zero(sample, "the filler has to be silent")
+	}
+
+	// Once the model is talking, its own audio is the clock and the filler stands down.
+	var reply serverEvent
+	s.Require().NoError(json.Unmarshal([]byte(spoke(240)), &reply))
+	provider.handleMessage(reply)
+	s.Eventually(func() bool {
+		provider.mu.Lock()
+		defer provider.mu.Unlock()
+		return !provider.carrying
+	}, time.Second, 10*time.Millisecond, "the filler should stop when the model speaks")
+}
+
+// spokenTo is the next frame that is not the silence filling the gap, which may arrive at any
+// point once a prompt has started the clock.
+func (s *OpenAILiveSocketSuite) spokenTo(conn *websocket.Conn) map[string]any {
+	for {
+		frame := s.nextFrame(conn)
+		if frame["type"] != "session.input_audio.append" {
+			return frame
+		}
+	}
 }
 
 func (s *OpenAILiveSocketSuite) TestNewToolsReplaceTheWholeDelegation() {

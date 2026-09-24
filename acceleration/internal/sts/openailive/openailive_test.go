@@ -196,7 +196,10 @@ func (s *OpenAILiveSuite) TestAPauseLongerThanTheGapStartsTheNextReply() {
 	s.Equal(2, completes(second)[0].Generation)
 }
 
-func (s *OpenAILiveSuite) TestAReplyTheCallerWasHeardOverIsSettledAsInterrupted() {
+// Hearing the caller during a reply says nothing about whether the reply was cut off. The
+// API transcribes the caller asynchronously, so the deltas for the utterance being answered
+// normally land after the answer has started. Only Interrupt settles a reply as cut off.
+func (s *OpenAILiveSuite) TestAReplyTheCallerWasHeardOverStillSettlesAsFinished() {
 	provider := s.newProvider()
 
 	provider.handleMessage(s.frame(spoke(240)))
@@ -204,7 +207,7 @@ func (s *OpenAILiveSuite) TestAReplyTheCallerWasHeardOverIsSettledAsInterrupted(
 
 	found := completes(s.settled(provider))
 	s.Require().Len(found, 1)
-	s.True(found[0].Interrupted, "the model stopping while the caller spoke is a barge-in")
+	s.False(found[0].Interrupted, "a late transcript of the caller is not a barge-in")
 }
 
 func (s *OpenAILiveSuite) TestALocalInterruptMutesTheRestOfTheReply() {

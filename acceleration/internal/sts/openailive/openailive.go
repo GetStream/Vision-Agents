@@ -10,8 +10,13 @@
 // A reply is therefore whatever the model says between two silences, numbered here: one
 // opens with the first audio after a quiet spell and settles once the audio has stopped for
 // ReplyGap. The caller is taken to have stopped at the last piece of transcript before the
-// model began, and a reply the caller was heard over is reported as interrupted, since the
-// API has no word for either.
+// model began, since the API has no word for it. Only Interrupt settles a reply as cut off:
+// the caller's transcript arrives asynchronously and is no evidence of when they spoke.
+//
+// The session runs on a media clock that only input audio advances, and anything the
+// application appends is injected at a point on that timeline. So a prompt or a typed turn is
+// neither acknowledged nor spoken while the session is silent, and the paths that append
+// something and then wait to hear it send silence until the model answers.
 //
 // Reasoning and tools are delegated to a backend Responses model the session names. Its
 // function calls arrive wrapped in response.event envelopes and their results go back as
@@ -63,6 +68,10 @@ const SampleRate = 24_000
 // DefaultReplyGap is how long the model's audio has to stop before its reply is settled.
 const DefaultReplyGap = 800 * time.Millisecond
 
+// silenceFrame is how much silence goes up at a time while the caller is quiet, which is the
+// frame a call carries anyway.
+const silenceFrame = 20 * time.Millisecond
+
 // apiKeyEnvVar holds the credentials when Options does not.
 const apiKeyEnvVar = "OPENAI_API_KEY"
 
@@ -77,6 +86,7 @@ const (
 	eventSessionClose      = "session.close"
 	eventAudioAppend       = "session.input_audio.append"
 	eventInstructionAppend = "session.instructions.append"
+	eventCommentaryAppend  = "session.commentary.append"
 	eventItemCreate        = "response.item.create"
 	eventResponseCreate    = "response.create"
 )
@@ -262,17 +272,18 @@ type STS struct {
 	lastHeardAt time.Time
 	heardAt     time.Time
 	// turn is the reply in flight, generation counts them, and quiet is the timer that
-	// settles it once the model stops talking. overheard is whether the caller was heard
-	// while it spoke.
+	// settles it once the model stops talking.
 	turn       *sts.Turn
 	generation int
 	quiet      *time.Timer
-	overheard  bool
 	// muted drops the rest of a reply the caller cut off from this side, since the API
 	// has no way to tell the model to stop.
-	muted   bool
-	started bool
-	closed  bool
+	muted bool
+	// carrying is whether silence is going up to move the session clock along, which only
+	// happens while waiting for something appended to be spoken.
+	carrying bool
+	started  bool
+	closed   bool
 	// ended is set once the server reported the session closed, so the transport closing
 	// after it is not reported a second time.
 	ended bool
@@ -375,12 +386,59 @@ func (s *STS) Start(ctx context.Context) error {
 	return nil
 }
 
+// carryTheClock sends silence until the model starts speaking or the caller does.
+//
+// A Live session runs on a media clock that only advances as input audio arrives, and an
+// append is injected at a point on that timeline. Nothing the application appends is reached,
+// acknowledged or spoken while the session is silent, so the paths that append something and
+// then wait to hear it have to carry the clock there themselves. A call carries silence
+// between words anyway, which is all this is.
+func (s *STS) carryTheClock() {
+	s.mu.Lock()
+	if s.carrying || s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.carrying = true
+	s.mu.Unlock()
+
+	go func() {
+		quiet := make([]byte, SampleRate/int(time.Second/silenceFrame)*2)
+		payload := base64.StdEncoding.EncodeToString(quiet)
+		ticker := time.NewTicker(silenceFrame)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			s.mu.Lock()
+			carrying, closed := s.carrying, s.closed
+			s.mu.Unlock()
+			if !carrying || closed {
+				return
+			}
+			if err := s.send(clientEvent{Type: eventAudioAppend, Audio: payload}); err != nil {
+				s.logger.Debug("could not keep the session clock moving", "error", err)
+				s.dropTheClock()
+				return
+			}
+		}
+	}()
+}
+
+// dropTheClock stops the silence, which the caller's own audio and the model's reply both do:
+// filling in behind either would splice silence into the middle of speech.
+func (s *STS) dropTheClock() {
+	s.mu.Lock()
+	s.carrying = false
+	s.mu.Unlock()
+}
+
 // ProcessAudio streams one chunk of the caller's speech.
 func (s *STS) ProcessAudio(pcm sts.PcmData, participant sts.Participant) error {
 	if err := pcm.Validate(sts.InputSampleRate); err != nil {
 		return fmt.Errorf("openailive: %w", err)
 	}
 
+	s.dropTheClock()
 	s.mu.Lock()
 	s.participant = participant
 	s.mu.Unlock()
@@ -403,7 +461,11 @@ func (s *STS) SendText(text string, participant sts.Participant) error {
 	}}); err != nil {
 		return err
 	}
-	return s.send(clientEvent{Type: eventResponseCreate})
+	if err := s.send(clientEvent{Type: eventResponseCreate}); err != nil {
+		return err
+	}
+	s.carryTheClock()
+	return nil
 }
 
 // SendFrame is refused: the live model hears and speaks only.
@@ -435,17 +497,30 @@ func (s *STS) Answer(callID string, output string, err error) error {
 	}}); sendErr != nil {
 		return sendErr
 	}
-	return s.send(clientEvent{Type: eventResponseCreate})
+	if sendErr := s.send(clientEvent{Type: eventResponseCreate}); sendErr != nil {
+		return sendErr
+	}
+	s.carryTheClock()
+	return nil
 }
 
-// Prompt asks the model to speak now, guided by the text. It is an appended instruction,
-// which is how OpenAI has a Live session greet before the caller speaks, with the part that
-// says not to wait spelled out because the model otherwise waits.
+// Prompt asks the model to speak now, guided by the text.
+//
+// It takes both appends OpenAI's greeting flow uses. The instruction says not to wait for the
+// caller, which the model otherwise does; the commentary is what actually starts it talking,
+// since an instruction on its own only steers the speech that a turn would have produced.
 func (s *STS) Prompt(text string) error {
-	return s.send(appendEvent{
+	if err := s.send(appendEvent{
 		Type:    eventInstructionAppend,
 		Content: text + " Do this now, without waiting for the caller, then listen.",
-	})
+	}); err != nil {
+		return err
+	}
+	if err := s.send(appendEvent{Type: eventCommentaryAppend, Content: text}); err != nil {
+		return err
+	}
+	s.carryTheClock()
+	return nil
 }
 
 // Interrupt stops forwarding the reply in flight and settles it as cut off. The API has no
@@ -484,6 +559,7 @@ func (s *STS) Close() error {
 
 	s.mu.Lock()
 	s.closed = true
+	s.carrying = false
 	s.mu.Unlock()
 
 	s.settleTurn(true)
@@ -726,9 +802,6 @@ func (s *STS) heard(text string) {
 	s.listening = true
 	s.lastHeardAt = time.Now()
 	s.hearing.WriteString(text)
-	if s.turn != nil {
-		s.overheard = true
-	}
 	participant := s.participant
 	s.mu.Unlock()
 
@@ -762,6 +835,7 @@ func (s *STS) finishHearing() {
 
 // spoke forwards a piece of the model's speech, opening a reply if none is in flight.
 func (s *STS) spoke(raw []byte) {
+	s.dropTheClock()
 	s.mu.Lock()
 	opening := s.turn == nil
 	muted := s.muted
@@ -814,15 +888,19 @@ func (s *STS) keepAlive(turn *sts.Turn) {
 
 // fellQuiet ends the reply the model stopped talking in, and any mute on a reply cut off
 // here, since whatever was being dropped has now all arrived.
+//
+// The reply is settled as finished, not cut off. Hearing the caller during it is no evidence
+// either way: this API transcribes the caller asynchronously, so the deltas for the very
+// utterance being answered usually arrive after the answer has begun.
 func (s *STS) fellQuiet(turn *sts.Turn) {
 	s.mu.Lock()
 	s.muted = false
-	current, overheard := s.turn, s.overheard
+	current := s.turn
 	s.mu.Unlock()
 	if turn == nil || current != turn {
 		return
 	}
-	s.settleTurn(overheard)
+	s.settleTurn(false)
 }
 
 // settleTurn closes the reply in flight, if there is one.
@@ -830,7 +908,6 @@ func (s *STS) settleTurn(interrupted bool) {
 	s.mu.Lock()
 	turn := s.turn
 	s.turn = nil
-	s.overheard = false
 	s.mu.Unlock()
 	if turn == nil {
 		return
