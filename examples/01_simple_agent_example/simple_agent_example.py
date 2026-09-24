@@ -80,5 +80,10 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         await agent.finish()
 
 
+runner = Runner(AgentLauncher(create_agent=create_agent, join_call=join_call))
+
+
 if __name__ == "__main__":
-    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
+    # `run` joins a call, `serve` starts the HTTP server and
+    # `simulate scenarios/` plays the YAML scenarios against the agent.
+    runner.cli()

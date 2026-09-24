@@ -24,6 +24,14 @@ Generated with `uvx vision-agents init`. See the docs at <https://visionagents.a
    uv run pytest
    ```
 
+5. Optionally, simulate conversations. Switch the agent to a text LLM such as
+   `gemini.LLM()` (realtime LLMs cannot be simulated in text mode), describe each
+   conversation in a `scenarios/*.yaml` file and run:
+
+   ```bash
+   uv run agent.py simulate scenarios/
+   ```
+
 ## Docker
 
 ```bash

@@ -256,3 +256,126 @@ class TestErrorMessages:
             AssertionError, match=r"FunctionCallEvent\(name='get_weather'"
         ):
             response.assert_function_called("nonexistent_tool")
+
+
+class TestFunctionNotCalled:
+    def test_passes_when_nothing_called(self):
+        response = _make_response(_simple_events())
+        response.assert_function_not_called()
+
+    def test_passes_when_other_tool_called(self):
+        response = _make_response(_tool_call_events())
+        response.assert_function_not_called("send_email")
+
+    def test_passes_when_arguments_differ(self):
+        response = _make_response(_tool_call_events())
+        response.assert_function_not_called(
+            "get_weather", arguments={"location": "Berlin"}
+        )
+
+    def test_fails_when_called(self):
+        response = _make_response(_tool_call_events())
+        with pytest.raises(
+            AssertionError, match="Expected no call to 'get_weather', but found 1"
+        ):
+            response.assert_function_not_called("get_weather")
+
+    def test_fails_when_called_with_matching_arguments(self):
+        response = _make_response(_tool_call_events())
+        with pytest.raises(
+            AssertionError,
+            match=r"Expected no call to 'get_weather\(location='Tokyo'\)', but found 1",
+        ):
+            response.assert_function_not_called(
+                "get_weather", arguments={"location": "Tokyo"}
+            )
+
+    def test_fails_when_any_function_called(self):
+        response = _make_response(_tool_call_events())
+        with pytest.raises(
+            AssertionError, match="Expected no function call, but found 1"
+        ):
+            response.assert_function_not_called()
+
+    def test_error_lists_actual_calls(self):
+        response = _make_response(_tool_call_events())
+        with pytest.raises(
+            AssertionError,
+            match=r"Function calls:\n   FunctionCallEvent\(name='get_weather'",
+        ):
+            response.assert_function_not_called("get_weather")
+
+
+class TestFunctionCallOrder:
+    @pytest.fixture
+    def response(self) -> TestResponse:
+        return _make_response(
+            [
+                FunctionCallEvent(name="search", arguments={"q": "pizza"}),
+                FunctionCallOutputEvent(name="search", output=["Luigi's"]),
+                FunctionCallEvent(name="book", arguments={"place": "Luigi's"}),
+                FunctionCallOutputEvent(name="book", output="ok"),
+                FunctionCallEvent(name="send_email", arguments={}),
+                FunctionCallOutputEvent(name="send_email", output="sent"),
+                ChatMessageEvent(role="assistant", content="Booked and emailed."),
+            ]
+        )
+
+    def test_exact_order_passes(self, response: TestResponse):
+        response.assert_function_call_order(["search", "book", "send_email"])
+
+    def test_subsequence_passes(self, response: TestResponse):
+        response.assert_function_call_order(["search", "send_email"])
+
+    def test_single_name_passes(self, response: TestResponse):
+        response.assert_function_call_order(["book"])
+
+    def test_repeated_name_consumes_one_call_each(self):
+        response = _make_response(
+            [
+                FunctionCallEvent(name="a", arguments={}),
+                FunctionCallEvent(name="b", arguments={}),
+                FunctionCallEvent(name="a", arguments={}),
+            ]
+        )
+        response.assert_function_call_order(["a", "a"])
+        response.assert_function_call_order(["a", "b", "a"])
+        with pytest.raises(AssertionError, match="'a' was not called after 'a'"):
+            response.assert_function_call_order(["a", "a", "a"])
+
+    def test_wrong_order_fails(self, response: TestResponse):
+        with pytest.raises(
+            AssertionError,
+            match=r"Expected function calls in order \['book', 'search'\], "
+            r"but 'search' was not called after 'book'",
+        ):
+            response.assert_function_call_order(["book", "search"])
+
+    def test_missing_name_fails(self, response: TestResponse):
+        with pytest.raises(AssertionError, match="'pay' was not called after 'search'"):
+            response.assert_function_call_order(["search", "pay"])
+
+    def test_first_name_missing_fails_without_after(self, response: TestResponse):
+        with pytest.raises(AssertionError, match=r"'pay' was not called\.\n"):
+            response.assert_function_call_order(["pay"])
+
+    def test_error_lists_actual_order_and_calls(self, response: TestResponse):
+        with pytest.raises(
+            AssertionError,
+            match=r"Actual order: \['search', 'book', 'send_email'\]\n"
+            r"Function calls:\n   FunctionCallEvent\(name='search'",
+        ):
+            response.assert_function_call_order(["send_email", "search"])
+
+    def test_no_calls_fails(self):
+        response = _make_response(_simple_events())
+        with pytest.raises(AssertionError, match=r"Actual order: \[\]"):
+            response.assert_function_call_order(["search"])
+
+    def test_empty_names_raises(self, response: TestResponse):
+        with pytest.raises(ValueError, match="at least one"):
+            response.assert_function_call_order([])
+
+    def test_bare_string_raises(self, response: TestResponse):
+        with pytest.raises(ValueError, match="sequence"):
+            response.assert_function_call_order("search")

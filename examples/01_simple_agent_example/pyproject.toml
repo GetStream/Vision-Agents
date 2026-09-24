@@ -25,6 +25,9 @@ dependencies = [
   "pytest-asyncio>=1.0",
 ]
 
+[tool.vision-agents.agent]
+entrypoint = "simple_agent_example:runner"
+
 [tool.uv.sources]
 "vision-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
 "vision-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}

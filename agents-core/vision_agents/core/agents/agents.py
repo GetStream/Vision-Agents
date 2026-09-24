@@ -296,6 +296,7 @@ class Agent:
         self._audio_consumer_task: Optional[asyncio.Task] = None
         self._audio_producer_task: Optional[asyncio.Task] = None
         self._metrics_broadcast_task: Optional[asyncio.Task] = None
+        self._close_task: Optional[asyncio.Task] = None
 
         # Metrics broadcasting settings
         self._broadcast_metrics = broadcast_metrics
@@ -382,7 +383,9 @@ class Agent:
             if self._call_ended_event is not None:
                 self._call_ended_event.set()
 
-            await self.close()
+            # Close in its own task: close() shuts the event manager down, which
+            # cancels and awaits every handler task, so it must not run inside one.
+            self._close_task = asyncio.create_task(self.close())
 
     async def simple_response(
         self,

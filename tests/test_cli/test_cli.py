@@ -1,3 +1,6 @@
+import json
+import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -194,6 +197,26 @@ class TestAgentCommand:
         assert result.exit_code == 0, result.output
         assert log_file.read_text() == "run --debug"
 
+    def test_forwards_options_after_the_subcommand(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        log_file = tmp_path / "called.txt"
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.vision-agents.agent]\nentrypoint = "stub_help:runner"\n'
+        )
+        (tmp_path / "stub_help.py").write_text(
+            "from vision_agents.core import Runner\n"
+            "class _Runner(Runner):\n"
+            "    def __init__(self): pass\n"
+            "    def cli(self, args=None):\n"
+            f"        open({str(log_file)!r}, 'w').write(' '.join(args or []))\n"
+            "runner = _Runner()\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(agent_cmd, ["run", "--help", "--entrypoint=x"])
+        assert result.exit_code == 0, result.output
+        assert log_file.read_text() == "run --help --entrypoint=x"
+
     def test_errors_when_target_is_not_a_runner_instance(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
@@ -255,3 +278,469 @@ class TestAgentCommand:
         assert result.exit_code != 0
         assert "--entrypoint" in result.output
         assert "module:attribute" in result.output
+
+
+_SIMULATE_STUB = '''
+import json
+import re
+from typing import Optional
+
+from getstream.video.rtc import AudioStreamTrack
+from vision_agents.core import Agent, AgentLauncher, Runner, User
+from vision_agents.core.edge.edge_transport import EdgeTransport
+from vision_agents.core.llm.llm import LLM, LLMResponseFinal
+from vision_agents.core.tts import TTS
+
+AGENT_INSTRUCTIONS = "You are the stub weather agent."
+
+
+class StubEdge(EdgeTransport):
+    async def authenticate(self, user):
+        pass
+
+    async def create_call(self, call_id, **kwargs):
+        raise NotImplementedError
+
+    def create_audio_track(self):
+        return AudioStreamTrack(
+            audio_buffer_size_ms=300_000, sample_rate=48000, channels=2
+        )
+
+    def open_demo(self, *args, **kwargs):
+        pass
+
+    async def join(self, agent, call, **kwargs):
+        raise NotImplementedError
+
+    async def publish_tracks(self, audio_track, video_track):
+        raise NotImplementedError
+
+    async def close(self):
+        pass
+
+    async def create_conversation(self, call, user, instructions):
+        raise NotImplementedError
+
+    def add_track_subscriber(self, track_id):
+        return None
+
+    async def send_custom_event(self, data):
+        pass
+
+
+class StubTTS(TTS):
+    async def stream_audio(self, *args, **kwargs):
+        return b""
+
+    async def stop_audio(self):
+        pass
+
+
+class ScriptedLLM(LLM):
+    """Plays the agent, the simulated user, the judge or the rewriter, based on the prompt."""
+
+    def __init__(
+        self,
+        agent: bool = False,
+        error: Optional[str] = None,
+        swallow_error: bool = False,
+    ):
+        super().__init__()
+        self._agent = agent
+        self._error = error
+        self._swallow_error = swallow_error
+        self._user_turns = 0
+
+    async def simple_response(self, text, participant=None):
+        if self._error and self._swallow_error:
+            self.on_llm_error(error=RuntimeError(self._error))
+            yield LLMResponseFinal(text="")
+            return
+        if self._error:
+            raise RuntimeError(self._error)
+        yield LLMResponseFinal(text=self._reply(text))
+
+    def _reply(self, text):
+        if self._agent:
+            return "It is sunny in Amsterdam today."
+        if "Criteria:" in text:
+            names = re.findall(r"^- (.+?): Over the whole conversation", text, re.M)
+            results = [
+                {
+                    "name": name,
+                    "verdict": "fail" if "impossible" in name else "pass",
+                    "reason": "stub judge",
+                }
+                for name in names
+            ]
+            return json.dumps({"results": results})
+        if "Produce exactly" in text:
+            wanted = int(re.search(r"Produce exactly (\\d+)", text).group(1))
+            return json.dumps(
+                {
+                    "variations": [
+                        {"goal": f"Rewrite {i}", "constraints": []}
+                        for i in range(1, wanted + 1)
+                    ]
+                }
+            )
+        self._user_turns += 1
+        if self._user_turns == 1:
+            return json.dumps(
+                {"message": "What's the weather in Amsterdam?", "done": False}
+            )
+        return json.dumps({"message": "", "done": True})
+
+
+def judge():
+    return ScriptedLLM()
+
+
+def broken_judge():
+    return ScriptedLLM(error="judge exploded")
+
+
+def not_an_llm():
+    return object()
+
+
+def _agent(llm):
+    return Agent(
+        edge=StubEdge(),
+        agent_user=User(name="stub", id="stub"),
+        instructions=AGENT_INSTRUCTIONS,
+        llm=llm,
+        tts=StubTTS(),
+    )
+
+
+async def create_agent(**kwargs):
+    return _agent(ScriptedLLM(agent=True))
+
+
+async def create_broken_agent(**kwargs):
+    return _agent(ScriptedLLM(agent=True, error="provider exploded", swallow_error=True))
+
+
+async def join_call(agent, call_type, call_id, **kwargs):
+    pass
+
+
+runner = Runner(AgentLauncher(create_agent=create_agent, join_call=join_call))
+broken_runner = Runner(
+    AgentLauncher(create_agent=create_broken_agent, join_call=join_call)
+)
+'''
+
+_GREETING_SCENARIO = """
+name: greeting
+goal: Find out today's weather in Amsterdam.
+success:
+  - The agent tells the user the weather in Amsterdam
+"""
+
+_IMPOSSIBLE_SCENARIO = """
+name: impossible
+goal: Find out today's weather in Amsterdam.
+success:
+  - The agent tells the user the weather in Amsterdam
+  - The agent does something impossible
+"""
+
+
+class TestSimulateCommand:
+    @pytest.fixture(autouse=True)
+    def _restore_sdk_logger(self):
+        """``simulate`` configures the SDK logger; undo that so later tests can capture logs."""
+        sdk_logger = logging.getLogger("vision_agents")
+        handlers = list(sdk_logger.handlers)
+        propagate = sdk_logger.propagate
+        level = sdk_logger.level
+        yield
+        sdk_logger.handlers = handlers
+        sdk_logger.propagate = propagate
+        sdk_logger.setLevel(level)
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        return CliRunner()
+
+    @pytest.fixture
+    def project(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        monkeypatch.delitem(sys.modules, "sim_stub", raising=False)
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.vision-agents.agent]\nentrypoint = "sim_stub:runner"\n'
+        )
+        (tmp_path / "sim_stub.py").write_text(_SIMULATE_STUB)
+        scenarios = tmp_path / "scenarios"
+        scenarios.mkdir()
+        (scenarios / "greeting.yaml").write_text(_GREETING_SCENARIO)
+        (scenarios / "impossible.yaml").write_text(_IMPOSSIBLE_SCENARIO)
+        monkeypatch.chdir(tmp_path)
+        return tmp_path
+
+    def _report(self, project: Path, report_dir: str = "simulation-report") -> dict:
+        return json.loads((project / report_dir / "report.json").read_text())
+
+    def test_help_describes_options(self, runner: CliRunner, project: Path):
+        result = runner.invoke(agent_cmd, ["simulate", "--help"])
+        assert result.exit_code == 0, result.output
+        for option in (
+            "--repeat",
+            "--variations",
+            "--max-turns",
+            "--judge",
+            "--report",
+            "--filter",
+        ):
+            assert option in result.output
+        assert "SCENARIOS" in result.output
+
+    def test_exits_zero_and_prints_table_when_all_pass(
+        self, runner: CliRunner, project: Path
+    ):
+        result = runner.invoke(
+            agent_cmd,
+            ["simulate", "scenarios/greeting.yaml", "--judge", "sim_stub:judge"],
+        )
+        assert result.exit_code == 0, result.output
+        for header in (
+            "Scenario",
+            "Variations",
+            "Passed",
+            "pass@k",
+            "Turns",
+            "P50 latency",
+            "Failed criteria",
+        ):
+            assert header in result.output
+        assert "greeting" in result.output
+        assert "1/1" in result.output
+        assert " ms" in result.output
+
+    def test_exits_one_when_a_scenario_fails(self, runner: CliRunner, project: Path):
+        result = runner.invoke(
+            agent_cmd, ["simulate", "scenarios", "--judge", "sim_stub:judge"]
+        )
+        assert result.exit_code == 1, result.output
+        assert "0/1" in result.output
+        assert "The agent does something impossible" in result.output
+        report = self._report(project)
+        assert report["state"] == "failed"
+        assert [run["state"] for run in report["runs"]] == ["passed", "failed"]
+
+    def test_exits_two_when_agent_provider_errors(
+        self, runner: CliRunner, project: Path
+    ):
+        result = runner.invoke(
+            agent_cmd,
+            [
+                "--entrypoint=sim_stub:broken_runner",
+                "simulate",
+                "scenarios/greeting.yaml",
+                "--judge",
+                "sim_stub:judge",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        report = self._report(project)
+        assert report["state"] == "errored"
+        case = report["runs"][0]["conversations"][0]
+        assert case["state"] == "errored"
+        assert case["passed"] is None
+        assert "provider exploded" in case["error"]
+
+    def test_exits_two_when_judge_errors(self, runner: CliRunner, project: Path):
+        result = runner.invoke(
+            agent_cmd,
+            ["simulate", "scenarios/greeting.yaml", "--judge", "sim_stub:broken_judge"],
+        )
+        assert result.exit_code == 2, result.output
+        case = self._report(project)["runs"][0]["conversations"][0]
+        assert case["state"] == "errored"
+        assert "judge exploded" in case["error"]
+
+    @pytest.mark.parametrize(
+        ("judge", "message"),
+        [
+            ("nonsense", "provider/model"),
+            ("no_such_plugin/some-model", "not installed"),
+            ("sim_stub:not_an_llm", "expected an LLM instance"),
+            ("sim_stub:missing", "no callable"),
+        ],
+    )
+    def test_exits_two_on_bad_judge_spec(
+        self, runner: CliRunner, project: Path, judge: str, message: str
+    ):
+        result = runner.invoke(
+            agent_cmd, ["simulate", "scenarios/greeting.yaml", "--judge", judge]
+        )
+        assert result.exit_code == 2, result.output
+        assert message in result.output
+        assert not (project / "simulation-report").exists()
+
+    def test_repeat_and_variations_are_reflected_in_report(
+        self, runner: CliRunner, project: Path
+    ):
+        result = runner.invoke(
+            agent_cmd,
+            [
+                "simulate",
+                "scenarios/greeting.yaml",
+                "--judge",
+                "sim_stub:judge",
+                "--repeat",
+                "2",
+                "--variations",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "6/6" in result.output
+        run = self._report(project)["runs"][0]
+        assert run["repeat"] == 2
+        assert run["pass_at_k"] == 1.0
+        assert run["variations"] == 3
+        assert run["cases"] == 6
+        assert sorted((c["variation"], c["attempt"]) for c in run["conversations"]) == [
+            (v, a) for v in range(3) for a in range(2)
+        ]
+        briefs = {c["variation"]: c["scenario"] for c in run["conversations"]}
+        assert briefs[0].startswith("Goal: Find out today's weather in Amsterdam.")
+        assert briefs[1].startswith("Goal: Rewrite 1")
+        assert briefs[2].startswith("Goal: Rewrite 2")
+
+    def test_max_turns_bounds_the_conversation(self, runner: CliRunner, project: Path):
+        result = runner.invoke(
+            agent_cmd,
+            [
+                "simulate",
+                "scenarios/greeting.yaml",
+                "--judge",
+                "sim_stub:judge",
+                "--max-turns",
+                "1",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        run = self._report(project)["runs"][0]
+        assert run["max_turns"] == 1
+        assert run["conversations"][0]["ended"] == "turns"
+
+    def test_filter_selects_scenarios_by_name(self, runner: CliRunner, project: Path):
+        result = runner.invoke(
+            agent_cmd,
+            ["simulate", "scenarios", "--judge", "sim_stub:judge", "--filter", "GREET"],
+        )
+        assert result.exit_code == 0, result.output
+        assert [run["name"] for run in self._report(project)["runs"]] == ["greeting"]
+
+    def test_filter_without_match_exits_two(self, runner: CliRunner, project: Path):
+        result = runner.invoke(
+            agent_cmd,
+            ["simulate", "scenarios", "--judge", "sim_stub:judge", "--filter", "nope"],
+        )
+        assert result.exit_code == 2, result.output
+        assert "no scenarios match" in result.output
+
+    def test_reports_contain_transcripts_and_verdicts(
+        self, runner: CliRunner, project: Path
+    ):
+        result = runner.invoke(
+            agent_cmd,
+            [
+                "simulate",
+                "scenarios",
+                "--judge",
+                "sim_stub:judge",
+                "--report",
+                "out/reports",
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        report = self._report(project, "out/reports")
+        greeting, impossible = report["runs"]
+        case = greeting["conversations"][0]
+        assert [(line["caller"], line["text"]) for line in case["transcript"]] == [
+            (True, "What's the weather in Amsterdam?"),
+            (False, "It is sunny in Amsterdam today."),
+        ]
+        assert case["turns"] == 1
+        assert case["ended"] == "complete"
+        assert case["passed"] is True
+        assert case["criteria"] == [
+            {
+                "criterion": "The agent tells the user the weather in Amsterdam",
+                "passed": True,
+                "reason": "stub judge",
+            }
+        ]
+        failed_case = impossible["conversations"][0]
+        assert failed_case["passed"] is False
+        assert (
+            "The agent does something impossible: stub judge" in failed_case["verdict"]
+        )
+        assert impossible["pass_at_k"] == 0.0
+
+        markdown = (project / "out" / "reports" / "report.md").read_text()
+        assert "# Simulation report" in markdown
+        assert "| greeting | 1 | 1/1 | 1.00 |" in markdown
+        assert "**User:** What's the weather in Amsterdam?" in markdown
+        assert "It is sunny in Amsterdam today." in markdown
+        assert "PASS: The agent tells the user the weather in Amsterdam" in markdown
+        assert "FAIL: The agent does something impossible (stub judge)" in markdown
+
+    def test_filter_applies_before_the_audio_skip(
+        self, runner: CliRunner, project: Path
+    ):
+        (project / "scenarios" / "spoken.yaml").write_text(
+            _GREETING_SCENARIO.replace("name: greeting", "name: spoken\nmode: audio")
+        )
+        result = runner.invoke(
+            agent_cmd,
+            ["simulate", "scenarios", "--judge", "sim_stub:judge", "--filter", "greet"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Skipping" not in result.output
+
+    def test_audio_scenarios_are_skipped(self, runner: CliRunner, project: Path):
+        (project / "scenarios" / "spoken.yaml").write_text(
+            _GREETING_SCENARIO.replace("name: greeting", "name: spoken\nmode: audio")
+        )
+        result = runner.invoke(
+            agent_cmd, ["simulate", "scenarios", "--judge", "sim_stub:judge"]
+        )
+        assert result.exit_code == 1, result.output
+        assert "Skipping audio scenario(s) spoken" in result.output
+        assert [run["name"] for run in self._report(project)["runs"]] == [
+            "greeting",
+            "impossible",
+        ]
+
+    def test_only_audio_scenarios_exits_two(self, runner: CliRunner, project: Path):
+        for name in ("greeting.yaml", "impossible.yaml"):
+            (project / "scenarios" / name).unlink()
+        (project / "scenarios" / "spoken.yaml").write_text(
+            _GREETING_SCENARIO.replace("name: greeting", "name: spoken\nmode: audio")
+        )
+        result = runner.invoke(
+            agent_cmd, ["simulate", "scenarios", "--judge", "sim_stub:judge"]
+        )
+        assert result.exit_code == 2, result.output
+        assert "no text scenarios" in result.output
+
+    def test_missing_target_exits_two(self, runner: CliRunner, project: Path):
+        result = runner.invoke(
+            agent_cmd, ["simulate", "nowhere", "--judge", "sim_stub:judge"]
+        )
+        assert result.exit_code == 2, result.output
+        assert "does not exist" in result.output
+
+    def test_malformed_scenario_exits_two(self, runner: CliRunner, project: Path):
+        (project / "scenarios" / "broken.yaml").write_text("goal: x\n")
+        result = runner.invoke(
+            agent_cmd, ["simulate", "scenarios", "--judge", "sim_stub:judge"]
+        )
+        assert result.exit_code == 2, result.output
+        assert "broken.yaml" in result.output
+        assert "success" in result.output
