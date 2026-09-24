@@ -64,10 +64,9 @@ LEMONSLICE_AGENT_ID=your_agent_id
 # Or, instead of LEMONSLICE_AGENT_ID:
 # LEMONSLICE_AGENT_IMAGE_URL=https://example.com/avatar.png
 
-# LemonSlice uses LiveKit as a transport for audio and video
-LIVEKIT_URL=wss://your-livekit-server.com
-LIVEKIT_API_KEY=your_livekit_api_key
-LIVEKIT_API_SECRET=your_livekit_api_secret
+# LemonSlice uses Stream as the transport for audio and video
+STREAM_API_KEY=your_stream_api_key
+STREAM_API_SECRET=your_stream_api_secret
 ```
 
 ### Avatar Options
@@ -79,26 +78,61 @@ lemonslice.Avatar(
     agent_prompt=None,  # Prompt to influence avatar expressions/movements
     api_key=None,  # Optional: override LEMONSLICE_API_KEY env var
     idle_timeout=None,  # Session timeout in seconds
-    livekit_url=None,  # Optional: override LIVEKIT_URL env var
-    livekit_api_key=None,  # Optional: override LIVEKIT_API_KEY env var
-    livekit_api_secret=None,  # Optional: override LIVEKIT_API_SECRET env var
-    width=1920,  # Output video width in pixels
-    height=1080,  # Output video height in pixels
+    stream_api_key=None,  # Optional: override STREAM_API_KEY env var
+    stream_api_secret=None,  # Optional: override STREAM_API_SECRET env var
+    width=1280,  # Output video width in pixels
+    height=720,  # Output video height in pixels
+    fps=30,  # Output video frame rate
+    buffer_seconds=1.0,  # Max video buffer depth in seconds
+    avatar_join_timeout=30.0,  # Seconds to wait for the avatar to join the bridge call
+    lemonslice_properties=None,  # Extra fields merged into the LemonSlice session request
 )
 ```
 
 ## How It Works
 
-1. **LemonSlice Session**: Creates a session via LemonSlice API, and joins the LiveKit room as a participant
-2. **Audio Forwarding**: TTS audio is captured and sent to LemonSlice via the room
+1. **LemonSlice Session**: Creates a session via LemonSlice API, and joins the Stream call as a participant. `agent.join()` blocks until the avatar is on the call, so no audio is sent before it can receive it — if the avatar does not show up within `avatar_join_timeout`, the connection is torn down and the error is raised
+2. **Audio Forwarding**: TTS audio is captured and sent to LemonSlice via the Stream call
 3. **Avatar Generation**: LemonSlice generates synchronized avatar video and audio
 4. **Video Streaming**: Avatar video is streamed to call participants via GetStream Edge
+
+## Custom Stream Call Type (recommended)
+
+The plugin runs its own internal Stream call as a bridge between your process and the LemonSlice avatar service — this is separate from the user-facing call the agent joins. Only two users ever need to be on the bridge call: the plugin user and the avatar user. We recommend passing a custom `stream_call_type` whose permissions allow **only those two** to join, so no other token-holder in your app can accidentally enter the bridge.
+
+Reference docs:
+- [Built-in call types](https://getstream.io/video/docs/api/call_types/builtin/)
+- [Managing call types](https://getstream.io/video/docs/api/call_types/manage/)
+- [Permissions & capabilities](https://getstream.io/video/docs/api/call_types/permissions/)
+
+The plugin attaches both users to the bridge call as members with `role="call_member"`. Configure your custom call type so the `call_member` role has exactly the capabilities the plugin needs — and no other role has `join-call`:
+
+```python
+client.video.create_call_type(
+    name="lemonslice_bridge",
+    grants={
+        # plugin + avatar — everything they need to bridge audio/video
+        "call_member": ["join-call", "read-call", "send-audio", "send-video"],
+        # everyone else — denied
+        "user": [],
+        "admin": [],
+        "host": [],
+        "moderator": [],
+    },
+)
+
+lemonslice.Avatar(
+    agent_id="your-avatar-id",
+    stream_call_type="lemonslice_bridge",
+)
+```
+
+If you stick with the default `"default"` call type the plugin still works, but the bridge call uses the same broad permissions as any default Stream call.
 
 ## Requirements
 
 - Python 3.10+
 - LemonSlice API key (get one at [lemonslice.com](https://lemonslice.com))
-- LiveKit server (cloud or self-hosted)
 - GetStream account for video calls
 - TTS provider (Cartesia, ElevenLabs, etc.) or Realtime LLM
 

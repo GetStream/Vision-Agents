@@ -1204,7 +1204,32 @@ class TestProcessTTS:
         await stage
 
         chunks = tts_out.peek()
-        assert [c.text for c in chunks] == ["Hi"]
+        assert [c.text for c in chunks[:-1]] == ["Hi"]
+        assert chunks[-1] == TTSOutputEnd()
+
+    async def test_streaming_multi_sentence_turn_ends_once(self, flow_factory) -> None:
+        tts = TTSStub(streaming=True)
+        flow = flow_factory(tts=tts)
+        tts_in: Stream[TTSInput | TTSInputEnd] = Stream()
+        tts_out: Stream[TTSOutputChunk | TTSOutputEnd] = Stream()
+
+        stage = asyncio.create_task(flow.process_tts(tts_in, tts_out))
+
+        await tts_in.send(TTSInput(text="One. ", delta=True))
+        await tts_in.send(TTSInput(text="Two. ", delta=True))
+        await tts_in.send(TTSInput(text="Three", delta=True))
+        await tts_in.send(TTSInputEnd())
+
+        tts_in.close()
+        await stage
+
+        # Three synthesis segments, but a single end-of-turn sentinel.
+        assert tts_out.peek() == [
+            TTSOutputChunk(text="One."),
+            TTSOutputChunk(text="Two."),
+            TTSOutputChunk(text="Three"),
+            TTSOutputEnd(),
+        ]
 
     async def test_streaming_ignores_delta_false_inputs(self, flow_factory) -> None:
         tts = TTSStub(streaming=True)
@@ -1239,7 +1264,7 @@ class TestProcessTTS:
         await stage
 
         chunks = tts_out.peek()
-        assert [c.text for c in chunks] == ["full"]
+        assert chunks == [TTSOutputChunk(text="full"), TTSOutputEnd()]
 
     async def test_non_streaming_passes_through_all_chunks(self, flow_factory) -> None:
         preloaded = [
@@ -1250,7 +1275,7 @@ class TestProcessTTS:
         tts = TTSStub(chunks=preloaded, streaming=False)
         flow = flow_factory(tts=tts)
         tts_in: Stream[TTSInput | TTSInputEnd] = Stream()
-        tts_out: Stream[TTSOutputChunk] = Stream()
+        tts_out: Stream[TTSOutputChunk | TTSOutputEnd] = Stream()
 
         stage = asyncio.create_task(flow.process_tts(tts_in, tts_out))
 
@@ -1259,7 +1284,7 @@ class TestProcessTTS:
         tts_in.close()
         await stage
 
-        assert tts_out.peek() == preloaded
+        assert tts_out.peek() == [*preloaded, TTSOutputEnd()]
 
     async def test_returns_early_when_tts_is_none(self, flow_factory) -> None:
         flow = flow_factory(tts=None)
@@ -1277,7 +1302,7 @@ class TestProcessTTS:
 
 
 class TestWriteAudioOutput:
-    async def test_forwards_chunks_preserving_final_flag(self, flow_factory) -> None:
+    async def test_only_output_end_marks_the_end_of_a_turn(self, flow_factory) -> None:
         flow = flow_factory()
         started: list[AgentTurnStartedEvent] = []
         ended: list[AgentTurnEndedEvent] = []
@@ -1295,20 +1320,45 @@ class TestWriteAudioOutput:
 
         # data=None lets the chunk pass through AudioOutputStream unchanged,
         # bypassing its 20ms re-chunking so the assertion stays focused.
+        # Two synthesis segments, each ending with its own final chunk.
         await tts_out.send(TTSOutputChunk(data=None, final=False))
         await tts_out.send(TTSOutputChunk(data=None, final=True))
+        await tts_out.send(TTSOutputChunk(data=None, final=False))
+        await tts_out.send(TTSOutputChunk(data=None, final=True))
+        await tts_out.send(TTSOutputEnd())
 
         tts_out.close()
         await stage
         await flow.events.wait()
 
+        # Per-segment finals are not end-of-turn: exactly one final marker.
         assert audio_out.peek() == [
+            AudioOutputChunk(data=None, final=False),
+            AudioOutputChunk(data=None, final=False),
+            AudioOutputChunk(data=None, final=False),
             AudioOutputChunk(data=None, final=False),
             AudioOutputChunk(data=None, final=True),
         ]
         assert len(started) == 1
         assert len(ended) == 1
         assert ended[0].interrupted is False
+
+    async def test_interrupted_output_end_emits_no_final_marker(
+        self, flow_factory
+    ) -> None:
+        # An interrupt discards the audio already queued, so there is no
+        # complete reply to mark.
+        flow = flow_factory()
+        tts_out: Stream[TTSOutputChunk | TTSOutputEnd] = Stream()
+        audio_out = AudioOutputStream()
+        stage = asyncio.create_task(flow.write_audio_output(tts_out, audio_out))
+
+        await tts_out.send(TTSOutputChunk(data=None, final=False))
+        await tts_out.send(TTSOutputEnd(interrupted=True))
+        tts_out.close()
+        await stage
+
+        assert audio_out.peek() == [AudioOutputChunk(data=None, final=False)]
 
     async def test_tts_output_end_emits_interrupted_agent_turn_ended(
         self, flow_factory
