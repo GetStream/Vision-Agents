@@ -156,18 +156,10 @@ class TestLemonSliceAvatar:
 
         await manager.flush()
 
-        emitted_samples = 0
-        while True:
-            try:
-                emitted_samples += (
-                    await asyncio.wait_for(manager._input_track.recv(), timeout=0.05)
-                ).samples
-            except TimeoutError:
-                break
-
+        # 60 ms of speech at 16 kHz; the trailing silence is not part of the utterance.
         assert call_events[0] == {
             "type": "lemonslice.end_utterance",
-            "pts": emitted_samples,
+            "pts": 960,
             "event_id": 1,
         }
 

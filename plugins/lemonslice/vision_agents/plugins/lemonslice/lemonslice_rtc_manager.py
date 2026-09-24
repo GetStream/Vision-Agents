@@ -28,6 +28,11 @@ _AVATAR_AUDIO_SAMPLE_RATE = 16000
 _AVATAR_AUDIO_CHANNELS = 1
 _CUSTOM_EVENT_END_UTTERANCE = "lemonslice.end_utterance"
 _CUSTOM_EVENT_INTERRUPT = "lemonslice.interrupt"
+# Silence sent after each utterance. RTP stops between utterances, so without it
+# the utterance's last packets stay in aiortc's Opus encoder (up to ~27 ms) and
+# potentially in the avatar's receiving buffer until the next utterance.
+# Bigger chunk of silence must "push" the remaining audio through the buffer
+_END_OF_UTTERANCE_SILENCE_MS = 120
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,13 @@ class StreamConnectionCredentials:
     call_type: str
     avatar_user_id: str
     avatar_token: str
+
+
+def _silence(*, duration_ms: int, sample_rate: int, channels: int) -> PcmData:
+    samples = sample_rate * duration_ms // 1000
+    return PcmData.from_bytes(
+        b"\x00" * samples * channels * 2, sample_rate=sample_rate, channels=channels
+    )
 
 
 class StreamRTCManager:
@@ -266,6 +278,14 @@ class StreamRTCManager:
             final=True,
         )
         pts = await self._input_track.pts()
+        await self._input_track.write(
+            _silence(
+                duration_ms=_END_OF_UTTERANCE_SILENCE_MS,
+                sample_rate=self._input_track.sample_rate,
+                channels=self._input_track.channels,
+            ),
+            final=True,
+        )
         await self._call.send_call_event(
             user_id=self._plugin_user_id,
             custom={
