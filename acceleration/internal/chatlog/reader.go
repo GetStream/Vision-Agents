@@ -103,7 +103,9 @@ func (r *Reader) Transcript(ctx context.Context, agentID string) ([]Spoken, erro
 			Text:    stored.Text,
 			Agent:   stored.Custom[SourceField] == SourceAgent,
 		}
-		if stored.User.Name != nil {
+		// A user nobody named is named after their own id, which is not a name and is no
+		// use to whoever is reading the conversation back.
+		if stored.User.Name != nil && *stored.User.Name != stored.User.ID {
 			line.Name = *stored.User.Name
 		}
 		if stored.CreatedAt.Time != nil {

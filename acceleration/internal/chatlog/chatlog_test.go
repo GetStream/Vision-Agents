@@ -270,6 +270,7 @@ func (s *ChatLogSuite) TestTheTranscriptSaysWhichLinesTheAgentSaid() {
 	s.Require().NoError(err)
 	s.Require().Len(said, 2)
 	s.Equal("alice", said[0].Speaker)
+	s.Empty(said[0].Name, "chat names a user after their id, and an id is not a name")
 	s.False(said[0].Agent)
 	s.Equal("vision-agent", said[1].Speaker)
 	s.True(said[1].Agent)
