@@ -1,0 +1,12 @@
+includes:
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+
+parameters:
+    level: max
+    paths:
+        - src
+        - tests
+        - bin
+    excludePaths:
+        - tests/server
+    tmpDir: build/phpstan
