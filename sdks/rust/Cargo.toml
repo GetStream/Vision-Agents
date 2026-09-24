@@ -1,0 +1,39 @@
+[package]
+name = "vision-agents"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Server-side Rust SDK for Stream's Vision Agents acceleration backend"
+license = "Apache-2.0"
+repository = "https://github.com/GetStream/Vision-Agents"
+readme = "README.md"
+keywords = ["stream", "voice", "agents", "ai"]
+categories = ["api-bindings", "asynchronous"]
+exclude = ["generate/", ".sdk_update_log/", "tests/"]
+
+[workspace]
+members = [".", "generate"]
+default-members = ["."]
+
+[dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query"] }
+tokio = { version = "1.53", features = ["rt", "macros", "sync", "time", "fs"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+tokio-util = "0.7"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+yaml-rust2 = "0.13"
+md-5 = "0.11"
+hmac = "0.13"
+sha2 = "0.11"
+base64 = "0.23"
+url = "2"
+percent-encoding = "2"
+rand = "0.10"
+
+[dev-dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "net"] }
+tempfile = "3"
