@@ -1163,6 +1163,16 @@ type AgentResponse struct {
 	Error      string     `bun:"error,notnull"`
 	CreatedAt  time.Time  `bun:"created_at,notnull"`
 	FinishedAt *time.Time `bun:"finished_at"`
+	// RewoundAt is when a rewind went back past this turn, which takes it out of the
+	// conversation without pretending it was never said.
+	RewoundAt *time.Time `bun:"rewound_at"`
+}
+
+// Exchange is one turn as a model is given it again: what was asked and what was answered.
+type Exchange struct {
+	ResponseID string
+	Said       string
+	Answer     string
 }
 
 // The kinds of item a response is made of.

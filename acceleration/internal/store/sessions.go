@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -333,6 +334,7 @@ func (s *Store) SessionResponses(ctx context.Context, customerID, sessionID stri
 	query := s.db.NewSelect().Model((*AgentResponse)(nil)).
 		Where("customer_id = ?", customerID).
 		Where("session_id = ?", sessionID).
+		Where("rewound_at IS NULL").
 		Order("created_at ASC", "id ASC").
 		Limit(limit)
 	if offset > 0 {
@@ -402,6 +404,7 @@ func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, respons
 		Join("JOIN agent_responses AS r ON r.id = ari.response_id").
 		Where("r.customer_id = ?", customerID).
 		Where("ari.session_id = ?", sessionID).
+		Where("r.rewound_at IS NULL").
 		Order("ari.at ASC", "ari.response_id ASC", "ari.ordinal ASC").
 		Limit(limit)
 	if responseID != "" {
@@ -416,6 +419,101 @@ func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, respons
 		return nil, fmt.Errorf("store: session items: %w", err)
 	}
 	return items, nil
+}
+
+// ErrUnknownResponse is a response that is not part of the session's conversation: it does
+// not exist, belongs to another session, or was rewound.
+var ErrUnknownResponse = errors.New("store: that response is not part of this conversation")
+
+// Exchanges returns a session's conversation as a model would be given it again, oldest
+// first: each turn's question and everything it answered. A non-empty upTo stops after that
+// response, which is where a rewind or a fork carries on from.
+//
+// Only questions and answers are kept. A tool's call and its result were the agent working
+// the answer out, and the answer is what the conversation carries forward, which is also all
+// a transcript read out of Chat gives a model.
+func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo string) ([]Exchange, error) {
+	if customerID == "" || sessionID == "" {
+		return nil, errors.New("store: a customer and a session id are required")
+	}
+
+	var responses []AgentResponse
+	err := s.db.NewSelect().Model(&responses).
+		Where("customer_id = ?", customerID).
+		Where("session_id = ?", sessionID).
+		Where("rewound_at IS NULL").
+		Order("created_at ASC", "id ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: exchanges: %w", err)
+	}
+	if upTo != "" {
+		end := -1
+		for i, response := range responses {
+			if response.ID == upTo {
+				end = i
+				break
+			}
+		}
+		if end < 0 {
+			return nil, ErrUnknownResponse
+		}
+		responses = responses[:end+1]
+	}
+	if len(responses) == 0 {
+		return nil, nil
+	}
+
+	ids := make([]string, 0, len(responses))
+	for _, response := range responses {
+		ids = append(ids, response.ID)
+	}
+	var answers []AgentResponseItem
+	err = s.db.NewSelect().Model(&answers).
+		Where("response_id IN (?)", bun.In(ids)).
+		Where("kind = ?", ItemAnswer).
+		Order("response_id ASC", "ordinal ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: exchanges: answers: %w", err)
+	}
+	// An agent that speaks again once delegated work comes back answers one question twice,
+	// and both halves are the answer.
+	answered := map[string][]string{}
+	for _, answer := range answers {
+		answered[answer.ResponseID] = append(answered[answer.ResponseID], answer.Text)
+	}
+
+	exchanges := make([]Exchange, 0, len(responses))
+	for _, response := range responses {
+		exchanges = append(exchanges, Exchange{
+			ResponseID: response.ID, Said: response.Said,
+			Answer: strings.Join(answered[response.ID], "\n\n"),
+		})
+	}
+	return exchanges, nil
+}
+
+// RewindResponses takes every response after kept out of the session's conversation.
+func (s *Store) RewindResponses(ctx context.Context, customerID, sessionID, kept string, at time.Time) error {
+	if customerID == "" || sessionID == "" || kept == "" {
+		return errors.New("store: a customer, a session and a response id are required")
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
+	_, err := s.db.NewUpdate().Model((*AgentResponse)(nil)).
+		Set("rewound_at = ?", at).
+		Where("customer_id = ?", customerID).
+		Where("session_id = ?", sessionID).
+		Where("rewound_at IS NULL").
+		Where("(created_at, id) > (SELECT created_at, id FROM agent_responses WHERE id = ?)", kept).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: rewind responses: %w", err)
+	}
+	return nil
 }
 
 // RecordGuest stores a guest this app handed out, so it can later be claimed.

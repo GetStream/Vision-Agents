@@ -8,6 +8,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -17,9 +18,13 @@ import (
 // Recall names a conversation to read history out of. Both halves are needed because a
 // channel is only readable as the agent it belongs to, and a fork onto a different agent
 // still has to read the old one's words.
+//
+// Messages is the history itself, for a fork read out of what its parent recorded rather
+// than out of a channel. When it is set the channel is not read.
 type Recall struct {
 	AgentID        string
 	ConversationID string
+	Messages       []llm.Message
 }
 
 // Spec is a conversation somebody outside this process asked for.

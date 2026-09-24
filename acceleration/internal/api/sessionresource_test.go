@@ -158,6 +158,61 @@ func (s *SessionAPISuite) TestForkingAnIncognitoSessionIsRefused() {
 	s.Contains(failure.Error, "nothing to fork from")
 }
 
+func (s *SessionAPISuite) TestRewindingNeedsAResponseToCarryOnFrom() {
+	created := s.writes(CreateSessionRequest{})
+
+	response := s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/rewind", "acme",
+		RewindSessionRequest{})
+
+	s.Equal(http.StatusBadRequest, response.StatusCode)
+}
+
+func (s *SessionAPISuite) TestRewindingNeedsSomewhereTheConversationWasWrittenDown() {
+	created := s.writes(CreateSessionRequest{})
+
+	response := s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/rewind", "acme",
+		RewindSessionRequest{ResponseId: "first"})
+
+	s.Equal(http.StatusBadRequest, response.StatusCode)
+	var failure Error
+	s.decodeBody(response, &failure)
+	s.Contains(failure.Error, "does not record")
+}
+
+func (s *SessionAPISuite) TestAnotherCustomerCannotRewindASession() {
+	created := s.writes(CreateSessionRequest{})
+
+	response := s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/rewind", "other",
+		RewindSessionRequest{ResponseId: "first"})
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+func (s *SessionAPISuite) TestForkingAtAResponseCarriesHistoryUpToIt() {
+	created := s.writes(CreateSessionRequest{})
+	no := false
+
+	response := s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/fork", "acme",
+		ForkSessionRequest{ResponseId: label("first"), Messages: &no})
+
+	s.Equal(http.StatusBadRequest, response.StatusCode)
+	var failure Error
+	s.decodeBody(response, &failure)
+	s.Contains(failure.Error, "messages false")
+}
+
+func (s *SessionAPISuite) TestForkingAtAResponseNeedsSomewhereItWasWrittenDown() {
+	created := s.writes(CreateSessionRequest{})
+
+	response := s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/fork", "acme",
+		ForkSessionRequest{ResponseId: label("first")})
+
+	s.Equal(http.StatusBadRequest, response.StatusCode)
+	var failure Error
+	s.decodeBody(response, &failure)
+	s.Contains(failure.Error, "does not record")
+}
+
 func (s *SessionAPISuite) TestAForkSaysWhatItCameFrom() {
 	created := s.writes(CreateSessionRequest{Title: label("The first ask"), Project: label("Health")})
 

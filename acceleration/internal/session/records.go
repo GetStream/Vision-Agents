@@ -48,6 +48,8 @@ type recordWrite struct {
 	finishedAt time.Time
 	// items are things that happened during a turn.
 	items []store.AgentResponseItem
+	// flushed is closed once everything queued before it has been written.
+	flushed chan struct{}
 }
 
 // recorder is what a session needs of the writer behind it, which is less than the writer
@@ -61,6 +63,9 @@ type recorder interface {
 	Responded(id, status, failure string, at time.Time)
 	// Item says one thing that happened during it.
 	Item(item store.AgentResponseItem)
+	// Flush waits until everything said so far has been written, which is what reading the
+	// conversation back straight after it happened needs.
+	Flush(ctx context.Context) error
 }
 
 // sessionRecorder writes sessions, turns and items to Postgres off the conversation's path.
@@ -118,6 +123,24 @@ func (r *sessionRecorder) Responded(id, status, failure string, at time.Time) {
 // Item queues one thing that happened during a turn.
 func (r *sessionRecorder) Item(item store.AgentResponseItem) {
 	r.queueWrite(recordWrite{items: []store.AgentResponseItem{item}})
+}
+
+// Flush waits for the writer to catch up with everything queued before it. Unlike the other
+// writes it waits for room rather than being dropped, because the caller is about to read
+// what it wrote.
+func (r *sessionRecorder) Flush(ctx context.Context) error {
+	flushed := make(chan struct{})
+	select {
+	case r.queue <- recordWrite{flushed: flushed}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-flushed:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Dropped reports how many writes were thrown away, for a test or a health check that wants
@@ -187,6 +210,9 @@ func (r *sessionRecorder) write(write recordWrite) {
 	defer cancel()
 
 	switch {
+	case write.flushed != nil:
+		// The items pending ahead of it were written before this was reached.
+		close(write.flushed)
 	case write.session != nil:
 		if err := r.store.SaveSession(ctx, write.session); err != nil {
 			r.logger.Error("could not record the session starting", "error", err)

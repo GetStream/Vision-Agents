@@ -3065,6 +3065,43 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/sessions/{id}/rewind:
+    post:
+      operationId: rewindSession
+      x-client-accessible: true
+      summary: Go back to a response and carry on from there
+      description: >
+        The conversation continues as though nothing after the named response had been said:
+        the reply being spoken is abandoned, the agent's history is cut back to the end of
+        that response, and every later response is marked rewound, so neither the responses
+        nor their items list them again. The named response itself is kept.
+
+        The history is rebuilt from what the session recorded, the question and the answer of
+        each turn, so a session that recorded nothing cannot be rewound: an incognito one, one
+        on a deployment with no store, and a native speech-to-speech one, whose model keeps its
+        own context. A persistent conversation is refused as well, because its transcript
+        lives in Chat and would bring the rewound turns back the next time it opened; fork it
+        at the response instead.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RewindSessionRequest"
+      responses:
+        "204":
+          description: The conversation carries on from the end of that response
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/sessions/{id}/say:
     post:
       operationId: saySession
@@ -5229,6 +5266,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KnowledgeDocument"
+        knowledge_urls:
+          type: array
+          description: >
+            The pages the directory's knowledge/urls.yaml declares. They are subscribed to
+            in the same knowledge base as the files, so one lookup covers both.
+          items:
+            $ref: "#/components/schemas/KnowledgeUrlDeclaration"
         mode:
           $ref: "#/components/schemas/AgentMode"
         stt:
@@ -5625,6 +5669,19 @@ components:
         text:
           type: string
 
+    KnowledgeUrlDeclaration:
+      type: object
+      required: [url]
+      description: A page an agent directory declares, in the knowledge base named after it.
+      properties:
+        url:
+          type: string
+          example: https://example.com/pricing
+        title:
+          type: string
+          example: Pricing
+        description:
+          type: string
     KnowledgeUrlRequest:
       type: object
       required: [namespace, url]
@@ -6822,12 +6879,27 @@ components:
             Carry the parent's history into the fork, so the new conversation continues from
             what was already said. False starts the same configuration over from nothing,
             which is what comparing two answers to the same opening question wants.
+        response_id:
+          type: string
+          description: >
+            Carry the parent's history only up to the end of this response, so the fork
+            continues from that point rather than from where the parent is now. The history is
+            read from what the parent recorded, which also lets a parent that kept no Chat
+            transcript be forked with its history. Cannot be combined with messages false.
         call_id:
           type: string
           description: >
             The call the fork joins. A voice session cannot be forked into a text one or the
             other way about, so this is required when the parent held a call and refused
             when it did not.
+
+    RewindSessionRequest:
+      type: object
+      required: [response_id]
+      properties:
+        response_id:
+          type: string
+          description: The response to carry on from. It is kept; everything after it is not.
 
     CreateResponseRequest:
       type: object

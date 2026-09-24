@@ -1057,6 +1057,29 @@ func (s *APIIntegrationSuite) TestASyncedDirectoryListsItsFilesAndForgetsTheOnes
 	s.Empty(s.documents("librarian"), "a directory with no knowledge left holds none")
 }
 
+func (s *APIIntegrationSuite) TestASyncedDirectorysPagesAreReadIntoItsKnowledge() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/sync", `{
+		"name":"librarian","hash":"v1",
+		"knowledge_urls":[{"url":"https://example.com/pricing","title":"What a call costs"}]
+	}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var synced SyncAgentResult
+	s.Require().NoError(json.Unmarshal(payload, &synced))
+	s.Require().NotNil(synced.Config.KnowledgeNamespace, "pages alone are still a knowledge base")
+	s.Equal("librarian", *synced.Config.KnowledgeNamespace)
+
+	response, payload = s.do(http.MethodGet, "/v1/agents/knowledge/urls?namespace=librarian", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var listed []KnowledgeUrl
+	s.Require().NoError(json.Unmarshal(payload, &listed))
+	s.Require().Len(listed, 1)
+	s.Equal("https://example.com/pricing", listed[0].Url)
+	s.Require().NotNil(listed[0].Title)
+	s.Equal("What a call costs", *listed[0].Title)
+}
+
 func (s *APIIntegrationSuite) TestAConfigRemembersWhichSearchItRoutesTo() {
 	response, payload := s.do(http.MethodPost, "/v1/agents/configs",
 		`{"name":"support","search":"en-high-accuracy"}`)

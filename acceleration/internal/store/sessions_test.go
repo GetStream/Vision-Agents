@@ -355,6 +355,55 @@ func (s *StoreSuite) TestAnInterruptedResponseIsCancelledRatherThanFailed() {
 	s.Equal(ResponseCancelled, responses[0].Status)
 }
 
+func (s *StoreSuite) TestExchangesAreTheQuestionsAndTheirAnswers() {
+	s.opened("one", "app", s.base, nil)
+	s.responded("one", "first", "Is Stream better than Sendbird?", s.base, ItemSaid, ItemToolCall, ItemToolResult, ItemAnswer)
+	s.responded("one", "second", "And cheaper?", s.base.Add(time.Hour), ItemSaid, ItemAnswer, ItemAnswer)
+
+	exchanges, err := s.store.Exchanges(s.ctx, "app", "one", "")
+	s.Require().NoError(err)
+	s.Equal([]Exchange{
+		{ResponseID: "first", Said: "Is Stream better than Sendbird?", Answer: "answer text"},
+		{ResponseID: "second", Said: "And cheaper?", Answer: "answer text\n\nanswer text"},
+	}, exchanges)
+
+	upTo, err := s.store.Exchanges(s.ctx, "app", "one", "first")
+	s.Require().NoError(err)
+	s.Require().Len(upTo, 1)
+	s.Equal("first", upTo[0].ResponseID)
+
+	_, err = s.store.Exchanges(s.ctx, "somebody-else", "one", "first")
+	s.ErrorIs(err, ErrUnknownResponse)
+}
+
+func (s *StoreSuite) TestRewindingTakesLaterTurnsOutOfTheConversation() {
+	s.opened("one", "app", s.base, nil)
+	s.responded("one", "first", "one", s.base, ItemSaid, ItemAnswer)
+	s.responded("one", "second", "two", s.base.Add(time.Hour), ItemSaid, ItemAnswer)
+	s.responded("one", "third", "three", s.base.Add(2*time.Hour), ItemSaid, ItemAnswer)
+
+	s.Require().NoError(s.store.RewindResponses(s.ctx, "app", "one", "first", s.base.Add(3*time.Hour)))
+
+	responses, err := s.store.SessionResponses(s.ctx, "app", "one", 0, 0)
+	s.Require().NoError(err)
+	s.Require().Len(responses, 1)
+	s.Equal("first", responses[0].ID)
+
+	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, 0)
+	s.Require().NoError(err)
+	s.Len(items, 2)
+
+	_, err = s.store.Exchanges(s.ctx, "app", "one", "third")
+	s.ErrorIs(err, ErrUnknownResponse, "a rewound turn is no longer somewhere to carry on from")
+
+	// What is said after the rewind carries on from the kept turn.
+	s.responded("one", "fourth", "four", s.base.Add(4*time.Hour), ItemSaid, ItemAnswer)
+	exchanges, err := s.store.Exchanges(s.ctx, "app", "one", "")
+	s.Require().NoError(err)
+	s.Require().Len(exchanges, 2)
+	s.Equal("fourth", exchanges[1].ResponseID)
+}
+
 func (s *StoreSuite) TestDeletingASessionTakesItsTurnsWithIt() {
 	s.opened("one", "app", s.base, nil)
 	s.responded("one", "first", "hello", s.base, ItemSaid, ItemAnswer)

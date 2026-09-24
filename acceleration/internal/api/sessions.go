@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -197,6 +198,18 @@ func (s *Server) ForkSession(ctx context.Context, request ForkSessionRequestObje
 	if err != nil {
 		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
 	}
+	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
+	switch {
+	case errors.Is(err, store.ErrUnknownResponse):
+		return ForkSession404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+	case errors.Is(err, errForkNeedsHistory), errors.Is(err, errNoRecords):
+		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
+	case err != nil:
+		return nil, err
+	}
+	if recalled != nil {
+		spec.Recall = &session.Recall{Messages: recalled}
+	}
 	spec.CustomerID = customerID
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
@@ -305,6 +318,34 @@ func (s *Server) InterruptSession(ctx context.Context, request InterruptSessionR
 
 	found.Interrupt()
 	return InterruptSession204Response{}, nil
+}
+
+// RewindSession carries a conversation on from the end of one of its responses.
+func (s *Server) RewindSession(ctx context.Context, request RewindSessionRequestObject) (RewindSessionResponseObject, error) {
+	found, failure := s.session(ctx, request.Id)
+	if failure != nil {
+		if failure.status == unauthorized {
+			return RewindSession401JSONResponse{missingCustomer()}, nil
+		}
+		return RewindSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+	}
+	if request.Body == nil || request.Body.ResponseId == "" {
+		return RewindSession400JSONResponse{badRequest("name the response to carry on from")}, nil
+	}
+	if s.store == nil {
+		return RewindSession400JSONResponse{badRequest(noStore)}, nil
+	}
+
+	err := found.Rewind(ctx, s.store, request.Body.ResponseId)
+	switch {
+	case errors.Is(err, store.ErrUnknownResponse):
+		return RewindSession404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+	case errors.Is(err, session.ErrCannotRewind):
+		return RewindSession400JSONResponse{badRequest(err.Error())}, nil
+	case err != nil:
+		return nil, err
+	}
+	return RewindSession204Response{}, nil
 }
 
 // GetSessionCommand reports what one durable command ended as, without running anything.
@@ -967,6 +1008,45 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		spec.Recall = recall
 	}
 	return spec, nil
+}
+
+var (
+	errForkNeedsHistory = errors.New(
+		"response_id says where the carried history stops, so it cannot be combined with messages false")
+	errNoRecords = errors.New(noStore)
+)
+
+// recordedHistory is the history a fork reads out of what its parent recorded rather than
+// out of a Chat channel: up to the named response, or all of it for a parent that kept no
+// channel to read. Nil leaves the fork carrying whatever forkSpec decided.
+func (s *Server) recordedHistory(ctx context.Context, parent session.Found, request ForkSessionRequest, recall *session.Recall) ([]llm.Message, error) {
+	carry := request.Messages == nil || *request.Messages
+	responseID := value(request.ResponseId)
+	switch {
+	case responseID != "" && !carry:
+		return nil, errForkNeedsHistory
+	case responseID == "" && (!carry || recall != nil):
+		return nil, nil
+	case s.store == nil && responseID != "":
+		return nil, errNoRecords
+	case s.store == nil:
+		return nil, nil
+	}
+
+	// A running parent may have said something the writer has not caught up with yet.
+	if parent.Live != nil {
+		if err := parent.Live.FlushRecords(ctx); err != nil {
+			return nil, err
+		}
+	}
+	exchanges, err := s.store.Exchanges(ctx, OwnerFrom(ctx).CustomerID, parent.ID(), responseID)
+	if err != nil {
+		return nil, err
+	}
+	if len(exchanges) == 0 && responseID == "" {
+		return nil, nil
+	}
+	return session.HistoryOf(exchanges), nil
 }
 
 // value reads an optional field, which the generated types carry as pointers.

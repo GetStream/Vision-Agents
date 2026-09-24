@@ -428,6 +428,72 @@ func (s *Session) Interrupt() {
 	}
 }
 
+// ErrCannotRewind is a session whose conversation cannot be cut back faithfully.
+var ErrCannotRewind = errors.New("session: this conversation cannot be rewound")
+
+// Recorded is where a rewind reads the conversation back from and marks what it went past.
+type Recorded interface {
+	Exchanges(ctx context.Context, customerID, sessionID, upTo string) ([]store.Exchange, error)
+	RewindResponses(ctx context.Context, customerID, sessionID, kept string, at time.Time) error
+}
+
+// Rewind carries the conversation on from the end of a response, as though nothing after it
+// had been said. The reply being spoken is abandoned and the model's history is rebuilt from
+// what was recorded up to that response.
+//
+// A persistent conversation is refused because its transcript lives in Chat, and reopening
+// it would bring the rewound turns back; forking it at the response is what keeps both. A
+// native model is refused because it holds its own context, which this cannot reach.
+func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID string) error {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	switch {
+	case s.records == nil:
+		return fmt.Errorf("%w: nothing was recorded to go back to", ErrCannotRewind)
+	case s.spec.Native():
+		return fmt.Errorf("%w: a speech-to-speech model keeps its own context", ErrCannotRewind)
+	case s.persisted != nil:
+		return fmt.Errorf("%w: a persistent conversation keeps its transcript in Chat; fork it at the response instead", ErrCannotRewind)
+	}
+
+	s.voiceAgent.Interrupt()
+	if err := s.records.Flush(ctx); err != nil {
+		return err
+	}
+	exchanges, err := recorded.Exchanges(ctx, s.spec.CustomerID, s.id, responseID)
+	if err != nil {
+		return err
+	}
+	if err := recorded.RewindResponses(ctx, s.spec.CustomerID, s.id, responseID, time.Now().UTC()); err != nil {
+		return err
+	}
+	s.voiceAgent.RestoreHistory(HistoryOf(exchanges))
+	return nil
+}
+
+// FlushRecords waits until everything the session has said is written down, so it can be
+// read back straight away.
+func (s *Session) FlushRecords(ctx context.Context) error {
+	if s.records == nil {
+		return nil
+	}
+	return s.records.Flush(ctx)
+}
+
+// HistoryOf is recorded turns as a model is handed them: each question, then its answer.
+func HistoryOf(exchanges []store.Exchange) []llm.Message {
+	history := make([]llm.Message, 0, 2*len(exchanges))
+	for _, exchange := range exchanges {
+		if exchange.Said != "" {
+			history = append(history, llm.Message{Role: llm.User, Content: exchange.Said})
+		}
+		if exchange.Answer != "" {
+			history = append(history, llm.Message{Role: llm.Assistant, Content: exchange.Answer})
+		}
+	}
+	return history
+}
+
 // Command reads what is known about a durable command without accepting, running or
 // stopping anything. The caller must already be authorized for this session.
 func (s *Session) Command(id string) (persistent.CommandReceipt, error) {

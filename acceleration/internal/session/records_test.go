@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -46,6 +47,8 @@ func (r *heldRecorder) Item(item store.AgentResponseItem) {
 	defer r.mu.Unlock()
 	r.items = append(r.items, item)
 }
+
+func (r *heldRecorder) Flush(context.Context) error { return nil }
 
 // kinds is the conversation as a reader would see it: what happened, in order.
 func (r *heldRecorder) kinds() []string {

@@ -214,7 +214,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// A fork opens an empty channel of its own and then reads the parent's, so the model
 		// carries on from what was said while the transcripts stay separate. The parent's
 		// half goes first because it happened first.
-		if spec.Recall != nil {
+		if spec.Recall != nil && spec.Recall.Messages == nil {
 			recalled, cut, err := service.ContextForCaller(ctx, spec.CustomerID,
 				spec.Recall.AgentID, spec.Recall.ConversationID, spec.Caller.UserID)
 			if err != nil {
@@ -240,6 +240,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, err
 		}
 		spec.ContextTruncated = truncated
+	}
+	if spec.Recall != nil && spec.Recall.Messages != nil {
+		previous = append(append([]llm.Message(nil), spec.Recall.Messages...), previous...)
 	}
 	m.supersede(spec)
 	m.think(ctx, &spec)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -58,6 +59,20 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 		namespace = name
 		if _, _, err := s.fillKnowledge(ctx, customerID, namespace, documents, nil); err != nil {
 			return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
+		}
+	}
+	if body.KnowledgeUrls != nil && len(*body.KnowledgeUrls) > 0 {
+		if s.pages == nil {
+			return SyncAgent400JSONResponse{badRequest(noKnowledgeURLs)}, nil
+		}
+		namespace = name
+		for _, page := range *body.KnowledgeUrls {
+			wanted := urls.Subscription{Namespace: namespace, URL: page.Url}
+			wanted.Title = value(page.Title)
+			wanted.Description = value(page.Description)
+			if _, err := s.pages.Add(ctx, customerID, wanted); err != nil {
+				return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
+			}
 		}
 	}
 	// The directory is the whole of what its knowledge base holds, so a file taken out of

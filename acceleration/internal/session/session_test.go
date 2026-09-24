@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -904,6 +905,82 @@ func (s *SessionSuite) TestATextSessionCannotAlsoJoinACall() {
 	_, err := s.manager.Create(s.ctx, Spec{Text: true, CallID: "call-1", CustomerID: "acme"})
 
 	s.ErrorContains(err, "holds no call")
+}
+
+// recordedTurns is a conversation's recorded turns held in memory, the way the store holds
+// them for a rewind to read back and cut.
+type recordedTurns struct {
+	exchanges []store.Exchange
+}
+
+func (r *recordedTurns) Exchanges(_ context.Context, _, _, upTo string) ([]store.Exchange, error) {
+	if upTo == "" {
+		return r.exchanges, nil
+	}
+	for i, exchange := range r.exchanges {
+		if exchange.ResponseID == upTo {
+			return r.exchanges[:i+1], nil
+		}
+	}
+	return nil, store.ErrUnknownResponse
+}
+
+func (r *recordedTurns) RewindResponses(_ context.Context, _, _, kept string, _ time.Time) error {
+	for i, exchange := range r.exchanges {
+		if exchange.ResponseID == kept {
+			r.exchanges = r.exchanges[:i+1]
+		}
+	}
+	return nil
+}
+
+func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
+	s.manages()
+	created := s.writes(Spec{})
+	created.records = &heldRecorder{}
+	recorded := &recordedTurns{exchanges: []store.Exchange{
+		{ResponseID: "first", Said: "Is Stream better than Sendbird?", Answer: "Yes."},
+		{ResponseID: "second", Said: "And cheaper?", Answer: "Also yes."},
+	}}
+
+	s.Require().NoError(created.Rewind(s.ctx, recorded, "first"))
+
+	s.Equal([]llm.Message{
+		{Role: llm.User, Content: "Is Stream better than Sendbird?"},
+		{Role: llm.Assistant, Content: "Yes."},
+	}, created.voiceAgent.History())
+	s.Len(recorded.exchanges, 1, "the later turn is no longer part of the conversation")
+}
+
+func (s *SessionSuite) TestRewindingToAResponseTheSessionNeverHadIsUnknown() {
+	s.manages()
+	created := s.writes(Spec{})
+	created.records = &heldRecorder{}
+
+	err := created.Rewind(s.ctx, &recordedTurns{}, "somebody-elses")
+
+	s.ErrorIs(err, store.ErrUnknownResponse)
+}
+
+func (s *SessionSuite) TestAForkReadFromRecordsStartsFromThatHistory() {
+	s.manages()
+	recalled := []llm.Message{
+		{Role: llm.User, Content: "Is Stream better than Sendbird?"},
+		{Role: llm.Assistant, Content: "Yes."},
+	}
+
+	created := s.writes(Spec{ForkedFrom: "parent", Recall: &Recall{Messages: recalled}})
+
+	s.Equal(recalled, created.voiceAgent.History())
+}
+
+func (s *SessionSuite) TestASessionThatRecordedNothingCannotBeRewound() {
+	s.manages()
+	created := s.writes(Spec{})
+
+	err := created.Rewind(s.ctx, &recordedTurns{}, "first")
+
+	s.ErrorIs(err, ErrCannotRewind)
 }
 
 func (s *SessionSuite) TestATextSessionAnswersInWriting() {
