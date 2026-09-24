@@ -15,7 +15,7 @@
 #
 # The router links Opus and soxr through LiveKit's media-sdk, so both stages need
 # the C libraries: headers to build, shared objects to run.
-FROM golang:1.26-bookworm AS build
+FROM golang:1.27-bookworm AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       pkg-config libopus-dev libopusfile-dev libsoxr-dev \
