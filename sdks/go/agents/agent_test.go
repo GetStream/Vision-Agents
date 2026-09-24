@@ -18,12 +18,11 @@ import (
 type backend struct {
 	*httptest.Server
 
-	mu        sync.Mutex
-	configs   []acceleration.AgentConfig
-	skills    []acceleration.Skill
-	knowledge []acceleration.IngestKnowledgeRequest
-	pages     []acceleration.KnowledgeUrlRequest
-	updates   []string
+	mu      sync.Mutex
+	configs []acceleration.AgentConfig
+	skills  []acceleration.Skill
+	syncs   []acceleration.SyncAgentRequest
+	updates []string
 }
 
 func newBackend(t *testing.T) *backend {
@@ -102,31 +101,30 @@ func newBackend(t *testing.T) *backend {
 		})
 	})
 
-	mux.HandleFunc("POST /v1/agents/knowledge", func(w http.ResponseWriter, r *http.Request) {
-		var request acceleration.IngestKnowledgeRequest
+	mux.HandleFunc("POST /v1/agents/sync", func(w http.ResponseWriter, r *http.Request) {
+		var request acceleration.SyncAgentRequest
 		_ = json.NewDecoder(r.Body).Decode(&request)
 
 		router.mu.Lock()
 		defer router.mu.Unlock()
-		router.knowledge = append(router.knowledge, request)
-		reply(w, http.StatusOK, acceleration.IngestedKnowledge{
-			Namespace: request.Namespace, Documents: len(request.Documents),
-			Passages: len(request.Documents),
-		})
-	})
-	mux.HandleFunc("POST /v1/agents/knowledge/urls", func(w http.ResponseWriter, r *http.Request) {
-		var request acceleration.KnowledgeUrlRequest
-		_ = json.NewDecoder(r.Body).Decode(&request)
-
-		router.mu.Lock()
-		defer router.mu.Unlock()
-		router.pages = append(router.pages, request)
-		reply(w, http.StatusCreated, acceleration.KnowledgeUrl{
-			Id: "page-" + request.Url, Namespace: request.Namespace, Url: request.Url,
-			Title: request.Title, Description: request.Description,
-			State: acceleration.KnowledgeUrlStateIndexed, Passages: 1,
+		router.syncs = append(router.syncs, request)
+		stored := acceleration.AgentConfig{
+			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
+			Subagent: request.Subagent, Llm: request.Llm, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
-		})
+		}
+		if request.Knowledge != nil || request.KnowledgeUrls != nil {
+			stored.KnowledgeNamespace = &request.Name
+		}
+		if request.Skills != nil {
+			named := []string{}
+			for _, skill := range *request.Skills {
+				named = append(named, skill.Name)
+			}
+			stored.Skills = &named
+		}
+		router.configs = append(router.configs[:0:0], stored)
+		reply(w, http.StatusOK, acceleration.SyncAgentResult{Config: stored})
 	})
 
 	router.Server = httptest.NewServer(mux)
@@ -203,6 +201,7 @@ func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
 
 func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "llm: openai/gpt-5.6\ntags:\n  team: support\n")
 	write(t, root, "instructions.md", "You are Jean.\n")
 	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
 	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
@@ -219,36 +218,88 @@ func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	router.mu.Lock()
 	defer router.mu.Unlock()
 
-	if len(router.skills) != 1 || router.skills[0].Name != "think" {
-		t.Errorf("the skills stored are %+v", router.skills)
+	if len(router.syncs) != 1 {
+		t.Fatalf("the directory was synced in %d requests", len(router.syncs))
 	}
-	if len(router.knowledge) != 1 {
-		t.Fatalf("the knowledge posted is %+v", router.knowledge)
+	synced := router.syncs[0]
+	if synced.Hash != agent.Folder().Hash() {
+		t.Errorf("the directory was sent as %q, but hashes to %q", synced.Hash, agent.Folder().Hash())
 	}
-	if router.knowledge[0].Namespace != "jean" {
-		t.Errorf("the knowledge went to %q", router.knowledge[0].Namespace)
+	if synced.Skills == nil || (*synced.Skills)[0].Name != "think" {
+		t.Errorf("the skills sent are %+v", synced.Skills)
 	}
-	// Files and pages share the namespace, so one lookup covers both.
-	if len(router.pages) != 1 {
-		t.Fatalf("the pages subscribed are %+v", router.pages)
+	if synced.Knowledge == nil || (*synced.Knowledge)[0].Source != "pricing.md" {
+		t.Errorf("the knowledge sent is %+v", synced.Knowledge)
 	}
-	page := router.pages[0]
-	if page.Namespace != "jean" || page.Url != "https://example.com/plans" {
-		t.Errorf("the page subscribed is %+v", page)
+	if synced.KnowledgeUrls == nil || (*synced.KnowledgeUrls)[0].Url != "https://example.com/plans" ||
+		*(*synced.KnowledgeUrls)[0].Title != "Plans" || (*synced.KnowledgeUrls)[0].Description != nil {
+		t.Errorf("the pages sent are %+v", synced.KnowledgeUrls)
 	}
-	if page.Title == nil || *page.Title != "Plans" || page.Description != nil {
-		t.Errorf("the declaration reached the router as %+v", page)
+	if synced.Llm == nil || *synced.Llm != "openai/gpt-5.6" || (*synced.Tags)["team"] != "support" {
+		t.Errorf("what agent.yaml declares did not go with it: %+v", synced)
+	}
+	if synced.Stt != nil || synced.Mode != nil {
+		t.Errorf("settings the declaration never named were sent: %+v", synced)
 	}
 	if stored.KnowledgeNamespace == nil || *stored.KnowledgeNamespace != "jean" {
 		t.Errorf("the config does not point at the knowledge: %+v", stored)
 	}
-	if stored.Skills == nil || (*stored.Skills)[0] != "think" {
-		t.Errorf("the config does not name the skill: %+v", stored.Skills)
+	if ReadStamp(root) != synced.Hash {
+		t.Errorf("%s records %q", AgentStamp, ReadStamp(root))
+	}
+}
+
+func TestAnUnchangedDirectoryIsNotSyncedAgain(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	router := newBackend(t)
+
+	for range 2 {
+		stored, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored == nil || stored.Name != "jean" {
+			t.Fatalf("the sync answered %+v", stored)
+		}
+	}
+	write(t, root, "instructions.md", "You are Jean, and brief.\n")
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 2 {
+		t.Errorf("three syncs, one of them of an edited directory, sent %d requests", len(router.syncs))
+	}
+}
+
+func TestWhatTheCodeSetsIsPartOfWhatIsSynced(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	router := newBackend(t)
+
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	written := Options{Dir: root, Instructions: "You are somebody else."}
+	if _, err := agentOn(t, router, written).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 2 || *router.syncs[1].Instructions != "You are somebody else." {
+		t.Errorf("instructions written in code were not synced: %+v", router.syncs)
 	}
 }
 
 func TestADirectorysSkillsAreWhatTheAgentJoinsWith(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
 
 	router := newBackend(t)
@@ -264,6 +315,7 @@ func TestADirectorysSkillsAreWhatTheAgentJoinsWith(t *testing.T) {
 
 func TestADirectoryDoesNotWriteThroughToAHarnessSharedWithAnotherAgent(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
 
 	router := newBackend(t)

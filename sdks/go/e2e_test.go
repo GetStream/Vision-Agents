@@ -356,6 +356,7 @@ func TestADirectoryIsPushedAndLookedUpAgain(t *testing.T) {
 	backend := router(t)
 
 	root := t.TempDir() + "/e2e-knowledge"
+	writeFile(t, root+"/agent.yaml", "name: e2e-knowledge\n")
 	writeFile(t, root+"/instructions.md",
 		"You are Jean. Look things up rather than guessing, and answer in one sentence.")
 	writeFile(t, root+"/knowledge/refunds.md",

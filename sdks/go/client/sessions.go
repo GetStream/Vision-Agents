@@ -338,6 +338,9 @@ type ForkOptions struct {
 	// WithoutMessages starts the same configuration over from nothing rather than carrying
 	// the parent's history across. What comparing two answers to one opening question wants.
 	WithoutMessages bool
+	// ResponseID carries the history only up to the end of this response, so the fork
+	// branches from that point rather than from where the parent is now.
+	ResponseID string
 
 	// Functions are the fork's own. Nil inherits this session's, since a conversation
 	// continued without them would offer the model tools nothing can run.
@@ -368,6 +371,7 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 		Incognito:       pointer(options.Incognito),
 		ModelOverwrites: options.ModelOverwrites,
 		CallId:          pointer(options.CallID),
+		ResponseId:      pointer(options.ResponseID),
 	}
 	if len(options.Custom) > 0 {
 		custom := options.Custom

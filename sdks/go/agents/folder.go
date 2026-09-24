@@ -1,17 +1,29 @@
 package agents
 
 import (
+	"bytes"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// AgentFile is what makes a directory an agent: it names it and says what it runs on.
+const AgentFile = "agent.yaml"
+
+// AgentStamp is where a directory records the fingerprint it was last synced under.
+const AgentStamp = ".agent_sync"
 
 // InstructionsFile is what an agent directory calls its system prompt.
 const InstructionsFile = "instructions.md"
@@ -88,9 +100,42 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// Settings is what agent.yaml declares.
+//
+// The rest of the directory is what the agent is told; this is what it is run with. A
+// field left out leaves whatever the config already has stored, so a model chosen in the
+// dashboard survives a sync that says nothing about it.
+type Settings struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	Mode        string `yaml:"mode"`
+	STT         string `yaml:"stt"`
+	TTS         string `yaml:"tts"`
+	// STS is nil when the declaration says nothing, and empty when it turns it off.
+	STS      *string           `yaml:"sts"`
+	Voice    string            `yaml:"voice"`
+	LLM      string            `yaml:"llm"`
+	Subagent string            `yaml:"subagent"`
+	Search   string            `yaml:"search"`
+	Greeting string            `yaml:"greeting"`
+	Sandbox  string            `yaml:"sandbox"`
+	Plugins  []string          `yaml:"plugins"`
+	Keyterms []string          `yaml:"keyterms"`
+	Tags     map[string]string `yaml:"tags"`
+	Video    *VideoSettings    `yaml:"video"`
+}
+
+// VideoSettings is which video a skill that captures it sees.
+type VideoSettings struct {
+	Source string `yaml:"source"`
+	// MaxFrames is how many recent frames are captured, from 1 to 8. Zero reads as one.
+	MaxFrames int `yaml:"max_frames"`
+}
+
 // Folder is an agent written down as a directory.
 //
 //	agents/jean/
+//	  agent.yaml
 //	  instructions.md
 //	  guardrail.md
 //	  skills/think.md
@@ -102,8 +147,12 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 type Folder struct {
 	// Path is the directory this was read from.
 	Path string
-	// Name is the directory's own name, which is what the agent is called.
+	// Name is what agent.yaml calls the agent, or the directory's own name if it does not.
 	Name string
+	// Declaration is agent.yaml as written, which is what its fingerprint is taken over.
+	Declaration string
+	// Settings is what agent.yaml declares.
+	Settings Settings
 	// Instructions is instructions.md, or empty if there is none.
 	Instructions string
 	// Guardrail is guardrail.md, whole and unparsed, or empty if there is none. The
@@ -119,8 +168,9 @@ type Folder struct {
 
 // Load reads an agent directory.
 //
-// Everything in it is optional: a directory with only instructions.md is a valid agent, and
-// so is one with only skills.
+// agent.yaml is what makes a directory an agent, so it is required. Everything else is
+// optional: a directory with only instructions.md beside it is a valid agent, and so is one
+// with only skills.
 func Load(path string) (*Folder, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -131,6 +181,21 @@ func Load(path string) (*Folder, error) {
 	}
 
 	folder := &Folder{Path: path, Name: filepath.Base(filepath.Clean(path))}
+
+	declaration, err := os.ReadFile(filepath.Join(path, AgentFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("agents: %s has no %s, so it is not an agent directory", path, AgentFile)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", AgentFile, err)
+	}
+	folder.Declaration = strings.TrimSpace(string(declaration))
+	if folder.Settings, err = declare(declaration); err != nil {
+		return nil, fmt.Errorf("agents: %s: %w", filepath.Join(path, AgentFile), err)
+	}
+	if folder.Settings.Name != "" {
+		folder.Name = folder.Settings.Name
+	}
 
 	instructions, err := os.ReadFile(filepath.Join(path, InstructionsFile))
 	switch {
@@ -196,6 +261,108 @@ func (f *Folder) KnowledgeNamespace() string {
 		return ""
 	}
 	return f.Name
+}
+
+// Hash is a fingerprint of the directory. The same files produce the same hash, and the
+// Python SDK takes it the same way, so a stamp either one wrote is understood by both.
+func (f *Folder) Hash() string {
+	return fingerprint(f.Declaration, f.Instructions, f.Guardrail, f.Skills, f.Knowledge, f.KnowledgeURLs)
+}
+
+func fingerprint(
+	declaration, instructions, guardrail string,
+	skills []Skill,
+	knowledge []Document,
+	pages []KnowledgeURL,
+) string {
+	hasher := md5.New()
+	io.WriteString(hasher, declaration+"\n"+instructions+"\n"+guardrail)
+
+	sorted := slices.SortedFunc(slices.Values(skills), func(a, b Skill) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	for _, skill := range sorted {
+		// Written the way Python prints a bool and a float, which is what keeps the two
+		// SDKs' fingerprints of one directory the same.
+		captured := "False"
+		if skill.CaptureVideo {
+			captured = "True"
+		}
+		io.WriteString(hasher, "\nskill:"+skill.Name+"\n"+skill.Description+"\n"+skill.Instructions+captured+"\n")
+		if skill.Deadline > 0 {
+			seconds := strconv.FormatFloat(skill.Deadline.Seconds(), 'f', -1, 64)
+			if !strings.Contains(seconds, ".") {
+				seconds += ".0"
+			}
+			io.WriteString(hasher, seconds)
+		}
+	}
+
+	documents := slices.SortedFunc(slices.Values(knowledge), func(a, b Document) int {
+		return strings.Compare(a.Source, b.Source)
+	})
+	for _, document := range documents {
+		io.WriteString(hasher, "\nknowledge:"+document.Source+"\n"+document.Text)
+	}
+	for _, page := range pages {
+		io.WriteString(hasher, "\nurl:"+page.URL+"\n"+page.Title+"\n"+page.Description)
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// syncStamp is what .agent_sync holds.
+type syncStamp struct {
+	Hash     string `json:"hash"`
+	SyncedAt string `json:"synced_at"`
+}
+
+// ReadStamp is the fingerprint a directory was last synced under, or empty when it never
+// was or the stamp cannot be read.
+func ReadStamp(path string) string {
+	raw, err := os.ReadFile(filepath.Join(path, AgentStamp))
+	if err != nil {
+		return ""
+	}
+	var recorded syncStamp
+	if json.Unmarshal(raw, &recorded) != nil {
+		return ""
+	}
+	return recorded.Hash
+}
+
+// WriteStamp records what was synced and when, so a second sync can do nothing.
+func WriteStamp(path, hash string) error {
+	recorded, err := json.Marshal(syncStamp{
+		Hash:     hash,
+		SyncedAt: time.Now().UTC().Truncate(time.Second).Format("2006-01-02T15:04:05+00:00"),
+	})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(path, AgentStamp), append(recorded, '\n'), 0o644); err != nil {
+		return fmt.Errorf("agents: writing %s: %w", AgentStamp, err)
+	}
+	return nil
+}
+
+// declare reads agent.yaml. A key nobody knows is refused rather than dropped, since a
+// misspelled llm that goes quietly is a config running on a model the file does not name.
+func declare(raw []byte) (Settings, error) {
+	var settings Settings
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&settings); err != nil && !errors.Is(err, io.EOF) {
+		return Settings{}, err
+	}
+	if settings.Video != nil {
+		if settings.Video.MaxFrames == 0 {
+			settings.Video.MaxFrames = 1
+		}
+		if settings.Video.MaxFrames < 1 || settings.Video.MaxFrames > 8 {
+			return Settings{}, errors.New("video.max_frames must be an integer from 1 to 8")
+		}
+	}
+	return settings, nil
 }
 
 func loadSkills(path string) ([]Skill, error) {

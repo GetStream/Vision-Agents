@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
@@ -214,4 +215,33 @@ func (r *Responses) List(ctx context.Context, limit, offset int) ([]acceleration
 			listed.JSON401, listed.JSON403, listed.JSON404)
 	}
 	return *listed.JSON200, nil
+}
+
+// Rewind goes back to a response and carries on from there.
+//
+// The reply being spoken is abandoned and the conversation continues as though nothing after
+// that response had been said: later turns are no longer listed, and the next question is
+// answered from that point. The response itself is kept. Pass a response's ID, or an item's
+// ResponseId to go back to the turn it was part of. A persistent conversation cannot be
+// rewound, because its transcript lives in Chat; fork it at the response instead.
+func (r *Responses) Rewind(ctx context.Context, responseID string) error {
+	if responseID == "" {
+		return fmt.Errorf("client: rewinding %s: that response has no id, which is what a "+
+			"session that records nothing hands back; there is nothing to rewind to", r.sessionID)
+	}
+	api, err := r.client.api()
+	if err != nil {
+		return err
+	}
+
+	rewound, err := api.RewindSessionWithResponse(ctx, r.sessionID,
+		acceleration.RewindSessionRequest{ResponseId: responseID})
+	if err != nil {
+		return fmt.Errorf("client: rewinding %s: %w", r.sessionID, err)
+	}
+	if rewound.StatusCode() != http.StatusNoContent {
+		return failure("rewinding "+r.sessionID, rewound.Status(),
+			rewound.JSON400, rewound.JSON401, rewound.JSON403, rewound.JSON404)
+	}
+	return nil
 }

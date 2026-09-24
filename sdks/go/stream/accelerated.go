@@ -581,6 +581,12 @@ func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event) 
 func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	name := frame.String("name")
 	result := Frame{"type": "tool_result", "tool_call_id": frame.String("id")}
+	// A durable command's result is only accepted back with the command and turn it names.
+	for _, key := range []string{"command_id", "turn_id"} {
+		if value := frame.String(key); value != "" {
+			result[key] = value
+		}
+	}
 
 	output, err := p.functions.Call(ctx, name, frame.String("arguments"))
 	if err != nil {

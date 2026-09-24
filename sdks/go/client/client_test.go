@@ -105,6 +105,17 @@ func newRouter(t *testing.T) *router {
 		answer(w, http.StatusOK, backend.page())
 	})
 
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/rewind", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		// A persistent conversation is what the real router refuses to rewind.
+		if r.PathValue("id") == "persistent" {
+			answer(w, http.StatusBadRequest, acceleration.Error{
+				Error: "a persistent conversation keeps its transcript in Chat"})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	mux.HandleFunc("POST /v1/agents/guests", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusCreated, acceleration.GuestUser{
@@ -471,6 +482,61 @@ func TestUnwindingReportsWhyItStoppedRatherThanLookingLikeTheEnd(t *testing.T) {
 	}
 	if stream.Err() == nil {
 		t.Fatal("the stream ended as though it had run out")
+	}
+}
+
+func TestRewindingCarriesOnFromTheResponseGiven(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	answer, err := session.Responses.Create(t.Context(), "Is Stream better?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Responses.Rewind(t.Context(), answer.ID()); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/rewind")
+	if body["response_id"] != "response-1" {
+		t.Errorf("the rewind went over as %v", body)
+	}
+}
+
+func TestARewindTheRouterRefusesSaysWhy(t *testing.T) {
+	backend := newRouter(t)
+	responses := backend.client(t).Agent("docs").Sessions.Responses("persistent")
+
+	err := responses.Rewind(t.Context(), "response-1")
+	if err == nil || !strings.Contains(err.Error(), "transcript in Chat") {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+func TestAResponseThatWasNeverRecordedCannotBeRewoundTo(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if err := session.Responses.Rewind(t.Context(), ""); err == nil {
+		t.Fatal("a response with no id was rewound to")
+	}
+	if asked := backend.requests("POST", "/v1/agents/sessions/session-1/rewind"); asked != 0 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+}
+
+func TestForkingAtAResponseBranchesFromThere(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	forked, err := session.Fork(t.Context(), ForkOptions{ResponseID: "response-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forked.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions/session-1/fork"); body["response_id"] != "response-1" {
+		t.Errorf("response_id went over as %v", body["response_id"])
 	}
 }
 

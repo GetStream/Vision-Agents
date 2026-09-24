@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
@@ -13,10 +14,17 @@ import (
 // A config is what a session can be created from by name, so the things worth deciding once
 // are decided once. Both the config and its skills are found by name first, so calling this
 // twice edits what is stored rather than storing another copy of it.
+//
+// An agent read from a directory is synced whole, with what its agent.yaml declares, and
+// .agent_sync records the fingerprint of what was stored. A directory unchanged since then
+// is only read back, not written again.
 func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	client, err := a.Client()
 	if err != nil {
 		return nil, err
+	}
+	if a.folder != nil {
+		return a.syncFolder(ctx, client)
 	}
 
 	skills := a.syncedSkills()
@@ -26,21 +34,9 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 		}
 	}
 
-	namespace := ""
-	if a.folder != nil {
-		namespace = a.folder.KnowledgeNamespace()
-		if err := IngestKnowledge(ctx, client, namespace, a.folder.Knowledge); err != nil {
-			return nil, err
-		}
-		if err := SubscribeKnowledgeURLs(ctx, client, namespace, a.folder.KnowledgeURLs); err != nil {
-			return nil, err
-		}
-	}
-
 	wanted := acceleration.AgentConfigRequest{Name: a.options.Name}
 	setString(&wanted.Instructions, a.options.Instructions)
 	setString(&wanted.Guardrail, a.options.Guardrail)
-	setString(&wanted.KnowledgeNamespace, namespace)
 	setString(&wanted.Subagent, a.options.Harness.Subagent())
 	if len(a.options.CostTracking) > 0 {
 		tags := a.options.CostTracking
@@ -55,6 +51,131 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	}
 
 	return DefineAgent(ctx, client, wanted)
+}
+
+// syncFolder stores the agent's directory in one request. What the code set wins over what
+// the directory says, and is part of the fingerprint, so changing either syncs again.
+func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithResponses) (*acceleration.AgentConfig, error) {
+	folder := a.folder
+	skills := a.syncedSkills()
+	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
+		skills, folder.Knowledge, folder.KnowledgeURLs)
+	subagent := a.options.Harness.Subagent()
+	if subagent != "" || len(a.options.CostTracking) > 0 {
+		hash = fingerprint(hash, subagent, fmt.Sprint(a.options.CostTracking), nil, nil, nil)
+	}
+
+	if ReadStamp(folder.Path) == hash {
+		if stored, err := storedConfig(ctx, client, a.options.Name); err != nil || stored != nil {
+			return stored, err
+		}
+	}
+
+	body := acceleration.SyncAgentRequest{Name: a.options.Name, Hash: hash}
+	setString(&body.Instructions, a.options.Instructions)
+	setString(&body.Guardrail, a.options.Guardrail)
+	if len(skills) > 0 {
+		requests := make([]acceleration.SkillRequest, 0, len(skills))
+		for _, skill := range skills {
+			requests = append(requests, skillRequestOf(skill))
+		}
+		body.Skills = &requests
+	}
+	if len(folder.Knowledge) > 0 {
+		documents := make([]acceleration.KnowledgeDocument, 0, len(folder.Knowledge))
+		for _, document := range folder.Knowledge {
+			documents = append(documents, acceleration.KnowledgeDocument{Source: document.Source, Text: document.Text})
+		}
+		body.Knowledge = &documents
+	}
+	if len(folder.KnowledgeURLs) > 0 {
+		pages := make([]acceleration.KnowledgeUrlDeclaration, 0, len(folder.KnowledgeURLs))
+		for _, page := range folder.KnowledgeURLs {
+			declared := acceleration.KnowledgeUrlDeclaration{Url: page.URL}
+			setString(&declared.Title, page.Title)
+			setString(&declared.Description, page.Description)
+			pages = append(pages, declared)
+		}
+		body.KnowledgeUrls = &pages
+	}
+	declareSettings(&body, folder.Settings)
+	setString(&body.Subagent, subagent)
+	if len(a.options.CostTracking) > 0 {
+		tags := map[string]string{}
+		if body.Tags != nil {
+			tags = *body.Tags
+		}
+		for key, value := range a.options.CostTracking {
+			tags[key] = value
+		}
+		body.Tags = &tags
+	}
+
+	synced, err := client.SyncAgentWithResponse(ctx, body)
+	if err != nil {
+		return nil, fmt.Errorf("agents: syncing %s: %w", a.options.Name, err)
+	}
+	result, err := answer(synced.JSON200, synced.JSON400, synced.JSON401, nil, synced.Status())
+	if err != nil {
+		return nil, err
+	}
+	if err := WriteStamp(folder.Path, hash); err != nil {
+		return nil, err
+	}
+	return &result.Config, nil
+}
+
+// declareSettings carries what agent.yaml declared onto the sync request. Only what the file
+// names is sent, so the router leaves whatever is already stored for the rest.
+func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
+	if settings.Mode != "" {
+		mode := acceleration.AgentMode(settings.Mode)
+		body.Mode = &mode
+	}
+	setString(&body.Stt, settings.STT)
+	setString(&body.Tts, settings.TTS)
+	body.Sts = settings.STS
+	setString(&body.Voice, settings.Voice)
+	setString(&body.Llm, settings.LLM)
+	setString(&body.Subagent, settings.Subagent)
+	setString(&body.Search, settings.Search)
+	setString(&body.Greeting, settings.Greeting)
+	if settings.Sandbox != "" {
+		sandbox := acceleration.Sandbox(settings.Sandbox)
+		body.Sandbox = &sandbox
+	}
+	if len(settings.Plugins) > 0 {
+		body.Plugins = &settings.Plugins
+	}
+	if len(settings.Keyterms) > 0 {
+		body.Keyterms = &settings.Keyterms
+	}
+	if len(settings.Tags) > 0 {
+		tags := maps.Clone(settings.Tags)
+		body.Tags = &tags
+	}
+	if settings.Video != nil {
+		body.Video = &acceleration.SessionVideo{MaxFrames: &settings.Video.MaxFrames}
+		setString(&body.Video.Source, settings.Video.Source)
+	}
+}
+
+// storedConfig is the config stored under a name, or nil when there is none.
+func storedConfig(ctx context.Context, client *acceleration.ClientWithResponses, name string) (*acceleration.AgentConfig, error) {
+	listed, err := client.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
+	if err != nil {
+		return nil, fmt.Errorf("agents: listing configs: %w", err)
+	}
+	stored, err := answer(listed.JSON200, listed.JSON400, listed.JSON401, nil, listed.Status())
+	if err != nil {
+		return nil, err
+	}
+	for _, config := range *stored {
+		if config.Name == name {
+			return &config, nil
+		}
+	}
+	return nil, nil
 }
 
 // syncedSkills are the skills the stored config should name. The harness is the whole of
@@ -123,17 +244,7 @@ func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 	}
 
 	for _, skill := range skills {
-		body := acceleration.SkillRequest{
-			Name:         skill.Name,
-			CaptureVideo: &skill.CaptureVideo,
-			Description:  skill.Description,
-			Instructions: skill.Instructions,
-		}
-		if skill.Deadline > 0 {
-			milliseconds := skill.Deadline.Milliseconds()
-			body.DeadlineMs = &milliseconds
-		}
-
+		body := skillRequestOf(skill)
 		if id, ok := known[skill.Name]; ok {
 			updated, err := client.UpdateSkillWithResponse(ctx, id, body)
 			if err != nil {
@@ -154,6 +265,20 @@ func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 		}
 	}
 	return nil
+}
+
+func skillRequestOf(skill Skill) acceleration.SkillRequest {
+	body := acceleration.SkillRequest{
+		Name:         skill.Name,
+		CaptureVideo: &skill.CaptureVideo,
+		Description:  skill.Description,
+		Instructions: skill.Instructions,
+	}
+	if skill.Deadline > 0 {
+		milliseconds := skill.Deadline.Milliseconds()
+		body.DeadlineMs = &milliseconds
+	}
+	return body
 }
 
 // IngestKnowledge fills a knowledge base with documents an agent can look things up in.

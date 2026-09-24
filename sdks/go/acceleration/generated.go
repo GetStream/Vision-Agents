@@ -1900,7 +1900,10 @@ type ForkSessionRequest struct {
 	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
 	Project         *string          `json:"project,omitempty"`
-	Title           *string          `json:"title,omitempty"`
+
+	// ResponseId Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
+	ResponseId *string `json:"response_id,omitempty"`
+	Title      *string `json:"title,omitempty"`
 }
 
 // Granularity defines model for Granularity.
@@ -2057,6 +2060,17 @@ type KnowledgeUrl struct {
 	Title     *string   `json:"title,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Url       string    `json:"url"`
+}
+
+// KnowledgeUrlDeclaration A page an agent directory declares, in the knowledge base named after it.
+type KnowledgeUrlDeclaration struct {
+	Description *string `json:"description,omitempty"`
+
+	// Title Example: Pricing
+	Title *string `json:"title,omitempty"`
+
+	// Url Example: https://example.com/pricing
+	Url string `json:"url"`
 }
 
 // KnowledgeUrlRequest defines model for KnowledgeUrlRequest.
@@ -2440,6 +2454,12 @@ type RespondRequest struct {
 	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
 	CommandId *string `json:"command_id,omitempty"`
 	Text      string  `json:"text"`
+}
+
+// RewindSessionRequest defines model for RewindSessionRequest.
+type RewindSessionRequest struct {
+	// ResponseId The response to carry on from. It is kept; everything after it is not.
+	ResponseId string `json:"response_id"`
 }
 
 // RollupRequest defines model for RollupRequest.
@@ -3233,7 +3253,10 @@ type SyncAgentRequest struct {
 	Instructions *string              `json:"instructions,omitempty"`
 	Keyterms     *[]string            `json:"keyterms,omitempty"`
 	Knowledge    *[]KnowledgeDocument `json:"knowledge,omitempty"`
-	Llm          *string              `json:"llm,omitempty"`
+
+	// KnowledgeUrls The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both.
+	KnowledgeUrls *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty"`
+	Llm           *string                    `json:"llm,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -4094,6 +4117,9 @@ type RespondSessionJSONRequestBody = RespondRequest
 
 // CreateResponseJSONRequestBody defines body for CreateResponse for application/json ContentType.
 type CreateResponseJSONRequestBody = CreateResponseRequest
+
+// RewindSessionJSONRequestBody defines body for RewindSession for application/json ContentType.
+type RewindSessionJSONRequestBody = RewindSessionRequest
 
 // SaySessionJSONRequestBody defines body for SaySession for application/json ContentType.
 type SaySessionJSONRequestBody = SayRequest
@@ -4957,6 +4983,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
 	ListResponseItems(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RewindSessionWithBody Go back to a response and carry on from there
+	//
+	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
+	RewindSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RewindSession Go back to a response and carry on from there
+	//
+	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
+	RewindSession(ctx context.Context, id SessionID, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SaySessionWithBody Speak a piece of text without going through the model
 	//
@@ -6932,6 +6978,46 @@ func (c *Client) CreateResponse(ctx context.Context, id SessionID, body CreateRe
 // Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
 func (c *Client) ListResponseItems(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListResponseItemsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RewindSessionWithBody Go back to a response and carry on from there
+//
+// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
+func (c *Client) RewindSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRewindSessionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RewindSession Go back to a response and carry on from there
+//
+// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
+func (c *Client) RewindSession(ctx context.Context, id SessionID, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRewindSessionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11416,6 +11502,53 @@ func NewListResponseItemsRequest(server string, id SessionID, params *ListRespon
 	return req, nil
 }
 
+// NewRewindSessionRequest calls the generic RewindSession builder with application/json body
+func NewRewindSessionRequest(server string, id SessionID, body RewindSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRewindSessionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewRewindSessionRequestWithBody constructs an http.Request for the RewindSession method, with any body, and a specified content type
+func NewRewindSessionRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/rewind", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewSaySessionRequest calls the generic SaySession builder with application/json body
 func NewSaySessionRequest(server string, id SessionID, body SaySessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -14822,6 +14955,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
 	ListResponseItemsWithResponse(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*ListResponseItemsResponse, error)
+
+	// RewindSessionWithBodyWithResponse Go back to a response and carry on from there
+	//
+	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
+	RewindSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error)
+
+	// RewindSessionWithResponse Go back to a response and carry on from there
+	//
+	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
+	RewindSessionWithResponse(ctx context.Context, id SessionID, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error)
 
 	// SaySessionWithBodyWithResponse Speak a piece of text without going through the model
 	//
@@ -19161,6 +19314,68 @@ func (r ListResponseItemsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListResponseItemsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RewindSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RewindSessionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RewindSessionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RewindSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RewindSessionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r RewindSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RewindSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RewindSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RewindSessionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23999,6 +24214,38 @@ func (c *ClientWithResponses) ListResponseItemsWithResponse(ctx context.Context,
 	return ParseListResponseItemsResponse(rsp)
 }
 
+// RewindSessionWithBodyWithResponse Go back to a response and carry on from there
+//
+// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
+func (c *ClientWithResponses) RewindSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error) {
+	rsp, err := c.RewindSessionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRewindSessionResponse(rsp)
+}
+
+// RewindSessionWithResponse Go back to a response and carry on from there
+//
+// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
+func (c *ClientWithResponses) RewindSessionWithResponse(ctx context.Context, id SessionID, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error) {
+	rsp, err := c.RewindSession(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRewindSessionResponse(rsp)
+}
+
 // SaySessionWithBodyWithResponse Speak a piece of text without going through the model
 //
 // For when the caller already knows what should be said, such as a greeting. A model would only add latency and cost to words that were never in question.
@@ -27964,6 +28211,56 @@ func ParseListResponseItemsResponse(rsp *http.Response) (*ListResponseItemsRespo
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRewindSessionResponse parses an HTTP response from a RewindSessionWithResponse call
+func ParseRewindSessionResponse(rsp *http.Response) (*RewindSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RewindSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized

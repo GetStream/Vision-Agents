@@ -26,8 +26,8 @@ type Options struct {
 	// Name is what the agent is called. It names the stored config the folder syncs to and
 	// is who the agent appears as in a call.
 	Name string
-	// Dir is an agent directory holding instructions.md, skills/ and knowledge/. What it
-	// says fills in whatever is left empty here.
+	// Dir is an agent directory holding agent.yaml, instructions.md, skills/ and knowledge/.
+	// What it says fills in whatever is left empty here.
 	Dir string
 	// Instructions is the system prompt.
 	Instructions string

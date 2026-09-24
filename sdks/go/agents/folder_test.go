@@ -21,6 +21,7 @@ func write(t *testing.T, root, name, content string) {
 
 func TestADirectoryIsReadAsInstructionsSkillsAndKnowledge(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "instructions.md", "You are Jean.\n")
 	write(t, root, "skills/think.md", `---
 description: Work something out before answering
@@ -66,6 +67,7 @@ Take your time and reason it through.
 
 func TestADirectoryWithOnlyInstructionsIsAnAgent(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "quiet")
+	write(t, root, "agent.yaml", "")
 	write(t, root, "instructions.md", "Say little.\n")
 
 	folder, err := Load(root)
@@ -82,6 +84,7 @@ func TestADirectoryWithOnlyInstructionsIsAnAgent(t *testing.T) {
 
 func TestNestedKnowledgeKeepsThePathItWasFoundAt(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "knowledge/reference/api.md", "# API\n\nthe endpoints\n")
 	write(t, root, "knowledge/logo.png", "not a document")
 	write(t, root, "knowledge/empty.md", "   \n")
@@ -101,6 +104,7 @@ func TestNestedKnowledgeKeepsThePathItWasFoundAt(t *testing.T) {
 
 func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
 	write(t, root, "knowledge/urls.yaml", `- https://example.com/pricing
 - url: https://example.com/plans
@@ -137,6 +141,7 @@ func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
 
 func TestADirectoryWithOnlyPagesHasSomewhereToLookThingsUpIn(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "knowledge/urls.yaml", "- https://example.com/pricing\n")
 
 	folder, err := Load(root)
@@ -159,6 +164,7 @@ func TestAPageThatCannotBeFetchedOrDescribedIsRefused(t *testing.T) {
 		"- [https://example.com/plans]\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", "name: jean\n")
 		write(t, root, "knowledge/urls.yaml", declaration)
 
 		if _, err := Load(root); err == nil {
@@ -169,6 +175,7 @@ func TestAPageThatCannotBeFetchedOrDescribedIsRefused(t *testing.T) {
 
 func TestASkillWithoutADescriptionIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "skills/think.md", "Just a body, with nothing saying when to use it.\n")
 
 	if _, err := Load(root); err == nil {
@@ -178,6 +185,7 @@ func TestASkillWithoutADescriptionIsRefused(t *testing.T) {
 
 func TestASkillCanBeNamedSomethingOtherThanItsFile(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "skills/01-think.md", `---
 name: think
 description: Work something out
@@ -196,6 +204,7 @@ Reason it through.
 
 func TestADirectoryFillsInWhatTheCodeLeftEmpty(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "instructions.md", "You are Jean.\n")
 
 	folder, err := Load(root)
@@ -213,6 +222,85 @@ func TestADirectoryFillsInWhatTheCodeLeftEmpty(t *testing.T) {
 	folder.fill(&written)
 	if written.Name != "other" || written.Instructions != "You are somebody else." {
 		t.Errorf("the directory overrode what was written in code: %+v", written)
+	}
+}
+
+func TestADirectoryWithoutADeclarationIsNotAnAgent(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "instructions.md", "You are Jean.\n")
+
+	if _, err := Load(root); err == nil {
+		t.Fatal("instructions alone made a directory an agent")
+	}
+}
+
+func TestTheDeclarationSaysWhatTheAgentIsCalledAndRunsOn(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", `name: receptionist
+llm: openai/gpt-5.6
+sts: ""
+keyterms: [Vision Agents]
+video:
+  source: camera
+`)
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.Name != "receptionist" {
+		t.Errorf("the agent is called %q", folder.Name)
+	}
+	settings := folder.Settings
+	if settings.LLM != "openai/gpt-5.6" || settings.Keyterms[0] != "Vision Agents" {
+		t.Errorf("the declaration read as %+v", settings)
+	}
+	if settings.STS == nil || *settings.STS != "" {
+		t.Errorf("turning speech-to-speech off read as %v", settings.STS)
+	}
+	if settings.Video.Source != "camera" || settings.Video.MaxFrames != 1 {
+		t.Errorf("the video read as %+v", settings.Video)
+	}
+}
+
+func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
+	for _, declaration := range []string{
+		"name: jean\nlmm: openai/gpt-5.6\n",
+		"video:\n  max_frames: 9\n",
+		"keyterms: Vision Agents\n",
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", declaration)
+
+		if _, err := Load(root); err == nil {
+			t.Errorf("accepted %q", declaration)
+		}
+	}
+}
+
+func TestADirectoryHashesTheWayThePythonSDKHashesIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	write(t, root, "skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What vision_agents.plugins.stream.folder.load(root).hash() gives for the same files.
+	if hash := folder.Hash(); hash != "02a7b2c8428f31e3a2b93ca2f5a6ec70" {
+		t.Errorf("the directory hashes to %s", hash)
+	}
+
+	write(t, root, "knowledge/urls.yaml", "- https://example.com/plans\n")
+	declared, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declared.Hash() == folder.Hash() {
+		t.Error("declaring a page did not change the fingerprint")
 	}
 }
 
