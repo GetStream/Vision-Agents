@@ -1487,6 +1487,34 @@ llm:
         per_million_cached_input_tokens: 0.50
         per_million_output_tokens: 30.00
 
+    # Anthropic's own pick for most work, and top of the Artificial Analysis Intelligence
+    # Index at 58 - at max effort. The provider reaches it over Anthropic's
+    # OpenAI-compatible endpoint, which ignores reasoning_effort, so it thinks at the medium
+    # effort it defaults to, where that index puts it at 51. Thinking is adaptive and cannot
+    # be switched off, and it counts against max_output_tokens. Forced tool use is a 400 on
+    # this model, so a request with tool_choice required fails if it is routed here.
+    #
+    # Cache reads are 5% of input rather than the usual 10%, but the compatibility endpoint
+    # does not cache, so that rate is what Anthropic bill rather than one this route reaches.
+    - provider: anthropic
+      model: claude-opus-5-5
+      description: "Anthropic's Opus 5.5, top of the Artificial Analysis Intelligence Index. Reads images, and costs less than Sol."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      # Anthropic's Commercial Terms say they "may not train models on Customer Content",
+      # and API inputs and outputs are deleted "within 30 days of receipt or generation".
+      # Opus 5.5 is not one of the Covered Models that require 30-day retention, so a zero
+      # retention agreement would make this none; nothing in this deployment says we have one.
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_million_input_tokens: 4.00
+        per_million_cached_input_tokens: 0.20
+        per_million_output_tokens: 20.00
+
   # A title offers a shortcut to someone picking a model, in the order written here, so
   # the one a conversation gets by default comes first.
   aliases:

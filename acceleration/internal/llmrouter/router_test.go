@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -386,6 +387,43 @@ func (s *LLMRouterSuite) TestStartFailsOverToTheNextCandidate() {
 	s.T().Cleanup(func() { session.Close() })
 
 	s.Equal("openai", session.Provider(), "the candidate that could be built served the turn")
+}
+
+func (s *LLMRouterSuite) TestTheBuiltInOpusEntrySeesWhatItDeclares() {
+	sent := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		s.NoError(json.NewDecoder(r.Body).Decode(&body))
+		sent <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"r\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a rose\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n")
+	}))
+	s.T().Cleanup(server.Close)
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	registry := NewRegistry()
+	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: server.URL, Model: spec.Model}))
+	})
+	router, err := New(Options{Config: config[routing.LLM], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "anthropic/claude-opus-5-5", InputModalities: []string{llm.ModalityImage}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { session.Close() })
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: []llm.Message{{
+		Role:  llm.User,
+		Parts: []llm.ContentPart{{Text: "what flower"}, {Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8}}}},
+	}}})
+	s.Require().NoError(err)
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+
+	s.Equal("a rose", response.OutputText)
+	body := <-sent
+	s.Equal("claude-opus-5-5", body["model"])
+	s.Contains(fmt.Sprint(body["messages"]), "image_url")
 }
 
 func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabilities() {
