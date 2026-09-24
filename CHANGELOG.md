@@ -521,6 +521,15 @@ The router now reaches `openai/gpt-6-astra`, `openai/gpt-6-sol` and `openai/gpt-
 namesakes, which stay declared for configs that name them. Astra rejects a reasoning effort
 of `none`, so a request naming no effort is sent `low` and one naming `none` is refused.
 
+### A live voice from Google: Gemini 3.8 Flash TTS
+
+The router now speaks through `gemini/gemini-3.8-flash-tts`, second on the Artificial
+Analysis voice arena and first on pronunciation robustness. It reuses `GOOGLE_API_KEY`, the
+key the Gemini language and speech-to-speech models already read. It takes a whole sentence
+per request and streams the speech back, about a second to first audio, so it sits in the
+high-quality tier and is reachable through the high-accuracy shortcuts. `voice` is a
+prebuilt name such as `Kore` or a designed `voice_` id.
+
 ### A recorded call, for a Go program with nobody at a microphone
 
 `stream.RecordedCall` reads a 16 kHz mono PCM16 WAV and hands it over the way a call
