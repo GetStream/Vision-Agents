@@ -73,6 +73,14 @@ const (
 	TextInput        Term = "text"
 	InputTranscript  Term = "input_transcript"
 	OutputTranscript Term = "output_transcript"
+	// The image terms. A picture drawn at whatever size the model liked, or from a seed it
+	// never read, looks like an answer to the request and is not one, so these are refused
+	// by a model that cannot honour them rather than dropped. An image model that declares
+	// format can be asked for PNG or JPEG.
+	Size           Term = "size"
+	AspectRatio    Term = "aspect_ratio"
+	Seed           Term = "seed"
+	NegativePrompt Term = "negative_prompt"
 )
 
 // Transcription modes. Verbatim keeps what was said; Smart tidies it.

@@ -1099,6 +1099,25 @@ func (s *RoutingSuite) TestCostAddsEveryUnitTheModelBillsFor() {
 		"an hour of audio plus a thousand characters")
 }
 
+func (s *RoutingSuite) TestCostPricesImagesByThePicture() {
+	// Qwen Image 3 on FAL: $0.04 a picture, whatever its size.
+	price := Price{PerImage: 0.04}
+
+	s.EqualValues(40_000, price.CostMicros(Usage{Images: 1, Pixels: 1024 * 1024}))
+	s.EqualValues(120_000, price.CostMicros(Usage{Images: 3, Pixels: 3 * 2048 * 2048}),
+		"three pictures cost three times one, however large they are")
+}
+
+func (s *RoutingSuite) TestCostPricesImagesByThePixelsThatCameBack() {
+	// $0.02 a megapixel, a million pixels to the megapixel.
+	price := Price{PerMegapixel: 0.02}
+
+	s.EqualValues(20_000, price.CostMicros(Usage{Images: 1, Pixels: 1_000_000}))
+	s.EqualValues(83_886, price.CostMicros(Usage{Images: 1, Pixels: 2048 * 2048}),
+		"a larger picture costs more even though it is still one picture")
+	s.Zero(price.CostMicros(Usage{Images: 0, Pixels: 0}), "nothing drawn is nothing billed")
+}
+
 func (s *RoutingSuite) TestTierDefaultsToLowLatency() {
 	s.Equal(LowLatency, ProviderConfig{}.tier())
 	s.Equal(HighQuality, ProviderConfig{Tier: HighQuality}.tier())

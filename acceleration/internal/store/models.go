@@ -37,8 +37,10 @@ type Request struct {
 	// CachedInputTokens is the part of the prompt served from the provider's cache.
 	CachedInputTokens int64 `bun:"cached_input_tokens,notnull"`
 	// OutputTokens is everything an LLM generated, reasoning included.
-	OutputTokens int64    `bun:"output_tokens,notnull"`
-	LatencyMs    *float64 `bun:"latency_ms"`
+	OutputTokens int64 `bun:"output_tokens,notnull"`
+	// Images is how many pictures were drawn.
+	Images    int64    `bun:"images,notnull"`
+	LatencyMs *float64 `bun:"latency_ms"`
 	// CostMicros is millionths of a dollar, priced from the provider's configured rates.
 	CostMicros   int64  `bun:"cost_micros,notnull"`
 	Success      bool   `bun:"success,notnull"`
@@ -58,6 +60,7 @@ type Bucket struct {
 	InputTokensTotal       int64     `bun:"input_tokens_total"`
 	CachedInputTokensTotal int64     `bun:"cached_input_tokens_total"`
 	OutputTokensTotal      int64     `bun:"output_tokens_total"`
+	ImagesTotal            int64     `bun:"images_total"`
 	CostMicrosTotal        int64     `bun:"cost_micros_total"`
 	RequestCount           int64     `bun:"request_count"`
 	ErrorCount             int64     `bun:"error_count"`
@@ -203,6 +206,7 @@ type TagBucket struct {
 	InputTokensTotal       int64     `bun:"input_tokens_total"`
 	CachedInputTokensTotal int64     `bun:"cached_input_tokens_total"`
 	OutputTokensTotal      int64     `bun:"output_tokens_total"`
+	ImagesTotal            int64     `bun:"images_total"`
 	CostMicrosTotal        int64     `bun:"cost_micros_total"`
 	RequestCount           int64     `bun:"request_count"`
 	ErrorCount             int64     `bun:"error_count"`

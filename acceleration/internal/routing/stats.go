@@ -114,6 +114,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		InputTokens:       entry.InputTokens,
 		CachedInputTokens: entry.CachedInputTokens,
 		OutputTokens:      entry.OutputTokens,
+		Images:            entry.Images,
 		CostMicros:        cost,
 		Success:           entry.Success,
 		ErrorCode:         entry.ErrorCode,

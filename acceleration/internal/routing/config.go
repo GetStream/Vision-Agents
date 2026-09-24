@@ -49,6 +49,10 @@ const (
 	// language model because it is served over a different protocol, billed in different
 	// units and asked for different things.
 	STS Modality = "sts"
+	// Image is a picture drawn from a prompt. It is routed like search: several providers
+	// will draw the same prompt, they differ in price and in how long a picture takes, and
+	// one call is one unit of work with nothing arriving in pieces.
+	Image Modality = "image"
 	// Memory, Knowledge and Phone are recorded but not routed: there is one memory store,
 	// one knowledge base and one vendor per number, so there is nothing to choose
 	// between. They are modalities so what they cost shows up in the same reporting as
@@ -106,6 +110,11 @@ type Price struct {
 	// because nothing in Usage counts calls: a caller billed this way sets Stat.CostMicros
 	// from it, the way a phone number's monthly charge is set outright.
 	PerThousandRequests float64 `yaml:"per_thousand_requests"`
+	// PerImage prices each picture a model drew.
+	PerImage float64 `yaml:"per_image"`
+	// PerMegapixel prices the pixels a model drew, a million to the megapixel, for a
+	// vendor whose bill grows with the size of the picture rather than the count.
+	PerMegapixel float64 `yaml:"per_megapixel"`
 }
 
 // RequestMicros is what one call to a provider billed by the call costs, in millionths of
@@ -116,7 +125,7 @@ func (p Price) RequestMicros() int64 {
 
 // Usage is what one unit of work consumed. A modality fills in the units it bills by and
 // leaves the rest at zero: audio for speech-to-text, characters for text-to-speech,
-// tokens for an LLM.
+// tokens for an LLM, pictures for image generation.
 type Usage struct {
 	// AudioMs is billable audio, transcribed or produced.
 	AudioMs int64
@@ -129,6 +138,12 @@ type Usage struct {
 	CachedInputTokens int64
 	// OutputTokens is everything generated, reasoning included.
 	OutputTokens int64
+	// Images is how many pictures were drawn.
+	Images int64
+	// Pixels is how many pixels those pictures hold between them, counted on what came
+	// back rather than what was asked for. It prices a model billed by the megapixel and
+	// is not stored: the picture count is what a customer reads.
+	Pixels int64
 }
 
 // CostMicros returns what one request cost in millionths of a dollar. Micros keep the
@@ -145,7 +160,9 @@ func (p Price) CostMicros(usage Usage) int64 {
 		p.PerAudioHour*float64(usage.AudioMs)/3_600_000 +
 		p.PerMillionInputTokens*float64(freshInputTokens)/1_000_000 +
 		p.PerMillionCachedInputTokens*float64(usage.CachedInputTokens)/1_000_000 +
-		p.PerMillionOutputTokens*float64(usage.OutputTokens)/1_000_000
+		p.PerMillionOutputTokens*float64(usage.OutputTokens)/1_000_000 +
+		p.PerImage*float64(usage.Images) +
+		p.PerMegapixel*float64(usage.Pixels)/1_000_000
 	return int64(dollars * 1_000_000)
 }
 
