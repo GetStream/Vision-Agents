@@ -24,8 +24,9 @@ const audio = 64
 // Router is everything the acceleration backend routes, configured once.
 //
 // Each of the three streaming modalities has a Realtime session and a Recording job, and
-// search has neither, because a question and its answer are one round trip. Everything the
-// named config holds is a default that a per-call option overrides.
+// search and images have neither, because a question and its answer, or a prompt and its
+// pictures, are one round trip. Everything the named config holds is a default that a
+// per-call option overrides.
 //
 // Client.Router is how one of these is usually had, since that is where the backend was
 // settled; the fields are exported for a caller who wants tags or a logger on top.
@@ -79,6 +80,49 @@ func (r Router) Search(
 		return nil, refusal(found.Status(), found.JSON400, found.JSON401, found.JSON404)
 	}
 	return found.JSON200, nil
+}
+
+// Image draws pictures from a prompt.
+func (r Router) Image() Drawing { return Drawing{router: r} }
+
+// Drawing routes image generation.
+type Drawing struct{ router Router }
+
+// Generate draws pictures from a prompt and returns them.
+//
+// The pictures come back in the answer and the router keeps nothing. A router config
+// holds no image options, so only the tags travel. A generation that drew nothing is
+// handed back with its ErrorCode and Error set, alongside an error saying the same.
+func (d Drawing) Generate(
+	ctx context.Context,
+	prompt string,
+	options *acceleration.ImageOptions,
+) (*acceleration.ImageGeneration, error) {
+	client, err := d.router.client()
+	if err != nil {
+		return nil, err
+	}
+
+	body := acceleration.GenerateImageJSONRequestBody{Prompt: prompt, Options: options}
+	d.router.label(&body.Tags)
+
+	drawn, err := client.GenerateImageWithResponse(ctx, body)
+	if err != nil {
+		return nil, fmt.Errorf("stream: drawing: %w", err)
+	}
+	if drawn.JSON200 == nil {
+		return nil, refusal(drawn.Status(), drawn.JSON400, drawn.JSON401, drawn.JSON403, drawn.JSON404)
+	}
+
+	generation := drawn.JSON200
+	if generation.Status == acceleration.ImageGenerationStatusFailed {
+		code := ""
+		if generation.ErrorCode != nil {
+			code = string(*generation.ErrorCode)
+		}
+		return generation, fmt.Errorf("stream: the image generation failed (%s): %s", code, value(generation.Error))
+	}
+	return generation, nil
 }
 
 // Transcribing routes transcription.
