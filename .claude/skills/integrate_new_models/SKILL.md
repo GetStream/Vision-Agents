@@ -30,15 +30,20 @@ vendor already has a package for that modality — `internal/tts/<vendor>`, `int
 Say which of the two each model is in the report at the end. It is the difference between an
 afternoon and a week, and it is the first thing a reviewer wants to know.
 
-## 3. One subagent per model
+## 3. One subagent per vendor per modality
 
-Dispatch a `best-of-n-runner` subagent per model, in parallel, each with the model
-`claude-opus-5-5-medium`. That subagent type takes its own git worktree and branch, which is what
-keeps the work separable — without it two models end up in one diff and neither can be merged.
+Dispatch a subagent per unit of work, in parallel, each with the model `claude-opus-5-5-medium`.
+Cloud subagents based on the working branch are the way to do it: each takes its own branch and
+VM, and the cloud environment carries the vendor API keys as secrets, so the integration tests
+can actually run. Locally, `best-of-n-runner` gives the same isolation through a worktree.
 
-Branch per model: `model/<vendor>-<model-id>`.
+The unit is one vendor's models in one modality, not one model. Three OpenAI LLMs are one PR,
+because three PRs editing the same lines of the `llm:` block conflict with each other and none
+of them can be merged on its own. Two vendors are always two PRs even in the same modality.
 
-Each subagent gets: the model's name, API id, type, docs URL and launch date from the report;
+Branch per unit: `model/<vendor>-<what>`.
+
+Each subagent gets: the name, API id, type, docs URL and launch date of every model in its unit;
 which of the two jobs in step 2 it is; and the skill to follow.
 
 | Type | Skill to follow |
@@ -48,13 +53,25 @@ which of the two jobs in step 2 it is; and the skill to follow.
 | LLM | [router-llm](../router-llm/SKILL.md) |
 | STS | [router-sts](../router-sts/SKILL.md) |
 
+Say which handed-over facts are unverified. An announcement gives a marketing name and a launch
+date; it rarely gives the API model id, and almost never gives a price. Those two are what the
+config is made of, so a subagent told "the id is probably X" will write X and move on. Name the
+gap instead and tell it to settle the question from the vendor's own docs and report what it
+found — `router.yaml` treats price as something this deployment is billed, not a guess.
+
 Tell each subagent to finish with a draft PR per [pr](../pr/SKILL.md), and to commit per
 [commit](../commit/SKILL.md). A subagent that cannot get the model working must still say so and
 leave the branch unpushed rather than open a PR on a guess — a router entry for a model nobody
-has heard answer is worse than no entry, because routing will send real traffic at it.
+has heard answer is worse than no entry, because routing will send real traffic at it. The same
+goes for a green-looking PR over a failing live suite.
 
-The integration tests need vendor credentials. A subagent that cannot run them says which test it
-could not run and why, in the PR body.
+When a live suite fails on a brand-new API, ask the API rather than reason about it. A throwaway
+program that opens one session and prints every frame settles in a minute what a day of reading
+the provider will not, because the docs of a just-launched model are thin and the failure is
+usually a fact about the protocol nobody wrote down. Unit tests over a fake server cannot find
+these: the fake answers the way the author expected, which is the thing in doubt. GPT-Live turned
+out to run on a media clock that only input audio advances, so every path that handed it text
+hung forever — invisible to a fake, obvious in two frames of the real thing.
 
 ## 4. Report
 
