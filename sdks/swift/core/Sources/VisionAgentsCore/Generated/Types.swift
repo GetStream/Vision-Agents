@@ -34,6 +34,32 @@ internal protocol APIProtocol: Sendable {
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(closeSession)`.
     func closeSession(_ input: Operations.CloseSession.Input) async throws -> Operations.CloseSession.Output
+    /// Continue a conversation as a new one
+    ///
+    /// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+    /// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/fork`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/fork/post(forkSession)`.
+    func forkSession(_ input: Operations.ForkSession.Input) async throws -> Operations.ForkSession.Output
+    /// The turns the agent took in a session
+    ///
+    /// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)`.
+    func listResponses(_ input: Operations.ListResponses.Input) async throws -> Operations.ListResponses.Output
+    /// Go back to a response and carry on from there
+    ///
+    /// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+    /// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/rewind`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)`.
+    func rewindSession(_ input: Operations.RewindSession.Input) async throws -> Operations.RewindSession.Output
     /// Answer a question out of what is true now
     ///
     /// The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
@@ -91,6 +117,62 @@ extension APIProtocol {
         try await closeSession(Operations.CloseSession.Input(
             path: path,
             headers: headers
+        ))
+    }
+    /// Continue a conversation as a new one
+    ///
+    /// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+    /// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/fork`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/fork/post(forkSession)`.
+    internal func forkSession(
+        path: Operations.ForkSession.Input.Path,
+        headers: Operations.ForkSession.Input.Headers = .init(),
+        body: Operations.ForkSession.Input.Body? = nil
+    ) async throws -> Operations.ForkSession.Output {
+        try await forkSession(Operations.ForkSession.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// The turns the agent took in a session
+    ///
+    /// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)`.
+    internal func listResponses(
+        path: Operations.ListResponses.Input.Path,
+        query: Operations.ListResponses.Input.Query = .init(),
+        headers: Operations.ListResponses.Input.Headers = .init()
+    ) async throws -> Operations.ListResponses.Output {
+        try await listResponses(Operations.ListResponses.Input(
+            path: path,
+            query: query,
+            headers: headers
+        ))
+    }
+    /// Go back to a response and carry on from there
+    ///
+    /// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+    /// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/rewind`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)`.
+    internal func rewindSession(
+        path: Operations.RewindSession.Input.Path,
+        headers: Operations.RewindSession.Input.Headers = .init(),
+        body: Operations.RewindSession.Input.Body
+    ) async throws -> Operations.RewindSession.Output {
+        try await rewindSession(Operations.RewindSession.Input(
+            path: path,
+            headers: headers,
+            body: body
         ))
     }
     /// Answer a question out of what is true now

@@ -126,10 +126,15 @@ public final class AgentSession {
         Task { [socket] in
             do {
                 let output = try await tool.run(call.argumentValues)
-                try await socket.send(.toolResult(id: call.id, output: output, error: nil))
+                try await socket.send(
+                    .toolResult(
+                        id: call.id, output: output, error: nil, commandID: call.commandID,
+                        turnID: call.turnID))
             } catch {
                 try? await socket.send(
-                    .toolResult(id: call.id, output: nil, error: error.localizedDescription))
+                    .toolResult(
+                        id: call.id, output: nil, error: error.localizedDescription,
+                        commandID: call.commandID, turnID: call.turnID))
             }
         }
     }

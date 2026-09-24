@@ -39,11 +39,11 @@ public struct SessionOptions: Sendable {
 ///     let agents = VisionAgents(url: url, customerID: "acme")
 ///     let chat = try await agents.chat(agent: configID)
 ///
-/// Opening a conversation, finding and ending one is the whole of what is here, because it is
-/// the whole of what the router lets a device do. What an agent is configured as, what it
-/// said on an earlier call and a token to join a call with are all server-side only: they
-/// belong to a backend, which has the Go or the Python SDK, and which hands down what the app
-/// needs.
+/// Opening a conversation, reading back its turns, going back to one of them, branching off
+/// and ending it is the whole of what is here, because it is the whole of what the router
+/// lets a device do. What an agent is configured as and a token to join a call with are
+/// server-side only: they belong to a backend, which has the Go or the Python SDK, and which
+/// hands down what the app needs.
 public struct VisionAgents: Sendable {
     public let backend: Backend
 
@@ -139,6 +139,8 @@ public struct VisionAgents: Sendable {
         switch output {
         case .ok(let response):
             return try response.body.json.map(Session.init)
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
         case .unauthorized(let response):
             throw AgentsError.http(status: 401, message: try response.body.json.error)
         case .undocumented(let status, _):
@@ -166,6 +168,87 @@ public struct VisionAgents: Sendable {
             return
         case .unauthorized(let response):
             throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .notFound(let response):
+            throw AgentsError.http(status: 404, message: try response.body.json.error)
+        case .undocumented(let status, _):
+            throw AgentsError.http(status: status, message: "unexpected")
+        }
+    }
+
+    /// A session's turns as the router wrote them down, oldest first.
+    ///
+    /// A session that records nothing has none, and one rewound has none after the response
+    /// it went back to.
+    public func responses(sessionID: String, limit: Int? = nil, offset: Int? = nil) async throws -> [Response] {
+        let output = try await call {
+            try await $0.listResponses(
+                path: .init(id: sessionID), query: .init(limit: limit, offset: offset))
+        }
+        switch output {
+        case .ok(let response):
+            return try response.body.json.map(Response.init)
+        case .unauthorized(let response):
+            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .forbidden(let response):
+            throw AgentsError.http(status: 403, message: try response.body.json.error)
+        case .notFound(let response):
+            throw AgentsError.http(status: 404, message: try response.body.json.error)
+        case .undocumented(let status, _):
+            throw AgentsError.http(status: status, message: "unexpected")
+        }
+    }
+
+    /// Goes back to a response and carries on from there, as though nothing after it was said.
+    ///
+    /// The model forgets the later turns and they drop out of `responses`. A transcript an
+    /// `AgentSession` is showing still has them, so read it back from `responses` after this.
+    /// A conversation kept in Stream Chat cannot be rewound, because the channel would still
+    /// hold the later turns: fork it at the response instead.
+    public func rewind(sessionID: String, to responseID: String) async throws {
+        let output = try await call {
+            try await $0.rewindSession(
+                path: .init(id: sessionID), body: .json(.init(responseId: responseID)))
+        }
+        switch output {
+        case .noContent:
+            return
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
+        case .unauthorized(let response):
+            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .forbidden(let response):
+            throw AgentsError.http(status: 403, message: try response.body.json.error)
+        case .notFound(let response):
+            throw AgentsError.http(status: 404, message: try response.body.json.error)
+        case .undocumented(let status, _):
+            throw AgentsError.http(status: status, message: "unexpected")
+        }
+    }
+
+    /// Continues a conversation as a new session, leaving the parent as it was.
+    ///
+    /// Follow the fork the way any session is followed, with `attach(sessionID:)`.
+    public func fork(sessionID: String, _ options: ForkOptions = ForkOptions()) async throws -> Session {
+        let body = Components.Schemas.ForkSessionRequest(
+            configId: options.agent.flatMap { $0.isEmpty ? nil : $0 },
+            title: options.title,
+            instructions: options.instructions,
+            messages: options.withoutHistory ? false : nil,
+            responseId: options.responseID.flatMap { $0.isEmpty ? nil : $0 },
+            callId: options.callID)
+
+        let output = try await call {
+            try await $0.forkSession(path: .init(id: sessionID), body: .json(body))
+        }
+        switch output {
+        case .created(let response):
+            return Session(try response.body.json)
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
+        case .unauthorized(let response):
+            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .forbidden(let response):
+            throw AgentsError.http(status: 403, message: try response.body.json.error)
         case .notFound(let response):
             throw AgentsError.http(status: 404, message: try response.body.json.error)
         case .undocumented(let status, _):

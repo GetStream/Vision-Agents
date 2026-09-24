@@ -78,6 +78,10 @@ import Testing
             Command.toolResult(id: "c1", output: nil, error: "no such order"),
             #"{"error":"no such order","output":"","tool_call_id":"c1","type":"tool_result"}"#
         ),
+        (
+            Command.toolResult(id: "c1", output: "ok", error: nil, commandID: "m1", turnID: "t1"),
+            #"{"command_id":"m1","error":"","output":"ok","tool_call_id":"c1","turn_id":"t1","type":"tool_result"}"#
+        ),
     ])
     func aCommandEncodesToWhatTheRouterReads(command: Command, expected: String) throws {
         let encoder = JSONEncoder()
@@ -135,6 +139,19 @@ import Testing
 
     @Test func somethingThatIsNotATimestampIsRefused() {
         #expect(throws: AgentsError.self) { try RouterDates().decode("last Tuesday") }
+    }
+
+    @Test func aRecordedTurnKeepsWhatWasAskedAndHowItEnded() {
+        let response = Response(
+            .init(
+                id: "r1", sessionId: "s1", said: "What are your hours?", status: .cancelled,
+                createdAt: Date(timeIntervalSince1970: 0)))
+
+        #expect(response.id == "r1")
+        #expect(response.said == "What are your hours?")
+        #expect(response.status == .cancelled)
+        #expect(response.error == "")
+        #expect(response.finishedAt == nil)
     }
 
     @Test func a403IsRecognisedAsAServerSideOnlyPath() {

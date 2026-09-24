@@ -81,6 +81,31 @@ struct LiveTests {
         #expect(await asked.orders.first?.uppercased() == "A-1042")
     }
 
+    /// Going back to the first turn takes the second out of the conversation, and a fork at
+    /// the first starts a session of its own.
+    @Test func aRewoundSessionCarriesOnFromTheResponseKept() async throws {
+        let agents = Live.agents
+        let session = try await agents.chat(agent: Live.agent)
+        await session.start()
+        defer { Task { await session.close() } }
+
+        try await session.send("My name is Ada. Reply with one word.")
+        try await until(20) { session.state == .idle && session.turns.count >= 2 }
+        try await session.send("What is my name? Reply with one word.")
+        try await until(20) { session.state == .idle && session.turns.count >= 4 }
+        try await until(10) { (try? await agents.responses(sessionID: session.id).count) == 2 }
+
+        let kept = try #require(try await agents.responses(sessionID: session.id).first)
+        #expect(kept.said.contains("Ada"))
+
+        try await agents.rewind(sessionID: session.id, to: kept.id)
+        #expect(try await agents.responses(sessionID: session.id).map(\.id) == [kept.id])
+
+        let fork = try await agents.fork(sessionID: session.id, ForkOptions(responseID: kept.id))
+        #expect(fork.id != session.id)
+        try await agents.close(sessionID: fork.id)
+    }
+
     /// Runs until the condition holds, so a test waits for what the model does rather than for
     /// a fixed number of seconds.
     private func until(

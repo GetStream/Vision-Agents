@@ -1313,6 +1313,207 @@ extension Components {
                 case lastResponseAt = "last_response_at"
             }
         }
+        /// Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/ForkSessionRequest`.
+        internal struct ForkSessionRequest: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/agent`.
+            internal var agent: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/config_id`.
+            internal var configId: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/title`.
+            internal var title: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/description`.
+            internal var description: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/project`.
+            internal var project: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/custom`.
+            internal struct CustomPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                /// Creates a new `CustomPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/custom`.
+            internal var custom: Components.Schemas.ForkSessionRequest.CustomPayload?
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/model_overwrites`.
+            internal var modelOverwrites: Components.Schemas.ModelOverwrites?
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/instructions`.
+            internal var instructions: Swift.String?
+            /// Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/incognito`.
+            internal var incognito: Swift.Bool?
+            /// Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/messages`.
+            internal var messages: Swift.Bool?
+            /// Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/response_id`.
+            internal var responseId: Swift.String?
+            /// The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/call_id`.
+            internal var callId: Swift.String?
+            /// Creates a new `ForkSessionRequest`.
+            ///
+            /// - Parameters:
+            ///   - agent:
+            ///   - configId:
+            ///   - title:
+            ///   - description:
+            ///   - project:
+            ///   - custom:
+            ///   - modelOverwrites:
+            ///   - instructions:
+            ///   - incognito: Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
+            ///   - messages: Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
+            ///   - responseId: Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
+            ///   - callId: The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
+            internal init(
+                agent: Swift.String? = nil,
+                configId: Swift.String? = nil,
+                title: Swift.String? = nil,
+                description: Swift.String? = nil,
+                project: Swift.String? = nil,
+                custom: Components.Schemas.ForkSessionRequest.CustomPayload? = nil,
+                modelOverwrites: Components.Schemas.ModelOverwrites? = nil,
+                instructions: Swift.String? = nil,
+                incognito: Swift.Bool? = nil,
+                messages: Swift.Bool? = nil,
+                responseId: Swift.String? = nil,
+                callId: Swift.String? = nil
+            ) {
+                self.agent = agent
+                self.configId = configId
+                self.title = title
+                self.description = description
+                self.project = project
+                self.custom = custom
+                self.modelOverwrites = modelOverwrites
+                self.instructions = instructions
+                self.incognito = incognito
+                self.messages = messages
+                self.responseId = responseId
+                self.callId = callId
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case agent
+                case configId = "config_id"
+                case title
+                case description
+                case project
+                case custom
+                case modelOverwrites = "model_overwrites"
+                case instructions
+                case incognito
+                case messages
+                case responseId = "response_id"
+                case callId = "call_id"
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RewindSessionRequest`.
+        internal struct RewindSessionRequest: Codable, Hashable, Sendable {
+            /// The response to carry on from. It is kept; everything after it is not.
+            ///
+            /// - Remark: Generated from `#/components/schemas/RewindSessionRequest/response_id`.
+            internal var responseId: Swift.String
+            /// Creates a new `RewindSessionRequest`.
+            ///
+            /// - Parameters:
+            ///   - responseId: The response to carry on from. It is kept; everything after it is not.
+            internal init(responseId: Swift.String) {
+                self.responseId = responseId
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case responseId = "response_id"
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/AgentResponse`.
+        internal struct AgentResponse: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/AgentResponse/id`.
+            internal var id: Swift.String
+            /// - Remark: Generated from `#/components/schemas/AgentResponse/session_id`.
+            internal var sessionId: Swift.String
+            /// What the person asked, which is the first item of every response.
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentResponse/said`.
+            internal var said: Swift.String?
+            /// cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentResponse/status`.
+            internal enum StatusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case running = "running"
+                case completed = "completed"
+                case failed = "failed"
+                case cancelled = "cancelled"
+            }
+            /// cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentResponse/status`.
+            internal var status: Components.Schemas.AgentResponse.StatusPayload
+            /// - Remark: Generated from `#/components/schemas/AgentResponse/error`.
+            internal var error: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/AgentResponse/created_at`.
+            internal var createdAt: Foundation.Date
+            /// - Remark: Generated from `#/components/schemas/AgentResponse/finished_at`.
+            internal var finishedAt: Foundation.Date?
+            /// Creates a new `AgentResponse`.
+            ///
+            /// - Parameters:
+            ///   - id:
+            ///   - sessionId:
+            ///   - said: What the person asked, which is the first item of every response.
+            ///   - status: cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+            ///   - error:
+            ///   - createdAt:
+            ///   - finishedAt:
+            internal init(
+                id: Swift.String,
+                sessionId: Swift.String,
+                said: Swift.String? = nil,
+                status: Components.Schemas.AgentResponse.StatusPayload,
+                error: Swift.String? = nil,
+                createdAt: Foundation.Date,
+                finishedAt: Foundation.Date? = nil
+            ) {
+                self.id = id
+                self.sessionId = sessionId
+                self.said = said
+                self.status = status
+                self.error = error
+                self.createdAt = createdAt
+                self.finishedAt = finishedAt
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case id
+                case sessionId = "session_id"
+                case said
+                case status
+                case error
+                case createdAt = "created_at"
+                case finishedAt = "finished_at"
+            }
+        }
         /// How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
         ///
         ///

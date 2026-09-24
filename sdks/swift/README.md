@@ -74,12 +74,28 @@ let router = Router(url: url, customerID: "acme", config: "healthcare")
 let found = try await router.search("perioperative antibiotic guidance")
 ```
 
+### Going back, and branching off
+
+`rewind` takes back every turn after the one kept, so the next message carries on from there.
+`fork` branches a new session off one instead, leaving the original as it was. A turn's id is
+the `id` of a `Response`, not the `turnID` a socket event carries:
+
+```swift
+let turns = try await agents.responses(sessionID: session.id)
+try await agents.rewind(sessionID: session.id, to: turns[0].id)
+let branch = try await agents.fork(sessionID: session.id, ForkOptions(responseID: turns[0].id))
+```
+
+A conversation kept in Stream Chat cannot be rewound, since its transcript would bring the
+turns back; fork it at the response instead. An open `AgentSession` keeps the transcript it
+already showed, so reload it from `responses` after a rewind.
+
 ## What is deliberately not here
 
-The router is server-side only by default: five operations are marked `x-client-accessible` in
-the spec and everything else answers a device 403. So this SDK has five methods' worth of
-surface, and `generate.py` fails if the filter names anything the spec does not open — which is
-what stops it growing a method that only ever fails.
+The router is server-side only by default: a handful of operations are marked
+`x-client-accessible` in the spec and everything else answers a device 403. This SDK uses
+seven of them, and `generate.py` fails if the filter names anything the spec does not open —
+which is what stops it growing a method that only ever fails.
 
 What that leaves out, and where it went instead:
 

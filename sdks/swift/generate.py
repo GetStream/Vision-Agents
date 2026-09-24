@@ -39,7 +39,10 @@ GENERATED = TARGET / "Generated"
 OPERATIONS = [
     "closeSession",
     "createSession",
+    "forkSession",
+    "listResponses",
     "listSessions",
+    "rewindSession",
     "search",
 ]
 

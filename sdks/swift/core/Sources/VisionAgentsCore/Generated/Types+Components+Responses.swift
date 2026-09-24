@@ -68,6 +68,34 @@ extension Components {
                 self.body = body
             }
         }
+        internal struct Forbidden: Sendable, Hashable {
+            /// - Remark: Generated from `#/components/responses/Forbidden/content`.
+            internal enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/components/responses/Forbidden/content/application\/json`.
+                case json(Components.Schemas._Error)
+                /// The associated value of the enum case if `self` is `.json`.
+                ///
+                /// - Throws: An error if `self` is not `.json`.
+                /// - SeeAlso: `.json`.
+                internal var json: Components.Schemas._Error {
+                    get throws {
+                        switch self {
+                        case let .json(body):
+                            return body
+                        }
+                    }
+                }
+            }
+            /// Received HTTP response body
+            internal var body: Components.Responses.Forbidden.Body
+            /// Creates a new `Forbidden`.
+            ///
+            /// - Parameters:
+            ///   - body: Received HTTP response body
+            internal init(body: Components.Responses.Forbidden.Body) {
+                self.body = body
+            }
+        }
         internal struct NotFound: Sendable, Hashable {
             /// - Remark: Generated from `#/components/responses/NotFound/content`.
             internal enum Body: Sendable, Hashable {
