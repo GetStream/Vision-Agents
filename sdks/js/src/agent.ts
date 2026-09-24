@@ -84,15 +84,55 @@ export interface Pipeline {
   video?: Schemas["SessionVideo"];
 }
 
+/**
+ * What an agent directory's agent.yaml declares: what the agent is called and what it runs
+ * on. A setting left out leaves whatever the stored config has.
+ */
+export interface Declaration {
+  name?: string;
+  description?: string;
+  mode?: Schemas["AgentMode"];
+  stt?: string;
+  tts?: string;
+  /** An empty string turns speech-to-speech off, which is different from saying nothing. */
+  sts?: string;
+  voice?: string;
+  llm?: string;
+  subagent?: string;
+  search?: string;
+  greeting?: string;
+  sandbox?: Schemas["Sandbox"];
+  plugins?: string[];
+  keyterms?: string[];
+  tags?: Record<string, string>;
+  video?: Schemas["SessionVideo"];
+}
+
+/**
+ * Where a directory records the fingerprint it was last synced under.
+ *
+ * Handed over by whatever read the directory, so writing `.agent_sync` stays with the code
+ * that can reach a filesystem and `sync` stays runnable wherever `fetch` is.
+ */
+export interface SyncStamp {
+  /** The fingerprint last synced, or empty when there is none. */
+  read(): Promise<string>;
+  write(hash: string): Promise<void>;
+}
+
 /** An agent directory, as `loadFolder` from `@stream-io/vision-agents/node` reads one. */
 export interface Folder {
   path: string;
   name: string;
+  /** What agent.yaml declares. */
+  settings?: Declaration;
   instructions: string;
   guardrail: string;
   skills: Skill[];
   knowledge: { source: string; text: string }[];
   knowledgeURLs: { url: string; title?: string; description?: string }[];
+  /** `.agent_sync`, so a sync of a directory nothing has touched asks the router nothing. */
+  stamp?: SyncStamp;
 }
 
 export interface AgentOptions {
@@ -361,15 +401,21 @@ export class Agent {
    * left out leaves whatever is stored, so a model chosen in the dashboard survives a sync
    * that says nothing about it.
    *
-   * Knowledge urls are subscriptions rather than contents, so they are added separately
-   * and only when the rest was written.
+   * What the directory's agent.yaml declares goes with it, under whatever the code set.
+   * A directory read by `loadFolder` records the fingerprint in `.agent_sync`, and a sync of
+   * one nothing has touched since only reads the stored config back.
    *
    * Server side only: how an agent is configured is not a browser's to rewrite.
    */
   async sync(): Promise<Schemas["SyncAgentResult"]> {
     const pipeline = this.options.pipeline ?? {};
+    const declared = this.folder?.settings ?? {};
     const skills = this.harness?.skills ?? this.folder?.skills ?? [];
-    const subagent = this.harness?.subagents?.["default"] ?? pipeline.subagent;
+    const subagent =
+      this.harness?.subagents?.["default"] ?? (pipeline.subagent || declared.subagent);
+    const sandbox = this.harness?.vm?.provider ?? declared.sandbox;
+    const tags = { ...declared.tags, ...this.options.costTracking };
+    const pages = this.folder?.knowledgeURLs ?? [];
 
     const body: Omit<Schemas["SyncAgentRequest"], "hash"> = {
       name: this.name,
@@ -381,6 +427,8 @@ export class Agent {
         ? { skills: skills.map((skill) => ({ ...skillRequest(skill), config_id: "" })) }
         : {}),
       ...(this.folder?.knowledge.length ? { knowledge: this.folder.knowledge } : {}),
+      ...(pages.length > 0 ? { knowledge_urls: pages } : {}),
+      ...declaredRequest(declared),
       ...(pipeline.llm ? { llm: pipeline.llm } : {}),
       ...(pipeline.stt ? { stt: pipeline.stt } : {}),
       ...(pipeline.tts ? { tts: pipeline.tts } : {}),
@@ -389,27 +437,24 @@ export class Agent {
       ...(pipeline.greeting ? { greeting: pipeline.greeting } : {}),
       ...(pipeline.video ? { video: pipeline.video } : {}),
       ...(subagent ? { subagent } : {}),
-      ...(this.harness?.vm ? { sandbox: this.harness.vm.provider } : {}),
-      ...(this.options.costTracking ? { tags: this.options.costTracking } : {}),
+      ...(sandbox ? { sandbox } : {}),
+      ...(Object.keys(tags).length > 0 ? { tags } : {}),
     };
 
-    const result = await this.client.post("/v1/agents/sync", {
-      body: { ...body, hash: await fingerprint(body) },
-    });
-
-    if (result.unchanged) {
-      return result;
-    }
-    for (const page of this.folder?.knowledgeURLs ?? []) {
-      await this.client.post("/v1/agents/knowledge/urls", {
-        body: {
-          namespace: this.folder?.name ?? this.name,
-          url: page.url,
-          ...(page.title ? { title: page.title } : {}),
-          ...(page.description ? { description: page.description } : {}),
-        },
+    const hash = await fingerprint(body);
+    const stamp = this.folder?.stamp;
+    if (stamp && (await stamp.read()) === hash) {
+      const [stored] = await this.client.get("/v1/agents/configs", {
+        query: { name: this.name },
       });
+      // A config deleted since the stamp was written is synced again rather than trusted.
+      if (stored?.name === this.name) {
+        return { unchanged: true, config: stored };
+      }
     }
+
+    const result = await this.client.post("/v1/agents/sync", { body: { ...body, hash } });
+    await stamp?.write(hash);
     return result;
   }
 
@@ -527,6 +572,26 @@ function skillRequest(skill: Skill): Schemas["SessionSkill"] {
     instructions: skill.instructions,
     ...(skill.captureVideo === undefined ? {} : { capture_video: skill.captureVideo }),
     ...(skill.deadlineMs ? { deadline_ms: skill.deadlineMs } : {}),
+  };
+}
+
+/**
+ * Renders what agent.yaml declared into a sync request. Only what it names is sent, so the
+ * router leaves whatever is stored for the rest.
+ */
+function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentRequest"]> {
+  return {
+    ...(declared.mode ? { mode: declared.mode } : {}),
+    ...(declared.stt ? { stt: declared.stt } : {}),
+    ...(declared.tts ? { tts: declared.tts } : {}),
+    ...(declared.sts === undefined ? {} : { sts: declared.sts }),
+    ...(declared.voice ? { voice: declared.voice } : {}),
+    ...(declared.llm ? { llm: declared.llm } : {}),
+    ...(declared.search ? { search: declared.search } : {}),
+    ...(declared.greeting ? { greeting: declared.greeting } : {}),
+    ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
+    ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
+    ...(declared.video ? { video: declared.video } : {}),
   };
 }
 

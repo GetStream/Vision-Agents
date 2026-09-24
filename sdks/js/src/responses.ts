@@ -1,4 +1,5 @@
 import type { Client, Schemas } from "./client.js";
+import { ConfigurationError } from "./errors.js";
 
 /** How many items are read per request while unwinding. */
 const ITEM_PAGE = 200;
@@ -130,6 +131,28 @@ export class Responses {
       body: { text, ...(options.images?.length ? { images: options.images } : {}) },
     });
     return new AgentResponse(this.client, created);
+  }
+
+  /**
+   * Goes back to a response and carries on from there, as though nothing after it was said.
+   *
+   * The model forgets the later turns and they drop out of `list` and `items`. An item
+   * stands for the response it belongs to, so the thing a transcript renders is enough to
+   * rewind to. A conversation kept in Stream Chat cannot be rewound, because the channel
+   * would still hold the later turns: fork it at the response instead.
+   */
+  async rewind(
+    to: AgentResponse | Schemas["AgentResponse"] | Schemas["AgentResponseItem"] | string,
+  ): Promise<void> {
+    const responseId =
+      typeof to === "string" ? to : "response_id" in to ? to.response_id : to.id;
+    if (!responseId) {
+      throw new ConfigurationError("a response that was never recorded cannot be rewound to");
+    }
+    await this.client.post("/v1/agents/sessions/{id}/rewind", {
+      path: { id: this.sessionId },
+      body: { response_id: responseId },
+    });
   }
 
   /** The turns so far, oldest first. */

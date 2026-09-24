@@ -5,6 +5,7 @@ import {
   Client,
   ConfigurationError,
   GUEST_STORAGE_KEY,
+  RouterError,
   Session,
   type CreateSessionOptions,
   type GuestStore,
@@ -256,6 +257,46 @@ describe("responses", () => {
     const asked = router.requestsTo("GET", "/v1/agents/sessions/session-1/responses/items");
     assert.equal(asked.length, 2, "a short page is the last page, so nothing is asked again");
     assert.equal(asked[1]?.query.get("offset"), "2", "the second page picks up where the first ended");
+  });
+
+  it("rewinds to the response an item belongs to, since an item is what a transcript shows", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-1/rewind", { status: 204 });
+
+    await held.responses.rewind(item(3));
+    assert.deepEqual(router.last.body, { response_id: "response-1" });
+
+    await held.responses.rewind("response-2");
+    assert.deepEqual(router.last.body, { response_id: "response-2" });
+  });
+
+  it("says why the router would not rewind", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-1/rewind", {
+      status: 400,
+      body: { error: "session: this conversation cannot be rewound" },
+    });
+
+    await assert.rejects(
+      () => held.responses.rewind("response-1"),
+      (error: unknown) =>
+        error instanceof RouterError && error.status === 400 && /cannot be rewound/.test(error.message),
+    );
+  });
+
+  it("refuses to rewind to a response a session that records nothing never had", async () => {
+    await assert.rejects(() => held.responses.rewind(""), ConfigurationError);
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions/session-1/rewind").length, 0);
+  });
+
+  it("forks at a response, carrying the history only that far", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-1/fork", {
+      status: 201,
+      body: session({ id: "session-2", forked_from: "session-1" }),
+    });
+
+    const forked = await held.fork({ response_id: "response-1", watch: false });
+
+    assert.equal(forked.id, "session-2");
+    assert.deepEqual(router.last.body, { response_id: "response-1" });
   });
 });
 

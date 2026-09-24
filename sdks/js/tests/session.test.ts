@@ -208,6 +208,29 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("names the durable command and turn a tool was asked for by, so the result is taken", async () => {
+    const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
+    const [session, connection] = await opened(tools);
+
+    connection.send({
+      type: "tool_call",
+      id: "call_1",
+      name: "lookup",
+      arguments: "{}",
+      command_id: "command-a",
+      turn_id: "turn-a",
+    });
+
+    assert.deepEqual(await connection.next(), {
+      type: "tool_result",
+      tool_call_id: "call_1",
+      command_id: "command-a",
+      turn_id: "turn-a",
+      output: "found",
+    });
+    await session.close();
+  });
+
   it("tells the model a tool did not work, since it is mid-sentence waiting", async () => {
     const tools = new Tools().register({
       name: "lookup",

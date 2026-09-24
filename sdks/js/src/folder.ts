@@ -1,8 +1,15 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, extname, join, posix, relative, sep } from "node:path";
 
-import type { Folder, Skill } from "./agent.js";
+import type { Declaration, Folder, Skill, SyncStamp } from "./agent.js";
+import type { Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
+
+/** What makes a directory an agent: it names it and says what it runs on. */
+export const AGENT_FILE = "agent.yaml";
+
+/** Where a directory records the fingerprint it was last synced under, and when. */
+export const AGENT_STAMP = ".agent_sync";
 
 /** What an agent directory calls its system prompt. */
 export const INSTRUCTIONS_FILE = "instructions.md";
@@ -31,6 +38,7 @@ const PAGE_KEYS = new Set(["url", "title", "description"]);
  *
  * ```
  * agents/jean/
+ *   agent.yaml
  *   instructions.md
  *   guardrail.md
  *   skills/think.md
@@ -38,19 +46,27 @@ const PAGE_KEYS = new Set(["url", "title", "description"]);
  *   knowledge/urls.yaml
  * ```
  *
- * Everything in it is optional: a directory with only instructions.md is a valid agent, and
- * so is one with only skills. A skill is a markdown file with frontmatter naming what the
- * fast model sees; the body is the prompt only the subagent sees.
+ * agent.yaml is what makes a directory an agent, so it is required. Everything else is
+ * optional: a directory with only instructions.md beside it is a valid agent, and so is one
+ * with only skills. A skill is a markdown file with frontmatter naming what the fast model
+ * sees; the body is the prompt only the subagent sees.
  */
 export async function loadFolder(path: string): Promise<Folder> {
   const info = await stat(path).catch(() => undefined);
   if (!info?.isDirectory()) {
     throw new ConfigurationError(`${path} is not an agent directory`);
   }
+  const declaration = await readFile(join(path, AGENT_FILE), "utf8").catch(() => undefined);
+  if (declaration === undefined) {
+    throw new ConfigurationError(`${path} has no ${AGENT_FILE}, so it is not an agent directory`);
+  }
+  const settings = parseDeclaration(declaration, join(path, AGENT_FILE));
 
   return {
     path,
-    name: basename(path.replace(/[/\\]+$/, "")),
+    name: settings.name || basename(path.replace(/[/\\]+$/, "")),
+    settings,
+    stamp: stampAt(join(path, AGENT_STAMP)),
     instructions: (await maybeRead(join(path, INSTRUCTIONS_FILE))).trim(),
     guardrail: (await maybeRead(join(path, GUARDRAIL_FILE))).trim(),
     skills: await loadSkills(join(path, SKILLS_DIR)),
@@ -288,6 +304,175 @@ export function parsePages(
     }
   }
   return pages;
+}
+
+const SCALARS = new Set([
+  "name",
+  "description",
+  "mode",
+  "stt",
+  "tts",
+  "sts",
+  "voice",
+  "llm",
+  "subagent",
+  "search",
+  "greeting",
+  "sandbox",
+]);
+const LISTS = new Set(["plugins", "keyterms"]);
+
+/**
+ * Reads agent.yaml: what the agent is called, and what it runs on.
+ *
+ * ```yaml
+ * name: receptionist
+ * llm: openai/gpt-5.6
+ * keyterms: [Vision Agents, Stream]
+ * tags:
+ *   team: support
+ * video:
+ *   source: camera
+ *   max_frames: 2
+ * ```
+ *
+ * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for two lists
+ * and two small mappings, and a YAML library would land in every browser bundle. A key
+ * nobody knows is refused rather than dropped, since a misspelled `llm` that goes quietly is
+ * a config running on a model the file does not name.
+ */
+export function parseDeclaration(content: string, where = AGENT_FILE): Declaration {
+  const declared: Declaration = {};
+  const lines = content.split("\n");
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] as string;
+    if (!line.trim() || line.trim().startsWith("#")) {
+      continue;
+    }
+    if (/^\s/.test(line)) {
+      throw new ConfigurationError(`${where}: ${JSON.stringify(line.trim())} belongs to no key`);
+    }
+    const entry = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(line.trimEnd());
+    if (!entry) {
+      throw new ConfigurationError(`${where}: ${JSON.stringify(line)} is not a key and a value`);
+    }
+    const key = entry[1] as string;
+    const inline = (entry[2] ?? "").replace(/\s+#.*$/, "").trim();
+
+    // What is indented under a key with nothing after it is its list or its mapping.
+    const nested: string[] = [];
+    while (index + 1 < lines.length && /^\s+\S/.test(lines[index + 1] as string)) {
+      nested.push((lines[++index] as string).trim());
+    }
+
+    if (SCALARS.has(key)) {
+      if (nested.length > 0 || inline.startsWith("[")) {
+        throw new ConfigurationError(`${where}: ${key} is one value, not a list`);
+      }
+      const value = scalar(inline);
+      if (value !== undefined && (value || key === "sts")) {
+        assign(declared, key, value);
+      }
+    } else if (LISTS.has(key)) {
+      const items = inline ? flowList(inline, key, where) : nested.map((item) => listItem(item, key, where));
+      const named = items.filter((item) => item);
+      if (named.length > 0) {
+        declared[key as "plugins" | "keyterms"] = named;
+      }
+    } else if (key === "tags") {
+      declared.tags = mapping(nested, inline, key, where);
+    } else if (key === "video") {
+      declared.video = video(mapping(nested, inline, key, where), where);
+    } else {
+      throw new ConfigurationError(
+        `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
+      );
+    }
+  }
+  return declared;
+}
+
+function assign(declared: Declaration, key: string, value: string): void {
+  switch (key) {
+    case "mode":
+      declared.mode = value as Schemas["AgentMode"];
+      break;
+    case "sandbox":
+      declared.sandbox = value as Schemas["Sandbox"];
+      break;
+    default:
+      declared[key as "name"] = value;
+  }
+}
+
+/** One value, unquoted. Nothing, `~` and `null` read as unset. */
+function scalar(value: string): string | undefined {
+  if (value === "" || value === "~" || value === "null") {
+    return undefined;
+  }
+  const quoted = /^(["'])(.*)\1$/.exec(value);
+  return quoted ? (quoted[2] as string) : value;
+}
+
+function flowList(value: string, key: string, where: string): string[] {
+  const listed = /^\[(.*)\]$/.exec(value);
+  if (!listed) {
+    throw new ConfigurationError(`${where}: ${key} should be a list`);
+  }
+  return (listed[1] as string).split(",").map((item) => scalar(item.trim()) ?? "");
+}
+
+function listItem(line: string, key: string, where: string): string {
+  if (!line.startsWith("-")) {
+    throw new ConfigurationError(`${where}: ${key} should be a list`);
+  }
+  return scalar(line.slice(1).trim()) ?? "";
+}
+
+function mapping(nested: string[], inline: string, key: string, where: string): Record<string, string> {
+  if (inline) {
+    throw new ConfigurationError(`${where}: ${key} should be a mapping`);
+  }
+  const mapped: Record<string, string> = {};
+  for (const line of nested) {
+    const entry = /^([^:\s][^:]*):(?:\s+(.*))?$/.exec(line);
+    if (!entry) {
+      throw new ConfigurationError(`${where}: ${key} should be a mapping`);
+    }
+    mapped[(entry[1] as string).trim()] = scalar((entry[2] ?? "").trim()) ?? "";
+  }
+  return mapped;
+}
+
+function video(declared: Record<string, string>, where: string): Schemas["SessionVideo"] {
+  for (const key of Object.keys(declared)) {
+    if (key !== "source" && key !== "max_frames") {
+      throw new ConfigurationError(`${where}: unknown video setting ${JSON.stringify(key)}`);
+    }
+  }
+  const frames = declared["max_frames"] === undefined ? 1 : Number(declared["max_frames"]);
+  if (!Number.isInteger(frames) || frames < 1 || frames > 8) {
+    throw new ConfigurationError(`${where}: video.max_frames must be an integer from 1 to 8`);
+  }
+  return { ...(declared["source"] ? { source: declared["source"] } : {}), max_frames: frames };
+}
+
+/** `.agent_sync`: the fingerprint a directory was last synced under, and when. */
+function stampAt(path: string): SyncStamp {
+  return {
+    async read() {
+      const recorded: unknown = await readFile(path, "utf8")
+        .then((text) => JSON.parse(text) as unknown)
+        .catch(() => undefined);
+      const hash = recorded && typeof recorded === "object" ? (recorded as { hash?: unknown }).hash : "";
+      return typeof hash === "string" ? hash : "";
+    },
+    async write(hash) {
+      const syncedAt = new Date().toISOString().replace(/\.\d+Z$/, "+00:00");
+      await writeFile(path, `${JSON.stringify({ hash, synced_at: syncedAt })}\n`);
+    },
+  };
 }
 
 async function maybeRead(path: string): Promise<string> {

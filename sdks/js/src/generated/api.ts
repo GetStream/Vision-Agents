@@ -1089,6 +1089,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/sessions/{id}/rewind": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Go back to a response and carry on from there
+         * @description The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+         *     The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+         */
+        readonly post: operations["rewindSession"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions/{id}/say": {
         readonly parameters: {
             readonly query?: never;
@@ -2549,6 +2570,8 @@ export type components = {
             readonly messages?: boolean;
             readonly model_overwrites?: components["schemas"]["ModelOverwrites"];
             readonly project?: string;
+            /** @description Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false. */
+            readonly response_id?: string;
             readonly title?: string;
         };
         /**
@@ -2680,6 +2703,14 @@ export type components = {
             readonly title?: string;
             /** Format: date-time */
             readonly updated_at: string;
+            readonly url: string;
+        };
+        /** @description A page an agent directory declares, in the knowledge base named after it. */
+        readonly KnowledgeUrlDeclaration: {
+            readonly description?: string;
+            /** @example Pricing */
+            readonly title?: string;
+            /** @example https://example.com/pricing */
             readonly url: string;
         };
         readonly KnowledgeUrlRequest: {
@@ -3018,6 +3049,10 @@ export type components = {
             /** @description Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference. */
             readonly command_id?: string;
             readonly text: string;
+        };
+        readonly RewindSessionRequest: {
+            /** @description The response to carry on from. It is kept; everything after it is not. */
+            readonly response_id: string;
         };
         readonly RollupRequest: {
             /** Format: date-time */
@@ -3711,6 +3746,8 @@ export type components = {
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge?: readonly components["schemas"]["KnowledgeDocument"][];
+            /** @description The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both. */
+            readonly knowledge_urls?: readonly components["schemas"]["KnowledgeUrlDeclaration"][];
             readonly llm?: string;
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is also the directory's name. */
@@ -6086,6 +6123,35 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentResponseItem"][];
                 };
             };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly rewindSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: components["parameters"]["SessionID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RewindSessionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The conversation carries on from the end of that response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];

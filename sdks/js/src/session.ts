@@ -454,6 +454,12 @@ export class Session {
     const id = text(frame, "id");
     const name = text(frame, "name");
     const result: Record<string, unknown> = { type: "tool_result", tool_call_id: id };
+    // A durable command's result is only accepted back with the command and turn it names.
+    for (const key of ["command_id", "turn_id"]) {
+      if (text(frame, key)) {
+        result[key] = text(frame, key);
+      }
+    }
 
     const cancel = new AbortController();
     this.running.set(id, cancel);

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
@@ -12,6 +15,7 @@ import {
   type Folder,
   type Schemas,
 } from "../src/index.js";
+import { loadFolder } from "../src/node.js";
 import { TestRouter } from "./router.js";
 
 const session = {
@@ -334,14 +338,10 @@ describe("Agent", () => {
           config: { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" },
         },
       });
-      router.serve("POST", "/v1/agents/knowledge/urls", {
-        status: 201,
-        body: { id: "url_1", namespace: "jean", url: "https://example.com", state: "pending" },
-      });
-
       const folder: Folder = {
         path: "/agents/jean",
         name: "jean",
+        settings: { llm: "llm-smart", stt: "flux", tags: { team: "support" } },
         instructions: "Be brief.",
         guardrail: "Refuse medical advice.",
         skills: [{ name: "think", description: "Think", instructions: "Work it out." }],
@@ -362,19 +362,14 @@ describe("Agent", () => {
       assert.equal(body.name, "jean");
       assert.equal(body.instructions, "Be brief.");
       assert.equal(body.guardrail, "Refuse medical advice.");
-      assert.equal(body.llm, "llm-fast");
+      assert.equal(body.llm, "llm-fast", "what the code set wins over agent.yaml");
+      assert.equal(body.stt, "flux", "what only agent.yaml says still goes");
+      assert.deepEqual(body.tags, { team: "support" });
       assert.equal(body.skills?.length, 1);
       assert.equal(body.knowledge?.length, 1);
+      assert.deepEqual(body.knowledge_urls, [{ url: "https://example.com", title: "Home" }]);
       assert.match(body.hash, /^[0-9a-f]{64}$/);
-
-      const subscribed = router.received.find(
-        (one) => one.path === "/v1/agents/knowledge/urls",
-      )?.body as { url: string; title: string; namespace: string };
-      assert.deepEqual(subscribed, {
-        namespace: "jean",
-        url: "https://example.com",
-        title: "Home",
-      });
+      assert.equal(router.received.length, 1, "the pages go in the same request");
     });
 
     it("fingerprints the same agent the same way twice, and a changed one differently", async () => {
@@ -397,31 +392,31 @@ describe("Agent", () => {
       assert.notEqual(hashes[1], hashes[2]);
     });
 
-    it("leaves the subscriptions alone when the router says nothing changed", async () => {
-      router.serve("POST", "/v1/agents/sync", {
-        body: {
-          unchanged: true,
-          config: { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" },
-        },
-      });
+    it("only reads back a directory nothing has touched since .agent_sync was written", async () => {
+      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
+      router.serve("POST", "/v1/agents/sync", { body: { unchanged: false, config: stored } });
+      router.serve("GET", "/v1/agents/configs", { body: [stored] });
+      const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
+      await mkdir(root);
+      await writeFile(join(root, "agent.yaml"), "name: jean\n");
+      await writeFile(join(root, "instructions.md"), "Be brief.\n");
 
-      const folder: Folder = {
-        path: "/agents/jean",
-        name: "jean",
-        instructions: "Be brief.",
-        guardrail: "",
-        skills: [],
-        knowledge: [],
-        knowledgeURLs: [{ url: "https://example.com" }],
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+      const again = await new Agent({ folder: await loadFolder(root), client: api }).sync();
+      await writeFile(join(root, "instructions.md"), "Be warm.\n");
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      assert.equal(again.unchanged, true);
+      assert.equal(again.config.id, "cfg_1");
+      assert.equal(router.requestsTo("POST", "/v1/agents/sync").length, 2);
+      assert.equal(router.requestsTo("GET", "/v1/agents/configs")[0]?.query.get("name"), "jean");
+      const recorded = JSON.parse(await readFile(join(root, ".agent_sync"), "utf8")) as {
+        hash: string;
+        synced_at: string;
       };
-
-      const result = await new Agent({ folder, client: api }).sync();
-
-      assert.equal(result.unchanged, true);
-      assert.equal(
-        router.received.some((one) => one.path === "/v1/agents/knowledge/urls"),
-        false,
-      );
+      const last = router.requestsTo("POST", "/v1/agents/sync").at(-1);
+      assert.equal(recorded.hash, (last?.body as Schemas["SyncAgentRequest"]).hash);
+      assert.match(recorded.synced_at, /^\d{4}-\d\d-\d\dT/);
     });
   });
 });

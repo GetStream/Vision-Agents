@@ -99,11 +99,13 @@ export {
   userIdOf,
   type AgentOptions,
   type ChatOptions,
+  type Declaration,
   type Folder,
   type Harness,
   type Pipeline,
   type Sandbox,
   type Skill,
+  type SyncStamp,
 } from "./agent.js";
 
 export {

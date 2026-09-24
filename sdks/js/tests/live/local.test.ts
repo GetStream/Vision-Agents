@@ -202,6 +202,62 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     await parent.close();
   });
 
+  it("rewinds to a turn, taking the later ones out of the conversation", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
+    }
+
+    const session = remember(await agent.sessions.create({ llm: model }));
+    for (const question of ["Reply with the single word: one.", "Reply with the single word: two."]) {
+      await session.responses.create(question);
+      for await (const event of session.events()) {
+        if (event.kind === "responded") {
+          break;
+        }
+        if (event.kind === "error") {
+          if (exhausted(event.error)) {
+            t.skip(`nothing left to answer with: ${event.error}`);
+            return;
+          }
+          assert.fail(`the session reported: ${event.error}`);
+        }
+      }
+    }
+
+    const [kept] = await session.responses.list();
+    assert.ok(kept, "the first turn was not written down");
+    await session.responses.rewind(kept);
+
+    const left = await session.responses.list();
+    assert.deepEqual(left.map((response) => response.id), [kept.id]);
+    const forked = remember(await session.fork({ response_id: kept.id }));
+    assert.equal(forked.created.forked_from, session.id);
+
+    await forked.close();
+    await session.close();
+  });
+
+  it("refuses to rewind a conversation kept in Stream Chat, which would bring the turns back", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
+    }
+
+    const session = remember(await agent.sessions.create({ persist_conversation: true, llm: model }));
+
+    await assert.rejects(
+      () => session.responses.rewind("anything"),
+      (raised: RouterError) => {
+        assert.equal(raised.status, 400);
+        assert.match(raised.message, /fork it at the response/);
+        return true;
+      },
+    );
+
+    await session.close();
+  });
+
   it("refuses to fork an incognito conversation, since there is nothing to fork from", async (t) => {
     if (!agent) {
       t.skip("this router has no agent configured to address by name");

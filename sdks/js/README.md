@@ -188,11 +188,13 @@ rather than talked over.
 
 ```
 agents/jean/
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, tags, ...)
   instructions.md
   guardrail.md
   skills/think.md
   knowledge/pricing.md
   knowledge/urls.yaml
+  .agent_sync           written by sync: the fingerprint last synced and when
 ```
 
 ```ts
@@ -203,16 +205,33 @@ const agent = new Agent({ folder: await loadFolder("agents/jean") });
 await agent.sync();
 ```
 
-`sync` stores it as a config a session can then be created from by name. It carries a
-fingerprint of everything in it, so syncing on every startup does nothing when nothing has
-changed, and a setting left out leaves whatever is stored — a model chosen in the dashboard
-survives a sync that says nothing about it.
+`sync` stores it as a config a session can then be created from by name, in one request
+carrying the files, the pages and what `agent.yaml` declares. A key `agent.yaml` does not
+know is refused. The request carries a fingerprint of everything in it and `.agent_sync`
+records it, so syncing on every startup only reads the config back when nothing has changed.
+A setting left out leaves whatever is stored — a model chosen in the dashboard survives a
+sync that says nothing about it.
 
 What is written in code wins over what the directory says, so a directory is a starting
 point rather than an override.
 
 `loadFolder` needs a filesystem, which is why it is the one thing in the `/node` entry
-point rather than the main one.
+point rather than the main one. It hands `sync` the stamp to read and write, so `sync`
+itself touches no filesystem.
+
+## Going back, and branching off
+
+```ts
+const items = await session.responses.items.all();
+await session.responses.rewind(items[2]); // carry on as though nothing after it was said
+const branch = await session.fork({ response_id: items[2].response_id, title: "asked again" });
+```
+
+`rewind` takes a response, a response's id, or any item of one. The model forgets the later
+turns, and they drop out of what `responses` reads back. A conversation kept in Stream Chat
+cannot be rewound, since the channel would still hold the later turns: fork it at the
+response instead, which starts a new session carrying the history only that far. Both work
+from a browser as well as a server.
 
 ## Sockets
 
