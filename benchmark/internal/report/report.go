@@ -95,14 +95,19 @@ type PackSummary struct {
 	V2VSamples       int               `json:"v2v_samples"`
 	NonToolSamples   int               `json:"non_tool_samples"`
 	DroppedTurns     int               `json:"dropped_turns"`
-	Spikes           int               `json:"spike_count"`
-	Cutoff           float64           `json:"false_cutoff_rate"`
-	CallDurationP50  int               `json:"call_duration_p50_ms"`
-	ToolCountPerCall float64           `json:"tool_count_per_call"`
-	ToolErrors       int               `json:"tool_errors"`
-	ToolWaitP50      int               `json:"tool_wait_p50_ms"`
-	CallerTurnsP50   int               `json:"caller_turns_p50"`
-	AgentTurnsP50    int               `json:"agent_turns_p50"`
+	FirstResponseP50 int               `json:"first_response_p50_ms"`
+	FirstResponseP95 int               `json:"first_response_p95_ms"`
+	// FirstResponseSamples is one per valid call whose first caller turn drew a reply.
+	FirstResponseSamples int     `json:"first_response_samples"`
+	FirstResponseTool    int     `json:"first_response_tool_samples"`
+	Spikes               int     `json:"spike_count"`
+	Cutoff               float64 `json:"false_cutoff_rate"`
+	CallDurationP50      int     `json:"call_duration_p50_ms"`
+	ToolCountPerCall     float64 `json:"tool_count_per_call"`
+	ToolErrors           int     `json:"tool_errors"`
+	ToolWaitP50          int     `json:"tool_wait_p50_ms"`
+	CallerTurnsP50       int     `json:"caller_turns_p50"`
+	AgentTurnsP50        int     `json:"agent_turns_p50"`
 }
 
 // CategoryCell is pass@k / pass^k for one call type.
@@ -170,9 +175,11 @@ func defaultProviders() map[string]string {
 }
 
 func summarizePack(pack string, calls []CallResult, k int) PackSummary {
+	out := PackSummary{Pack: pack}
 	byScenario := map[string][]CallResult{}
 	var v2v []int
 	var nonTool []int
+	var firstResponse []int
 	var durations []int
 	var toolWait []int
 	var callerTurns []int
@@ -200,6 +207,12 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 			}
 		}
 		dropped += len(call.Metrics.Dropped)
+		if first := call.Metrics.FirstResponse; first != nil && first.V2VMS >= 0 {
+			firstResponse = append(firstResponse, first.V2VMS)
+			if first.Tool {
+				out.FirstResponseTool++
+			}
+		}
 		if call.Metrics.CallDurationMS > 0 {
 			durations = append(durations, call.Metrics.CallDurationMS)
 		}
@@ -223,7 +236,6 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 		scenarioIDs = append(scenarioIDs, id)
 	}
 	sort.Strings(scenarioIDs)
-	out := PackSummary{Pack: pack}
 	byCategory := map[string][]ScenarioSummary{}
 	for _, id := range scenarioIDs {
 		scenarioCalls := byScenario[id]
@@ -280,6 +292,11 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 		sort.Ints(nonTool)
 		out.NonToolP50 = score.Percentile(nonTool, 50)
 	}
+	if len(firstResponse) > 0 {
+		sort.Ints(firstResponse)
+		out.FirstResponseP50 = score.Percentile(firstResponse, 50)
+		out.FirstResponseP95 = score.Percentile(firstResponse, 95)
+	}
 	if len(durations) > 0 {
 		sort.Ints(durations)
 		out.CallDurationP50 = score.Percentile(durations, 50)
@@ -299,6 +316,7 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	out.V2VSamples = len(v2v)
 	out.NonToolSamples = len(nonTool)
 	out.DroppedTurns = dropped
+	out.FirstResponseSamples = len(firstResponse)
 	out.Spikes = spikes
 	out.ToolErrors = toolErrors
 	if validCalls > 0 {
@@ -402,6 +420,11 @@ func Markdown(s Summary) string {
 	for _, p := range s.Packs {
 		fmt.Fprintf(&b, "| %s | %d ms (n=%d) | %d ms | %d ms (n=%d) | %d | %d | %.2f |\n", p.Pack, p.V2VP50, p.V2VSamples, p.V2VP95, p.NonToolP50, p.NonToolSamples, p.Spikes, p.DroppedTurns, p.Cutoff)
 	}
+	b.WriteString("\n## Time to first response\n\n")
+	b.WriteString("| Pack | P50 | P95 | Calls measured | Tool turns |\n| --- | ---: | ---: | ---: | ---: |\n")
+	for _, p := range s.Packs {
+		fmt.Fprintf(&b, "| %s | %d ms | %d ms | %d | %d |\n", p.Pack, p.FirstResponseP50, p.FirstResponseP95, p.FirstResponseSamples, p.FirstResponseTool)
+	}
 	b.WriteString("\n## Operations\n\n")
 	b.WriteString("| Pack | Call duration P50 | Tool count / call | Tool errors | Tool wait P50 | Caller turns P50 | Agent turns P50 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, p := range s.Packs {
@@ -415,13 +438,23 @@ func Markdown(s Summary) string {
 		}
 	}
 	b.WriteString("\n## Calls\n\n")
-	b.WriteString("| Scenario | Trial | Outcome | Duration | V2V P50 | Non-tool P50 | Tools | Tool wait | Spikes | Gates | Artifacts |\n| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
+	b.WriteString("| Scenario | Trial | Outcome | Duration | First response | V2V P50 | Non-tool P50 | Tools | Tool wait | Spikes | Gates | Artifacts |\n| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
 	for _, call := range s.Calls {
-		fmt.Fprintf(&b, "| %s | %d | %s | %d ms | %d ms | %d ms | %d | %d ms | %d | %s | %s |\n", call.ScenarioID, call.Trial, callOutcome(call), call.Metrics.CallDurationMS, call.Metrics.V2VP50, call.Metrics.NonToolP50, call.Metrics.ToolCount, call.Metrics.ToolWaitMS, call.Metrics.SpikeCount, strings.Join(call.Metrics.GateNotes, ","), artifactLinks(call))
+		fmt.Fprintf(&b, "| %s | %d | %s | %d ms | %s | %d ms | %d ms | %d | %d ms | %d | %s | %s |\n", call.ScenarioID, call.Trial, callOutcome(call), call.Metrics.CallDurationMS, firstResponseCell(call.Metrics.FirstResponse), call.Metrics.V2VP50, call.Metrics.NonToolP50, call.Metrics.ToolCount, call.Metrics.ToolWaitMS, call.Metrics.SpikeCount, strings.Join(call.Metrics.GateNotes, ","), artifactLinks(call))
 	}
-	b.WriteString("\nP50s are pooled over every measured turn in the pack, not a median of per-call medians; n is that sample count. Turns dropped are scripted turns with no usable reply gap, listed per call in `metrics.json` under `dropped_turns`.\n")
+	b.WriteString("\nP50s are pooled over every measured turn in the pack, not a median of per-call medians; n is that sample count. Turns dropped are scripted turns with no usable reply gap, listed per call in `metrics.json` under `dropped_turns`. Time to first response is the reply gap of each call's first caller utterance, one sample per call; a call whose first turn drew no reply has none.\n")
 	b.WriteString("\nHard gates are end-state AND successful expected tools/arguments AND policy AND entity fidelity AND tool order AND say-do AND filler AND barge-in stop AND hold/selectivity. Required evaluator failures make a trial invalid rather than failed. V2V latency and spikes are reported, not gated. Human-band % uses non-tool turns only.\n")
 	return b.String()
+}
+
+func firstResponseCell(first *score.Timing) string {
+	if first == nil {
+		return "—"
+	}
+	if first.Tool {
+		return fmt.Sprintf("%d ms (tool)", first.V2VMS)
+	}
+	return fmt.Sprintf("%d ms", first.V2VMS)
 }
 
 func (s Summary) kind() string {

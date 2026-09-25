@@ -241,3 +241,23 @@ func TestDroppedTurnsAreReported(t *testing.T) {
 		t.Fatalf("a one-sample P50 is not marked as one:\n%s", md)
 	}
 }
+
+func TestSummaryReportsTimeToFirstResponse(t *testing.T) {
+	sum := BuildSummary("accelerated", "run1", 3, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true, Metrics: score.Metrics{FirstResponse: &score.Timing{TurnID: "t1", V2VMS: 800}}},
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 2, Outcome: OutcomePass, Passed: true, Metrics: score.Metrics{FirstResponse: &score.Timing{TurnID: "t1", V2VMS: 1200, Tool: true}}},
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 3, Outcome: OutcomeFail, Metrics: score.Metrics{}},
+		{ScenarioID: "restaurant.noise", Pack: "restaurant", Category: "checklist", Trial: 1, Outcome: OutcomeInvalid, InvalidReason: []string{"agent stt skipped"}, Metrics: score.Metrics{FirstResponse: &score.Timing{TurnID: "t1", V2VMS: 50}}},
+	})
+	pack := sum.Packs[0]
+	if pack.FirstResponseP50 != 800 || pack.FirstResponseP95 != 1200 || pack.FirstResponseSamples != 2 || pack.FirstResponseTool != 1 {
+		t.Fatalf("pack %+v", pack)
+	}
+	md := Markdown(sum)
+	if !strings.Contains(md, "| restaurant | 800 ms | 1200 ms | 2 | 1 |") {
+		t.Fatalf("time to first response table missing:\n%s", md)
+	}
+	if !strings.Contains(md, "| 1200 ms (tool) |") {
+		t.Fatalf("per-call first response missing:\n%s", md)
+	}
+}
