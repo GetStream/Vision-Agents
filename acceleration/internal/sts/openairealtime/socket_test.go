@@ -284,6 +284,42 @@ func (s *RealtimeSocketSuite) TestATypedTurnAndAPromptAskForReplies() {
 	s.Equal("Greet the caller.", prompt.Response.Instructions, "a prompt guides the reply rather than adding a turn")
 }
 
+func (s *RealtimeSocketSuite) TestQwenAudioIsPromptedWithASystemMessageAndOnlyCancelled() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: Qwen, Model: "qwen-audio-3.1-realtime-plus"})
+	defer func() { _ = provider.Close() }()
+
+	s.Require().NoError(provider.Prompt("Greet the caller."))
+	guidance := s.nextFrame(conn)
+	s.Equal(eventItemCreate, guidance.Type)
+	s.Equal("system", guidance.Item.Role)
+	s.Equal("Greet the caller.", guidance.Item.Content[0].Text)
+	reply := s.nextFrame(conn)
+	s.Equal(eventResponseCreate, reply.Type)
+	s.Nil(reply.Response, "Qwen-Audio's response.create takes no instructions")
+
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.serve(conn, serverEvent{
+		Type: eventAudioDeltaOld, ResponseID: "r1", ItemID: "item_9",
+		Delta: base64.StdEncoding.EncodeToString(make([]byte, 2400*2)),
+	})
+	deadline := time.After(5 * time.Second)
+	for counted := false; !counted; {
+		select {
+		case event := <-provider.Events():
+			_, counted = event.(sts.AudioChunk)
+		case <-deadline:
+			s.FailNow("the audio never arrived")
+		}
+	}
+
+	s.Require().NoError(provider.Interrupt(40))
+	s.Equal(eventResponseCancel, s.nextFrame(conn).Type)
+	s.speak(provider)
+	s.Equal(eventAudioAppend, s.nextFrame(conn).Type, "no truncate follows the cancel")
+}
+
 func (s *RealtimeSocketSuite) TestInstructionsChangeThroughASessionUpdate() {
 	fake := newFakeRealtime(false)
 	defer fake.close()

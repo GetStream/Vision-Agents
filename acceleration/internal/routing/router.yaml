@@ -1532,6 +1532,27 @@ sts:
       price:
         per_audio_hour: 0.03
 
+    # Alibaba's Qwen-Audio 3.1 Plus, on the same socket as 3.5 Omni but its own dialect:
+    # it takes tools, typed turns and a semantic turn detector, smart_turn, and does not
+    # see. The Singapore endpoint lists 3.1 Plus and not the 3.0 models Artificial Analysis
+    # ranked second on Big Bench Audio. Its context keeps 50 turns or 300 seconds of audio
+    # and drops the oldest beyond that; the call goes on. It reports no usage, so it is
+    # priced by the caller's audio: $6.40 per million audio tokens at 12.5 a second, which
+    # undercounts its own speech at $24 per million. Alibaba say they never train on Model
+    # Studio data and publish no retention window.
+    - provider: qwen
+      model: qwen-audio-3.1-realtime-plus
+      description: "Alibaba's Qwen-Audio. Calls tools, takes typed turns and has a semantic turn detector, but cannot see."
+      languages: [de, en, es, fr, id, it, ja, ko, pt, ru, zh]
+      realtime: true
+      tier: high-quality
+      supports: [semantic_turns, endpointing, tools, text, input_transcript, output_transcript]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_audio_hour: 0.29
+
   # A title offers a shortcut to someone picking a model, in the order written here, so
   # the one a conversation gets by default comes first.
   aliases:

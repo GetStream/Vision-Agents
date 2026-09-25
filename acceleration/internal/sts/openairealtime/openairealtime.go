@@ -50,7 +50,15 @@ const (
 	// DialectQwen names its formats as words, pcm16 and pcm24, and its transcriber by a
 	// model of its own.
 	DialectQwen Dialect = "qwen"
+	// DialectQwenAudio is Qwen-Audio on the same socket as DialectQwen: one format, pcm,
+	// a transcriber it picks itself, tools nested under function the way Chat Completions
+	// nests them, and a semantic turn detector called smart_turn.
+	DialectQwenAudio Dialect = "qwen-audio"
 )
+
+// qwenAudioPrefix is what the model ids speaking DialectQwenAudio at the Qwen vendor
+// start with.
+const qwenAudioPrefix = "qwen-audio-"
 
 // Vendor is one endpoint that speaks this protocol, and what differs about it.
 type Vendor struct {
@@ -249,6 +257,14 @@ type turnDetection struct {
 
 type tool struct {
 	Type        string         `json:"type"`
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+	// Function carries the name, description and parameters instead, for Qwen-Audio.
+	Function *function `json:"function,omitempty"`
+}
+
+type function struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
@@ -358,6 +374,7 @@ func (e *apiError) Error() string {
 // STS is one realtime session.
 type STS struct {
 	options      Options
+	dialect      Dialect
 	capabilities sts.Capabilities
 	logger       *slog.Logger
 	emitter      *sts.Emitter
@@ -436,6 +453,7 @@ func New(settings Options) (*STS, error) {
 
 	return &STS{
 		options:      settings,
+		dialect:      dialectOf(settings.Vendor, settings.Model),
 		capabilities: capabilities,
 		logger:       logger.With("provider", settings.Vendor.Provider, "model", settings.Model),
 		emitter:      sts.NewEmitter(sts.EmitterBuffer),
@@ -445,7 +463,7 @@ func New(settings Options) (*STS, error) {
 // CapabilitiesFor is what a model at a vendor can be asked for. It is a table rather than
 // something learned from the session, because routing checks it before a session exists.
 func CapabilitiesFor(vendor Vendor, model string) sts.Capabilities {
-	switch vendor.Dialect {
+	switch dialectOf(vendor, model) {
 	case DialectOpenAI:
 		return sts.Capabilities{
 			InputModalities:        []string{options.ModalityImage},
@@ -480,9 +498,29 @@ func CapabilitiesFor(vendor Vendor, model string) sts.Capabilities {
 			Endpointing:      true,
 			Usage:            true,
 		}
+	case DialectQwenAudio:
+		// Qwen-Audio hears no images and reports no usage on response.done. Nothing says
+		// its instructions or tools can change once the session is open, so they cannot.
+		return sts.Capabilities{
+			Text:             true,
+			Tools:            true,
+			InputTranscript:  true,
+			OutputTranscript: true,
+			SemanticTurns:    true,
+			Endpointing:      true,
+		}
 	default:
 		return sts.Capabilities{}
 	}
+}
+
+// dialectOf is how a model at a vendor spells its session. Qwen serves two families on one
+// socket, and the model id says which.
+func dialectOf(vendor Vendor, model string) Dialect {
+	if vendor.Dialect == DialectQwen && strings.HasPrefix(model, qwenAudioPrefix) {
+		return DialectQwenAudio
+	}
+	return vendor.Dialect
 }
 
 // Start dials the socket, configures the session and waits for the server to accept the
@@ -572,7 +610,7 @@ func (s *STS) SendFrame(frame llm.ImagePart) error {
 		return fmt.Errorf("%s: a frame has to carry its bytes", s.options.Vendor.Provider)
 	}
 
-	if s.options.Vendor.Dialect == DialectQwen {
+	if s.dialect == DialectQwen {
 		return s.send(clientEvent{Type: eventImageAppend, Image: base64.StdEncoding.EncodeToString(frame.Data)})
 	}
 	return s.send(clientEvent{Type: eventItemCreate, Item: &item{
@@ -591,7 +629,7 @@ func (s *STS) SetInstructions(text string) error {
 		return err
 	}
 	update := &session{Instructions: text}
-	if s.options.Vendor.Dialect == DialectOpenAI {
+	if s.dialect == DialectOpenAI {
 		update.Type = "realtime"
 	}
 	return s.send(clientEvent{Type: eventSessionUpdate, Session: update})
@@ -608,8 +646,8 @@ func (s *STS) SetTools(tools []llm.Tool) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	update := &session{Tools: toolsOf(tools)}
-	if s.options.Vendor.Dialect == DialectOpenAI {
+	update := &session{Tools: toolsOf(s.dialect, tools)}
+	if s.dialect == DialectOpenAI {
 		update.Type = "realtime"
 	}
 	return s.send(clientEvent{Type: eventSessionUpdate, Session: update})
@@ -645,6 +683,18 @@ func (s *STS) Prompt(text string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
+	// Qwen-Audio's response.create takes no instructions, so the guidance goes in as a
+	// system message ahead of the reply it asks for.
+	if s.dialect == DialectQwenAudio {
+		if err := s.send(clientEvent{Type: eventItemCreate, Item: &item{
+			Type:    "message",
+			Role:    "system",
+			Content: []content{{Type: "input_text", Text: text}},
+		}}); err != nil {
+			return err
+		}
+		return s.send(clientEvent{Type: eventResponseCreate})
+	}
 	return s.send(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: text}})
 }
 
@@ -665,7 +715,8 @@ func (s *STS) Interrupt(playedMs int) error {
 	if err := s.send(clientEvent{Type: eventResponseCancel}); err != nil {
 		return err
 	}
-	if itemID == "" {
+	// Qwen-Audio has no truncate: a cancel keeps what was generated, heard or not.
+	if itemID == "" || s.dialect == DialectQwenAudio {
 		return nil
 	}
 	if playedMs <= 0 {
@@ -791,11 +842,11 @@ func (s *STS) next() (serverEvent, error) {
 
 // session is the configuration frame, spelled the way this vendor wants it.
 func (s *STS) session() *session {
-	configured := &session{Instructions: s.options.Instructions, Tools: toolsOf(s.options.Tools)}
+	configured := &session{Instructions: s.options.Instructions, Tools: toolsOf(s.dialect, s.options.Tools)}
 	turns := s.turnDetection()
 	// xAI answers the caller on its own only when its detector is told to: a session
 	// that names no detector waits to be asked for every reply.
-	if s.options.Vendor.Dialect == DialectXAI {
+	if s.dialect == DialectXAI {
 		if turns == nil {
 			turns = &turnDetection{Type: "server_vad"}
 		}
@@ -803,7 +854,7 @@ func (s *STS) session() *session {
 		turns.CreateResponse = &answers
 	}
 
-	switch s.options.Vendor.Dialect {
+	switch s.dialect {
 	case DialectOpenAI:
 		configured.Type = "realtime"
 		configured.OutputModalities = []string{"audio"}
@@ -836,6 +887,13 @@ func (s *STS) session() *session {
 		// transcriber it has, so asking is not optional here.
 		configured.InputAudioTranscription = &transcription{Model: qwenTranscriber}
 		configured.TurnDetection = turns
+	case DialectQwenAudio:
+		// Qwen-Audio always transcribes, with a transcriber it does not let anyone name.
+		configured.Modalities = []string{"text", "audio"}
+		configured.Voice = s.options.Voice
+		configured.InputAudioFormat = "pcm"
+		configured.OutputAudioFormat = "pcm"
+		configured.TurnDetection = turns
 	}
 	return configured
 }
@@ -847,7 +905,7 @@ func (s *STS) transcription() *transcription {
 		return nil
 	}
 	model := s.options.TranscriptionModel
-	if model == "" && s.options.Vendor.Dialect == DialectOpenAI {
+	if model == "" && s.dialect == DialectOpenAI {
 		model = openaiTranscriber
 	}
 	return &transcription{Model: model}
@@ -857,6 +915,9 @@ func (s *STS) transcription() *transcription {
 func (s *STS) turnDetection() *turnDetection {
 	switch s.options.TurnDetection {
 	case options.TurnSemantic:
+		if s.dialect == DialectQwenAudio {
+			return &turnDetection{Type: "smart_turn"}
+		}
 		return &turnDetection{
 			Type:              "semantic_vad",
 			Eagerness:         s.options.Eagerness,
@@ -886,12 +947,20 @@ func (s *STS) turnDetection() *turnDetection {
 }
 
 // toolsOf is the model's shape for what it may call.
-func toolsOf(tools []llm.Tool) []tool {
+func toolsOf(dialect Dialect, tools []llm.Tool) []tool {
 	if len(tools) == 0 {
 		return nil
 	}
 	shaped := make([]tool, 0, len(tools))
 	for _, offered := range tools {
+		if dialect == DialectQwenAudio {
+			shaped = append(shaped, tool{Type: "function", Function: &function{
+				Name:        offered.Name,
+				Description: offered.Description,
+				Parameters:  offered.Parameters,
+			}})
+			continue
+		}
 		shaped = append(shaped, tool{
 			Type:        "function",
 			Name:        offered.Name,
