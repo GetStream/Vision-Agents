@@ -885,6 +885,74 @@ tts:
       price:
         per_million_chars: 5.0
 
+    # Realtime TTS-2, the full model: natural-language steering, cross-lingual voices and
+    # multi-turn context, generally available since 2026-09-02. Around 100ms TTFB server-side,
+    # five times Flash's, which is why it is the quality tier. Priced at the On-Demand
+    # self-serve rate; paid plans bring it down to 12.50 and Enterprise to around 5.
+    - provider: inworld
+      model: inworld-tts-2
+      description: "Inworld's steerable flagship voice, around 100 ms to first audio on their side."
+      benchmark: { elo: 1246, characters_per_second: 85 }
+      languages:
+        [
+          ar,
+          bg,
+          bn,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fr,
+          gu,
+          he,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ka,
+          kn,
+          ko,
+          ml,
+          mr,
+          ms,
+          nl,
+          no,
+          or,
+          pa,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          te,
+          th,
+          tl,
+          tr,
+          uk,
+          ur,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: high-quality
+      # Zero Data Retention does cover the text in and the audio out, but it is arranged
+      # per workspace with their engineering team rather than sent with a request. On
+      # training their published terms only bind us - the acceptable use policy forbids
+      # training on their output - and say nothing about what they do with our text, so
+      # unknown is the honest half.
+      data_policy:
+        trains_on_data: unknown
+        retention: unspecified
+      price:
+        per_million_chars: 25.0
+
     # Flash is the low-latency model; the WebSocket streams audio as it is generated.
     - provider: elevenlabs
       model: eleven_flash_v2_5
@@ -1326,10 +1394,10 @@ tts:
       prefer: cartesia/sonic-preview
 
     # Quality: the live voices that win the Artificial Analysis speech arena, in the order
-    # they placed - Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2, ElevenLabs v3
-    # Conversational. Like the STT groups this names its members, so it is only as current
+    # they placed - Sonic 3.6, Inworld TTS-2, Inworld TTS-2 Flash, Breeze TTS 2, ElevenLabs
+    # v3 Conversational. Like the STT groups this names its members, so it is only as current
     # as the leaderboard it was read from. No tier requirement: the arena ranks how a voice
-    # sounds, and two of the four are low-latency anyway. Last reviewed 2026-09.
+    # sounds, and two of the five are low-latency anyway. Last reviewed 2026-09.
     tts-quality:
       title: Quality
       description: "The live voices listeners rate best in the Artificial Analysis arena. Prefers Cartesia Sonic 3.6, then Inworld, Breeze and ElevenLabs v3."
@@ -1337,6 +1405,7 @@ tts:
       prefer: cartesia/sonic-preview
       only:
         - cartesia/sonic-preview
+        - inworld/inworld-tts-2
         - inworld/inworld-tts-2-flash
         - breeze/breeze-tts-2
         - elevenlabs/eleven_v3_conversational
