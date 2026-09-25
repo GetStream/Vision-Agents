@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/s2pro"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/speechify"
 )
 
 // NewRegistry returns an empty registry.
@@ -51,6 +52,10 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(fish.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
 		return fish.New(fish.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
+	})
+
+	registry.Register(speechify.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return speechify.New(speechify.Options{Model: spec.Model, VoiceID: spec.Voice, Logger: spec.Logger})
 	})
 
 	registry.Register(s2pro.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
