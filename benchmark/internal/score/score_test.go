@@ -453,3 +453,27 @@ func TestCountConversation(t *testing.T) {
 		t.Fatalf("words %d", m.AgentWords)
 	}
 }
+
+func TestFirstResponseIsTheFirstCallerTurn(t *testing.T) {
+	m := Metrics{V2V: []Timing{{TurnID: "t1", V2VMS: 900, Tool: true}, {TurnID: "t2", V2VMS: 400}}}
+	rec := caller.Result{Events: []caller.Event{
+		{TurnID: "cough", OverlapSound: "cough", BargeIn: true},
+		{TurnID: "t1", Text: true},
+		{TurnID: "t2", Text: true},
+	}}
+	got := FirstResponse(m, rec)
+	if got == nil || got.TurnID != "t1" || got.V2VMS != 900 || !got.Tool {
+		t.Fatalf("first response %+v, want t1 at 900 ms flagged tool", got)
+	}
+}
+
+func TestFirstResponseDoesNotFallBackToALaterTurn(t *testing.T) {
+	m := Metrics{V2V: []Timing{{TurnID: "t2", V2VMS: 400}}}
+	rec := caller.Result{Events: []caller.Event{
+		{TurnID: "t1", Text: true},
+		{TurnID: "t2", Text: true},
+	}}
+	if got := FirstResponse(m, rec); got != nil {
+		t.Fatalf("first response %+v, want nil when the first caller turn has no reply", got)
+	}
+}

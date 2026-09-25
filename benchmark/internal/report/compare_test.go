@@ -79,3 +79,22 @@ func TestCompareBaselineFlagsMDE(t *testing.T) {
 		t.Fatalf("expected regression flag:\n%s", md)
 	}
 }
+
+func TestCompareShowsFirstResponseWithSampleCount(t *testing.T) {
+	run := func(label string, first *score.Timing) LabeledRun {
+		return LabeledRun{Label: label, Summary: BuildSummary(label, label, 1, []CallResult{
+			{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Passed: true, Outcome: OutcomePass, Metrics: score.Metrics{FirstResponse: first}},
+		})}
+	}
+	md := CompareMarkdown(CompareConfig{Baseline: 0, Runs: []LabeledRun{
+		run("accelerated", &score.Timing{TurnID: "t1", V2VMS: 700}),
+		run("livekit", &score.Timing{TurnID: "t1", V2VMS: 900}),
+		run("livekit-inference", nil),
+	}})
+	if !strings.Contains(md, "| First response P50 (ms) | 700 (n=1) ** | 900 (n=1) | — |") {
+		t.Fatalf("first response row missing or a run without samples was marked best:\n%s", md)
+	}
+	if !strings.Contains(md, "| livekit | +0.0 pp | +0 ms | +200 ms |") {
+		t.Fatalf("first response baseline delta missing:\n%s", md)
+	}
+}

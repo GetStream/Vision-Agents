@@ -142,6 +142,8 @@ func compareRows(runs []LabeledRun) []compareRow {
 		comparePointRow("V2V P50 (ms)", stats, func(s runStats) float64 { return float64(s.V2VP50) }),
 		comparePointRow("V2V P95 (ms)", stats, func(s runStats) float64 { return float64(s.V2VP95) }),
 		comparePointRow("Non-tool P50 (ms)", stats, func(s runStats) float64 { return float64(s.NonToolP50) }),
+		compareSampledRow("First response P50 (ms)", stats, func(s runStats) (int, int) { return s.FirstResponseP50, s.FirstResponseSamples }),
+		compareSampledRow("First response P95 (ms)", stats, func(s runStats) (int, int) { return s.FirstResponseP95, s.FirstResponseSamples }),
 		comparePointRow("Caller turns P50", stats, func(s runStats) float64 { return float64(s.CallerTurnsP50) }),
 		comparePointRow("Agent turns P50", stats, func(s runStats) float64 { return float64(s.AgentTurnsP50) }),
 	}
@@ -151,6 +153,9 @@ type runStats struct {
 	Passed, Valid, Invalid int
 	V2VP50, V2VP95         int
 	NonToolP50             int
+	FirstResponseP50       int
+	FirstResponseP95       int
+	FirstResponseSamples   int
 	CallerTurnsP50         int
 	AgentTurnsP50          int
 }
@@ -159,6 +164,7 @@ func summarizeRun(sum Summary) runStats {
 	var out runStats
 	var v2v []int
 	var nonTool []int
+	var firstResponse []int
 	var callerTurns []int
 	var agentTurns []int
 	for _, call := range sum.Calls {
@@ -181,6 +187,9 @@ func summarizeRun(sum Summary) runStats {
 				nonTool = append(nonTool, timing.V2VMS)
 			}
 		}
+		if first := call.Metrics.FirstResponse; first != nil && first.V2VMS >= 0 {
+			firstResponse = append(firstResponse, first.V2VMS)
+		}
 		if call.Metrics.CallerTurns > 0 {
 			callerTurns = append(callerTurns, call.Metrics.CallerTurns)
 		}
@@ -197,6 +206,12 @@ func summarizeRun(sum Summary) runStats {
 		sort.Ints(nonTool)
 		out.NonToolP50 = score.Percentile(nonTool, 50)
 	}
+	if len(firstResponse) > 0 {
+		sort.Ints(firstResponse)
+		out.FirstResponseP50 = score.Percentile(firstResponse, 50)
+		out.FirstResponseP95 = score.Percentile(firstResponse, 95)
+	}
+	out.FirstResponseSamples = len(firstResponse)
 	if len(callerTurns) > 0 {
 		sort.Ints(callerTurns)
 		out.CallerTurnsP50 = score.Percentile(callerTurns, 50)
@@ -210,6 +225,9 @@ func summarizeRun(sum Summary) runStats {
 			out.V2VP50 = pack.V2VP50
 			out.V2VP95 = pack.V2VP95
 			out.NonToolP50 = pack.NonToolP50
+			out.FirstResponseP50 = pack.FirstResponseP50
+			out.FirstResponseP95 = pack.FirstResponseP95
+			out.FirstResponseSamples = pack.FirstResponseSamples
 			out.CallerTurnsP50 = pack.CallerTurnsP50
 			out.AgentTurnsP50 = pack.AgentTurnsP50
 			break
@@ -254,6 +272,24 @@ func comparePointRow(name string, stats []runStats, pick func(runStats) float64)
 	return row
 }
 
+// compareSampledRow renders a pooled millisecond percentile with its sample count, where less is
+// better. A run with no samples shows a dash and is never marked best.
+func compareSampledRow(name string, stats []runStats, pick func(runStats) (int, int)) compareRow {
+	row := compareRow{Name: name, Best: -1, Star: make([]bool, len(stats))}
+	for i, st := range stats {
+		v, n := pick(st)
+		if n == 0 {
+			row.Cells = append(row.Cells, compareCell{Text: "—"})
+			continue
+		}
+		row.Cells = append(row.Cells, compareCell{Text: fmt.Sprintf("%d (n=%d)", v, n), Value: float64(v)})
+		if row.Best < 0 || float64(v) < row.Cells[row.Best].Value {
+			row.Best = i
+		}
+	}
+	return row
+}
+
 func baselineSection(cfg CompareConfig) string {
 	base := summarizeRun(cfg.Runs[cfg.Baseline].Summary)
 	var b strings.Builder
@@ -263,7 +299,7 @@ func baselineSection(cfg CompareConfig) string {
 	} else {
 		fmt.Fprintf(&b, "V2V P50 changes larger than %d ms are flagged.\n\n", cfg.MDEV2VMS)
 	}
-	b.WriteString("| Run | Pass rate delta | V2V P50 delta | Flag |\n| --- | ---: | ---: | --- |\n")
+	b.WriteString("| Run | Pass rate delta | V2V P50 delta | First response P50 delta | Flag |\n| --- | ---: | ---: | ---: | --- |\n")
 	for i, run := range cfg.Runs {
 		if i == cfg.Baseline {
 			continue
@@ -280,7 +316,11 @@ func baselineSection(cfg CompareConfig) string {
 				flag = "improvement"
 			}
 		}
-		fmt.Fprintf(&b, "| %s | %+.1f pp | %+d ms | %s |\n", run.Label, 100*(rate-baseRate), v2v, flag)
+		first := "—"
+		if st.FirstResponseSamples > 0 && base.FirstResponseSamples > 0 {
+			first = fmt.Sprintf("%+d ms", st.FirstResponseP50-base.FirstResponseP50)
+		}
+		fmt.Fprintf(&b, "| %s | %+.1f pp | %+d ms | %s | %s |\n", run.Label, 100*(rate-baseRate), v2v, first, flag)
 	}
 	return b.String()
 }
