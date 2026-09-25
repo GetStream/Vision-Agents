@@ -37,6 +37,7 @@ type Options struct {
 	Registry *Registry
 	Store    *store.Store
 	Live     *live.Client
+	Gate     routing.Gate
 	Logger   *slog.Logger
 }
 
@@ -94,6 +95,7 @@ func New(options Options) (*Router, error) {
 		Registry: options.Registry,
 		Store:    options.Store,
 		Live:     options.Live,
+		Gate:     options.Gate,
 		Logger:   options.Logger,
 	})
 	if err != nil {

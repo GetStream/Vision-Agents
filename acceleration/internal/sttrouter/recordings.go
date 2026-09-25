@@ -55,6 +55,7 @@ func NewRecordings(options Options) (*Recordings, error) {
 		Registry: options.Transcribers,
 		Store:    options.Store,
 		Live:     options.Live,
+		Gate:     options.Gate,
 		Logger:   options.Logger,
 	})
 	if err != nil {

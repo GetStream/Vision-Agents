@@ -358,6 +358,101 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/policies/app:
+    get:
+      operationId: getAppPolicy
+      summary: The calling app's budget, data policy and prompt injection setting
+      description: >
+        What the app itself decided. Its organization's policy applies as well, as a floor
+        the app can tighten and cannot loosen: both budgets are enforced, the stricter data
+        policy wins, and prompt injection is screened if either turns it on.
+      responses:
+        "200":
+          description: The app's policy, with what its budget has spent so far
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: updateAppPolicy
+      summary: Replace the calling app's policy
+      description: >
+        A field left out is no opinion, so the organization's setting shows through.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Policy"
+      responses:
+        "200":
+          description: The policy was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/policies/organization:
+    get:
+      operationId: getOrganizationPolicy
+      summary: The calling app's organization's policy
+      description: >
+        Applies to every app the router has seen the organization name. A request that
+        names no organization is a 400.
+      responses:
+        "200":
+          description: The organization's policy, with what its budget has spent so far
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: updateOrganizationPolicy
+      summary: Replace the calling app's organization's policy
+      description: >
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Policy"
+      responses:
+        "200":
+          description: The policy was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/router/configs:
     get:
       operationId: listRouterConfigs
@@ -4626,6 +4721,59 @@ components:
             or 24h. Omitting it asks nothing.
           example: none
 
+    Policy:
+      type: object
+      description: >
+        What an organization or an app decided about spend, data handling and prompt
+        injection. Every field is optional, and a field left out is no opinion rather than
+        off.
+      properties:
+        budget:
+          $ref: "#/components/schemas/Budget"
+        data_policy:
+          $ref: "#/components/schemas/DataPolicy"
+        prompt_injection:
+          type: boolean
+          description: >
+            Screen what every LLM response is asked for prompt injection. The newest input -
+            the user's turn and any tool results - goes to the classifier (lcm) beside the
+            model call, so it adds nothing to time to first token. The end of the response is
+            held until the verdict, and a response whose input reads as an injection fails
+            with prompt_injection before its tool calls can be acted on.
+
+    Budget:
+      type: object
+      description: >
+        A cap on spend across every modality, reset on a UTC boundary each interval. Once it
+        is spent every new session and every LLM response is refused until the next
+        interval. Checks are cached for a few seconds, so a busy app can overshoot by what
+        it spends in that time.
+      required: [limit_micros, interval]
+      properties:
+        limit_micros:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The cap, in millionths of a dollar.
+          example: 100000000
+        interval:
+          $ref: "#/components/schemas/BudgetInterval"
+        spent_micros:
+          type: integer
+          format: int64
+          readOnly: true
+          description: What has been spent in the current interval.
+        resets_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: When the current interval ends.
+
+    BudgetInterval:
+      type: string
+      enum: [hourly, daily, weekly, monthly]
+      description: How often a budget resets. A week starts on Monday.
+
     Endpointing:
       type: string
       enum: [silence, semantic]
@@ -7357,6 +7505,23 @@ components:
             nothing was served or the deployment keeps no statistics.
         benchmark:
           $ref: "#/components/schemas/ProviderBenchmark"
+        price:
+          $ref: "#/components/schemas/ProviderPrice"
+
+    ProviderPrice:
+      type: object
+      description: >
+        What this deployment is billed for the model, in US dollars. A rate is absent when
+        the model is not billed by that unit.
+      properties:
+        per_million_input_tokens:
+          type: number
+          format: double
+          example: 0.75
+        per_million_output_tokens:
+          type: number
+          format: double
+          example: 3.75
 
     ProviderBenchmark:
       type: object
@@ -7391,6 +7556,15 @@ components:
           format: double
           description: US dollars one task of the search benchmark cost, searches and the answering model's tokens together.
           example: 0.127
+        intelligence_index:
+          type: integer
+          description: Artificial Analysis Intelligence Index of a text model at the reasoning effort the router asks for.
+          example: 33
+        output_tokens_per_second:
+          type: number
+          format: double
+          description: Tokens a text model writes per second on the host the router calls.
+          example: 330
 
     Route:
       type: object

@@ -53,9 +53,18 @@ type Options struct {
 	Store    *store.Store
 	Live     *live.Client
 	// Quota caps what one end user may spend in a day. Absent means nothing is capped.
-	Quota  *quota.Limiter
+	Quota *quota.Limiter
+	// Gate enforces the customer's policies. Nil enforces nothing.
+	Gate routing.Gate
+	// Screen judges each response's input for prompt injection. Nil screens nothing.
+	Screen Screen
 	Logger *slog.Logger
 }
+
+// Screen judges what a response is asked while the model answers it. It returns nil when
+// the owner's policies screen nothing, and otherwise a channel yielding one verdict, as
+// llm.Stream.Screen takes it.
+type Screen func(ctx context.Context, owner routing.Owner, input []llm.Message) <-chan error
 
 // Request is what a caller wants a model for.
 type Request struct {
@@ -85,7 +94,8 @@ type Request struct {
 // Router selects an LLM provider and opens sessions.
 type Router struct {
 	*routing.Router[Provider]
-	quota *quota.Limiter
+	quota  *quota.Limiter
+	screen Screen
 }
 
 // New validates the options and returns a Router.
@@ -104,12 +114,13 @@ func New(options Options) (*Router, error) {
 		Registry: options.Registry,
 		Store:    options.Store,
 		Live:     options.Live,
+		Gate:     options.Gate,
 		Logger:   options.Logger,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Router{Router: core, quota: options.Quota}, nil
+	return &Router{Router: core, quota: options.Quota, screen: options.Screen}, nil
 }
 
 // Start selects a provider and opens a session, falling back to the next candidate when one
@@ -132,6 +143,8 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	}
 
 	session := newSession(provider, config, core.Owner(), r.Recorder(), r.quota)
+	session.admit = r.Admit
+	session.screen = r.screen
 	session.fallback = func(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 		candidates, err := r.Candidates(ctx, core)
 		if err != nil {

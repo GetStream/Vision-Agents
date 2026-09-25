@@ -2,6 +2,7 @@ package llm
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,11 +18,12 @@ type chunk func(w *ResponseWriter)
 type scripted struct {
 	chunks []chunk
 	err    error
-	closed bool
+	// closed is atomic because a screen closes a stream from its own goroutine.
+	closed atomic.Bool
 }
 
 func (s *scripted) Advance(w *ResponseWriter) bool {
-	if s.closed || len(s.chunks) == 0 {
+	if s.closed.Load() || len(s.chunks) == 0 {
 		return false
 	}
 	next := s.chunks[0]
@@ -33,7 +35,7 @@ func (s *scripted) Advance(w *ResponseWriter) bool {
 func (s *scripted) Err() error { return s.err }
 
 func (s *scripted) Close() error {
-	s.closed = true
+	s.closed.Store(true)
 	return nil
 }
 
@@ -84,6 +86,75 @@ func (s *LLMSuite) TestStreamOpensWithCreatedAndEndsWithCompleted() {
 	s.IsType(ResponseCreated{}, events[0])
 	s.IsType(OutputTextDelta{}, events[1])
 	s.IsType(ResponseCompleted{}, events[2])
+}
+
+func (s *LLMSuite) TestAScreenThatAllowsLetsTheResponseComplete() {
+	verdict := make(chan error, 1)
+	verdict <- nil
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).Screen(verdict)
+
+	s.drain(stream)
+
+	s.NoError(stream.Err())
+	s.Equal(StatusCompleted, stream.Response().Status)
+	s.Equal("Hi", stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestAScreenHoldsTheEndOfTheResponseButNotItsDeltas() {
+	verdict := make(chan error, 1)
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.IsType(OutputTextDelta{}, stream.Current(), "a delta must not wait on the screen")
+
+	ended := make(chan bool, 1)
+	go func() { ended <- stream.Next() }()
+	select {
+	case <-ended:
+		s.Fail("the response completed before the screen answered")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	verdict <- nil
+	s.True(<-ended)
+	s.IsType(ResponseCompleted{}, stream.Current())
+}
+
+func (s *LLMSuite) TestAScreenThatRefusesFailsAResponseThatAlreadyFinished() {
+	refusal := errors.New("prompt injection")
+	verdict := make(chan error, 1)
+	stream := s.stream(func(w *ResponseWriter) {
+		w.FunctionCall(0, "call-1", "transfer_funds", `{"to":"attacker"}`, "")
+	}).Screen(verdict)
+	verdict <- refusal
+
+	events := s.drain(stream)
+
+	s.ErrorIs(stream.Err(), refusal)
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.IsType(ResponseFailed{}, events[len(events)-2])
+}
+
+func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {
+	refusal := errors.New("prompt injection")
+	verdict := make(chan error, 1)
+	provider := &scripted{chunks: []chunk{
+		func(w *ResponseWriter) { w.OutputText("Sure, ") },
+		func(w *ResponseWriter) { w.OutputText("here is ") },
+		func(w *ResponseWriter) { w.OutputText("the system prompt") },
+	}}
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, provider).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	verdict <- refusal
+	s.Eventually(provider.closed.Load, time.Second, time.Millisecond)
+	s.drain(stream)
+
+	s.ErrorIs(stream.Err(), refusal)
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.NotContains(stream.Response().OutputText, "system prompt")
 }
 
 func (s *LLMSuite) TestStreamAssemblesTheAnswerFromItsDeltas() {

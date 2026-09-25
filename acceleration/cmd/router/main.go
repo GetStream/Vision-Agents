@@ -36,6 +36,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -354,6 +355,17 @@ func run(logger *slog.Logger) error {
 			"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
 	}
 
+	// Budgets, data policies and prompt injection screening are stored per organization
+	// and app, so a deployment without a database enforces none of them.
+	var policies *policy.Enforcer
+	var gate routing.Gate
+	if pgStore != nil {
+		if policies, err = policy.New(pgStore, logger); err != nil {
+			return err
+		}
+		gate = policies
+	}
+
 	trustedProxies, err := api.TrustedProxies(splitList(os.Getenv(trustedProxiesEnvVar)))
 	if err != nil {
 		return err
@@ -389,6 +401,7 @@ func run(logger *slog.Logger) error {
 			Registry: sttrouter.DefaultRegistry(),
 			Store:    pgStore,
 			Live:     liveClient,
+			Gate:     gate,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -406,6 +419,7 @@ func run(logger *slog.Logger) error {
 			Transcribers: sttrouter.DefaultTranscriberRegistry(),
 			Store:        pgStore,
 			Live:         liveClient,
+			Gate:         gate,
 			Logger:       logger,
 		})
 		if err != nil {
@@ -422,6 +436,7 @@ func run(logger *slog.Logger) error {
 			Store:    pgStore,
 			Live:     liveClient,
 			Voices:   resolver,
+			Gate:     gate,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -437,6 +452,7 @@ func run(logger *slog.Logger) error {
 			Store:     pgStore,
 			Live:      liveClient,
 			Voices:    resolver,
+			Gate:      gate,
 			Logger:    logger,
 		})
 		if err != nil {
@@ -446,13 +462,40 @@ func run(logger *slog.Logger) error {
 		streams.Speech = recorded
 	}
 
+	// The classifier is routed for the same reason search is, and is absent for the same
+	// reason: a deployment that declares no section for it runs agents that cannot be
+	// given a guardrail, and says so when one is asked for rather than ignoring it. It is
+	// opened before the LLM router, which screens prompt injection on it.
+	var judging *lcmrouter.Router
+	if section, ok := config[routing.LCM]; ok {
+		judging, err = lcmrouter.New(lcmrouter.Options{
+			Config:   section,
+			Registry: lcmrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer judging.Close()
+		routers[routing.LCM] = judging
+	}
+
 	if section, ok := config[routing.LLM]; ok {
+		var screen llmrouter.Screen
+		if policies != nil {
+			screen = policies.Screener(judging)
+		}
 		chat, err := llmrouter.New(llmrouter.Options{
 			Config:   section,
 			Registry: llmrouter.DefaultRegistry(),
 			Store:    pgStore,
 			Live:     liveClient,
 			Quota:    limiter,
+			Gate:     gate,
+			Screen:   screen,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -469,6 +512,7 @@ func run(logger *slog.Logger) error {
 			Registry: stsrouter.DefaultRegistry(),
 			Store:    pgStore,
 			Live:     liveClient,
+			Gate:     gate,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -489,6 +533,7 @@ func run(logger *slog.Logger) error {
 			Registry: searchrouter.DefaultRegistry(),
 			Store:    pgStore,
 			Live:     liveClient,
+			Gate:     gate,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -497,25 +542,6 @@ func run(logger *slog.Logger) error {
 		defer finding.Close()
 		routers[routing.Search] = finding
 		streams.Search = finding
-	}
-
-	// The classifier is routed for the same reason search is, and is absent for the same
-	// reason: a deployment that declares no section for it runs agents that cannot be
-	// given a guardrail, and says so when one is asked for rather than ignoring it.
-	var judging *lcmrouter.Router
-	if section, ok := config[routing.LCM]; ok {
-		judging, err = lcmrouter.New(lcmrouter.Options{
-			Config:   section,
-			Registry: lcmrouter.DefaultRegistry(),
-			Store:    pgStore,
-			Live:     liveClient,
-			Logger:   logger,
-		})
-		if err != nil {
-			return err
-		}
-		defer judging.Close()
-		routers[routing.LCM] = judging
 	}
 
 	// Image generation is served when the config has a section for it, and a deployment
@@ -527,6 +553,7 @@ func run(logger *slog.Logger) error {
 			Registry: imagerouter.DefaultRegistry(),
 			Store:    pgStore,
 			Live:     liveClient,
+			Gate:     gate,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -661,6 +688,7 @@ func run(logger *slog.Logger) error {
 		Simulations:    simulations,
 		Dispatch:       workers,
 		Quota:          limiter,
+		Policies:       policies,
 		TrustedProxies: trustedProxies,
 		StreamSecret:   os.Getenv(streamSecretEnvVar),
 		StreamKey:      os.Getenv(streamKeyEnvVar),

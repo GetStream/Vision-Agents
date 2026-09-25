@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -149,6 +150,9 @@ type Options struct {
 	// which is right for a deployment with no Redis to count in and for one whose callers
 	// are all backends the customer runs.
 	Quota *quota.Limiter
+	// Policies holds each organization's and app's budget, data policy and prompt
+	// injection setting. Absent without a database, in which case the policy paths say so.
+	Policies *policy.Enforcer
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
@@ -180,6 +184,7 @@ type Server struct {
 	oauth         *plugins.Auth
 	authenticator auth.Authenticator
 	quota         *quota.Limiter
+	policies      *policy.Enforcer
 	trusted       []netip.Prefix
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -260,6 +265,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		dashboardURL:  options.DashboardURL,
 		authenticator: authenticator,
 		quota:         options.Quota,
+		policies:      options.Policies,
 		trusted:       options.TrustedProxies,
 		serverSide:    serverSide,
 		upgrader:      newUpgrader(options.CORSOrigins),
@@ -538,6 +544,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 				IP:     clientIP(r, s.trusted),
 			})
 			r = r.WithContext(ctx)
+			s.policies.Join(principal.AppID, principal.OrganizationID)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -711,6 +718,7 @@ func (s *Server) ListProviders(ctx context.Context, request ListProvidersRequest
 			Health:      providerHealth(candidate.Health),
 			UsageShare:  &share,
 			Benchmark:   providerBenchmark(candidate.Config.Benchmark),
+			Price:       providerPrice(candidate.Config.Price),
 		})
 	}
 	return ListProviders200JSONResponse(providers), nil
@@ -1151,12 +1159,26 @@ func providerBenchmark(benchmark routing.Benchmark) *ProviderBenchmark {
 		return &v
 	}
 	return &ProviderBenchmark{
-		Elo:                 counted(benchmark.Elo),
-		CharactersPerSecond: measured(benchmark.CharactersPerSecond),
-		WordErrorRate:       measured(benchmark.WordErrorRate),
-		LatencyMs:           counted(benchmark.LatencyMs),
-		SearchIndex:         counted(benchmark.SearchIndex),
-		CostPerTask:         measured(benchmark.CostPerTask),
+		Elo:                   counted(benchmark.Elo),
+		CharactersPerSecond:   measured(benchmark.CharactersPerSecond),
+		WordErrorRate:         measured(benchmark.WordErrorRate),
+		LatencyMs:             counted(benchmark.LatencyMs),
+		SearchIndex:           counted(benchmark.SearchIndex),
+		CostPerTask:           measured(benchmark.CostPerTask),
+		IntelligenceIndex:     counted(benchmark.IntelligenceIndex),
+		OutputTokensPerSecond: measured(benchmark.OutputTokensPerSecond),
+	}
+}
+
+// providerPrice is the token rates a model is billed at, and nil for a model not billed
+// by the token.
+func providerPrice(price routing.Price) *ProviderPrice {
+	if price.PerMillionInputTokens == 0 && price.PerMillionOutputTokens == 0 {
+		return nil
+	}
+	return &ProviderPrice{
+		PerMillionInputTokens:  &price.PerMillionInputTokens,
+		PerMillionOutputTokens: &price.PerMillionOutputTokens,
 	}
 }
 

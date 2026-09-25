@@ -21,6 +21,8 @@ from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
 from .authorize_plugin_request import AuthorizePluginRequest
 from .available_number import AvailableNumber
+from .budget import Budget
+from .budget_interval import BudgetInterval
 from .buy_number_request import BuyNumberRequest
 from .buy_number_request_tags import BuyNumberRequestTags
 from .call import Call
@@ -117,6 +119,7 @@ from .plugin import Plugin
 from .plugin_authorization import PluginAuthorization
 from .plugin_connection import PluginConnection
 from .plugin_connection_status import PluginConnectionStatus
+from .policy import Policy
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
 from .provider import Provider
@@ -242,6 +245,8 @@ __all__ = (
     "AttachedNumber",
     "AuthorizePluginRequest",
     "AvailableNumber",
+    "Budget",
+    "BudgetInterval",
     "BuyNumberRequest",
     "BuyNumberRequestTags",
     "Call",
@@ -338,6 +343,7 @@ __all__ = (
     "PluginAuthorization",
     "PluginConnection",
     "PluginConnectionStatus",
+    "Policy",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
     "Provider",

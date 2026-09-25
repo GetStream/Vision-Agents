@@ -185,6 +185,24 @@ func (p DataPolicy) Valid() bool {
 	return p.Retention.Valid()
 }
 
+// Stricter returns what a provider has to meet to satisfy both policies: training
+// forbidden if either forbids it, and the shorter of the two retentions.
+func (p DataPolicy) Stricter(other DataPolicy) DataPolicy {
+	merged := p
+	if other.AllowTraining != nil && (merged.AllowTraining == nil || !*other.AllowTraining) {
+		merged.AllowTraining = other.AllowTraining
+	}
+	if other.Retention == "" {
+		return merged
+	}
+	mine, ok := merged.Retention.Window()
+	theirs, known := other.Retention.Window()
+	if !ok || (known && theirs < mine) {
+		merged.Retention = other.Retention
+	}
+	return merged
+}
+
 // SatisfiedBy reports whether a provider that handles data this way may serve a request
 // that asked for this policy.
 func (p DataPolicy) SatisfiedBy(handling DataHandling) bool {

@@ -292,6 +292,15 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+### Budgets, data policies and prompt injection screening per organization and app
+
+`/v1/policies/app` and `/v1/policies/organization` set a spend cap reset hourly, daily,
+weekly or monthly, a training and retention floor applied to every routed request, and
+prompt injection screening. Screening runs the lcm router (Jev by default) beside each LLM
+call rather than in front of it, so it adds nothing to time to first token; a response whose
+input reads as an injection fails with `prompt_injection`. An organization's settings are a
+floor its apps can tighten but not loosen.
+
 ### Meta's Muse Spark 1.3 in the built-in LLM config
 
 `meta/muse-spark-1.3` is now in the default `router.yaml`, in the high-quality tier with

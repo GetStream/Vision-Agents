@@ -325,6 +325,27 @@ stepped past. Unset, the header is ignored entirely — correct with nothing in 
 and wrong behind a load balancer, where every caller would look like the balancer
 and share one allowance.
 
+### Organization and app policies
+
+`GET`/`PUT /v1/policies/app` and `/v1/policies/organization` hold three settings, all
+optional. The organization's are a floor its apps can tighten but not loosen.
+
+| Setting | What it does |
+| ------- | ------------ |
+| `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses are refused. Both the app's and the organization's caps apply |
+| `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
+| `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the lcm router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
+
+The screen asks one question per harm in OpenRouter's prompt injection list (instruction
+override, privileged modes, system override, prompt extraction, role manipulation, DAN-style
+jailbreaks, safety bypass, role spoofing, control tokens), and decodes base64, hex and
+letter-spaced text first so an encoded attack is judged on what it says.
+
+An organization's budget sums the apps the router has seen that organization name. Behind a
+proxy that is the `X-Stream-Organization-Id` header; with API keys it is the key's app. `noauth`
+reads no organization, so only app policies apply there. Decisions are cached per app for 10s,
+so a budget can overshoot by what is spent in that window, and every read fails open.
+
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.
 Adding a provider or model is a config edit.

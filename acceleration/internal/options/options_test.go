@@ -233,4 +233,20 @@ func (s *OptionsSuite) TestADataPolicyIsNotSomethingAVoiceHasToExpress() {
 	s.Empty(asked, "a policy narrows which voices may answer, it is not a term one declares")
 }
 
+func (s *OptionsSuite) TestTheStricterPolicyForbidsTrainingIfEitherDoes() {
+	yes := true
+	merged := DataPolicy{AllowTraining: &yes}.Stricter(DataPolicy{AllowTraining: no()})
+
+	s.Require().NotNil(merged.AllowTraining)
+	s.False(*merged.AllowTraining)
+	s.Nil(DataPolicy{}.Stricter(DataPolicy{}).AllowTraining, "two policies asking nothing still ask nothing")
+}
+
+func (s *OptionsSuite) TestTheStricterPolicyKeepsTheShorterRetention() {
+	s.Equal(Retention("24h"), DataPolicy{Retention: "30d"}.Stricter(DataPolicy{Retention: "24h"}).Retention)
+	s.Equal(RetentionNone, DataPolicy{Retention: RetentionNone}.Stricter(DataPolicy{Retention: "30d"}).Retention)
+	s.Equal(Retention("30d"), DataPolicy{}.Stricter(DataPolicy{Retention: "30d"}).Retention)
+	s.Equal(Retention("30d"), DataPolicy{Retention: "30d"}.Stricter(DataPolicy{}).Retention)
+}
+
 func intOf(value int) *int { return &value }

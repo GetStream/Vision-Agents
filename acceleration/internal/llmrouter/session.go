@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -27,6 +28,11 @@ type Session struct {
 	recorder *routing.Recorder
 	// quota caps what the owner's end user may spend in a day. Nil caps nothing.
 	quota *quota.Limiter
+	// admit asks the owner's policies before each response, and screen judges what each
+	// response is asked. Both are nil on a fallback child, which serves a response its
+	// parent already admitted and screened.
+	admit  func(context.Context, string) (options.DataPolicy, error)
+	screen Screen
 }
 
 func newSession(
@@ -160,9 +166,20 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if err := s.quota.Allow(ctx, s.owner.CustomerID, s.owner.Caller); err != nil {
 		return nil, err
 	}
+	if s.admit != nil {
+		if _, err := s.admit(ctx, s.owner.CustomerID); err != nil {
+			return nil, err
+		}
+	}
+	// The screen is started before the model is asked so the two overlap from the first
+	// byte, rather than the screen waiting on however long the provider takes to accept.
+	var verdict <-chan error
+	if s.screen != nil {
+		verdict = s.screen(ctx, s.owner, params.Input)
+	}
 	stream, err := s.create(ctx, params)
 	if err == nil || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
-		return stream, err
+		return screened(stream, verdict), err
 	}
 	var apiError *openai.Error
 	if errors.As(err, &apiError) && apiError.StatusCode < 500 && apiError.StatusCode != 401 && apiError.StatusCode != 403 && apiError.StatusCode != 404 && apiError.StatusCode != 408 && apiError.StatusCode != 429 {
@@ -172,7 +189,15 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if fallbackErr != nil {
 		return nil, errors.Join(err, fallbackErr)
 	}
-	return alternate, nil
+	return screened(alternate, verdict), nil
+}
+
+// screened attaches a verdict to a stream, when there is both.
+func screened(stream *llm.Stream, verdict <-chan error) *llm.Stream {
+	if stream == nil || verdict == nil {
+		return stream
+	}
+	return stream.Screen(verdict)
 }
 
 func (s *Session) addChild(child *Session) bool {

@@ -67,6 +67,13 @@ type VoiceResolver interface {
 	ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error)
 }
 
+// Gate is what an organization's and an app's policies say about a customer's request
+// before anything is routed. Admit refuses a customer who has spent their budget, and
+// otherwise returns the data policy every request of theirs is held to on top of its own.
+type Gate interface {
+	Admit(ctx context.Context, customerID string) (options.DataPolicy, error)
+}
+
 // Options configures a Router. Store, Live and Voices are optional: without them the
 // router still routes, it just stops recording and stops resolving custom voices.
 type Options[P Provider] struct {
@@ -77,7 +84,9 @@ type Options[P Provider] struct {
 	Store    *store.Store
 	Live     *live.Client
 	Voices   VoiceResolver
-	Logger   *slog.Logger
+	// Gate enforces the customer's policies. Nil enforces nothing.
+	Gate   Gate
+	Logger *slog.Logger
 }
 
 // Router selects providers and records per-request statistics.
@@ -89,6 +98,7 @@ type Router[P Provider] struct {
 	recorder *Recorder
 	live     *live.Client
 	voices   VoiceResolver
+	gate     Gate
 	logger   *slog.Logger
 }
 
@@ -201,6 +211,7 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		recorder: NewRecorder(options.Modality, options.Store, options.Live, logger),
 		live:     options.Live,
 		voices:   options.Voices,
+		gate:     options.Gate,
 		logger:   logger,
 	}, nil
 }
@@ -284,6 +295,12 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		return zero, ProviderConfig{}, err
 	}
 
+	floor, err := r.Admit(ctx, request.CustomerID)
+	if err != nil {
+		return zero, ProviderConfig{}, err
+	}
+	request.DataPolicy = request.DataPolicy.Stricter(floor)
+
 	candidates, err := r.Candidates(ctx, request)
 	if err != nil {
 		return zero, ProviderConfig{}, err
@@ -320,6 +337,16 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 
 	return zero, ProviderConfig{}, fmt.Errorf("routing: every candidate for %q failed: %w",
 		request.Target, errors.Join(failures...))
+}
+
+// Admit asks the customer's policies whether they may spend anything, and what data policy
+// their requests are held to. A modality whose session serves many units of work asks it
+// again before each one, since a budget can run out mid-session.
+func (r *Router[P]) Admit(ctx context.Context, customerID string) (options.DataPolicy, error) {
+	if r.gate == nil {
+		return options.DataPolicy{}, nil
+	}
+	return r.gate.Admit(ctx, customerID)
 }
 
 // Candidates is where a request may go, best first: a priority list where one was given,
