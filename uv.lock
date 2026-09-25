@@ -38,6 +38,7 @@ members = [
     "vision-agents-plugins-pocket",
     "vision-agents-plugins-qdrant",
     "vision-agents-plugins-qwen",
+    "vision-agents-plugins-requesty",
     "vision-agents-plugins-roboflow",
     "vision-agents-plugins-sarvam",
     "vision-agents-plugins-smart-turn",
@@ -6544,6 +6545,9 @@ qwen = [
 redis = [
     { name = "redis", extra = ["hiredis"] },
 ]
+requesty = [
+    { name = "vision-agents-plugins-requesty" },
+]
 roboflow = [
     { name = "vision-agents-plugins-roboflow" },
 ]
@@ -6632,6 +6636,7 @@ requires-dist = [
     { name = "vision-agents-plugins-pocket", marker = "extra == 'pocket'", editable = "plugins/pocket" },
     { name = "vision-agents-plugins-qdrant", marker = "extra == 'qdrant'", editable = "plugins/qdrant" },
     { name = "vision-agents-plugins-qwen", marker = "extra == 'qwen'", editable = "plugins/qwen" },
+    { name = "vision-agents-plugins-requesty", marker = "extra == 'requesty'", editable = "plugins/requesty" },
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'roboflow'", editable = "plugins/roboflow" },
     { name = "vision-agents-plugins-sarvam", marker = "extra == 'sarvam'", editable = "plugins/sarvam" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "plugins/smart_turn" },
@@ -6646,7 +6651,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "requesty", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -7426,6 +7431,32 @@ requires-dist = [
     { name = "numpy" },
     { name = "vision-agents", editable = "agents-core" },
     { name = "websockets", specifier = ">=15.0.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-requesty"
+source = { editable = "plugins/requesty" }
+dependencies = [
+    { name = "openai" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "openai", specifier = ">=2.26.0,<3" },
+    { name = "vision-agents", editable = "agents-core" },
 ]
 
 [package.metadata.requires-dev]
