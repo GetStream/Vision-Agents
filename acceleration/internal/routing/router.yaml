@@ -885,6 +885,25 @@ tts:
       price:
         per_million_chars: 5.0
 
+    # Simba 3.2, Speechify's streaming-native English model: the fastest to first audio on
+    # the Voice Arena's US English board in September 2026. There is no socket - a whole
+    # sentence goes up per request and PCM streams back over chunked HTTP. Priced at the
+    # entry self-serve rate, which Pro and Scale bring down to 8 and 6.
+    - provider: speechify
+      model: simba-3.2
+      description: "Speechify's Simba 3.2, the fastest English voice to first audio. A whole sentence per request."
+      benchmark: { elo: 1239, characters_per_second: 103 }
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      # Their trust page says they never train models on customer data. Nothing is
+      # published about how long the text or the audio is kept.
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_chars: 10.0
+
     # Flash is the low-latency model; the WebSocket streams audio as it is generated.
     - provider: elevenlabs
       model: eleven_flash_v2_5
