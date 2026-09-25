@@ -536,6 +536,14 @@ per request and streams the speech back, about a second to first audio, so it si
 high-quality tier and is reachable through the high-accuracy shortcuts. `voice` is a
 prebuilt name such as `Kore` or a designed `voice_` id.
 
+### A faster Google voice: Gemini 3.8 Flash-Lite TTS
+
+The router now speaks through `gemini/gemini-3.8-flash-lite-tts`, first on Voice Arena in
+US English and a third cheaper than Flash per hour of speech. It takes the same key and
+voices as Flash and is still a whole sentence per request, but it reaches first audio in
+about half a second, so it sits in the low-latency tier and is reachable through `tts-fast`
+and the low-latency shortcuts. It covers 101 languages to Flash's 130.
+
 ### A recorded call, for a Go program with nobody at a microphone
 
 `stream.RecordedCall` reads a 16 kHz mono PCM16 WAV and hands it over the way a call
