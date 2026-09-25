@@ -6,7 +6,6 @@ The router, Postgres and Redis run from `compose.yaml` at the repo root. Credent
 from the repo-root `.env` (copy `.env.example` if you have none).
 
 ```bash
-ssh-add -l                            # needs a key with access to GetStream/getstream-go-webrtc
 docker compose up -d --build router   # router on :8080, Postgres on :55432, Redis on :56379
 curl http://localhost:8080/health
 ```
