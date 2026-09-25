@@ -758,7 +758,7 @@ tts:
     - provider: cartesia
       model: sonic-preview
       description: "Sonic 3.6 tops both Artificial Analysis speech arenas and is the fastest to first audio."
-      benchmark: { elo: 1273, characters_per_second: 115 }
+      benchmark: { elo: 1279, characters_per_second: 109 }
       languages:
         [
           ar,
@@ -824,7 +824,7 @@ tts:
     - provider: inworld
       model: inworld-tts-2-flash
       description: "Inworld's low-latency voice, around 25 ms to first audio on their side."
-      benchmark: { elo: 1210, characters_per_second: 215 }
+      benchmark: { elo: 1210, characters_per_second: 211 }
       languages:
         [
           ar,
@@ -889,7 +889,7 @@ tts:
     - provider: elevenlabs
       model: eleven_flash_v2_5
       description: "ElevenLabs' low-latency voice, streamed as it is generated."
-      benchmark: { elo: 1074, characters_per_second: 480 }
+      benchmark: { elo: 1074, characters_per_second: 518 }
       languages:
         [
           ar,
@@ -943,7 +943,7 @@ tts:
     - provider: elevenlabs
       model: eleven_multilingual_v2
       description: "ElevenLabs' quality voice. Better prosody, slower to first audio."
-      benchmark: { elo: 1092, characters_per_second: 96 }
+      benchmark: { elo: 1093, characters_per_second: 96 }
       languages:
         [
           ar,
@@ -994,7 +994,7 @@ tts:
     - provider: elevenlabs
       model: eleven_v3_conversational
       description: "Performs audio tags such as [laughs] instead of reading them out. Slower to first audio."
-      benchmark: { elo: 1196, characters_per_second: 67 }
+      benchmark: { elo: 1196, characters_per_second: 65 }
       languages:
         [
           ar,
@@ -1054,6 +1054,7 @@ tts:
     - provider: gemini
       model: gemini-3.8-flash-tts
       description: "Second on the Artificial Analysis voice arena and first on pronunciation. A whole sentence per request, about a second to first audio."
+      benchmark: { elo: 1265, characters_per_second: 46 }
       languages:
         [
           af,
@@ -1168,7 +1169,7 @@ tts:
     - provider: fish
       model: s2-pro
       description: "Fish's hosted S2 Pro, in more than 80 languages."
-      benchmark: { elo: 1120, characters_per_second: 96 }
+      benchmark: { elo: 1122, characters_per_second: 105 }
       languages:
         [
           ar,
@@ -1207,7 +1208,7 @@ tts:
     - provider: s2pro
       model: s2-pro
       description: "The same S2 Pro weights on our own GPUs."
-      benchmark: { elo: 1120 }
+      benchmark: { elo: 1122 }
       languages:
         [
           ar,
@@ -1252,7 +1253,7 @@ tts:
     - provider: breeze
       model: breeze-tts-2
       description: "Expressive and performs vocal events, in two languages. On our own GPUs."
-      benchmark: { elo: 1204 }
+      benchmark: { elo: 1205 }
       languages: [en, zh]
       realtime: true
       tier: high-quality
@@ -1270,7 +1271,7 @@ tts:
     - provider: elevenlabs
       model: eleven_v3
       description: "ElevenLabs v3 as a whole file, for recordings rather than live calls."
-      benchmark: { elo: 1167, characters_per_second: 45 }
+      benchmark: { elo: 1169, characters_per_second: 44 }
       languages:
         [
           ar,
