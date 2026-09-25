@@ -51,7 +51,7 @@ func (s *MetaSuite) TestUnsupportedToolChoicesAndEffortsFailBeforeNetworkAccess(
 }
 
 func (s *MetaSuite) TestExplicitAndDefaultEffortUseTheMetaWireProtocol() {
-	for _, effort := range []string{"", "minimal", "high"} {
+	for _, effort := range []string{"", "minimal", "high", "max"} {
 		s.Run(effort, func() {
 			wanted := effort
 			if wanted == "" {

@@ -296,7 +296,8 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 `meta/muse-spark-1.3` is now in the default `router.yaml`, in the high-quality tier with
 image input, on Meta's Standard tier that does not train on requests. It needs
-`META_API_KEY`, and no shortcut prefers it: it is reached by name or as failover.
+`META_API_KEY`, and no shortcut prefers it: it is reached by name or as failover. The
+`meta` provider now accepts the `max` reasoning effort, above `xhigh`.
 
 ### An agent can be given a guardrail: `guardrail.md`
 
