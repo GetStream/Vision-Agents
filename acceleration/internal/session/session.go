@@ -132,6 +132,15 @@ type Session struct {
 	saidMu sync.Mutex
 	said   []spoken
 
+	// naming is how an unnamed persistent conversation gets its title. Nil when the caller
+	// named it, or when there is no channel to name.
+	naming *naming
+	// labelMu guards title and description, which are what naming last called the
+	// conversation, over the spec's own.
+	labelMu     sync.Mutex
+	title       string
+	description string
+
 	// records keeps the turns and what each one did, so a conversation can be read back
 	// without the socket that heard it. Nil for an incognito session and for a deployment
 	// with no store, which is what makes the flag safe: there is nowhere to write rather
@@ -166,7 +175,15 @@ type recordedTurn struct {
 func (s *Session) ID() string { return s.id }
 
 // Spec is what the session was asked for.
-func (s *Session) Spec() Spec { return s.spec }
+func (s *Session) Spec() Spec {
+	spec := s.spec
+	s.labelMu.Lock()
+	defer s.labelMu.Unlock()
+	if s.title != "" {
+		spec.Title, spec.Description = s.title, s.description
+	}
+	return spec
+}
 
 // CreatedAt is when the session joined.
 func (s *Session) CreatedAt() time.Time { return s.created }
@@ -714,6 +731,7 @@ func (s *Session) consume() {
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)
+		s.name(event)
 	}
 }
 

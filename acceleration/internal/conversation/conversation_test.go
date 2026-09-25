@@ -50,6 +50,12 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 		parts := strings.Split(r.URL.Path, "/")
 		result := map[string]any{}
 		switch {
+		case r.Method == http.MethodPatch && len(parts) > 2 && parts[len(parts)-2] == "agent":
+			id := parts[len(parts)-1]
+			for k, v := range body["set"].(map[string]any) {
+				db.channels[id][k] = v
+			}
+			result["channel"] = db.channels[id]
 		case strings.HasSuffix(r.URL.Path, "/query"):
 			id := parts[len(parts)-2]
 			if data, ok := body["data"].(map[string]any); ok {
@@ -496,6 +502,52 @@ func TestConversationKeepsItsMemoryScopeAcrossResumeAndRestart(t *testing.T) {
 	c, _, _, err = service.Open(t.Context(), "customer", "agent", cid, scope)
 	require.NoError(t, err)
 	c.Release()
+}
+
+// TestACreatedChannelCarriesTheCallersCustomButNotItsOwnership covers the page that says
+// where a conversation started: that lands on the channel, and a support_ field it sends
+// cannot decide whose conversation it is.
+func TestACreatedChannelCarriesTheCallersCustomButNotItsOwnership(t *testing.T) {
+	db, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer service.Close()
+
+	c, _, _, err := service.OpenForCallerWithCustom(t.Context(), "customer", "agent", "", "guest-reader", "",
+		map[string]any{
+			"page_url": "https://getstream.io/chat/docs/", "referrer": "https://google.com/",
+			"support_owner_id": "somebody-else", "support_customer_id": "another", "name": "chosen by the page",
+		})
+	require.NoError(t, err)
+	defer c.Release()
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	custom := db.channels[strings.TrimPrefix(c.CID(), "agent:")]["custom"].(map[string]any)
+	require.Equal(t, "https://getstream.io/chat/docs/", custom["page_url"])
+	require.Equal(t, "https://google.com/", custom["referrer"])
+	require.Equal(t, "guest-reader", custom["support_owner_id"])
+	require.Equal(t, "customer", custom["support_customer_id"])
+	require.NotContains(t, custom, "name")
+}
+
+func TestDescribeNamesTheChannel(t *testing.T) {
+	db, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer service.Close()
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "guest-reader")
+	require.NoError(t, err)
+	defer c.Release()
+
+	require.NoError(t, service.Describe(t.Context(), c.CID(), "Add push to an Android app", "They asked how to register a device."))
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	channel := db.channels[strings.TrimPrefix(c.CID(), "agent:")]
+	require.Equal(t, "Add push to an Android app", channel["name"])
+	require.Equal(t, "They asked how to register a device.", channel["description"])
+	require.Error(t, service.Describe(t.Context(), "messaging:general", "title", ""))
 }
 
 func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testing.T) {

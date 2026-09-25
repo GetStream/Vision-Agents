@@ -48,6 +48,8 @@ type recordWrite struct {
 	finishedAt time.Time
 	// items are things that happened during a turn.
 	items []store.AgentResponseItem
+	// described is a session given a new title and description, nil otherwise.
+	described *described
 	// flushed is closed once everything queued before it has been written.
 	flushed chan struct{}
 }
@@ -108,6 +110,17 @@ func (r *sessionRecorder) Opened(row store.AgentSession) {
 // Closed queues the time a session ended.
 func (r *sessionRecorder) Closed(id string, at time.Time) {
 	r.queueWrite(recordWrite{closed: id, closedAt: at})
+}
+
+// described is what a session was renamed to.
+type described struct {
+	customerID, id, title, description string
+}
+
+// Described queues a session's new name. It goes through the queue rather than straight to
+// the store so it cannot be written before the row it renames.
+func (r *sessionRecorder) Described(customerID, id, title, description string) {
+	r.queueWrite(recordWrite{described: &described{customerID, id, title, description}})
 }
 
 // Responding queues a turn that has just begun.
@@ -228,6 +241,11 @@ func (r *sessionRecorder) write(write recordWrite) {
 	case write.finished != "":
 		if err := r.store.FinishResponse(ctx, write.finished, write.status, write.failure, write.finishedAt); err != nil {
 			r.logger.Error("could not record the turn ending", "error", err)
+		}
+	case write.described != nil:
+		d := write.described
+		if err := r.store.DescribeSession(ctx, d.customerID, d.id, d.title, d.description, nil); err != nil {
+			r.logger.Error("could not record the session's title", "session", d.id, "error", err)
 		}
 	}
 }

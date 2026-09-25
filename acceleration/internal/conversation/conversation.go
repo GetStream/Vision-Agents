@@ -247,6 +247,13 @@ func (s *Service) OpenForCaller(ctx context.Context, customer, agentID, cid, cal
 // OpenForCallerWithVoice also restores settled transcripts from the configured
 // media agent when a caller returns from voice to a persistent text session.
 func (s *Service) OpenForCallerWithVoice(ctx context.Context, customer, agentID, cid, caller, voiceAgent string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	return s.OpenForCallerWithCustom(ctx, customer, agentID, cid, caller, voiceAgent, nil, scopes...)
+}
+
+// OpenForCallerWithCustom also stamps custom onto the channel when it creates one, so what
+// the caller said about the conversation is on the transcript as well as on the session.
+// A channel that already exists keeps what it has: it was stamped when it was made.
+func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	if voiceAgent != "" && !validAuthorID.MatchString(voiceAgent) {
 		return nil, nil, false, errors.New("invalid voice transcript author")
 	}
@@ -310,7 +317,9 @@ func (s *Service) OpenForCallerWithVoice(ctx context.Context, customer, agentID,
 		if err != nil {
 			return nil, nil, false, err
 		}
-		_, err = s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: map[string]any{"support_customer_id": customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger}}})
+		stamped := channelCustom(custom)
+		maps.Copy(stamped, map[string]any{"support_customer_id": customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
+		_, err = s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}})
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -375,6 +384,52 @@ func (s *Service) ContextForCaller(ctx context.Context, customer, agentID, cid, 
 	}
 	messages, truncated := history(page)
 	return messages, truncated, nil
+}
+
+// channelFields are the channel's own fields rather than custom data, and name and
+// description are the router's to write (Describe), so a caller's custom may set none of them.
+var channelFields = map[string]bool{
+	"id": true, "type": true, "cid": true, "name": true, "description": true, "image": true,
+	"members": true, "member_count": true, "created_by": true, "created_by_id": true,
+	"created_at": true, "updated_at": true, "deleted_at": true, "last_message_at": true,
+	"truncated_at": true, "frozen": true, "disabled": true, "hidden": true, "team": true,
+	"config": true, "own_capabilities": true, "auto_translation_enabled": true,
+	"auto_translation_language": true,
+}
+
+// channelCustom is the part of a caller's custom data a channel may carry. Every support_
+// field is ownership and routing the router checks before it answers into a channel, so a
+// caller naming one would be a caller choosing whose conversation this is.
+func channelCustom(custom map[string]any) map[string]any {
+	kept := make(map[string]any, len(custom))
+	for key, value := range custom {
+		if strings.HasPrefix(key, "support_") || channelFields[key] {
+			continue
+		}
+		kept[key] = value
+	}
+	return kept
+}
+
+// Describe names the conversation's channel, which is what a list of conversations reads.
+// An empty field is left as it was rather than cleared.
+func (s *Service) Describe(ctx context.Context, cid, title, description string) error {
+	id := strings.TrimPrefix(cid, "agent:")
+	if cid != "agent:"+id || !validID.MatchString(id) {
+		return errors.New("invalid conversation channel")
+	}
+	set := map[string]any{}
+	if title != "" {
+		set["name"] = title
+	}
+	if description != "" {
+		set["description"] = description
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	_, err := s.client.Chat().UpdateChannelPartial(ctx, "agent", id, &getstream.UpdateChannelPartialRequest{Set: set, Unset: []string{}})
+	return err
 }
 
 // ownedBy reads server-owned channel metadata. Explicit member access still

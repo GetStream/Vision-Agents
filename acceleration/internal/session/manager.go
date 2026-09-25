@@ -115,6 +115,8 @@ type Manager struct {
 	records *sessionRecorder
 	// reviews says what a finished call went like, onto the row calls wrote.
 	reviews *reviewer
+	// titles names persistent conversations nobody named, on the session row and the channel.
+	titles *titler
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -145,6 +147,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		manager.records = newSessionRecorder(options.Store, options.Logger)
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 	}
+	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
 	if os.Getenv("CHAT_OUTBOX_DIR") != "" {
 		if _, err := manager.Conversations(); err != nil {
 			return nil, err
@@ -202,7 +205,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, err
 		}
 		var truncated bool
-		conv, previous, truncated, err = service.OpenForCallerWithVoice(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = service.OpenForCallerWithCustom(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if err != nil {
 			return nil, err
 		}
@@ -415,6 +418,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if conv != nil {
 		conv.Attach(func(update persistent.Updated) { created.broadcast(update) })
 		created.closers = append(created.closers, conv.Release)
+		// A caller that named the conversation named it; only an unnamed one is named here.
+		if service, err := m.Conversations(); err == nil && spec.Title == "" && spec.Description == "" {
+			created.naming = &naming{titles: m.titles, service: service, earlier: spokenOf(previous)}
+		}
 	}
 
 	// The fan-out starts before joining so nothing said between joining and the first
@@ -836,6 +843,7 @@ func (m *Manager) Shutdown() error {
 	// The recorders go last so the endings those closes queued are written rather than
 	// lost on the way out. The reviews go with it: a summary is worth having, but not
 	// worth holding a shutdown open for a model to finish writing.
+	m.titles.Close()
 	if m.calls != nil {
 		m.reviews.Close()
 		m.calls.Close()
