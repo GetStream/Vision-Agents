@@ -5,6 +5,7 @@ Run with `uv run --no-project .claude/skills/refresh_model_stats/aa_stats.py`.
 
 import json
 import re
+import sys
 import urllib.request
 from collections.abc import Iterator
 
@@ -123,7 +124,56 @@ def search() -> None:
             )
 
 
+def llm() -> None:
+    print(
+        "# llm: model, slug, intelligence index, output tokens per second on the creator's API"
+    )
+    seen = set()
+    for value in flight("leaderboards/models"):
+        for d in dicts(value):
+            index = d.get("intelligenceIndex")
+            if not isinstance(index, float) or d["slug"] in seen:
+                continue
+            seen.add(d["slug"])
+            speed = d.get("medianOutputTokensPerSecond")
+            print(
+                d["name"],
+                d["slug"],
+                round(index),
+                round(speed) if isinstance(speed, float) else "",
+                sep="\t",
+            )
+
+
+def llm_hosts(slug: str) -> None:
+    print(f"# llm hosts of {slug}: host, output tokens per second")
+    seen = set()
+    for value in flight(f"models/{slug}/providers"):
+        for d in dicts(value):
+            host, model, performance = d.get("host"), d.get("model"), d.get("performance")
+            if not (
+                isinstance(host, dict)
+                and isinstance(model, dict)
+                and isinstance(performance, dict)
+                and model.get("slug") == slug
+                and isinstance(performance.get("outputSpeed"), dict)
+            ):
+                continue
+            if host["name"] in seen:
+                continue
+            seen.add(host["name"])
+            speed = performance["outputSpeed"].get("median")
+            print(
+                host["name"], round(speed) if isinstance(speed, float) else "", sep="\t"
+            )
+
+
 if __name__ == "__main__":
-    tts()
-    stt()
-    search()
+    if len(sys.argv) > 1:
+        for slug in sys.argv[1:]:
+            llm_hosts(slug)
+    else:
+        tts()
+        stt()
+        search()
+        llm()

@@ -1801,6 +1801,7 @@ llm:
     - provider: deepseek
       model: DeepSeek-V4-Flash-0731
       description: "A 284B mixture-of-experts with 13B active per token, so it answers fast. The cheapest model here."
+      benchmark: { output_tokens_per_second: 320 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1812,6 +1813,7 @@ llm:
     - provider: openai
       model: gpt-5.6-luna
       description: "OpenAI's small, fast model. Reads images, and costs little."
+      benchmark: { intelligence_index: 16, output_tokens_per_second: 120 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1836,6 +1838,7 @@ llm:
     - provider: openai
       model: gpt-6-luna
       description: "OpenAI's most efficient model, and what Vision prefers. Reads images, and the cheapest OpenAI model here."
+      benchmark: { intelligence_index: 18, output_tokens_per_second: 124 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1855,6 +1858,7 @@ llm:
     - provider: gemini
       model: gemini-3.8-flash
       description: "Quick and strong, and what llm-fast prefers. Reads images. The dearest of the fast tier."
+      benchmark: { intelligence_index: 33, output_tokens_per_second: 330 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1872,6 +1876,7 @@ llm:
     - provider: gemma
       model: gemma-4-26B-A4B-it
       description: "Open weights on our own GPUs: 26B with 4B active, billed by the GPU minute rather than the token."
+      benchmark: { intelligence_index: 13 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1884,6 +1889,7 @@ llm:
     - provider: cerebras
       model: gemma-4-31b
       description: "Gemma 4 31B on Cerebras, at around 1,500 tokens a second."
+      benchmark: { intelligence_index: 14 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1896,6 +1902,7 @@ llm:
     - provider: deepseek
       model: DeepSeek-V4-Pro-0813
       description: "A 1.6T-parameter frontier model. Better answers, and too slow for most live turns."
+      benchmark: { output_tokens_per_second: 134 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1907,6 +1914,7 @@ llm:
     - provider: openai
       model: gpt-5.6-terra
       description: "OpenAI's middle tier: stronger reasoning than Luna, slower, and ten times the price."
+      benchmark: { intelligence_index: 21, output_tokens_per_second: 85 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1922,6 +1930,7 @@ llm:
     - provider: openai
       model: gpt-5.6-sol
       description: "OpenAI's previous frontier model, and still what llm-smart prefers. GPT-6 Sol is stronger and cheaper."
+      benchmark: { intelligence_index: 28, output_tokens_per_second: 69 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1943,6 +1952,7 @@ llm:
     - provider: anthropic
       model: claude-opus-5-5
       description: "Anthropic's Opus 5.5, top of the Artificial Analysis Intelligence Index. Reads images, and costs less than Sol."
+      benchmark: { intelligence_index: 51, output_tokens_per_second: 80 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1968,6 +1978,7 @@ llm:
     - provider: xai
       model: grok-4.7
       description: "xAI's Grok 4.7, with a 500k context. Reads images, and always thinks first."
+      benchmark: { output_tokens_per_second: 58 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1988,6 +1999,7 @@ llm:
     - provider: openai
       model: gpt-6-sol
       description: "OpenAI's model for coding and agentic work, and what llm-thinking prefers. Reads images."
+      benchmark: { intelligence_index: 28, output_tokens_per_second: 86 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2008,6 +2020,7 @@ llm:
     - provider: openai
       model: gpt-6-astra
       description: "OpenAI's most capable model, for the hardest reasoning. Always thinks first. The dearest here."
+      benchmark: { intelligence_index: 46, output_tokens_per_second: 53 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2034,6 +2047,7 @@ llm:
     - provider: meta
       model: muse-spark-1.3
       description: "Meta's Muse Spark 1.3, the fastest of the top tier. Reads images, always thinks first, and costs less than Sol."
+      benchmark: { output_tokens_per_second: 252 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2065,6 +2079,7 @@ llm:
     - provider: baseten
       model: zai-org/GLM-5.3-Flash
       description: "Z.ai's GLM 5.3 Flash, the most-used open-weight model on OpenRouter. Cheap and quick."
+      benchmark: { output_tokens_per_second: 160 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -2076,6 +2091,7 @@ llm:
     - provider: together
       model: zai-org/GLM-5.3-Flash
       description: "GLM 5.3 Flash on Together, which reasons before answering whatever the request says."
+      benchmark: { intelligence_index: 42, output_tokens_per_second: 94 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -2096,6 +2112,7 @@ llm:
     - provider: deepseek
       model: DeepSeek-V4.1-Flash
       description: "DeepSeek's V4.1 Flash, second in usage on OpenRouter. Newer than V4 Flash and twice the price."
+      benchmark: { intelligence_index: 25, output_tokens_per_second: 169 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -2107,6 +2124,7 @@ llm:
     - provider: together
       model: deepseek-ai/DeepSeek-V4.1-Flash
       description: "DeepSeek V4.1 Flash on Together, with the cheapest cache reads of anything here."
+      benchmark: { intelligence_index: 25, output_tokens_per_second: 245 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -2138,6 +2156,7 @@ llm:
     - provider: together
       model: MiniMaxAI/MiniMax-M3
       description: "MiniMax M3, which answers in a sentence or two of thinking rather than a page of it."
+      benchmark: { intelligence_index: 29, output_tokens_per_second: 128 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -2152,6 +2171,7 @@ llm:
     - provider: baseten
       model: zai-org/GLM-5.3
       description: "Z.ai's frontier GLM, ten times Flash's price and the strongest open-weight model here."
+      benchmark: { output_tokens_per_second: 117 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2163,6 +2183,7 @@ llm:
     - provider: together
       model: zai-org/GLM-5.3
       description: "GLM 5.3 on Together. The same weights as Baseten's, at nearly twice the cache-read price."
+      benchmark: { output_tokens_per_second: 257 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2179,6 +2200,7 @@ llm:
     - provider: baseten
       model: zai-org/GLM-5.2
       description: "Z.ai's previous frontier GLM, at the same price as 5.3."
+      benchmark: { intelligence_index: 22, output_tokens_per_second: 118 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2190,6 +2212,7 @@ llm:
     - provider: together
       model: zai-org/GLM-5.2
       description: "GLM 5.2 on Together."
+      benchmark: { intelligence_index: 22, output_tokens_per_second: 113 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2218,6 +2241,7 @@ llm:
     - provider: baseten
       model: moonshotai/Kimi-K3
       description: "Moonshot's Kimi K3, an agentic model with a 1M context. The dearest open-weight model here."
+      benchmark: { output_tokens_per_second: 145 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2229,6 +2253,7 @@ llm:
     - provider: together
       model: moonshotai/Kimi-K3
       description: "Kimi K3 on Together, at the same price as the same weights on Baseten."
+      benchmark: { output_tokens_per_second: 82 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2243,6 +2268,7 @@ llm:
     - provider: together
       model: Qwen/Qwen3.8-2.4T-A95B
       description: "Alibaba's largest open Qwen, 2.4T parameters with 95B active."
+      benchmark: { output_tokens_per_second: 183 }
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality

@@ -33,7 +33,8 @@ bun dev
 ```
 
 Open `https://local.getstream.io:3011/organization/<orgId>/<appId>/agents/` (not
-`localhost`, or CORS/auth break). The override puts the router in `noauth` mode with Volt's
+`localhost`, or CORS/auth break). The override puts the router in `proxy` mode, so it reads the app and organization
+the dev proxy sets, with Volt's
 CORS origin. Rebuild the router after pulling router changes.
 
 ## How Agents is wired
@@ -57,7 +58,8 @@ choice in bold ("gemini / gemini-3.8-flash"), a muted detail line ("Pinned model
 "The router's default.", "Now provider / model" for a route), and a **Change** button.
 Change opens a dialog with two sections: **Routers** (route cards from
 `/v1/<modality>/routes`, default first) and **Models** (a table of pinnable models from
-`/v1/<modality>/providers`). The columns follow the modality: LLM shows popularity, TTS
+`/v1/<modality>/providers`). The columns follow the modality: LLM shows popularity,
+intelligence index, tokens per second and input and output price per million tokens, TTS
 Elo and characters per second, STT WER and latency, search the search index and cost
 per task (Artificial Analysis numbers from
 `benchmark`, refreshed with the `refresh_model_stats` skill), anything else the live

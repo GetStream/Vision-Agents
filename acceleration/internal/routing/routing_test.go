@@ -329,6 +329,22 @@ func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
 	}
 }
 
+func (s *RoutingSuite) TestDefaultConfigMeasuresTextModelsOnIntelligenceAndSpeed() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	measured := 0
+	for _, provider := range config[LLM].Providers {
+		b := provider.Benchmark
+		s.Equalf(Benchmark{IntelligenceIndex: b.IntelligenceIndex, OutputTokensPerSecond: b.OutputTokensPerSecond}, b,
+			"%s carries a benchmark that is not a text model's", provider.Name())
+		if b.IntelligenceIndex > 0 && b.OutputTokensPerSecond > 0 {
+			measured++
+		}
+	}
+	s.Positive(measured)
+}
+
 func (s *RoutingSuite) TestDefaultConfigDeclaresADataPolicyForEverySpeechModel() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)

@@ -89,6 +89,11 @@ type Benchmark struct {
 	// CostPerTask is what one task of that benchmark cost in US dollars, the searches and
 	// the answering model's tokens together.
 	CostPerTask float64 `yaml:"cost_per_task"`
+	// IntelligenceIndex is the Artificial Analysis Intelligence Index of a text model at
+	// the reasoning effort the router asks for.
+	IntelligenceIndex int `yaml:"intelligence_index"`
+	// OutputTokensPerSecond is how fast a text model writes on the host the router calls.
+	OutputTokensPerSecond float64 `yaml:"output_tokens_per_second"`
 }
 
 // Price is what a provider charges, in US dollars. Providers bill by different units, so
