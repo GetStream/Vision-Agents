@@ -1566,7 +1566,13 @@ func (a *Agent) startReply(
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return
 		}
-		a.fail(err, "llm")
+		// Ended the way a reply failing mid-stream ends, so the turn is over: left
+		// generating, the agent never looks idle and a model switch waits on it forever.
+		a.mu.Lock()
+		replies := a.replies
+		a.mu.Unlock()
+		replies <- llm.ResponseFailed{ResponseID: turn.ID, Err: err, Context: "llm"}
+		replies <- llm.ResponseCompleted{Response: llm.Response{ID: turn.ID, Status: llm.StatusFailed}}
 		return
 	}
 
