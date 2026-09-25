@@ -30,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/together"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/venice"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/wafer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/xai"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -71,6 +72,10 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(anthropic.New(anthropic.Options{Model: spec.Model, Logger: spec.Logger}))
+	})
+
+	registry.Register(xai.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(xai.New(xai.Options{Model: spec.Model, ReasoningEffort: spec.ReasoningEffort, Logger: spec.Logger}))
 	})
 
 	// The hosts of open-weight models. They serve the same weights over the same

@@ -1741,6 +1741,27 @@ llm:
         per_million_cached_input_tokens: 0.20
         per_million_output_tokens: 20.00
 
+    # xAI's Grok 4.7 over their OpenAI-compatible chat completions, with a 500k context.
+    # It cannot be told not to think: none is a 400, and xAI default it to high, so the
+    # provider asks for low when a request names no effort. Prompts of 200k tokens or more
+    # are billed at twice these rates for the whole request. xAI do not train on API
+    # traffic without permission and delete it after 30 days; zero data retention is a
+    # team-wide switch in their console, and nothing in this deployment says it is on.
+    - provider: xai
+      model: grok-4.7
+      description: "xAI's Grok 4.7, with a 500k context. Reads images, and always thinks first."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_million_input_tokens: 2.00
+        per_million_cached_input_tokens: 0.50
+        per_million_output_tokens: 6.00
+
     # GPT-6 Sol is built for complex coding and agentic work, and what llm-thinking prefers,
     # so this is the model the skills run on unless it is down. Artificial Analysis score it
     # 48 at roughly half the cost per task of GPT-5.6 Sol. OpenAI default it to medium
