@@ -15,6 +15,7 @@ import (
 
 type GeminiIntegrationSuite struct {
 	ttssuite.Suite
+	model string
 }
 
 func TestGeminiIntegrationSuite(t *testing.T) {
@@ -33,11 +34,26 @@ func TestGeminiIntegrationSuite(t *testing.T) {
 	}})
 }
 
+func TestGeminiFlashLiteIntegrationSuite(t *testing.T) {
+	suite.Run(t, &GeminiIntegrationSuite{model: "gemini-3.8-flash-lite-tts", Suite: ttssuite.Suite{
+		New: func() ttssuite.Provider {
+			provider, err := New(Options{Model: "gemini-3.8-flash-lite-tts"})
+			require.NoError(t, err)
+			return provider
+		},
+		Requires: []string{"GOOGLE_API_KEY"},
+		// Still a request per sentence, but it measures about half a second.
+		MaxTimeToFirstByte: 1_500,
+		Interruptible:      true,
+		Timeout:            90 * time.Second,
+	}})
+}
+
 // TestSpeaksInTheVoiceAndLanguageAskedFor is the one option worth a live request: the
 // server refuses a voice it does not know, so a request that comes back as speech is one
 // whose voice and language it accepted.
 func (s *GeminiIntegrationSuite) TestSpeaksInTheVoiceAndLanguageAskedFor() {
-	provider, err := New(Options{Voice: "Kore", Language: "en-US"})
+	provider, err := New(Options{Model: s.model, Voice: "Kore", Language: "en-US"})
 	s.Require().NoError(err)
 	s.Start(provider)
 	defer s.Hangup(provider)
