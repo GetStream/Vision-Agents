@@ -50,7 +50,8 @@ func New(options Options) (*LLM, error) {
 		options.ReasoningEffort = "low"
 	}
 	capabilities := llm.Capabilities{
-		ReasoningEfforts: []string{"minimal", "low", "medium", "high", "xhigh"},
+		// max is Standard-tier 1.3 only; the contributor models answer it with a 400.
+		ReasoningEfforts: []string{"minimal", "low", "medium", "high", "xhigh", "max"},
 		DefaultEffort:    options.ReasoningEffort,
 		InputModalities:  []string{llm.ModalityImage},
 		// Chat Completions reports reasoning token counts, not reasoning text.
