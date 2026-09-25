@@ -61,8 +61,6 @@ class RequestyLLM(LLM):
         """
         super().__init__()
         self.model = model
-        # For tracking streaming tool calls in Chat Completions mode
-        self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
         self._max_tokens = max_tokens
         self._tools_max_rounds = max(tools_max_rounds, 1)
 
@@ -220,7 +218,8 @@ class RequestyLLM(LLM):
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Process a streaming response, handling tool calls if present."""
         text_chunks: list[str] = []
-        self._pending_tool_calls = {}
+        # Tracks streaming tool calls; local so concurrent streams don't share it
+        pending_tool_calls: Dict[int, Dict[str, Any]] = {}
         accumulated_tool_calls: list[NormalizedToolCallItem] = []
         sequence_number = 0
         first_token_time: Optional[float] = None
@@ -240,7 +239,7 @@ class RequestyLLM(LLM):
             if choice.delta.tool_calls:
                 has_tool_call_delta_seen = True
                 for tc in choice.delta.tool_calls:
-                    self._accumulate_tool_call_chunk(tc)
+                    self._accumulate_tool_call_chunk(tc, pending_tool_calls)
 
             if content:
                 is_first = first_token_time is None
@@ -275,8 +274,10 @@ class RequestyLLM(LLM):
                 # The router sometimes emits multiple `finish_reason="tool_calls"`
                 # chunks; finalize only when there's still pending data to consume,
                 # otherwise the second pass overwrites the result with [].
-                if finish_reason == "tool_calls" and self._pending_tool_calls:
-                    accumulated_tool_calls = self._finalize_pending_tool_calls()
+                if finish_reason == "tool_calls" and pending_tool_calls:
+                    accumulated_tool_calls = self._finalize_pending_tool_calls(
+                        pending_tool_calls
+                    )
 
         total_text = "".join(text_chunks)
 
@@ -310,17 +311,21 @@ class RequestyLLM(LLM):
             model=model or self.model,
         )
 
-    def _accumulate_tool_call_chunk(self, tc_chunk: ChoiceDeltaToolCall) -> None:
+    def _accumulate_tool_call_chunk(
+        self,
+        tc_chunk: ChoiceDeltaToolCall,
+        pending_tool_calls: Dict[int, Dict[str, Any]],
+    ) -> None:
         """Accumulate tool call data from streaming chunks."""
         idx = tc_chunk.index
-        if idx not in self._pending_tool_calls:
-            self._pending_tool_calls[idx] = {
+        if idx not in pending_tool_calls:
+            pending_tool_calls[idx] = {
                 "id": tc_chunk.id or "",
                 "name": "",
                 "arguments_parts": [],
             }
 
-        pending = self._pending_tool_calls[idx]
+        pending = pending_tool_calls[idx]
         if tc_chunk.id:
             pending["id"] = tc_chunk.id
         if tc_chunk.function:
@@ -329,10 +334,12 @@ class RequestyLLM(LLM):
             if tc_chunk.function.arguments:
                 pending["arguments_parts"].append(tc_chunk.function.arguments)
 
-    def _finalize_pending_tool_calls(self) -> List[NormalizedToolCallItem]:
+    def _finalize_pending_tool_calls(
+        self, pending_tool_calls: Dict[int, Dict[str, Any]]
+    ) -> List[NormalizedToolCallItem]:
         """Convert accumulated tool call chunks to normalized format."""
         tool_calls: List[NormalizedToolCallItem] = []
-        for pending in self._pending_tool_calls.values():
+        for pending in pending_tool_calls.values():
             args_str = "".join(pending["arguments_parts"]).strip() or "{}"
             try:
                 args = json.loads(args_str)
@@ -349,7 +356,7 @@ class RequestyLLM(LLM):
             tool_calls.append(tool_call)
             logger.debug(f"Finalized tool call: {pending['name']} with args: {args}")
 
-        self._pending_tool_calls = {}
+        pending_tool_calls.clear()
         return tool_calls
 
     async def _handle_tool_calls(
@@ -449,7 +456,7 @@ class RequestyLLM(LLM):
                 break
 
             text_chunks: list[str] = []
-            self._pending_tool_calls = {}
+            pending_tool_calls: Dict[int, Dict[str, Any]] = {}
             next_tool_calls: list[NormalizedToolCallItem] = []
             has_tool_call_delta_seen = False
 
@@ -465,7 +472,7 @@ class RequestyLLM(LLM):
                 if choice.delta.tool_calls:
                     has_tool_call_delta_seen = True
                     for tc_delta in choice.delta.tool_calls:
-                        self._accumulate_tool_call_chunk(tc_delta)
+                        self._accumulate_tool_call_chunk(tc_delta, pending_tool_calls)
 
                 if content:
                     is_first = first_token_time is None
@@ -487,8 +494,10 @@ class RequestyLLM(LLM):
                         )
                         sequence_number += 1
 
-                if finish_reason == "tool_calls" and self._pending_tool_calls:
-                    next_tool_calls = self._finalize_pending_tool_calls()
+                if finish_reason == "tool_calls" and pending_tool_calls:
+                    next_tool_calls = self._finalize_pending_tool_calls(
+                        pending_tool_calls
+                    )
 
             all_text_parts.extend(text_chunks)
 

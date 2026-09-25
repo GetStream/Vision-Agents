@@ -4,6 +4,10 @@ import os
 
 import pytest
 from dotenv import load_dotenv
+from openai.types.chat.chat_completion_chunk import (
+    ChoiceDeltaToolCall,
+    ChoiceDeltaToolCallFunction,
+)
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.plugins.requesty import LLM
 
@@ -97,6 +101,59 @@ class TestRequestyLLM:
         llm._convert_tools_to_provider_format(tools)
         assert "additionalProperties" not in schema
 
+    async def test_interleaved_streams_keep_tool_calls_separate(self, llm_factory):
+        """Tool call chunks from two concurrent streams must not merge."""
+        llm = llm_factory()
+        pending_a: dict = {}
+        pending_b: dict = {}
+        chunks = [
+            (
+                pending_a,
+                ChoiceDeltaToolCall(
+                    index=0,
+                    id="call_a",
+                    function=ChoiceDeltaToolCallFunction(
+                        name="tool_a", arguments='{"x": '
+                    ),
+                ),
+            ),
+            (
+                pending_b,
+                ChoiceDeltaToolCall(
+                    index=0,
+                    id="call_b",
+                    function=ChoiceDeltaToolCallFunction(
+                        name="tool_b", arguments='{"y": '
+                    ),
+                ),
+            ),
+            (
+                pending_a,
+                ChoiceDeltaToolCall(
+                    index=0, function=ChoiceDeltaToolCallFunction(arguments="1}")
+                ),
+            ),
+            (
+                pending_b,
+                ChoiceDeltaToolCall(
+                    index=0, function=ChoiceDeltaToolCallFunction(arguments="2}")
+                ),
+            ),
+        ]
+        for pending, chunk in chunks:
+            llm._accumulate_tool_call_chunk(chunk, pending)
+
+        calls_a = llm._finalize_pending_tool_calls(pending_a)
+        calls_b = llm._finalize_pending_tool_calls(pending_b)
+
+        assert [(c["id"], c["name"], c["arguments_json"]) for c in calls_a] == [
+            ("call_a", "tool_a", {"x": 1})
+        ]
+        assert [(c["id"], c["name"], c["arguments_json"]) for c in calls_b] == [
+            ("call_b", "tool_b", {"y": 2})
+        ]
+        assert pending_a == {} and pending_b == {}
+
 
 @pytest.mark.integration
 class TestRequestyLLMIntegration:
@@ -123,9 +180,9 @@ class TestRequestyLLMIntegration:
             llm.simple_response("How many paws are there in the room?")
         )
 
-        assert "8" in final.text or "eight" in final.text.lower(), (
-            f"Expected '8' or 'eight' in response, got: {final.text}"
-        )
+        assert (
+            "8" in final.text or "eight" in final.text.lower()
+        ), f"Expected '8' or 'eight' in response, got: {final.text}"
 
     async def test_instruction_following(self, llm_factory):
         """Test that the LLM follows system instructions."""
@@ -139,9 +196,9 @@ class TestRequestyLLMIntegration:
             )
         )
 
-        assert "nl" in final.text.lower(), (
-            f"Expected 'NL' in response, got: {final.text}"
-        )
+        assert (
+            "nl" in final.text.lower()
+        ), f"Expected 'NL' in response, got: {final.text}"
 
     async def test_function_calling_openai(self, llm_factory):
         """Test function calling with OpenAI model."""
@@ -161,6 +218,6 @@ class TestRequestyLLMIntegration:
         _, final = await collect_simple_response(llm.simple_response(prompt))
 
         assert len(calls) >= 1, "probe_tool was not invoked by the model"
-        assert "probe_ok:pong" in final.text, (
-            f"Expected 'probe_ok:pong', got: {final.text}"
-        )
+        assert (
+            "probe_ok:pong" in final.text
+        ), f"Expected 'probe_ok:pong', got: {final.text}"
