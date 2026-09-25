@@ -238,7 +238,7 @@ done
 go run ./cmd/voicebench compare out/<run1> out/<run2> out/<run3> out/<run4> out/<run5>
 ```
 
-The largest P50 difference between any two of those runs is the smallest change the bench can detect for that target. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`.
+Repeat for `healthcare` and `telecom`, since `run` takes one pack at a time. The largest P50 difference between any two of those runs is the smallest change the bench can detect for that target and pack. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`.
 
 ## Public benchmark basis
 

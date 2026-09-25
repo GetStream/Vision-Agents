@@ -260,4 +260,10 @@ func TestSummaryReportsTimeToFirstResponse(t *testing.T) {
 	if !strings.Contains(md, "| 1200 ms (tool) |") {
 		t.Fatalf("per-call first response missing:\n%s", md)
 	}
+	empty := Markdown(BuildSummary("livekit", "run2", 1, []CallResult{
+		{ScenarioID: "telecom.golden", Pack: "telecom", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true},
+	}))
+	if !strings.Contains(empty, "| telecom | — | — | 0 | 0 |") {
+		t.Fatalf("a pack with no first response must not read as 0 ms:\n%s", empty)
+	}
 }

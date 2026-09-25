@@ -423,6 +423,10 @@ func Markdown(s Summary) string {
 	b.WriteString("\n## Time to first response\n\n")
 	b.WriteString("| Pack | P50 | P95 | Calls measured | Tool turns |\n| --- | ---: | ---: | ---: | ---: |\n")
 	for _, p := range s.Packs {
+		if p.FirstResponseSamples == 0 {
+			fmt.Fprintf(&b, "| %s | — | — | 0 | 0 |\n", p.Pack)
+			continue
+		}
 		fmt.Fprintf(&b, "| %s | %d ms | %d ms | %d | %d |\n", p.Pack, p.FirstResponseP50, p.FirstResponseP95, p.FirstResponseSamples, p.FirstResponseTool)
 	}
 	b.WriteString("\n## Operations\n\n")
