@@ -2,6 +2,12 @@
 
 ## Breaking Changes
 
+### The `lemonslice` and `liveavatar` plugins have been removed
+
+`vision-agents[lemonslice]` and `vision-agents[liveavatar]` are gone, along with
+`vision_agents.plugins.lemonslice` and `vision_agents.plugins.liveavatar`. Use `anam` for an
+avatar.
+
 ### `ROUTER_AUTH_MODE` defaults to `api_key`, and `noauth` has been split in two
 
 The old `noauth` did two unrelated jobs: it trusted the headers a proxy set, and it was

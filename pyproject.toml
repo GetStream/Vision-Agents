@@ -23,7 +23,6 @@ vision-agents-plugins-huggingface = { workspace = true }
 vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
-vision-agents-plugins-lemonslice = { workspace = true }
 vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
@@ -41,7 +40,6 @@ vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-local = { workspace = true }
 vision-agents-plugins-anam = { workspace = true }
 vision-agents-plugins-sarvam = { workspace = true }
-vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
 vision-agents-plugins-twelvelabs = { workspace = true }
 vision-agents-plugins-speechify = { workspace = true }
@@ -76,7 +74,6 @@ members = [
     "plugins/ultralytics",
     "plugins/smart_turn",
     "plugins/wizper",
-    "plugins/lemonslice",
     "plugins/inworld",
     "plugins/vogent",
     "plugins/moondream",
@@ -94,7 +91,6 @@ members = [
     "plugins/local",
     "plugins/anam",
     "plugins/sarvam",
-    "plugins/liveavatar",
     "plugins/tencent",
     "plugins/twelvelabs",
     "plugins/speechify",

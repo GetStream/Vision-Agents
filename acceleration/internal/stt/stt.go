@@ -13,7 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 )
 
-// SampleRate is the only rate the providers accept. LiveKit decodes to this for us.
+// SampleRate is the only rate the providers accept. Inbound Opus is decoded to this.
 const SampleRate = 16_000
 
 // MaxKeyterms is how many terms a provider will be told about. It is the lowest limit

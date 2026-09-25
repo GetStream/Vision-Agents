@@ -42,7 +42,6 @@ and billing as a direct API call.
 | `internal/live`      | Redis via rueidis: provider health and live per-customer counters   |
 | `internal/api`       | HTTP layer generated from `api/openapi.yaml`                        |
 | `cmd/router`         | Serves the HTTP API                                                 |
-| `cmd/transcribe`     | Joins a LiveKit room and prints transcripts                         |
 | `cmd/say`            | Types a line, hears it                                              |
 | `cmd/chat`           | Types a line, reads the answer                                      |
 | `cmd/agent`          | Joins a Stream call and holds a conversation                        |
@@ -71,18 +70,7 @@ the session frame is spelled; Gemini Live is its own package under `internal/sts
 
 ## Build prerequisites
 
-`cmd/transcribe` and `cmd/agent` decode and encode Opus through LiveKit's media-sdk, which
-is cgo:
-
-```bash
-# macOS
-brew install pkg-config opus opusfile libsoxr
-
-# Debian/Ubuntu
-sudo apt-get install -y pkg-config libopus-dev libopusfile-dev libsoxr-dev
-```
-
-Everything else builds without them. `cmd/say` needs `ffplay` at runtime (part of ffmpeg)
+Everything builds without cgo. `cmd/say` needs `ffplay` at runtime (part of ffmpeg)
 to play audio, or `-out` to write a file instead.
 
 ## Configuration
@@ -132,9 +120,6 @@ to play audio, or `-out` to write a file instead.
 | `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
 | `DEEPSEEK_BASE_URL`     | Optional; overrides Baseten's shared Model APIs endpoint    |
 | `GEMMA_BASE_URL`        | The Gemma 4 deployment endpoint, `https://model-qvmmvrrq.api.baseten.co/environments/production/sync/v1` |
-| `LIVEKIT_URL`           | LiveKit host, used by `cmd/transcribe`                     |
-| `LIVEKIT_API_KEY`       | LiveKit credentials                                        |
-| `LIVEKIT_API_SECRET`    | LiveKit credentials                                        |
 | `STREAM_API_KEY`        | Stream credentials, used by `cmd/agent` and to say which app a browser joins |
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
@@ -558,10 +543,6 @@ audio minute, so a busy call costs more than the table suggests and a quiet one 
 # The API
 ROUTER_POSTGRES_DSN=postgres://... ROUTER_REDIS_ADDR=localhost:6379 \
   go run ./cmd/router
-
-# Transcribe a LiveKit room to the terminal
-go run ./cmd/transcribe -room my-room -target en-low-latency
-
 # Say something
 go run ./cmd/say -text "Hello from the router."
 

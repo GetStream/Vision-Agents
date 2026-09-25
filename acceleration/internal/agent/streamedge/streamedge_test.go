@@ -138,11 +138,9 @@ func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {
 
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
 
-	// More than five: an utterance ends with a flush, which is what carries the tail of one
-	// out of the pipeline. Here there is no tail to carry, so the last of them are quiet.
 	frames := s.drain(talker)
-	s.Require().Len(frames, 5+flushFrames, "100 ms of speech is five frames, and a flush ends it")
-	for _, frame := range frames[:5] {
+	s.Require().Len(frames, 5, "100 ms of speech is five frames")
+	for _, frame := range frames {
 		s.NotEmpty(frame)
 		s.NotEqual(silenceFrame, frame, "the tone is not silence")
 	}
@@ -226,7 +224,7 @@ func (s *StreamEdgeSuite) TestSpeechNotHeardYetIsThrownAwayOnBargeIn() {
 }
 
 func (s *StreamEdgeSuite) TestTheTailOfAnAbandonedReplyIsNotHeardOnTheNextOne() {
-	// Emptying the queue is not enough on its own: what the pipeline is holding belongs to
+	// Emptying the queue is not enough on its own: what the encoder is holding belongs to
 	// the reply being abandoned too, and would otherwise be the first thing the caller hears
 	// of the next one.
 	talker := newSpeaker(slog.New(slog.DiscardHandler))
@@ -239,7 +237,8 @@ func (s *StreamEdgeSuite) TestTheTailOfAnAbandonedReplyIsNotHeardOnTheNextOne() 
 	s.Require().NoError(talker.Write(speech(24_000, 100)))
 
 	heardMs := len(s.drain(talker)) * 20
-	s.LessOrEqual(heardMs, 100+flushFrames*20,
+	// The flush that ends the reply pads its last part-frame out to a whole one.
+	s.LessOrEqual(heardMs, 100+20,
 		"the abandoned reply was heard at the start of the next one")
 }
 
@@ -341,7 +340,7 @@ func (s *StreamEdgeSuite) TestEmptySpeechIsIgnored() {
 }
 
 func (s *StreamEdgeSuite) TestLeavingPartWayThroughAFrameIsNotAFailure() {
-	// The queue is thrown away on leaving, so the part-frame the pipeline is still holding
+	// The queue is thrown away on leaving, so the part-frame the encoder is still holding
 	// was never going to be heard. The encoder only takes whole frames and says so, and
 	// reporting that as a failure makes every call look like it ended badly.
 	talker := newSpeaker(slog.New(slog.DiscardHandler))

@@ -2,9 +2,8 @@
 //
 // It is the transport half of internal/agent: everything about credentials, tracks,
 // subscriptions and codecs lives here, so the agent itself only ever sees 16 kHz mono PCM
-// in and out. Inbound Opus is decoded and resampled by media-sdk, which is the same path
-// cmd/transcribe already uses for LiveKit; outbound PCM is encoded back to 48 kHz Opus for
-// the track the agent publishes.
+// in and out. Inbound Opus is decoded straight to 16 kHz; outbound PCM is encoded back to
+// 48 kHz Opus for the track the agent publishes.
 package streamedge
 
 import (
@@ -17,13 +16,13 @@ import (
 	"sync"
 
 	rtc "github.com/GetStream/getstream-go-webrtc"
+	"github.com/GetStream/getstream-go-webrtc/audio/opus"
+	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
 	"github.com/GetStream/getstream-go-webrtc/track"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
 	"github.com/GetStream/protocol/protobuf/video/sfu/signal_rpc"
 	"github.com/google/uuid"
-	"github.com/livekit/media-sdk"
-	lkmedia "github.com/livekit/server-sdk-go/v2/pkg/media"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -94,9 +93,9 @@ type Edge struct {
 	call   *rtc.Call
 
 	mu sync.Mutex
-	// listening holds the decoder per subscribed track, so a track that goes away stops
-	// being decoded.
-	listening map[string]*lkmedia.PCMRemoteTrack
+	// listening holds what stops the decoding of each subscribed track, so a track that
+	// goes away stops being decoded.
+	listening map[string]chan struct{}
 	// subscribed is the whole subscription list, because the SFU replaces it wholesale on
 	// every update rather than adding to it.
 	subscribed  []*signal_rpc.TrackSubscriptionDetails
@@ -142,7 +141,7 @@ func New(options Options) (*Edge, error) {
 		inbound:   emit.New[agent.InboundAudio](audioBuffer),
 		attending: emit.New[agent.Attendance](attendanceBuffer),
 		speaker:   newSpeaker(options.Logger),
-		listening: map[string]*lkmedia.PCMRemoteTrack{},
+		listening: map[string]chan struct{}{},
 	}, nil
 }
 
@@ -220,23 +219,17 @@ func (e *Edge) leave() error {
 	e.left = true
 	unregisters := e.unregisters
 	e.unregisters = nil
-	decoders := make([]*lkmedia.PCMRemoteTrack, 0, len(e.listening))
-	for _, decoder := range e.listening {
-		decoders = append(decoders, decoder)
+	for _, stop := range e.listening {
+		close(stop)
 	}
-	e.listening = map[string]*lkmedia.PCMRemoteTrack{}
+	e.listening = map[string]chan struct{}{}
 	e.mu.Unlock()
 
 	for _, unregister := range unregisters {
 		unregister()
 	}
-	// The channel closes before the decoders do, because closing a decoder waits for its
-	// decode goroutine: one blocked handing over its last chunk would never be let go of.
 	e.inbound.Close()
 	e.attending.Close()
-	for _, decoder := range decoders {
-		decoder.Close()
-	}
 
 	var failures []error
 	if err := e.speaker.Close(); err != nil {
@@ -324,30 +317,53 @@ func (e *Edge) listen(remote rtc.OnTrackReceived) {
 		participant.Name = remote.Participant.Name
 	}
 
-	decoder, err := lkmedia.NewPCMRemoteTrack(remote.Track,
-		&listener{inbound: e.inbound, participant: participant},
-		lkmedia.WithTargetSampleRate(stt.SampleRate),
-		lkmedia.WithTargetChannels(1),
-	)
+	reader, err := audiortc.NewTrackReader(remote.Track,
+		audiortc.ReaderConfig{Opus: opus.Config{SampleRate: stt.SampleRate}})
 	if err != nil {
 		e.logger.Error("could not decode a participant's audio",
 			"participant", participant.UserID, "error", err)
 		return
 	}
 
+	stop := make(chan struct{})
 	e.mu.Lock()
 	if e.left {
 		e.mu.Unlock()
-		decoder.Close()
 		return
 	}
 	if previous, ok := e.listening[remote.Track.ID()]; ok {
-		previous.Close()
+		close(previous)
 	}
-	e.listening[remote.Track.ID()] = decoder
+	e.listening[remote.Track.ID()] = stop
 	e.mu.Unlock()
 
 	e.logger.Debug("listening to a participant", "participant", participant.UserID)
+	go e.hear(reader, participant, stop)
+}
+
+// hear hands one participant's decoded audio to the agent until the track ends or stop is
+// closed.
+func (e *Edge) hear(reader *audiortc.TrackReader, participant stt.Participant, stop <-chan struct{}) {
+	defer reader.Close()
+	for pcm, err := range reader.Frames() {
+		if err != nil {
+			e.logger.Debug("stopped hearing a participant", "participant", participant.UserID, "error", err)
+			return
+		}
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		e.inbound.Send(agent.InboundAudio{
+			Participant: participant,
+			Audio: audio.PcmData{
+				Samples:    pcm.ToInt16().Int16(),
+				SampleRate: stt.SampleRate,
+				Channels:   1,
+			},
+		})
+	}
 }
 
 // watchForNewTracks subscribes to whatever is published after the agent joined, which is
@@ -457,23 +473,3 @@ func audioSubscriptions(state *sfu_models.CallState, selfUserID string) []*signa
 	return subscriptions
 }
 
-// listener hands one participant's decoded audio to the agent.
-type listener struct {
-	inbound     *emit.Emitter[agent.InboundAudio]
-	participant stt.Participant
-}
-
-func (l *listener) WriteSample(sample media.PCM16Sample) error {
-	// The decoder reuses its buffer, so what crosses to the agent has to be a copy.
-	l.inbound.Send(agent.InboundAudio{
-		Participant: l.participant,
-		Audio: audio.PcmData{
-			Samples:    slices.Clone(sample),
-			SampleRate: stt.SampleRate,
-			Channels:   1,
-		},
-	})
-	return nil
-}
-
-func (l *listener) Close() error { return nil }

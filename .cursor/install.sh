@@ -6,9 +6,7 @@ GO_VERSION=1.27.1
 PYTHON_VERSION=3.12.11
 
 sudo apt-get update
-# livekit media-sdk is cgo: libopus/libopusfile decode Opus and libsoxr resamples.
-sudo apt-get install -y postgresql redis-server pkg-config \
-  libopus-dev libopusfile-dev libsoxr-dev
+sudo apt-get install -y postgresql redis-server
 
 export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"
 if ! grep -q '/usr/local/go/bin' "$HOME/.bashrc"; then

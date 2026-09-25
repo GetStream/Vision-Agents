@@ -91,8 +91,6 @@ agent = Agent(
 
 **Vision:** [Ultralytics](https://visionagents.ai/integrations/ultralytics) · [Roboflow](https://visionagents.ai/integrations/roboflow) · [Moondream](https://visionagents.ai/integrations/moondream) · [TwelveLabs](https://github.com/GetStream/Vision-Agents/tree/main/plugins/twelvelabs) · [NVIDIA](https://visionagents.ai/integrations/nvidia) · [Decart](https://visionagents.ai/integrations/decart)
 
-**Avatars:** [LemonSlice](https://visionagents.ai/integrations/lemonslice)
-
 **Turn Detection:** [Vogent](https://visionagents.ai/integrations/vogent) · [Smart Turn](https://visionagents.ai/integrations/smart-turn)
 
 **Other:** [Twilio](https://github.com/GetStream/Vision-Agents/tree/main/examples/old/03_phone_and_rag_example) · [Telnyx](https://github.com/GetStream/Vision-Agents/tree/main/plugins/telnyx/examples) · [TurboPuffer](https://visionagents.ai/guides/rag)
