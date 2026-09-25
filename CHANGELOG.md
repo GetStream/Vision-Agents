@@ -292,6 +292,12 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+### Meta's Muse Spark 1.3 in the built-in LLM config
+
+`meta/muse-spark-1.3` is now in the default `router.yaml`, in the high-quality tier with
+image input, on Meta's Standard tier that does not train on requests. It needs
+`META_API_KEY`, and no shortcut prefers it: it is reached by name or as failover.
+
 ### An agent can be given a guardrail: `guardrail.md`
 
 A `guardrail.md` beside `instructions.md` says what the agent may be asked about. Every

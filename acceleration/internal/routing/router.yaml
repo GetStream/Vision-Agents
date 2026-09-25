@@ -1781,6 +1781,32 @@ llm:
         per_million_cached_input_tokens: 1.00
         per_million_output_tokens: 50.00
 
+    # Meta's Muse Spark 1.3 on their hosted Model API, 48 on the Artificial Analysis
+    # Intelligence Index at max effort and 45 at xhigh, and at around 230-250 output tokens
+    # a second the fastest model of that tier. It cannot be told not to think: none is a
+    # 400, so the provider asks for low when a request names no effort. Its tool_choice
+    # takes auto and nothing else, so a request with required fails if it is routed here.
+    # Nothing prefers it; it is reached by name or as failover in the quality tier.
+    #
+    # This is the Standard tier. Meta's commitments say they do not use Standard content to
+    # train their models, while muse-spark-1.3-contributor, a twentieth of the price, trains
+    # on prompts and completions. Content is kept "as described in the Terms and Privacy
+    # Policy", which names no window; zero data retention is something Meta's sales grant.
+    - provider: meta
+      model: muse-spark-1.3
+      description: "Meta's Muse Spark 1.3, the fastest of the top tier. Reads images, always thinks first, and costs less than Sol."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 1.25
+        per_million_cached_input_tokens: 0.15
+        per_million_output_tokens: 4.25
+
     # The open-weight models, and the hosts that serve them.
     #
     # The weights are the same wherever they run, so a second host of a model already
