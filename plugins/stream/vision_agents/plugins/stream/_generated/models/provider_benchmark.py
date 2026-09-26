@@ -27,6 +27,10 @@ class ProviderBenchmark:
             search_index (int | Unset): Artificial Analysis Search Index of a search provider, from 0 to 100. Example: 74.
             cost_per_task (float | Unset): US dollars one task of the search benchmark cost, searches and the answering
                 model's tokens together. Example: 0.127.
+            intelligence_index (int | Unset): Artificial Analysis Intelligence Index of a text model at the reasoning effort
+                the router asks for. Example: 33.
+            output_tokens_per_second (float | Unset): Tokens a text model writes per second on the host the router calls.
+                Example: 330.
     """
 
     elo: int | Unset = UNSET
@@ -35,6 +39,8 @@ class ProviderBenchmark:
     latency_ms: int | Unset = UNSET
     search_index: int | Unset = UNSET
     cost_per_task: float | Unset = UNSET
+    intelligence_index: int | Unset = UNSET
+    output_tokens_per_second: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,6 +55,10 @@ class ProviderBenchmark:
         search_index = self.search_index
 
         cost_per_task = self.cost_per_task
+
+        intelligence_index = self.intelligence_index
+
+        output_tokens_per_second = self.output_tokens_per_second
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -65,6 +75,10 @@ class ProviderBenchmark:
             field_dict["search_index"] = search_index
         if cost_per_task is not UNSET:
             field_dict["cost_per_task"] = cost_per_task
+        if intelligence_index is not UNSET:
+            field_dict["intelligence_index"] = intelligence_index
+        if output_tokens_per_second is not UNSET:
+            field_dict["output_tokens_per_second"] = output_tokens_per_second
 
         return field_dict
 
@@ -83,6 +97,10 @@ class ProviderBenchmark:
 
         cost_per_task = d.pop("cost_per_task", UNSET)
 
+        intelligence_index = d.pop("intelligence_index", UNSET)
+
+        output_tokens_per_second = d.pop("output_tokens_per_second", UNSET)
+
         provider_benchmark = cls(
             elo=elo,
             characters_per_second=characters_per_second,
@@ -90,6 +108,8 @@ class ProviderBenchmark:
             latency_ms=latency_ms,
             search_index=search_index,
             cost_per_task=cost_per_task,
+            intelligence_index=intelligence_index,
+            output_tokens_per_second=output_tokens_per_second,
         )
 
         provider_benchmark.additional_properties = d

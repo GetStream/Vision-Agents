@@ -1281,6 +1281,35 @@ impl Client {
         )
         .await
     }
+    /// What has happened to this app's rows since a cursor
+    ///
+    /// `GET /v1/data/changes` (`listDataChanges`).
+    pub async fn list_data_changes(
+        &self,
+        query: &ListDataChangesQuery,
+    ) -> Result<types::DataChangePage> {
+        self.send(
+            Method::GET,
+            "/v1/data/changes",
+            Some(query),
+            None::<&()>,
+            "listDataChanges",
+        )
+        .await
+    }
+    /// Write an export, or a batch of changes, into this deployment
+    ///
+    /// `POST /v1/data/import` (`importData`).
+    pub async fn import_data(&self, body: &serde_json::Value) -> Result<types::DataImport> {
+        self.send(
+            Method::POST,
+            "/v1/data/import",
+            None::<&()>,
+            Some(body),
+            "importData",
+        )
+        .await
+    }
     /// Draw pictures from a prompt, and return them
     ///
     /// `POST /v1/image/generations` (`generateImage`).
@@ -1437,6 +1466,58 @@ impl Client {
             None::<&()>,
             None::<&()>,
             "listPhoneVendors",
+        )
+        .await
+    }
+    /// The calling app's budget, data policy and prompt injection setting
+    ///
+    /// `GET /v1/policies/app` (`getAppPolicy`).
+    pub async fn get_app_policy(&self) -> Result<types::Policy> {
+        self.send(
+            Method::GET,
+            "/v1/policies/app",
+            None::<&()>,
+            None::<&()>,
+            "getAppPolicy",
+        )
+        .await
+    }
+    /// Replace the calling app's policy
+    ///
+    /// `PUT /v1/policies/app` (`updateAppPolicy`).
+    pub async fn update_app_policy(&self, body: &types::Policy) -> Result<types::Policy> {
+        self.send(
+            Method::PUT,
+            "/v1/policies/app",
+            None::<&()>,
+            Some(body),
+            "updateAppPolicy",
+        )
+        .await
+    }
+    /// The calling app's organization's policy
+    ///
+    /// `GET /v1/policies/organization` (`getOrganizationPolicy`).
+    pub async fn get_organization_policy(&self) -> Result<types::Policy> {
+        self.send(
+            Method::GET,
+            "/v1/policies/organization",
+            None::<&()>,
+            None::<&()>,
+            "getOrganizationPolicy",
+        )
+        .await
+    }
+    /// Replace the calling app's organization's policy
+    ///
+    /// `PUT /v1/policies/organization` (`updateOrganizationPolicy`).
+    pub async fn update_organization_policy(&self, body: &types::Policy) -> Result<types::Policy> {
+        self.send(
+            Method::PUT,
+            "/v1/policies/organization",
+            None::<&()>,
+            Some(body),
+            "updateOrganizationPolicy",
         )
         .await
     }
@@ -1944,6 +2025,15 @@ pub struct ListLibraryVoicesQuery {
     /// Only this provider's voices.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+}
+/// The query string `listDataChanges` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListDataChangesQuery {
+    /// The cursor the last page ended at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
 }
 /// The query string `listPhoneNumbers` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

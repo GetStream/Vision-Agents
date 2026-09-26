@@ -278,6 +278,19 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 	}
 }
 
+func TestTheApplicationsOwnSectionIsLeftToIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\napp:\n  sandbox_profile: support\n  tool_timeout_ms: 195000\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.Settings.App["sandbox_profile"] != "support" {
+		t.Errorf("the application's section read as %+v", folder.Settings.App)
+	}
+}
+
 func TestADirectoryHashesTheWayThePythonSDKHashesIt(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")

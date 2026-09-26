@@ -407,6 +407,131 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/data/export:
+    get:
+      operationId: exportData
+      summary: Everything this app has, as newline-delimited JSON
+      description: >
+        One line per row, `{"table": ..., "row": {...}}`, and a last line
+        `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is
+        also what says the export finished: a stream that broke halfway has no cursor
+        line, so half a copy cannot be mistaken for a whole one. The rows are read at one
+        moment rather than stitched together, and exporting starts recording changes so
+        that `listDataChanges` carries on from exactly where this left off.
+
+        Only the calling app's rows are here, and credentials are not: an API key secret,
+        an OAuth access token and an OAuth refresh token stay with the deployment that
+        holds them, so an imported plugin connection has to be authorized again. The audio
+        behind a voice sample and a call recording lives in an object bucket rather than in
+        this database; the rows naming those objects are here, and copying the bucket is
+        yours to do.
+
+        Server-side only, and refused entirely when the router runs with
+        ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
+      responses:
+        "200":
+          description: The export, streamed
+          content:
+            # Newline-delimited JSON, declared as text so that every client generator
+            # can express it. The server sends application/x-ndjson.
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: This deployment has no database to export from.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /v1/data/import:
+    post:
+      operationId: importData
+      summary: Write an export, or a batch of changes, into this deployment
+      description: >
+        Takes what `exportData` produced, and the same lines with a `change` in place of a
+        `row` for what `listDataChanges` returned. Every row is written under the calling
+        app whatever the file says, so an export from one app cannot be imported into
+        another's rows, and rows belonging to a customer through a parent are only written
+        where that parent is the caller's.
+
+        Importing is idempotent: the same export applied twice leaves what applying it
+        once would.
+
+        Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+      requestBody:
+        required: true
+        content:
+          # The file exportData produced: newline-delimited JSON, sent as it stands.
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: What was written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataImport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: This deployment has no database to import into.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /v1/data/changes:
+    get:
+      operationId: listDataChanges
+      summary: What has happened to this app's rows since a cursor
+      description: >
+        Oldest first, for replaying onto the deployment that took the export. A change is
+        only returned once every transaction older than it has committed, so following the
+        cursor never steps over a row, and a change carries the row as it now reads rather
+        than the columns that changed, so applying one twice is the same as applying it
+        once.
+
+        Changes are only recorded for an app that has exported, and only for as long as
+        the deployment's retention window. A cursor older than what is still kept is
+        answered 410, which means export again.
+
+        Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+      parameters:
+        - {name: after, in: query, description: The cursor the last page ended at., schema: {type: integer, format: int64}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 500}}
+      responses:
+        "200":
+          description: The changes since the cursor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataChangePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "410":
+          description: The changes since that cursor are no longer kept, so export again.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: This deployment has no database to read changes from.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
   /v1/policies/organization:
     get:
       operationId: getOrganizationPolicy
@@ -4773,6 +4898,71 @@ components:
       type: string
       enum: [hourly, daily, weekly, monthly]
       description: How often a budget resets. A week starts on Monday.
+
+    DataChange:
+      type: object
+      description: One thing that happened to one row of the calling app's data.
+      required: [seq, table, op, key, at]
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: Where this sits in the order changes happened, and the cursor to resume from.
+        table:
+          type: string
+          description: Which table the row is in.
+          example: agent_configs
+        op:
+          type: string
+          enum: [insert, update, delete]
+        key:
+          type: object
+          additionalProperties: true
+          description: What identifies the row, which is all a delete has.
+        row:
+          type: object
+          additionalProperties: true
+          description: The row as it now reads, absent for a delete and never carrying a credential.
+        at:
+          type: string
+          format: date-time
+
+    DataChangePage:
+      type: object
+      required: [changes, cursor]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataChange"
+        cursor:
+          type: integer
+          format: int64
+          description: What to pass as `after` next time.
+        caught_up:
+          type: boolean
+          description: >
+            Nothing else has happened yet, which is when a switchover is safe: point your
+            SDKs at the new deployment, wait for this to be true once more, and stop.
+
+    DataImport:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: integer
+          format: int64
+          description: How many rows were written.
+        tables:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: How many of them went into each table.
+        cursor:
+          type: integer
+          format: int64
+          description: The cursor the export named, to ask the other deployment for changes from.
 
     Endpointing:
       type: string

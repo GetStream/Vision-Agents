@@ -182,6 +182,12 @@ module GetStream
           body: nil, body_required: false,
           socket: true, client_accessible: false
         }.freeze,
+        "exportData" => {
+          method: :get, path: "/v1/data/export",
+          path_params: [].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "forkSession" => {
           method: :post, path: "/v1/agents/sessions/{id}/fork",
           path_params: %w[id].freeze, query: [].freeze,
@@ -209,6 +215,12 @@ module GetStream
         "getAgentLog" => {
           method: :get, path: "/v1/agents/logs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getAppPolicy" => {
+          method: :get, path: "/v1/policies/app",
+          path_params: [].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -269,6 +281,12 @@ module GetStream
         "getKnowledgeUrl" => {
           method: :get, path: "/v1/agents/knowledge/urls/{id}",
           path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getOrganizationPolicy" => {
+          method: :get, path: "/v1/policies/organization",
+          path_params: [].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -356,6 +374,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "importData" => {
+          method: :post, path: "/v1/data/import",
+          path_params: [].freeze, query: [].freeze,
+          body: nil, body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "indexKnowledgeUrl" => {
           method: :post, path: "/v1/agents/knowledge/urls/{id}/index",
           path_params: %w[id].freeze, query: [].freeze,
@@ -413,6 +437,12 @@ module GetStream
         "listConfigPlugins" => {
           method: :get, path: "/v1/agents/configs/{id}/plugins",
           path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "listDataChanges" => {
+          method: :get, path: "/v1/data/changes",
+          path_params: [].freeze, query: %w[after limit].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -692,6 +722,18 @@ module GetStream
           body: "AgentConfigRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "updateAppPolicy" => {
+          method: :put, path: "/v1/policies/app",
+          path_params: [].freeze, query: [].freeze,
+          body: "Policy", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "updateOrganizationPolicy" => {
+          method: :put, path: "/v1/policies/organization",
+          path_params: [].freeze, query: [].freeze,
+          body: "Policy", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "updateRouterConfig" => {
           method: :put, path: "/v1/router/configs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -769,6 +811,10 @@ module GetStream
           properties: %w[e164 vendor country region locality number_type capabilities monthly_cost_micros].freeze,
           required: %w[e164 vendor country capabilities].freeze, open: false
         }.freeze,
+        "Budget" => {
+          properties: %w[limit_micros interval spent_micros resets_at].freeze,
+          required: %w[limit_micros interval].freeze, open: false
+        }.freeze,
         "BuyNumberRequest" => {
           properties: %w[vendor e164 country tags].freeze,
           required: %w[vendor e164].freeze, open: false
@@ -840,6 +886,18 @@ module GetStream
         "CreateSessionRequest" => {
           properties: %w[conversation_id persist_conversation context_truncated call_id text config_id agent incognito title description project custom model_overwrites call_type user_id user_name agent_id instructions greeting navigating llm stt tts sts subagent search voice languages keyterms max_tokens tasks sandbox backchannel min_confidence skills skill_names tools tool_timeout_ms tags memory phone video].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "DataChange" => {
+          properties: %w[seq table op key row at].freeze,
+          required: %w[seq table op key at].freeze, open: false
+        }.freeze,
+        "DataChangePage" => {
+          properties: %w[changes cursor caught_up].freeze,
+          required: %w[changes cursor].freeze, open: false
+        }.freeze,
+        "DataImport" => {
+          properties: %w[rows tables cursor].freeze,
+          required: %w[rows].freeze, open: false
         }.freeze,
         "DataPolicy" => {
           properties: %w[allow_training retention].freeze,
@@ -973,6 +1031,10 @@ module GetStream
           properties: %w[plugin_id name category description instance_required instance_hint instance_url status].freeze,
           required: %w[plugin_id name status].freeze, open: false
         }.freeze,
+        "Policy" => {
+          properties: %w[budget data_policy prompt_injection].freeze,
+          required: [].freeze, open: false
+        }.freeze,
         "PrepareVoiceRequest" => {
           properties: %w[providers].freeze,
           required: [].freeze, open: false
@@ -982,16 +1044,20 @@ module GetStream
           required: %w[vendor digits].freeze, open: false
         }.freeze,
         "Provider" => {
-          properties: %w[provider model description languages realtime tier health usage_share benchmark].freeze,
+          properties: %w[provider model description languages realtime tier health usage_share benchmark price].freeze,
           required: %w[provider model languages realtime tier health].freeze, open: false
         }.freeze,
         "ProviderBenchmark" => {
-          properties: %w[elo characters_per_second word_error_rate latency_ms search_index cost_per_task].freeze,
+          properties: %w[elo characters_per_second word_error_rate latency_ms search_index cost_per_task intelligence_index output_tokens_per_second].freeze,
           required: [].freeze, open: false
         }.freeze,
         "ProviderHealth" => {
           properties: %w[available requests errors error_rate latency_ms_avg].freeze,
           required: %w[available requests errors error_rate latency_ms_avg].freeze, open: false
+        }.freeze,
+        "ProviderPrice" => {
+          properties: %w[per_million_input_tokens per_million_output_tokens].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "RecordingSource" => {
           properties: %w[url audio].freeze,

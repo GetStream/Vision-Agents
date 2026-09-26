@@ -1,5 +1,0 @@
-# A router on a laptop, against the Postgres and Redis that compose.yaml starts.
-# Anything already set, by .env or the shell, wins over this file.
-ROUTER_ADDR: ":8080"
-ROUTER_POSTGRES_DSN: postgres://postgres:postgres@localhost:55432/model_router?sslmode=disable
-ROUTER_REDIS_ADDR: localhost:56379

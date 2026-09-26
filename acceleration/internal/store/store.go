@@ -30,6 +30,9 @@ import (
 type Store struct {
 	db       *bun.DB
 	LogDrops atomic.Int64
+	// shapes is what each table an export carries looks like, read from the catalogue
+	// once rather than kept in a list here that a migration could leave behind.
+	shapes tableShapes
 }
 
 // Open connects to Postgres using a pgdriver DSN, for example
@@ -61,7 +64,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := goose.UpContext(ctx, s.db.DB, "."); err != nil {
 		return fmt.Errorf("store: migrate: %w", err)
 	}
-	return nil
+	// Attached here rather than in a migration of their own, so that a table added later
+	// is covered by the deployment reaching it rather than by somebody remembering.
+	return s.WatchDataChanges(ctx)
 }
 
 // RecordRequest stores one request. Latency is optional because a request that failed

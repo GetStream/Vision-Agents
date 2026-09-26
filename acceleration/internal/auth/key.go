@@ -4,9 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // Environment separates a key that spends money from one that does not. It is in the
@@ -68,6 +72,26 @@ func ValidKey(key string) bool {
 		return false
 	}
 	return sum == fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(id)))
+}
+
+// ServerToken mints the token a process the customer runs presents beside its key.
+//
+// It carries `server: true` and names no user, which is what a backend is: the header
+// says so as well, and both are required because neither can promote a request on its
+// own. The expiry is short because nothing but the process that made it ever holds it.
+func ServerToken(secret string, lifetime time.Duration) (string, error) {
+	if secret == "" {
+		return "", errors.New("auth: a secret is required to sign a token")
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"server": true,
+		"exp":    time.Now().Add(lifetime).Unix(),
+		"iat":    time.Now().Unix(),
+	}).SignedString([]byte(secret))
+	if err != nil {
+		return "", fmt.Errorf("auth: sign token: %w", err)
+	}
+	return token, nil
 }
 
 // Last4 is all of a secret the dashboard ever shows again.

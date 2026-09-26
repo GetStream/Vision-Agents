@@ -139,6 +139,14 @@ type Options struct {
 	PublicURL string
 	// DashboardURL is where a finished plugin login sends the browser.
 	DashboardURL string
+	// AuthMode is how this deployment decided that, which a handler needs when the mode
+	// itself is the answer: moving a customer's data is refused outright in noauth,
+	// where the tenant is a header rather than something anybody proved. Empty means
+	// noauth, matching Auth being absent.
+	AuthMode auth.Mode
+	// DataRetention is how long a customer moving away has to finish, which is how long
+	// their changes are recorded for.
+	DataRetention time.Duration
 	// Auth decides who a request is from. Absent means noauth, which reads the customer
 	// header and takes every caller for that customer's own backend. That is the right
 	// default for a server built in code rather than from configuration — a test, or a
@@ -183,6 +191,8 @@ type Server struct {
 	dashboardURL  string
 	oauth         *plugins.Auth
 	authenticator auth.Authenticator
+	authMode      auth.Mode
+	dataRetention time.Duration
 	quota         *quota.Limiter
 	policies      *policy.Enforcer
 	trusted       []netip.Prefix
@@ -234,6 +244,17 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 	}
 
+	authMode := options.AuthMode
+	if authMode == "" {
+		authMode = auth.NoAuth
+	}
+	// A deployment that names no window still records changes for somebody moving, for
+	// as long as the settings say by default.
+	retention := options.DataRetention
+	if retention <= 0 {
+		retention = 7 * 24 * time.Hour
+	}
+
 	serverSide, err := serverSideRoutes()
 	if err != nil {
 		return nil, err
@@ -264,6 +285,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		publicURL:     options.PublicURL,
 		dashboardURL:  options.DashboardURL,
 		authenticator: authenticator,
+		authMode:      authMode,
+		dataRetention: retention,
 		quota:         options.Quota,
 		policies:      options.Policies,
 		trusted:       options.TrustedProxies,
@@ -291,6 +314,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/agents/logs", s.listAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/stream", s.streamAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
+	mux.HandleFunc("GET /v1/data/export", s.exportData)
+	mux.HandleFunc("POST /v1/data/import", s.importData)
+	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
 	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)
@@ -425,6 +451,9 @@ var unspecifiedRoutes = map[string]bool{
 	"GET /v1/agents/logs":                 false,
 	"GET /v1/agents/logs/stream":          false,
 	"GET /v1/agents/logs/{id}":            false,
+	"GET /v1/data/export":                 false,
+	"POST /v1/data/import":                false,
+	"GET /v1/data/changes":                false,
 	// Reached before there is a caller to classify: the browser arrives from the identity
 	// provider and the state parameter is the secret.
 	"GET /v1/agents/plugins/callback": true,

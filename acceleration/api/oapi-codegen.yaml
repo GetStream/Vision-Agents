@@ -22,3 +22,9 @@ output-options:
     - listAgentLogs
     - getAgentLog
     - streamAgentLogs
+
+    # An export streams rows out and an import streams them in, neither of which a
+    # strict server can hand back or take. They are written by hand in datamove.go.
+    - exportData
+    - importData
+    - listDataChanges

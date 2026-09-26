@@ -266,6 +266,49 @@ func (s *DispatchSuite) nextCall(connection *websocket.Conn) string {
 	return id
 }
 
+func (s *DispatchSuite) TestHostedToolsNeedAConfigTheCustomerHolds() {
+	connection := s.connect("acme", "")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "host_tools", "config_id": "support",
+		"tools": []map[string]any{{"name": "investigate_sdk", "description": "Read SDK source"}},
+	}))
+
+	var reply map[string]any
+	s.Require().NoError(connection.ReadJSON(&reply))
+	s.Equal("hosting_refused", reply["type"], "without a store there is no config to hold")
+	tools, _ := s.pool.HostedTools("acme", "support")
+	s.Empty(tools)
+}
+
+func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
+	connection := s.connect("acme", "")
+	worker := s.pool.Workers("acme")[0]
+	s.Require().NoError(s.pool.Host(worker, "support", []dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+
+	type answer struct {
+		output string
+		err    error
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		output, err := s.pool.RunHosted(s.T().Context(), "acme", "support",
+			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk", Arguments: `{"sdk":"android"}`})
+		answered <- answer{output, err}
+	}()
+
+	var call map[string]any
+	s.Require().NoError(connection.ReadJSON(&call))
+	s.Equal("tool_call", call["type"])
+	s.Equal("call-1", call["id"])
+	s.Equal("session-1", call["session_id"])
+	s.Equal(`{"sdk":"android"}`, call["arguments"])
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "tool_result", "id": "call-1", "output": "targetSdkVersion 35"}))
+	got := <-answered
+	s.Require().NoError(got.err)
+	s.Equal("targetSdkVersion 35", got.output)
+}
+
 func (s *DispatchSuite) TestADeploymentThatDoesNotDispatchSaysSo() {
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)

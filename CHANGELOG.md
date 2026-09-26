@@ -292,6 +292,42 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+### A dispatch worker can run tools for every session on an agent config
+
+A worker on `/v1/dispatch` can send `host_tools` naming one of its customer's agent configs
+and the tools it runs for it. Every session opened on that config, whoever opened it, is then
+offered those tools, and each call reaches the worker as a `tool_call` frame and is answered
+with `tool_result`, within the worker's own `timeout_ms` (two minutes by default). This is
+how a session a browser opens gets a tool only a backend can run, such as reading source on
+a VM. A tool the session's own caller declares under the same name wins, a config the
+customer does not hold is refused with `hosting_refused`, and a call waiting on a worker
+that disconnects fails at once. The Go SDK exposes it as `Dispatch.Host(configID,
+functions, timeout)`.
+
+`agent.yaml` may carry an `app:` mapping, the application's own settings. Both SDKs leave
+it unread and never send it, and it is the one top-level key they do not refuse.
+
+### The router is configured by a YAML file, and can hand a customer to another deployment
+
+`router --config /etc/router.yaml` (or `ROUTER_CONFIG_FILE`) is now where a deployment's
+settings live: `postgres.dsn`, `redis.addr`, `auth.mode`, `cors_origins` and the rest.
+Naming no file loads one of `local`, `testing` or `staging` embedded in the binary, by
+`ROUTER_ENV`, which replaces `internal/environment` and renames `development` to `local`.
+Every `ROUTER_` variable still wins over the file, so nothing in an existing chart, compose
+file or `.env` has to change.
+
+`router keys create` mints the first credential of an `api_key` deployment, which has no
+way to issue one over HTTP, and prints the secret once. `--app-id` reuses the app id a
+customer already has.
+
+Three new server-side endpoints move a customer between two deployments:
+`GET /v1/data/export` streams everything the calling app has and ends with a cursor,
+`POST /v1/data/import` writes it back, and `GET /v1/data/changes` replays what has happened
+since that cursor. `router replicate --from <url>` does the copy and then follows the
+source, so pointing the SDKs at the new deployment loses no writes. The customer is always
+the authenticated caller, key secrets and OAuth tokens are never exported, and all three
+are refused outright in `noauth` mode, where the tenant is only a header.
+
 ### Budgets, data policies and prompt injection screening per organization and app
 
 `/v1/policies/app` and `/v1/policies/organization` set a spend cap reset hourly, daily,

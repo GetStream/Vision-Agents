@@ -51,6 +51,13 @@ from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_tags import CreateSessionRequestTags
+from .data_change import DataChange
+from .data_change_key import DataChangeKey
+from .data_change_op import DataChangeOp
+from .data_change_page import DataChangePage
+from .data_change_row import DataChangeRow
+from .data_import import DataImport
+from .data_import_tables import DataImportTables
 from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
 from .endpointing import Endpointing
@@ -125,6 +132,7 @@ from .press_digits_request import PressDigitsRequest
 from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
+from .provider_price import ProviderPrice
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
 from .respond_request import RespondRequest
@@ -275,6 +283,13 @@ __all__ = (
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
     "CreateSessionRequestTags",
+    "DataChange",
+    "DataChangeKey",
+    "DataChangeOp",
+    "DataChangePage",
+    "DataChangeRow",
+    "DataImport",
+    "DataImportTables",
     "DataPolicy",
     "DecisionKind",
     "Endpointing",
@@ -349,6 +364,7 @@ __all__ = (
     "Provider",
     "ProviderBenchmark",
     "ProviderHealth",
+    "ProviderPrice",
     "RecordingSource",
     "RecordingStatus",
     "RespondRequest",

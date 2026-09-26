@@ -110,9 +110,13 @@ type Worker struct {
 	// audio, and making somebody wait for a phone line to free up before their message is
 	// read would be the wrong queue entirely.
 	messages chan Message
+	// toolCalls is the hosted calls to deliver, and results the calls waiting on an
+	// answer, keyed by the id the model gave each.
+	toolCalls chan ToolCall
 
-	mu   sync.Mutex
-	load Load
+	mu      sync.Mutex
+	load    Load
+	results map[string]chan ToolResult
 }
 
 // Calls is what the worker's connection reads from. It is closed when the worker is
@@ -148,13 +152,19 @@ type Pool struct {
 	workers map[string][]*Worker
 	cursors map[string]int
 	next    int
+	// hosted is the tools workers run for other sessions, by customer and then agent
+	// config, and toolCursors whose turn it is for each tool.
+	hosted      map[string]map[string][]*hosting
+	toolCursors map[string]int
 }
 
 // NewPool returns an empty pool.
 func NewPool() *Pool {
 	return &Pool{
-		workers: make(map[string][]*Worker),
-		cursors: make(map[string]int),
+		workers:     make(map[string][]*Worker),
+		cursors:     make(map[string]int),
+		hosted:      make(map[string]map[string][]*hosting),
+		toolCursors: make(map[string]int),
 	}
 }
 
@@ -174,6 +184,8 @@ func (p *Pool) Register(customerID string, capacity int) (*Worker, func()) {
 		CustomerID: customerID,
 		calls:      make(chan Call, capacity),
 		messages:   make(chan Message, capacity),
+		toolCalls:  make(chan ToolCall, toolQueue),
+		results:    map[string]chan ToolResult{},
 	}
 	p.workers[customerID] = append(p.workers[customerID], worker)
 	p.mu.Unlock()
@@ -257,6 +269,8 @@ func (p *Pool) release(worker *Worker) {
 		p.workers[worker.CustomerID] = append(waiting[:index:index], waiting[index+1:]...)
 		close(worker.calls)
 		close(worker.messages)
+		close(worker.toolCalls)
+		p.unhost(worker)
 		break
 	}
 	if len(p.workers[worker.CustomerID]) == 0 {

@@ -123,6 +123,9 @@ type Settings struct {
 	Keyterms []string          `yaml:"keyterms"`
 	Tags     map[string]string `yaml:"tags"`
 	Video    *VideoSettings    `yaml:"video"`
+	// App is the application's own section of the declaration, which this SDK never reads
+	// and the backend is never sent. It is the one place an unknown key is not refused.
+	App map[string]any `yaml:"app"`
 }
 
 // VideoSettings is which video a skill that captures it sees.

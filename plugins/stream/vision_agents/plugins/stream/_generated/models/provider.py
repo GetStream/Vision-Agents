@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.provider_benchmark import ProviderBenchmark
     from ..models.provider_health import ProviderHealth
+    from ..models.provider_price import ProviderPrice
 
 
 T = TypeVar("T", bound="Provider")
@@ -35,6 +36,8 @@ class Provider:
             keeps no statistics.
         benchmark (ProviderBenchmark | Unset): What Artificial Analysis measured for this model, refreshed by hand
             rather than live. A field is absent when the model was not measured on it.
+        price (ProviderPrice | Unset): What this deployment is billed for the model, in US dollars. A rate is absent
+            when the model is not billed by that unit.
     """
 
     provider: str
@@ -46,6 +49,7 @@ class Provider:
     description: str | Unset = UNSET
     usage_share: float | Unset = UNSET
     benchmark: ProviderBenchmark | Unset = UNSET
+    price: ProviderPrice | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +73,10 @@ class Provider:
         if not isinstance(self.benchmark, Unset):
             benchmark = self.benchmark.to_dict()
 
+        price: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.price, Unset):
+            price = self.price.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -87,6 +95,8 @@ class Provider:
             field_dict["usage_share"] = usage_share
         if benchmark is not UNSET:
             field_dict["benchmark"] = benchmark
+        if price is not UNSET:
+            field_dict["price"] = price
 
         return field_dict
 
@@ -94,6 +104,7 @@ class Provider:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.provider_benchmark import ProviderBenchmark
         from ..models.provider_health import ProviderHealth
+        from ..models.provider_price import ProviderPrice
 
         d = dict(src_dict)
         provider = d.pop("provider")
@@ -119,6 +130,13 @@ class Provider:
         else:
             benchmark = ProviderBenchmark.from_dict(_benchmark)
 
+        _price = d.pop("price", UNSET)
+        price: ProviderPrice | Unset
+        if isinstance(_price, Unset):
+            price = UNSET
+        else:
+            price = ProviderPrice.from_dict(_price)
+
         provider = cls(
             provider=provider,
             model=model,
@@ -129,6 +147,7 @@ class Provider:
             description=description,
             usage_share=usage_share,
             benchmark=benchmark,
+            price=price,
         )
 
         provider.additional_properties = d

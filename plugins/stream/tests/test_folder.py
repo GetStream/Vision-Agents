@@ -126,6 +126,12 @@ class TestFolder:
         with pytest.raises(ValueError, match="lmm"):
             load(root)
 
+    def test_the_applications_own_section_is_left_to_it(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\napp:\n  sandbox_profile: support\n")
+
+        assert load(root).settings.app == {"sandbox_profile": "support"}
+
     def test_video_selection_is_read_from_a_nested_block(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(

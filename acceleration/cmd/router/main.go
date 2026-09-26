@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -24,8 +23,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/environment"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
@@ -36,8 +35,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
@@ -61,59 +60,8 @@ import (
 var release string
 
 const (
-	addressEnvVar     = "ROUTER_ADDR"
-	postgresEnvVar    = "ROUTER_POSTGRES_DSN"
-	redisEnvVar       = "ROUTER_REDIS_ADDR"
-	configEnvVar      = "ROUTER_CONFIG"
-	phoneConfigEnvVar = "ROUTER_PHONE_CONFIG"
-	// publicURLEnvVar is where this service is reachable from the internet, which the
-	// telephony vendors that fetch a call plan on answer need in order to fetch it. It is
-	// not ROUTER_ADDR: that is where to listen, which behind a load balancer is not where
-	// anyone reaches it.
-	publicURLEnvVar = "ROUTER_PUBLIC_URL"
-	// streamSecretEnvVar signs the call events Stream sends to the inbound hook. It is the
-	// app secret rather than a webhook-specific one, and it also signs the tokens a
-	// browser joins a call with.
-	streamSecretEnvVar = "STREAM_API_SECRET"
-	// streamKeyEnvVar names the Stream app those tokens are for, which a browser needs in
-	// order to join with one.
-	streamKeyEnvVar = "STREAM_API_KEY"
-	// corsOriginsEnvVar names the browser origins allowed to call this API directly,
-	// comma separated. It exists for the dashboard, which talks to the router rather than
-	// through a server of its own. Unset means no browser may.
-	corsOriginsEnvVar = "ROUTER_CORS_ORIGINS"
-	// authModeEnvVar decides who the router believes a caller is, and defaults to
-	// "api_key", which verifies a key and the token signed with its secret. "proxy"
-	// trusts the headers something in front of it sets and is only safe when nothing else
-	// can reach it. "noauth" asks for nothing and takes every caller for the customer's
-	// own backend, which is for a laptop. "custom" is an authenticator a deployment
-	// embedding this module supplies, and the stock binary has none.
-	authModeEnvVar = "ROUTER_AUTH_MODE"
-	// authKEKEnvVar unseals the stored key secrets. It lives outside the database on
-	// purpose: it is what makes a leaked backup ciphertext rather than credentials.
-	authKEKEnvVar = "ROUTER_AUTH_KEK"
-	// messageLimitEnvVar and tokenLimitEnvVar cap what one of a customer's end users may
-	// spend in a day. They apply to callers holding a token minted for a user, not to a
-	// backend the customer runs for itself, which is trusted with its own spend. Either at
-	// 0 turns that half off; both off, or no Redis to count in, caps nothing.
-	messageLimitEnvVar = "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY"
-	tokenLimitEnvVar   = "ROUTER_RATE_LIMIT_TOKENS_PER_DAY"
-	// trustedProxiesEnvVar names the CIDR ranges this deployment's own proxies sit in,
-	// comma separated, and decides how much of X-Forwarded-For is believed. Unset means
-	// none of it is and the connection's address is used, which is right with no proxy in
-	// front and wrong behind one, where every caller would look like the load balancer.
-	trustedProxiesEnvVar = "ROUTER_TRUSTED_PROXIES"
-	// defaultMessageLimit and defaultTokenLimit are a day's allowance for one end user.
-	// The token limit is a backstop under the message count rather than a second cap: at
-	// roughly 2,500 tokens for a turn carrying instructions and some history, 200 messages
-	// is about 500,000 tokens, so it should only be reached by somebody making a few
-	// enormous requests rather than by somebody having 200 ordinary conversations.
-	defaultMessageLimit = 200
-	defaultTokenLimit   = 500_000
-	logLevelEnvVar      = "ROUTER_LOG_LEVEL"
-	defaultAddress      = ":8080"
-	shutdownGrace       = 10 * time.Second
-	readHeaderTimeout   = 10 * time.Second
+	shutdownGrace     = 10 * time.Second
+	readHeaderTimeout = 10 * time.Second
 	// crawlTimeout bounds reading one page into a knowledge base. It is generous compared
 	// to a search because nobody is on the phone waiting for it: a page that has to be
 	// crawled live rather than served from an index takes seconds, and giving up on it
@@ -129,15 +77,24 @@ const (
 	sentryFlushTimeout = 2 * time.Second
 )
 
+// usage is what the binary does besides serving.
+const usage = `usage: router [--config path] [command]
+
+  serve                 serve the API (the default)
+  keys create           mint a credential for an app, printing the secret once
+  replicate             copy another deployment's data here and follow its changes
+`
+
 func main() {
-	env, envErr := environment.Apply()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
+	path, command, args := arguments(os.Args[1:])
+	settings, from, configErr := config.Load(path)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel(settings)}))
 	slog.SetDefault(logger)
-	if envErr != nil {
-		logger.Error("router stopped", "error", envErr)
+	if configErr != nil {
+		logger.Error("router stopped", "error", configErr)
 		os.Exit(1)
 	}
-	logger.Info("loaded environment", "env", env)
+	logger.Info("loaded configuration", "from", from)
 
 	// Dsn is deliberately not set. The SDK reads SENTRY_DSN and
 	// SENTRY_ENVIRONMENT itself, so the DSN stays out of this repository and an
@@ -154,7 +111,7 @@ func main() {
 		logger.Error("sentry is disabled", "error", err)
 	}
 
-	if err := run(logger); err != nil {
+	if err := dispatchCommand(command, args, settings, logger); err != nil {
 		logger.Error("router stopped", "error", err)
 		// Reported here because a startup failure never reaches an HTTP handler,
 		// so the middleware in internal/api would never see it.
@@ -167,11 +124,63 @@ func main() {
 	sentry.Flush(sentryFlushTimeout)
 }
 
-// logLevel reads ROUTER_LOG_LEVEL. Debug is where the turn-taking decisions are: what was
-// heard, what the flow controller made of it, and why the agent did or did not speak.
-func logLevel() slog.Level {
+// arguments pulls --config off the command line, wherever it sits, and returns the
+// command and what is left for it.
+//
+// It is read by hand rather than by a flag set because the subcommands have flags of
+// their own, and --config belongs to all of them: it says which deployment is being
+// talked about before anything decides what to do with it.
+func arguments(argv []string) (path, command string, rest []string) {
+	for index := 0; index < len(argv); index++ {
+		argument := argv[index]
+		switch {
+		case argument == "--config" || argument == "-config":
+			if index+1 < len(argv) {
+				path = argv[index+1]
+				index++
+			}
+		case strings.HasPrefix(argument, "--config="):
+			path = strings.TrimPrefix(argument, "--config=")
+		case command == "" && !strings.HasPrefix(argument, "-"):
+			command = argument
+		default:
+			rest = append(rest, argument)
+		}
+	}
+	if command == "" {
+		command = "serve"
+	}
+	return path, command, rest
+}
+
+// dispatchCommand runs what the command line asked for.
+func dispatchCommand(command string, args []string, settings config.Config, logger *slog.Logger) error {
+	switch command {
+	case "serve":
+		return run(settings, logger)
+	case "keys":
+		return runKeys(args, settings, logger)
+	case "replicate":
+		return runReplicate(args, settings, logger)
+	case "help", "-h", "--help":
+		fmt.Print(usage)
+		return nil
+	default:
+		return fmt.Errorf("unknown command %q\n\n%s", command, usage)
+	}
+}
+
+// logLevel reads the level to log at. Debug is where the turn-taking decisions are: what
+// was heard, what the flow controller made of it, and why the agent did or did not speak.
+//
+// It is read from the settings when they loaded and from the environment when they did
+// not, so that the failure to load them is itself logged at the level asked for.
+func logLevel(settings config.Config) slog.Level {
 	var level slog.Level
-	text := os.Getenv(logLevelEnvVar)
+	text := settings.LogLevel
+	if text == "" {
+		text = os.Getenv("ROUTER_LOG_LEVEL")
+	}
 	if text == "" {
 		return slog.LevelInfo
 	}
@@ -181,55 +190,13 @@ func logLevel() slog.Level {
 	return level
 }
 
-func dashboardBaseURL() string {
-	if value := os.Getenv("DASHBOARD_BASE_URL"); value != "" {
-		return value
-	}
-	return "http://localhost:3000"
-}
-
-// dailyLimits reads what one end user may spend in a day, defaulting to the built-in
-// allowance and refusing a value that is not a number.
-//
-// An unreadable limit is an error rather than a fallback to the default: a deployment that
-// meant to raise the cap and mistyped it would otherwise run on the low one and only find
-// out from a customer.
-func dailyLimits() (quota.Limits, error) {
-	messages, err := limitFrom(messageLimitEnvVar, defaultMessageLimit)
-	if err != nil {
-		return quota.Limits{}, err
-	}
-	tokens, err := limitFrom(tokenLimitEnvVar, defaultTokenLimit)
-	if err != nil {
-		return quota.Limits{}, err
-	}
-	return quota.Limits{MessagesPerDay: messages, TokensPerDay: tokens}, nil
-}
-
-// limitFrom reads one limit. Zero is allowed and means the limit is not enforced, which is
-// how a deployment turns one of the two off.
-func limitFrom(name string, fallback int64) (int64, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return fallback, nil
-	}
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be a whole number of units a day, got %q", name, raw)
-	}
-	if value < 0 {
-		return 0, fmt.Errorf("%s cannot be negative, got %d", name, value)
-	}
-	return value, nil
-}
-
 // newAuthenticator builds the authenticator the deployment's mode asks for.
 //
 // api_key needs both a store to look keys up in and the key that unseals their secrets, and
 // says which is missing rather than starting and refusing every request for a reason only
 // visible in a 401.
-func newAuthenticator(pgStore *store.Store, logger *slog.Logger) (auth.Authenticator, error) {
-	mode, err := auth.ParseMode(os.Getenv(authModeEnvVar))
+func newAuthenticator(settings config.Config, pgStore *store.Store, logger *slog.Logger) (auth.Authenticator, error) {
+	mode, err := auth.ParseMode(settings.Auth.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -239,26 +206,25 @@ func newAuthenticator(pgStore *store.Store, logger *slog.Logger) (auth.Authentic
 		logger.Warn("running without authentication: anyone who can reach this router can "+
 			"read and spend any customer's account, and every one of them is treated as "+
 			"that customer's own backend, so nothing but a laptop should run this way",
-			"mode", auth.NoAuth, "set", authModeEnvVar)
+			"mode", auth.NoAuth, "set", "auth.mode")
 		return auth.New(mode, nil)
 	case auth.Proxy:
 		logger.Warn("authenticating nothing: the caller is whoever the headers in front of "+
 			"this router say, so only a proxy that overwrites them should be able to reach it",
-			"mode", auth.Proxy, "set", authModeEnvVar)
+			"mode", auth.Proxy, "set", "auth.mode")
 		return auth.New(mode, nil)
 	case auth.Custom:
-		return nil, fmt.Errorf("%s=%s has no authenticator in this binary: a deployment "+
-			"answering for itself embeds the module and passes api.WithAuthenticator",
-			authModeEnvVar, auth.Custom)
+		return nil, fmt.Errorf("auth.mode=%s has no authenticator in this binary: a deployment "+
+			"answering for itself embeds the module and passes api.WithAuthenticator", auth.Custom)
 	}
 
 	if pgStore == nil {
-		return nil, fmt.Errorf("%s=%s needs %s, because that is where the keys are",
-			authModeEnvVar, auth.APIKey, postgresEnvVar)
+		return nil, fmt.Errorf("auth.mode=%s needs postgres.dsn, because that is where the keys are",
+			auth.APIKey)
 	}
-	sealer, err := auth.NewSealer(os.Getenv(authKEKEnvVar))
+	sealer, err := auth.NewSealer(settings.Auth.KEK)
 	if err != nil {
-		return nil, fmt.Errorf("%s=%s needs %s: %w", authModeEnvVar, auth.APIKey, authKEKEnvVar, err)
+		return nil, fmt.Errorf("auth.mode=%s needs auth.kek: %w", auth.APIKey, err)
 	}
 
 	return auth.New(mode, func(ctx context.Context, key string) (auth.App, error) {
@@ -295,11 +261,11 @@ func newAuthenticator(pgStore *store.Store, logger *slog.Logger) (auth.Authentic
 	})
 }
 
-func run(logger *slog.Logger) error {
+func run(settings config.Config, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	config, err := routing.LoadConfig(os.Getenv(configEnvVar))
+	capabilities, err := routing.LoadConfig(settings.RoutingConfig)
 	if err != nil {
 		return err
 	}
@@ -307,29 +273,29 @@ func run(logger *slog.Logger) error {
 	// Postgres and Redis are optional so the API can be brought up for inspection before
 	// the data stores exist. /health reports what is missing.
 	var pgStore *store.Store
-	if dsn := os.Getenv(postgresEnvVar); dsn != "" {
-		pgStore, err = store.Open(dsn)
+	if settings.Postgres.DSN != "" {
+		pgStore, err = openStore(ctx, settings)
 		if err != nil {
 			return err
 		}
 		defer pgStore.Close()
-
-		if err := pgStore.Migrate(ctx); err != nil {
-			return err
-		}
 	} else {
-		logger.Warn("no database configured, statistics will not be recorded", "env", postgresEnvVar)
+		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
 	}
 
 	var liveClient *live.Client
-	if address := os.Getenv(redisEnvVar); address != "" {
-		liveClient, err = live.New(live.Options{Address: address, Username: os.Getenv("ROUTER_REDIS_USERNAME"), Password: os.Getenv("ROUTER_REDIS_PASSWORD")})
+	if settings.Redis.Addr != "" {
+		liveClient, err = live.New(live.Options{
+			Address:  settings.Redis.Addr,
+			Username: settings.Redis.Username,
+			Password: settings.Redis.Password,
+		})
 		if err != nil {
 			return err
 		}
 		defer liveClient.Close()
 	} else {
-		logger.Warn("no redis configured, routing will not use live health", "env", redisEnvVar)
+		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
 
 	// A daily limit is counted in Redis, so a deployment without one caps nothing. That is
@@ -337,16 +303,16 @@ func run(logger *slog.Logger) error {
 	// than they were meant to, and refusing every request because the counter is missing
 	// would be a worse outage than the one it prevents.
 	var limiter *quota.Limiter
-	limits, err := dailyLimits()
-	if err != nil {
-		return err
+	limits := quota.Limits{
+		MessagesPerDay: settings.RateLimit.MessagesPerDay,
+		TokensPerDay:   settings.RateLimit.TokensPerDay,
 	}
 	switch {
 	case !limits.Enforced():
 		logger.Warn("no daily limit configured, an end user may spend without bound",
-			"env", messageLimitEnvVar)
+			"setting", "rate_limit.messages_per_day")
 	case liveClient == nil:
-		logger.Warn("no redis configured, daily limits will not be enforced", "env", redisEnvVar)
+		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
 	default:
 		if limiter, err = quota.New(liveClient.Redis(), limits, logger); err != nil {
 			return err
@@ -366,13 +332,13 @@ func run(logger *slog.Logger) error {
 		gate = policies
 	}
 
-	trustedProxies, err := api.TrustedProxies(splitList(os.Getenv(trustedProxiesEnvVar)))
+	trustedProxies, err := api.TrustedProxies(settings.TrustedProxies)
 	if err != nil {
 		return err
 	}
 	if len(trustedProxies) == 0 {
 		logger.Warn("no trusted proxies configured, X-Forwarded-For will be ignored",
-			"env", trustedProxiesEnvVar)
+			"setting", "trusted_proxies")
 	}
 
 	// Voices a customer brought with them live in an object bucket and a few tables. The
@@ -383,7 +349,7 @@ func run(logger *slog.Logger) error {
 		resolver = voices.NewResolver(pgStore)
 	}
 
-	bucket, err := blob.Open(ctx, os.Getenv(voices.EnvBucketURL))
+	bucket, err := blob.Open(ctx, settings.VoicesBucketURL)
 	if err != nil {
 		return err
 	}
@@ -395,7 +361,7 @@ func run(logger *slog.Logger) error {
 	routers := map[routing.Modality]routing.Inspector{}
 	streams := &api.Streams{}
 
-	if section, ok := config[routing.STT]; ok {
+	if section, ok := capabilities[routing.STT]; ok {
 		speech, err := sttrouter.New(sttrouter.Options{
 			Config:   section,
 			Registry: sttrouter.DefaultRegistry(),
@@ -429,7 +395,7 @@ func run(logger *slog.Logger) error {
 		streams.Transcriptions = recorded
 	}
 
-	if section, ok := config[routing.TTS]; ok {
+	if section, ok := capabilities[routing.TTS]; ok {
 		voice, err := ttsrouter.New(ttsrouter.Options{
 			Config:   section,
 			Registry: ttsrouter.DefaultRegistry(),
@@ -467,7 +433,7 @@ func run(logger *slog.Logger) error {
 	// given a guardrail, and says so when one is asked for rather than ignoring it. It is
 	// opened before the LLM router, which screens prompt injection on it.
 	var judging *lcmrouter.Router
-	if section, ok := config[routing.LCM]; ok {
+	if section, ok := capabilities[routing.LCM]; ok {
 		judging, err = lcmrouter.New(lcmrouter.Options{
 			Config:   section,
 			Registry: lcmrouter.DefaultRegistry(),
@@ -483,7 +449,7 @@ func run(logger *slog.Logger) error {
 		routers[routing.LCM] = judging
 	}
 
-	if section, ok := config[routing.LLM]; ok {
+	if section, ok := capabilities[routing.LLM]; ok {
 		var screen llmrouter.Screen
 		if policies != nil {
 			screen = policies.Screener(judging)
@@ -506,7 +472,7 @@ func run(logger *slog.Logger) error {
 		streams.LLM = chat
 	}
 
-	if section, ok := config[routing.STS]; ok {
+	if section, ok := capabilities[routing.STS]; ok {
 		conversing, err := stsrouter.New(stsrouter.Options{
 			Config:   section,
 			Registry: stsrouter.DefaultRegistry(),
@@ -527,7 +493,7 @@ func run(logger *slog.Logger) error {
 	// providers still inspects and reports on them: what stops a session searching is a
 	// candidate refusing to be built, not the section being absent.
 	var finding *searchrouter.Router
-	if section, ok := config[routing.Search]; ok {
+	if section, ok := capabilities[routing.Search]; ok {
 		finding, err = searchrouter.New(searchrouter.Options{
 			Config:   section,
 			Registry: searchrouter.DefaultRegistry(),
@@ -547,7 +513,7 @@ func run(logger *slog.Logger) error {
 	// Image generation is served when the config has a section for it, and a deployment
 	// with no key for either provider still inspects and reports on them: what stops a
 	// picture being drawn is a candidate refusing to be built.
-	if section, ok := config[routing.Image]; ok {
+	if section, ok := capabilities[routing.Image]; ok {
 		imaging, err := imagerouter.New(imagerouter.Options{
 			Config:   section,
 			Registry: imagerouter.DefaultRegistry(),
@@ -564,7 +530,7 @@ func run(logger *slog.Logger) error {
 		streams.Image = imaging
 	}
 
-	telephony, err := buildPhone(pgStore, liveClient, logger)
+	telephony, err := buildPhone(settings, pgStore, liveClient, logger)
 	if err != nil {
 		return err
 	}
@@ -581,7 +547,7 @@ func run(logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, judging, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, liveClient, telephony, base, finding, judging, logger)
 	if err != nil {
 		return err
 	}
@@ -652,7 +618,7 @@ func run(logger *slog.Logger) error {
 	// Keeping a knowledge base filled from a url needs a row, a base and a crawler.
 	// Missing any of those, the url paths say so rather than storing a subscription
 	// nothing would ever honour.
-	pages, err := buildKnowledgeURLs(pgStore, os.Getenv(redisEnvVar), base, logger)
+	pages, err := buildKnowledgeURLs(pgStore, settings.Redis.Addr, base, logger)
 	if err != nil {
 		return err
 	}
@@ -667,10 +633,23 @@ func run(logger *slog.Logger) error {
 	// pool exists whether or not anybody is: an empty pool is a call nobody answers, which
 	// is a different thing from a deployment that does not dispatch at all.
 	workers := dispatch.NewPool()
+	if sessions != nil {
+		sessions.HostTools(workers)
+	}
 
-	authenticator, err := newAuthenticator(pgStore, logger)
+	authenticator, err := newAuthenticator(settings, pgStore, logger)
 	if err != nil {
 		return err
+	}
+	authMode, err := auth.ParseMode(settings.Auth.Mode)
+	if err != nil {
+		return err
+	}
+
+	// The changes recorded for a customer moving away are kept for as long as the move
+	// has to finish in, and then they are somebody's storage bill for nothing.
+	if pgStore != nil {
+		go pruneDataChanges(ctx, pgStore, settings.DataMove.Retention, logger)
 	}
 
 	options := api.Options{
@@ -690,21 +669,23 @@ func run(logger *slog.Logger) error {
 		Quota:          limiter,
 		Policies:       policies,
 		TrustedProxies: trustedProxies,
-		StreamSecret:   os.Getenv(streamSecretEnvVar),
-		StreamKey:      os.Getenv(streamKeyEnvVar),
-		CORSOrigins:    splitList(os.Getenv(corsOriginsEnvVar)),
-		PublicURL:      os.Getenv(publicURLEnvVar),
-		DashboardURL:   dashboardBaseURL(),
+		AuthMode:       authMode,
+		DataRetention:  settings.DataMove.Retention,
+		StreamSecret:   settings.Stream.APISecret,
+		StreamKey:      settings.Stream.APIKey,
+		CORSOrigins:    settings.CORSOrigins,
+		PublicURL:      settings.PublicURL,
+		DashboardURL:   settings.DashboardURL,
 		Auth:           authenticator,
 		Logger:         logger,
 	}
 	if options.StreamSecret == "" {
-		logger.Warn("no "+streamSecretEnvVar+" set, so inbound calls cannot be dispatched: "+
+		logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+
 			"the call events Stream sends cannot be told apart from anyone who found the url",
 			"hook", "POST /v1/phone/hooks/stream")
 	}
 	if options.StreamKey == "" {
-		logger.Warn("no "+streamKeyEnvVar+" set, so nobody can join a call from a browser",
+		logger.Warn("no stream.api_key set, so nobody can join a call from a browser",
 			"endpoint", "POST /v1/agents/calls/{id}/token")
 	}
 	// A nil *turbopuffer.Store in an interface is not a nil interface, so the absence has
@@ -718,10 +699,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	address := os.Getenv(addressEnvVar)
-	if address == "" {
-		address = defaultAddress
-	}
+	address := settings.Addr
 
 	httpServer := &http.Server{
 		Addr:              address,
@@ -750,16 +728,42 @@ func run(logger *slog.Logger) error {
 	}
 }
 
-// splitList reads a comma-separated environment variable, dropping the empty entries a
-// trailing comma leaves behind.
-func splitList(raw string) []string {
-	var entries []string
-	for _, entry := range strings.Split(raw, ",") {
-		if trimmed := strings.TrimSpace(entry); trimmed != "" {
-			entries = append(entries, trimmed)
+// pruneDataChanges drops the recorded changes nobody can resume from any more, hourly
+// until the process stops.
+func pruneDataChanges(ctx context.Context, pgStore *store.Store, retention time.Duration, logger *slog.Logger) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		removed, err := pgStore.PruneDataChanges(ctx, retention)
+		if err != nil {
+			logger.Error("could not prune recorded changes", "error", err)
+		} else if removed > 0 {
+			logger.Debug("pruned recorded changes", "rows", removed)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
-	return entries
+}
+
+// openStore opens the database and brings the schema up to date. Every command that
+// touches a customer's rows starts here, so migrating is part of opening rather than
+// something only serving does.
+func openStore(ctx context.Context, settings config.Config) (*store.Store, error) {
+	if settings.Postgres.DSN == "" {
+		return nil, errors.New("this needs a database: set postgres.dsn")
+	}
+	pgStore, err := store.Open(settings.Postgres.DSN)
+	if err != nil {
+		return nil, err
+	}
+	if err := pgStore.Migrate(ctx); err != nil {
+		pgStore.Close()
+		return nil, err
+	}
+	return pgStore, nil
 }
 
 // buildSessions wires the part of the router that holds conversations rather than
@@ -769,6 +773,7 @@ func splitList(raw string) []string {
 // factories live here rather than in the session package so the Stream edge, whose Opus
 // path is cgo, stays out of everything that only needs to be tested.
 func buildSessions(
+	settings config.Config,
 	streams *api.Streams,
 	pgStore *store.Store,
 	liveClient *live.Client,
@@ -810,7 +815,7 @@ func buildSessions(
 		// The same app secret that verifies Stream's inbound hooks, now signing one going
 		// the other way. A customer who wants to decide for themselves whether a turn may
 		// be answered already holds it, so there is no second secret to hand out.
-		WebhookSecret: os.Getenv(streamSecretEnvVar),
+		WebhookSecret: settings.Stream.APISecret,
 		Store:         pgStore,
 		Live:          liveClient,
 		Logger:        logger,
@@ -944,11 +949,12 @@ func buildVoices(
 // number, so a deployment without them still lists vendors and searches for numbers, and
 // the operations that need them say so.
 func buildPhone(
+	settings config.Config,
 	pgStore *store.Store,
 	liveClient *live.Client,
 	logger *slog.Logger,
 ) (*phone.Service, error) {
-	config, err := phone.LoadConfig(os.Getenv(phoneConfigEnvVar))
+	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -966,11 +972,11 @@ func buildPhone(
 	}
 
 	return phone.NewService(phone.ServiceOptions{
-		Registry:  vendors.Registry(config),
+		Registry:  vendors.Registry(vendorConfig),
 		Store:     pgStore,
 		Stream:    stream,
 		Recorder:  recorder,
-		PublicURL: os.Getenv(publicURLEnvVar),
+		PublicURL: settings.PublicURL,
 		Logger:    logger,
 	})
 }

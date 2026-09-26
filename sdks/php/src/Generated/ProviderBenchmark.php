@@ -27,6 +27,10 @@ final readonly class ProviderBenchmark
         public ?int $searchIndex = null,
         // US dollars one task of the search benchmark cost, searches and the answering model's tokens together.
         public ?float $costPerTask = null,
+        // Artificial Analysis Intelligence Index of a text model at the reasoning effort the router asks for.
+        public ?int $intelligenceIndex = null,
+        // Tokens a text model writes per second on the host the router calls.
+        public ?float $outputTokensPerSecond = null,
     ) {
     }
 
@@ -42,6 +46,8 @@ final readonly class ProviderBenchmark
             latencyMs: array_key_exists('latency_ms', $data) && $data['latency_ms'] !== null ? Json::int($data, 'latency_ms') : null,
             searchIndex: array_key_exists('search_index', $data) && $data['search_index'] !== null ? Json::int($data, 'search_index') : null,
             costPerTask: array_key_exists('cost_per_task', $data) && $data['cost_per_task'] !== null ? Json::float($data, 'cost_per_task') : null,
+            intelligenceIndex: array_key_exists('intelligence_index', $data) && $data['intelligence_index'] !== null ? Json::int($data, 'intelligence_index') : null,
+            outputTokensPerSecond: array_key_exists('output_tokens_per_second', $data) && $data['output_tokens_per_second'] !== null ? Json::float($data, 'output_tokens_per_second') : null,
         );
     }
 
@@ -70,6 +76,12 @@ final readonly class ProviderBenchmark
         }
         if ($this->costPerTask !== null) {
             $out['cost_per_task'] = $this->costPerTask;
+        }
+        if ($this->intelligenceIndex !== null) {
+            $out['intelligence_index'] = $this->intelligenceIndex;
+        }
+        if ($this->outputTokensPerSecond !== null) {
+            $out['output_tokens_per_second'] = $this->outputTokensPerSecond;
         }
         return $out;
     }

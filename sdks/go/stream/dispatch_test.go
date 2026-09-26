@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // pool is a stand-in for the router's dispatch socket: a real WebSocket a worker waits on,
@@ -474,5 +476,51 @@ func TestARouterThatStopsDispatchingIsNotAFailure(t *testing.T) {
 
 	if err := worker.Run(t.Context()); err != nil {
 		t.Errorf("a router that stopped dispatching was reported as %v", err)
+	}
+}
+
+func TestAHostedFunctionIsDeclaredAndAnsweredOverTheDispatchSocket(t *testing.T) {
+	router := newPool(t, func(connection *websocket.Conn) {
+		_ = connection.WriteJSON(Frame{"type": "tool_call", "id": "call-1", "session_id": "s", "name": "investigate_sdk", "arguments": `{"sdk":"android"}`})
+	})
+	functions := tools.NewRegistry()
+	if err := tools.Register(functions, "investigate_sdk", "Read SDK source", func(_ context.Context, in struct {
+		SDK string `json:"sdk"`
+	}) (any, error) {
+		return "read " + in.SDK, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	worker := waiting(t, router, DispatchOptions{})
+	worker.Host("support", functions, time.Minute)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := run(t, ctx, worker)
+
+	declared := router.told(t, "host_tools")
+	if declared.String("config_id") != "support" || declared.Int("timeout_ms") != 60000 {
+		t.Errorf("the router was told %v", declared)
+	}
+	answered := router.told(t, "tool_result")
+	if answered.String("id") != "call-1" || answered.String("output") != "read android" {
+		t.Errorf("the call was answered %v", answered)
+	}
+	cancel()
+	stopped()
+}
+
+func TestAWorkerWhoseToolsAreRefusedStopsWaiting(t *testing.T) {
+	router := newPool(t, func(connection *websocket.Conn) {
+		_ = connection.WriteJSON(Frame{"type": "hosting_refused", "config_id": "support", "reason": "there is no such config"})
+	})
+	functions := tools.NewRegistry()
+	if err := tools.Register(functions, "investigate_sdk", "Read SDK source", func(context.Context, struct{}) (any, error) { return "", nil }); err != nil {
+		t.Fatal(err)
+	}
+	worker := waiting(t, router, DispatchOptions{})
+	worker.Host("support", functions, 0)
+
+	if err := run(t, t.Context(), worker)(); err == nil {
+		t.Fatal("a worker nobody will call kept waiting")
 	}
 }

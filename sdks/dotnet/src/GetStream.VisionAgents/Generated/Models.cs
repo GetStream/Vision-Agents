@@ -783,6 +783,193 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and a field left out is no opinion rather than off.
+    /// <br/>
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class Policy
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("budget")]
+        public Budget? Budget { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("data_policy")]
+        public DataPolicy? DataPolicy { get; set; } = default!;
+
+        /// <summary>
+        /// Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("prompt_injection")]
+        public bool? PromptInjection { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
+    /// <br/>
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class Budget
+    {
+
+        /// <summary>
+        /// The cap, in millionths of a dollar.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("limit_micros")]
+        public long LimitMicros { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("interval")]
+        public string Interval { get; set; } = default!;
+
+        /// <summary>
+        /// What has been spent in the current interval.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("spent_micros")]
+        public long? SpentMicros { get; set; } = default!;
+
+        /// <summary>
+        /// When the current interval ends.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resets_at")]
+        public System.DateTimeOffset? ResetsAt { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// One thing that happened to one row of the calling app's data.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DataChange
+    {
+
+        /// <summary>
+        /// Where this sits in the order changes happened, and the cursor to resume from.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("seq")]
+        public long Seq { get; set; } = default!;
+
+        /// <summary>
+        /// Which table the row is in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("table")]
+        public string Table { get; set; } = default!;
+
+        /// <summary>
+        /// One of `insert`, `update`, `delete`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("op")]
+        public string Op { get; set; } = default!;
+
+        /// <summary>
+        /// What identifies the row, which is all a delete has.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("key")]
+        public object Key { get; set; } = new object();
+
+        /// <summary>
+        /// The row as it now reads, absent for a delete and never carrying a credential.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("row")]
+        public object? Row { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("at")]
+        public System.DateTimeOffset At { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DataChangePage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("changes")]
+        public System.Collections.Generic.List<DataChange> Changes { get; set; } = new System.Collections.Generic.List<DataChange>();
+
+        /// <summary>
+        /// What to pass as `after` next time.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cursor")]
+        public long Cursor { get; set; } = default!;
+
+        /// <summary>
+        /// Nothing else has happened yet, which is when a switchover is safe: point your SDKs at the new deployment, wait for this to be true once more, and stop.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("caught_up")]
+        public bool? CaughtUp { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DataImport
+    {
+
+        /// <summary>
+        /// How many rows were written.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("rows")]
+        public long Rows { get; set; } = default!;
+
+        /// <summary>
+        /// How many of them went into each table.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tables")]
+        public System.Collections.Generic.Dictionary<string, long>? Tables { get; set; } = default!;
+
+        /// <summary>
+        /// The cursor the export named, to ask the other deployment for changes from.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cursor")]
+        public long? Cursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
     /// <br/>
     /// </summary>
@@ -5123,6 +5310,34 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("benchmark")]
         public ProviderBenchmark? Benchmark { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("price")]
+        public ProviderPrice? Price { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit.
+    /// <br/>
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ProviderPrice
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("per_million_input_tokens")]
+        public double? PerMillionInputTokens { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("per_million_output_tokens")]
+        public double? PerMillionOutputTokens { get; set; } = default!;
+
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
         [System.Text.Json.Serialization.JsonExtensionData]
@@ -5177,6 +5392,18 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("cost_per_task")]
         public double? CostPerTask { get; set; } = default!;
+
+        /// <summary>
+        /// Artificial Analysis Intelligence Index of a text model at the reasoning effort the router asks for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("intelligence_index")]
+        public int? IntelligenceIndex { get; set; } = default!;
+
+        /// <summary>
+        /// Tokens a text model writes per second on the host the router calls.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("output_tokens_per_second")]
+        public double? OutputTokensPerSecond { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -6183,6 +6410,33 @@ namespace GetStream.VisionAgents.Models
             set { _additionalProperties = value; }
         }
 
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NSwag", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class FileParameter
+    {
+        public FileParameter(System.IO.Stream data)
+            : this (data, null, null)
+        {
+        }
+
+        public FileParameter(System.IO.Stream data, string? fileName)
+            : this (data, fileName, null)
+        {
+        }
+
+        public FileParameter(System.IO.Stream data, string? fileName, string? contentType)
+        {
+            Data = data;
+            FileName = fileName;
+            ContentType = contentType;
+        }
+
+        public System.IO.Stream Data { get; private set; }
+
+        public string? FileName { get; private set; }
+
+        public string? ContentType { get; private set; }
     }
 
 

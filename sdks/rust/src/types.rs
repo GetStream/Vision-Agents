@@ -597,6 +597,79 @@ pub struct AvailableNumber {
     ///Who is offering it, which is also who to buy it from.
     pub vendor: ::std::string::String,
 }
+/**A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
+*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct Budget {
+    pub interval: BudgetInterval,
+    ///The cap, in millionths of a dollar.
+    pub limit_micros: i64,
+    ///When the current interval ends.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resets_at: ::std::option::Option<::std::string::String>,
+    ///What has been spent in the current interval.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub spent_micros: ::std::option::Option<i64>,
+}
+///How often a budget resets. A week starts on Monday.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum BudgetInterval {
+    #[serde(rename = "hourly")]
+    Hourly,
+    #[serde(rename = "daily")]
+    Daily,
+    #[serde(rename = "weekly")]
+    Weekly,
+    #[serde(rename = "monthly")]
+    Monthly,
+}
+impl ::std::fmt::Display for BudgetInterval {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Hourly => f.write_str("hourly"),
+            Self::Daily => f.write_str("daily"),
+            Self::Weekly => f.write_str("weekly"),
+            Self::Monthly => f.write_str("monthly"),
+        }
+    }
+}
+impl ::std::str::FromStr for BudgetInterval {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hourly" => Ok(Self::Hourly),
+            "daily" => Ok(Self::Daily),
+            "weekly" => Ok(Self::Weekly),
+            "monthly" => Ok(Self::Monthly),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for BudgetInterval {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for BudgetInterval {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`BuyNumberRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct BuyNumberRequest {
@@ -1233,6 +1306,102 @@ pub struct CreateSessionRequest {
     ///Provider-specific voice id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+///One thing that happened to one row of the calling app's data.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct DataChange {
+    pub at: ::std::string::String,
+    ///What identifies the row, which is all a delete has.
+    pub key: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    pub op: DataChangeOp,
+    ///The row as it now reads, absent for a delete and never carrying a credential.
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    pub row: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ///Where this sits in the order changes happened, and the cursor to resume from.
+    pub seq: i64,
+    ///Which table the row is in.
+    pub table: ::std::string::String,
+}
+///`DataChangeOp`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum DataChangeOp {
+    #[serde(rename = "insert")]
+    Insert,
+    #[serde(rename = "update")]
+    Update,
+    #[serde(rename = "delete")]
+    Delete,
+}
+impl ::std::fmt::Display for DataChangeOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Insert => f.write_str("insert"),
+            Self::Update => f.write_str("update"),
+            Self::Delete => f.write_str("delete"),
+        }
+    }
+}
+impl ::std::str::FromStr for DataChangeOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "insert" => Ok(Self::Insert),
+            "update" => Ok(Self::Update),
+            "delete" => Ok(Self::Delete),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for DataChangeOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for DataChangeOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`DataChangePage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct DataChangePage {
+    /**Nothing else has happened yet, which is when a switchover is safe: point your SDKs at the new deployment, wait for this to be true once more, and stop.
+    */
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub caught_up: ::std::option::Option<bool>,
+    pub changes: ::std::vec::Vec<DataChange>,
+    ///What to pass as `after` next time.
+    pub cursor: i64,
+}
+///`DataImport`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct DataImport {
+    ///The cursor the export named, to ask the other deployment for changes from.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cursor: ::std::option::Option<i64>,
+    ///How many rows were written.
+    pub rows: i64,
+    ///How many of them went into each table.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tables: ::std::collections::BTreeMap<::std::string::String, i64>,
 }
 /**What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 */
@@ -3039,6 +3208,19 @@ impl ::std::convert::TryFrom<::std::string::String> for PluginConnectionStatus {
         value.parse()
     }
 }
+/**What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and a field left out is no opinion rather than off.
+*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct Policy {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub budget: ::std::option::Option<Budget>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub data_policy: ::std::option::Option<DataPolicy>,
+    /**Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
+    */
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub prompt_injection: ::std::option::Option<bool>,
+}
 ///`PrepareVoiceRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct PrepareVoiceRequest {
@@ -3067,6 +3249,8 @@ pub struct Provider {
     pub health: ProviderHealth,
     pub languages: ::std::vec::Vec<::std::string::String>,
     pub model: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub price: ::std::option::Option<ProviderPrice>,
     pub provider: ::std::string::String,
     pub realtime: bool,
     pub tier: Tier,
@@ -3088,9 +3272,15 @@ pub struct ProviderBenchmark {
     ///Speech arena Elo rating of a text-to-speech model.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub elo: ::std::option::Option<i64>,
+    ///Artificial Analysis Intelligence Index of a text model at the reasoning effort the router asks for.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub intelligence_index: ::std::option::Option<i64>,
     ///Milliseconds a speech-to-text model takes to its final transcript after speech ends.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub latency_ms: ::std::option::Option<i64>,
+    ///Tokens a text model writes per second on the host the router calls.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub output_tokens_per_second: ::std::option::Option<f64>,
     ///Artificial Analysis Search Index of a search provider, from 0 to 100.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub search_index: ::std::option::Option<i64>,
@@ -3108,6 +3298,15 @@ pub struct ProviderHealth {
     pub latency_ms_avg: f64,
     ///Requests seen in the current health window.
     pub requests: i64,
+}
+/**What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit.
+*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct ProviderPrice {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub per_million_input_tokens: ::std::option::Option<f64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub per_million_output_tokens: ::std::option::Option<f64>,
 }
 /**Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first.
 */

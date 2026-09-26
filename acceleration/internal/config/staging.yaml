@@ -1,3 +1,4 @@
 # The hosted staging router. The database, Redis and every credential come from the
 # chart in Stream's infra repo, which wins over this file; see the deploy skill.
-ROUTER_AUTH_MODE: proxy
+auth:
+  mode: proxy

@@ -78,6 +78,9 @@ class Settings:
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
     video_max_frames: int = 0
+    app: dict[str, object] = field(default_factory=dict)
+    """The application's own section, which this SDK never reads and the backend is never
+    sent. It is the one place an unknown key is not refused."""
 
 
 @dataclass
@@ -293,6 +296,10 @@ def _declare(path: Path) -> Settings:
             settings.tags = _tags(path, value)
         elif field_name == "video":
             settings.video_source, settings.video_max_frames = _video(path, value)
+        elif field_name == "app":
+            if value is not None and not isinstance(value, dict):
+                raise ValueError(f"{path} should give app as a mapping")
+            settings.app = dict(value or {})
         else:
             raise ValueError(
                 f"{path} declares {field_name!r}, which is not something an agent has"

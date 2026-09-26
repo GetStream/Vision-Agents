@@ -75,9 +75,27 @@ to play audio, or `-out` to write a file instead.
 
 ## Configuration
 
+Everything that is not a provider credential is one YAML file, read by `internal/config`:
+
+```bash
+go run ./cmd/router --config /etc/router.yaml
+```
+
+Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`, `cors_origins`,
+`trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
+`postgres.dsn`, `redis.{addr,username,password}`, `auth.{mode,kek}`,
+`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention` and
+`stream.{api_key,api_secret}`. Naming no file loads one of the three embedded in the
+binary, by `ROUTER_ENV`.
+
+Every variable below still wins over the file, so a chart, compose and `.env` keep working
+with nothing changed, and the effective settings are written back into the environment for
+the other commands that read them there.
+
 | Variable                | Purpose                                                   |
 | ----------------------- | --------------------------------------------------------- |
-| `ROUTER_ENV`            | `development` (default), `staging` or `testing`. Loads `internal/environment/<env>.yaml`, whose values fill in any variable below that is unset. The integration suites always use `testing`, which has its own `model_router_test` database |
+| `ROUTER_CONFIG_FILE`    | Path to the deployment's own YAML, which is what `--config` sets |
+| `ROUTER_ENV`            | `local` (default), `staging` or `testing`. Loads `internal/config/<env>.yaml` when no file of your own is named. The integration suites always use `testing`, which has its own `model_router_test` database and is the one file that wins over the environment |
 | `ROUTER_ADDR`           | HTTP listen address, defaults to `:8080`                   |
 | `ROUTER_POSTGRES_DSN`   | Postgres DSN. Without it, nothing is recorded              |
 | `ROUTER_REDIS_ADDR`     | Redis `host:port`. Without it, routing ignores health      |
@@ -90,6 +108,7 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
+| `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
 | `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |
@@ -1184,6 +1203,54 @@ go run ./cmd/phone release -number +1719XXXXXXX
 ```bash
 goose -dir migrations postgres "$ROUTER_POSTGRES_DSN" up
 ```
+
+## Moving a customer
+
+`api_key` mode cannot bootstrap itself over HTTP: every endpoint wants a key and there is
+nobody to issue the first one. `keys create` does it beside the database, printing the
+secret once and never logging it:
+
+```bash
+go run ./cmd/router keys create --org Acme --app-name "Acme production" --key-name default
+```
+
+`--app-id` keeps an id the customer already has, which is what makes an import land under
+something. Running it again for an existing app adds a second key rather than refusing.
+
+Three endpoints move a customer between two deployments, all server-side only:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /v1/data/export` | Everything the calling app has, one JSON object per line, ending with the cursor its changes carry on from |
+| `POST /v1/data/import` | Writes an export, or a batch of changes, into this deployment |
+| `GET /v1/data/changes?after=` | What has happened to the app's rows since that cursor, and whether that is all of it |
+
+`cmd/router replicate` is both halves at once: the copy, and everything that happens after
+the copy, which is what makes the switchover free of a window where writes are lost.
+
+```bash
+go run ./cmd/router replicate --from https://old.example.com \
+  --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
+```
+
+The customer is always the authenticated caller, never anything in the body or the query,
+so an export is the caller's own data and an import lands under the caller's own app
+however the file was edited on the way. An import upserts and refuses a row whose primary
+key belongs to another tenant, so replaying the same change twice lands where applying it
+once would and a guessed id overwrites nothing.
+
+Key rows, sealed secrets, OAuth access and refresh tokens, organizations and apps are not
+exported. A moved deployment mints its own keys and re-authorizes its plugin connections.
+Voice recordings live in the bucket rather than in Postgres, so their rows move and copying
+the bucket is the operator's.
+
+Changes are captured by a trigger per table writing into `data_changes`, gated on a row in
+`data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting
+starts the capture and reading a page refreshes it, so an abandoned move stops recording by
+itself after `ROUTER_DATA_MOVE_RETENTION`, and a cursor older than that is answered 410
+rather than silently missing writes. Each change records `pg_current_xact_id()`, and the
+cursor never passes `pg_snapshot_xmin(pg_current_snapshot())`, so a sequence number handed
+out by a transaction that has not committed yet cannot be stepped over.
 
 ## Test
 

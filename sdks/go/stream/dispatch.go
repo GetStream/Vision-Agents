@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // DispatchPath is where a worker waits for work on the router.
@@ -128,6 +130,7 @@ type Dispatch struct {
 
 	call    CallHandler
 	message MessageHandler
+	hosted  []hosting
 
 	mu        sync.Mutex
 	socket    *Socket
@@ -172,6 +175,73 @@ func (d *Dispatch) OnCall(handler CallHandler) { d.call = handler }
 // OnMessage registers what to do with a message written to an agent that is not running.
 func (d *Dispatch) OnMessage(handler MessageHandler) { d.message = handler }
 
+// hosting is one set of functions this worker runs for every session on an agent config.
+type hosting struct {
+	configID  string
+	functions *tools.Registry
+	timeout   time.Duration
+}
+
+// Host runs these functions for every session opened on an agent config, whoever opened it.
+//
+// A session's own functions run in the process that opened it, which is no use to a
+// conversation opened from a browser that wants to read a source tree. Hosting is the other
+// direction: the router offers these functions to each session on the config and sends
+// every call to one of them here. timeout is how long the router gives one call; zero takes
+// its default. Call before Run.
+func (d *Dispatch) Host(configID string, functions *tools.Registry, timeout time.Duration) {
+	d.hosted = append(d.hosted, hosting{configID: configID, functions: functions, timeout: timeout})
+}
+
+// host tells the router what this worker runs, once it is listening.
+func (d *Dispatch) host() {
+	for _, offer := range d.hosted {
+		declared := []Frame{}
+		for _, function := range offer.functions.List() {
+			declared = append(declared, Frame{"name": function.Name, "description": function.Description, "parameters": function.Parameters})
+		}
+		d.tell(Frame{"type": "host_tools", "config_id": offer.configID, "tools": declared, "timeout_ms": offer.timeout.Milliseconds()})
+	}
+}
+
+// runHosted answers one hosted call, on its own goroutine: an investigation takes a minute,
+// and the socket it arrived on is also what delivers the next.
+func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
+	id, name := frame.String("id"), frame.String("name")
+	var functions *tools.Registry
+	for _, offer := range d.hosted {
+		for _, function := range offer.functions.List() {
+			if function.Name == name {
+				functions = offer.functions
+			}
+		}
+	}
+	if functions == nil {
+		d.tell(Frame{"type": "tool_result", "id": id, "error": "this worker does not run " + name})
+		return
+	}
+
+	d.logger.Info("running a hosted tool", "tool", name, "session", frame.String("session_id"))
+	d.running.Add(1)
+	d.active.Add(1)
+	go func() {
+		defer d.running.Done()
+		defer d.active.Add(-1)
+
+		result := Frame{"type": "tool_result", "id": id}
+		output, err := functions.Call(ctx, name, frame.String("arguments"))
+		if err != nil {
+			d.logger.Error("a hosted tool failed", "tool", name, "error", err)
+			result["error"] = err.Error()
+		} else {
+			result["output"] = output
+		}
+		if !d.tell(result) {
+			d.logger.Error("a hosted tool's result never reached the router", "tool", name)
+		}
+	}()
+}
+
 // WorkerID is what the router calls this connection, for matching a log line here against
 // one there. Empty until the router has said.
 func (d *Dispatch) WorkerID() string {
@@ -198,8 +268,8 @@ func (d *Dispatch) LatencyMS() float64 {
 // Work already being handled is waited for on the way out, because dropping a call would
 // hang up on whoever is talking.
 func (d *Dispatch) Run(ctx context.Context) error {
-	if d.call == nil && d.message == nil {
-		return errors.New("stream: register a handler with OnCall or OnMessage before waiting for work")
+	if d.call == nil && d.message == nil && len(d.hosted) == 0 {
+		return errors.New("stream: register a handler with OnCall or OnMessage, or Host functions, before waiting for work")
 	}
 
 	backend, err := d.backend.Resolve()
@@ -277,6 +347,16 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 			d.workerID = frame.String("worker_id")
 			d.mu.Unlock()
 			d.logger.Info("the router calls this worker", "worker", frame.String("worker_id"))
+			d.host()
+		case "tool_call":
+			d.runHosted(ctx, frame)
+		case "hosting":
+			d.logger.Info("the router sends this worker's tools here", "config", frame.String("config_id"))
+		case "hosting_refused":
+			// Not worth waiting on: a worker whose tools were refused is one nobody will
+			// call, and saying so is better than sitting connected looking healthy.
+			return fmt.Errorf("stream: the router refused to host tools for config %s: %s",
+				frame.String("config_id"), frame.String("reason"))
 		case "pong":
 			select {
 			case d.pong <- struct{}{}:
