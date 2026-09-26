@@ -143,6 +143,14 @@ A trial passes only when every hard gate passes. Latency is reported separately,
 
 Not every scripted turn yields a latency sample. A barge-in turn has no reply gap by definition, a turn the caller played while the agent was still speaking has no meaningful one, and a turn the agent never answered has none at all. Those turns are counted and named in `dropped_turns` in each call's `metrics.json` and totalled per pack in the report, so a P50 cannot quietly rest on one measurement. Percentiles are pooled over every measured turn in the pack — not a median of per-call medians — and every reported P50 carries its sample count.
 
+### Time to first response
+
+Time to first response is the gap from the end of the caller's first utterance to the start of the agent's first audible reply to it, measured from the recordings the same way as voice-to-voice. It is the first reply that has to run speech recognition, the model, and speech synthesis on caller input, so it carries the call's cold-start costs (first model request, connection warm-up) that the pooled V2V numbers average away.
+
+Every target greets first (`serve_webrtc.py`, the LiveKit worker, and the acceleration session greeting), and the caller waits for that greeting before it speaks, so the greeting sits outside this metric. Timing the greeting would measure from the moment the call is joined, which is time to connect, not time to reply. The metric starts when the caller finishes the first utterance the agent has to answer.
+
+Each call contributes at most one sample, stored as `first_response` in its `metrics.json`. If the first caller turn produced no V2V sample (a barge-in, a turn played over the still-speaking greeting, or no reply), the call has no sample; Voicebench never falls back to a later turn, which would mix a steady-state reply into a cold-start metric. A first reply whose gap overlaps a tool call keeps its `tool` flag and is counted, because the scenario and tool delays are identical across targets. `report.md` shows it per call and as a per-pack P50 and P95 with the number of calls measured and how many were tool turns; `summary.json` carries the same numbers as `first_response_p50_ms`, `first_response_p95_ms`, `first_response_samples`, and `first_response_tool_samples`. `voicebench compare` shows P50 and P95 with their sample counts and, against a baseline, the P50 delta.
+
 ## Metrics and Voicebench targets
 
 There is no single industry-standard score across these verticals. Voicebench targets are fixed acceptance thresholds for this suite, defined in [`timing.go`](internal/score/timing.go) and [`board.go`](internal/report/board.go). They are not universal industry standards, compliance certification, or claims of state of the art.
@@ -158,6 +166,7 @@ There is no single industry-standard score across these verticals. Voicebench ta
 | Selectivity | Ignore coughs and side talk; accept real interruptions | Hold on non-directed speech | Yes |
 | Reply gap | Caller end to agent onset, excluding tool turns | P50 300–700 ms | No |
 | Voice-to-voice | Caller end to agent onset, every measurable turn | P50 300–700 ms; P95 and sample count reported | No |
+| Time to first response | Caller end to agent onset, first caller turn of each call only | P50 and P95 with sample count reported; no target yet | No |
 | Stability | Non-tool gap over 2× that call's P50 | Zero spikes | No |
 | False cutoffs | Agent starts while caller is speaking | Zero | No |
 | Reliability | Repeated runs | `pass^k`; default target 3/3 | Aggregate |
@@ -218,6 +227,18 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
 ## Comparing runs
 
 A LiveKit column is only comparable when the worker actually received the contract: check the report for zero tool calls and Warnings before reading its score. Trials that produce no verdict are invalid, make scenario reliability incomplete, and fail the run. A comparable run should use matching manifest values: methodology version, scenario and contract hashes, `k`, target and transport, target model and voice, caller configuration, region/network conditions, and evaluator configuration. `summary.json` records these fields without credentials. Voicebench scores are directly comparable to other Voicebench runs under the same setup; they are not directly comparable to EVA, τ²-bench, eot-bench, or other benchmark scores.
+
+Time to first response has one sample per call, so it needs more calls than V2V to settle. Before claiming a gap, measure its noise floor: run the frozen set against the same target at least five times back to back with the same `--network-profile`, then read the spread of `First response P50` across those runs:
+
+```bash
+for i in 1 2 3 4 5; do
+  CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
+    --pack restaurant --target accelerated --spawn --frozen --k 3 --network-profile "$PROFILE"
+done
+go run ./cmd/voicebench compare out/<run1> out/<run2> out/<run3> out/<run4> out/<run5>
+```
+
+Repeat for `healthcare` and `telecom`, since `run` takes one pack at a time. The largest P50 difference between any two of those runs is the smallest change the bench can detect for that target and pack. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`.
 
 ## Public benchmark basis
 
