@@ -22,10 +22,13 @@ class CreateResponseRequest:
     Attributes:
         text (str): What to answer, as though it had been said.
         images (list[ImageSource] | Unset):
+        command_id (str | Unset): Required for personal persistent text conversations, and text only. Reuse this ID and
+            identical text for retries; a retry starts no second turn and returns no id.
     """
 
     text: str
     images: list[ImageSource] | Unset = UNSET
+    command_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,6 +41,8 @@ class CreateResponseRequest:
                 images_item = images_item_data.to_dict()
                 images.append(images_item)
 
+        command_id = self.command_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -47,6 +52,8 @@ class CreateResponseRequest:
         )
         if images is not UNSET:
             field_dict["images"] = images
+        if command_id is not UNSET:
+            field_dict["command_id"] = command_id
 
         return field_dict
 
@@ -66,9 +73,12 @@ class CreateResponseRequest:
 
                 images.append(images_item)
 
+        command_id = d.pop("command_id", UNSET)
+
         create_response_request = cls(
             text=text,
             images=images,
+            command_id=command_id,
         )
 
         create_response_request.additional_properties = d

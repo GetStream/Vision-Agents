@@ -2585,6 +2585,8 @@ export type components = {
         };
         readonly ContentPart: components["schemas"]["TextContentPart"] | components["schemas"]["ImageContentPart"];
         readonly CreateResponseRequest: {
+            /** @description Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id. */
+            readonly command_id?: string;
             readonly images?: readonly components["schemas"]["ImageSource"][];
             /** @description What to answer, as though it had been said. */
             readonly text: string;
@@ -6454,6 +6456,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description The command ID was already accepted with different content */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly listResponseItems: {

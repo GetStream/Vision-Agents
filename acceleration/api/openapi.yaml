@@ -3247,6 +3247,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The command ID was already accepted with different content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/agents/sessions/{id}/responses/items:
     get:
@@ -7422,6 +7428,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ImageSource"
+        command_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+          description: Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
 
     AgentResponse:
       type: object

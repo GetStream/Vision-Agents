@@ -9,6 +9,11 @@ export type ImageSource = Schemas["ImageSource"];
 
 export interface CreateResponseOptions {
   images?: ImageSource[];
+  /**
+   * Names the question so a retry with the same id and text starts no second turn. A session
+   * that keeps its conversation needs one, so it gets a fresh one when none is given.
+   */
+  commandId?: string;
 }
 
 /**
@@ -117,18 +122,27 @@ export class Responses {
 
   private readonly client: Client;
   private readonly sessionId: string;
+  private readonly persistent: boolean;
 
-  constructor(client: Client, sessionId: string) {
+  constructor(client: Client, sessionId: string, persistent = false) {
     this.client = client;
     this.sessionId = sessionId;
+    this.persistent = persistent;
     this.items = new Items(client, sessionId);
   }
 
   /** Asks the agent something and names the turn it answers as. */
   async create(text: string, options: CreateResponseOptions = {}): Promise<AgentResponse> {
+    // A command carries text only, so a question with images goes without one.
+    const commandId =
+      options.commandId ?? (this.persistent && !options.images?.length ? crypto.randomUUID() : undefined);
     const created = await this.client.post("/v1/agents/sessions/{id}/responses", {
       path: { id: this.sessionId },
-      body: { text, ...(options.images?.length ? { images: options.images } : {}) },
+      body: {
+        text,
+        ...(options.images?.length ? { images: options.images } : {}),
+        ...(commandId ? { command_id: commandId } : {}),
+      },
     });
     return new AgentResponse(this.client, created);
   }

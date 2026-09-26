@@ -290,7 +290,7 @@ func (s *Server) RespondSession(ctx context.Context, request RespondSessionReque
 	}
 
 	if id := value(request.Body.CommandId); id != "" {
-		receipt, err := found.RespondCommand(ctx, id, request.Body.Text)
+		receipt, _, err := found.RespondCommand(ctx, id, request.Body.Text)
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return RespondSession409JSONResponse{Error: err.Error()}, nil
 		}

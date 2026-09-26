@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -40,7 +42,18 @@ func (s *Server) CreateResponse(ctx context.Context, request CreateResponseReque
 		return CreateResponse400JSONResponse{badRequest(err.Error())}, nil
 	}
 
-	responseID, err := found.Respond(ctx, request.Body.Text, parts)
+	var responseID string
+	if id := value(request.Body.CommandId); id != "" {
+		if len(parts) > 0 {
+			return CreateResponse400JSONResponse{badRequest("a command ID carries text only")}, nil
+		}
+		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text)
+		if errors.Is(err, conversation.ErrCommandConflict) {
+			return CreateResponse409JSONResponse{Error: err.Error()}, nil
+		}
+	} else {
+		responseID, err = found.Respond(ctx, request.Body.Text, parts)
+	}
 	if err != nil {
 		return CreateResponse400JSONResponse{badRequest(err.Error())}, nil
 	}

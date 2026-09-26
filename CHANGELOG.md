@@ -1138,6 +1138,11 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- `POST /v1/agents/sessions/{id}/responses` takes an optional `command_id`, so a page can ask
+  a user's kept conversation over HTTP and still get the turn's id back; it was refused with
+  "personal conversations require a command ID". The JavaScript SDK's `responses.create`
+  sends a fresh one on a session with a `conversationId`, or the `commandId` option you pass.
+
 - Chat readers are explicitly added to existing agent channels before their token is
   issued, so opening a members-only transcript no longer fails with `ReadChannel`.
 
