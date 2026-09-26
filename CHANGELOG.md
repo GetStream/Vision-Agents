@@ -304,6 +304,11 @@ customer does not hold is refused with `hosting_refused`, and a call waiting on 
 that disconnects fails at once. The Go SDK exposes it as `Dispatch.Host(configID,
 functions, timeout)`.
 
+A Go `Dispatch` whose socket drops -- a router redeployed, a load balancer ending the
+connection -- now reconnects with a fresh token, backing off from one second to thirty, and
+declares what it hosts again. `Run` still returns on cancellation, on a deliberate close,
+on refused tools, and when the first connection fails.
+
 `agent.yaml` may carry an `app:` mapping, the application's own settings. Both SDKs leave
 it unread and never send it, and it is the one top-level key they do not refuse.
 

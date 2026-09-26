@@ -28,7 +28,19 @@ const (
 	// pongWait is how long a round trip is given before the last measurement is kept
 	// instead. A figure that is out of date is more use than a zero.
 	pongWait = 5 * time.Second
+	// firstRetry and lastRetry bound the wait between attempts to reach a router that
+	// dropped this worker, doubling from one to the other. A router being redeployed is
+	// back within seconds; one that is down for longer is not worth asking twice a second.
+	firstRetry = time.Second
+	lastRetry  = 30 * time.Second
+	// steadyAfter is how long a connection has to have lasted for its loss to be a fresh
+	// drop rather than another failed attempt, so the wait starts again from firstRetry.
+	steadyAfter = time.Minute
 )
+
+// errRefused is the router declining the tools this worker hosts, which reconnecting
+// would only be told again.
+var errRefused = errors.New("stream: the router refused to host tools")
 
 // InboundCall is a call the router could not answer itself.
 //
@@ -143,6 +155,8 @@ type Dispatch struct {
 	active  atomic.Int64
 
 	pong chan struct{}
+
+	firstRetry time.Duration
 }
 
 // NewDispatch describes a worker without connecting it.
@@ -165,6 +179,7 @@ func NewDispatch(options DispatchOptions) (*Dispatch, error) {
 		reportEvery: options.ReportEvery,
 		logger:      options.Logger,
 		pong:        make(chan struct{}, 1),
+		firstRetry:  firstRetry,
 	}, nil
 }
 
@@ -263,7 +278,14 @@ func (d *Dispatch) LatencyMS() float64 {
 	return d.latencyMS
 }
 
-// Run waits for work until the context is cancelled or the router closes the connection.
+// Run waits for work until the context is cancelled, the router closes the connection on
+// purpose, or it refuses the tools this worker hosts.
+//
+// A connection that drops any other way -- a router being redeployed, a load balancer
+// ending an idle socket -- is opened again, with a fresh token, and the router is told
+// again what this worker hosts, so a worker left running stays reachable. Only the first
+// connection failing is returned, since that is a worker that was never going to work:
+// the wrong address or a credential the router does not accept.
 //
 // Work already being handled is waited for on the way out, because dropping a call would
 // hang up on whoever is talking.
@@ -276,20 +298,70 @@ func (d *Dispatch) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	credentials, err := backend.Credentials()
+	address := backend.SocketURL(DispatchPath) + "?capacity=" + strconv.Itoa(d.capacity)
+	socket, err := d.connect(ctx, backend, address)
 	if err != nil {
 		return err
 	}
+	d.logger.Info("waiting for work", "router", backend.URL, "capacity", d.capacity)
 
-	address := backend.SocketURL(DispatchPath) + "?capacity=" + strconv.Itoa(d.capacity)
+	reporting, done := context.WithCancel(ctx)
+	go d.report(reporting)
+	defer func() {
+		done()
+		d.running.Wait()
+	}()
+
+	retry := d.firstRetry
+	for {
+		opened := time.Now()
+		failure := d.serve(ctx, socket)
+		if ctx.Err() != nil || failure == nil || errors.Is(failure, errRefused) {
+			return failure
+		}
+		if time.Since(opened) >= steadyAfter {
+			retry = d.firstRetry
+		}
+
+		d.logger.Warn("lost the router, reconnecting", "error", failure, "in", retry)
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retry):
+			}
+			retry = min(retry*2, lastRetry)
+			socket, err = d.connect(ctx, backend, address)
+			if err == nil {
+				break
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			d.logger.Warn("could not reach the router", "error", err, "retrying in", retry)
+		}
+	}
+}
+
+// connect opens one dispatch socket, with credentials minted for it: a token signed when
+// the worker started would have expired by the time a long-running one reconnects.
+func (d *Dispatch) connect(ctx context.Context, backend Backend, address string) (*Socket, error) {
+	credentials, err := backend.Credentials()
+	if err != nil {
+		return nil, err
+	}
 	socket := NewSocket(address, credentials, backend.HTTPClient, d.logger)
 	if err := socket.Open(ctx); err != nil {
-		return err
+		return nil, err
 	}
+	return socket, nil
+}
+
+// serve waits for work on one connection until it ends.
+func (d *Dispatch) serve(ctx context.Context, socket *Socket) error {
 	d.mu.Lock()
 	d.socket = socket
 	d.mu.Unlock()
-	d.logger.Info("waiting for work", "router", backend.URL, "capacity", d.capacity)
 
 	// A read blocks in the socket rather than on a channel, so cancellation has to reach
 	// it by closing the connection underneath it.
@@ -302,14 +374,8 @@ func (d *Dispatch) Run(ctx context.Context) error {
 		}
 	}()
 
-	reporting, done := context.WithCancel(ctx)
-	go d.report(reporting)
-
 	failure := d.read(ctx, socket)
-
 	close(stopped)
-	done()
-	d.running.Wait()
 
 	d.mu.Lock()
 	d.socket = nil
@@ -327,8 +393,9 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if errors.Is(err, ErrSocketClosed) ||
-				websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+			// Going away is a router shutting down, which is when a worker should find the
+			// one replacing it rather than stop.
+			if errors.Is(err, ErrSocketClosed) || websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 				return nil
 			}
 			return fmt.Errorf("stream: the dispatch socket ended: %w", err)
@@ -355,7 +422,7 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 		case "hosting_refused":
 			// Not worth waiting on: a worker whose tools were refused is one nobody will
 			// call, and saying so is better than sitting connected looking healthy.
-			return fmt.Errorf("stream: the router refused to host tools for config %s: %s",
+			return fmt.Errorf("%w for config %s: %s", errRefused,
 				frame.String("config_id"), frame.String("reason"))
 		case "pong":
 			select {

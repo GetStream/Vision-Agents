@@ -124,7 +124,7 @@ func TestAMessageWrittenToAnAgentReachesTheHandler(t *testing.T) {
 		_ = connection.WriteJSON(Frame{
 			"type": "message", "channel_type": "agent", "channel_id": "support-42",
 			"agent_id": "support-42", "config_id": "config-1",
-			"text": "does the react sdk retry a failed upload?",
+			"text":       "does the react sdk retry a failed upload?",
 			"message_id": "message-1", "user_id": "sam", "user_name": "Sam",
 			"at": "2026-09-08T12:00:00Z",
 		})
@@ -507,6 +507,59 @@ func TestAHostedFunctionIsDeclaredAndAnsweredOverTheDispatchSocket(t *testing.T)
 	}
 	cancel()
 	stopped()
+}
+
+func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
+	// The first connection is cut without a close frame, the way a router pod being
+	// replaced ends it, and the second goes away with one. A worker that stopped at
+	// either would leave every session on the config without its tools.
+	var connections sync.Mutex
+	opened := 0
+	router := newPool(t, func(connection *websocket.Conn) {
+		connections.Lock()
+		opened++
+		this := opened
+		connections.Unlock()
+		switch this {
+		case 1:
+			_ = connection.UnderlyingConn().Close()
+		case 2:
+			_ = connection.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseGoingAway, "shutting down"))
+		}
+	})
+	functions := tools.NewRegistry()
+	if err := tools.Register(functions, "investigate_sdk", "Read SDK source", func(context.Context, struct{}) (any, error) { return "", nil }); err != nil {
+		t.Fatal(err)
+	}
+	worker := waiting(t, router, DispatchOptions{})
+	worker.firstRetry = 10 * time.Millisecond
+	worker.Host("support", functions, 0)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := run(t, ctx, worker)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		connections.Lock()
+		reached := opened
+		connections.Unlock()
+		if reached >= 3 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("the worker connected %d times, want it back after each drop", reached)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if declared := router.told(t, "host_tools"); declared.String("config_id") != "support" {
+		t.Errorf("the reconnected worker declared %v", declared)
+	}
+	cancel()
+	if err := stopped(); err != nil && err != context.Canceled {
+		t.Errorf("a cancelled worker stopped with %v", err)
+	}
 }
 
 func TestAWorkerWhoseToolsAreRefusedStopsWaiting(t *testing.T) {

@@ -209,8 +209,9 @@ func (d *Dispatch) Conversation(ctx context.Context, message InboundMessage, bui
 	return started, nil
 }
 
-// Run waits for work until the context is cancelled or the router closes the connection,
-// then closes the conversations this worker was holding.
+// Run waits for work until the context is cancelled or the router closes the connection
+// on purpose, reconnecting when it drops, then closes the conversations this worker was
+// holding. See stream.Dispatch.Run.
 func (d *Dispatch) Run(ctx context.Context) error {
 	failure := d.dispatch.Run(ctx)
 
