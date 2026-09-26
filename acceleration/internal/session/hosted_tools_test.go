@@ -13,8 +13,8 @@ import (
 
 type fakeHosts struct{ ran []dispatch.ToolCall }
 
-func (f *fakeHosts) HostedTools(customerID, configID string) ([]dispatch.Tool, time.Duration) {
-	if customerID != "acme" || configID != "support" {
+func (f *fakeHosts) HostedTools(customerID, agentID string) ([]dispatch.Tool, time.Duration) {
+	if customerID != "acme" || agentID != "stream-support" {
 		return nil, 0
 	}
 	return []dispatch.Tool{
@@ -35,13 +35,14 @@ func (c *callerTools) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPa
 	return llm.TextParts("from the caller"), nil
 }
 
-func TestASessionOnAHostedConfigIsOfferedTheWorkersTools(t *testing.T) {
+func TestASessionNamingAHostedAgentIsOfferedTheWorkersTools(t *testing.T) {
 	hosts := &fakeHosts{}
 	m := &Manager{logger: slog.Default(), hosts: hosts}
 	caller := &callerTools{}
 	declared := []harness.Tool{{Name: "search_docs", Description: "The browser's search"}}
 
-	tools, runner := m.hostedTools(Spec{CustomerID: "acme", ConfigID: "support"}, "session-1", declared, caller)
+	// The shape a browser opens: an agent id, no stored config, and its own search.
+	tools, runner := m.hostedTools(Spec{CustomerID: "acme", AgentID: "stream-support"}, "session-1", declared, caller)
 
 	if len(tools) != 2 || tools[0].Description != "The browser's search" || tools[1].Name != "investigate_sdk" {
 		t.Fatalf("offered %+v", tools)
@@ -60,16 +61,16 @@ func TestASessionOnAHostedConfigIsOfferedTheWorkersTools(t *testing.T) {
 	}
 }
 
-func TestASessionOnAnotherConfigIsOfferedNothingHosted(t *testing.T) {
+func TestASessionNamingAnotherAgentIsOfferedNothingHosted(t *testing.T) {
 	m := &Manager{logger: slog.Default(), hosts: &fakeHosts{}}
 	caller := &callerTools{}
 
-	tools, runner := m.hostedTools(Spec{CustomerID: "acme", ConfigID: "sales"}, "s", nil, caller)
+	tools, runner := m.hostedTools(Spec{CustomerID: "acme", AgentID: "sales"}, "s", nil, caller)
 	if len(tools) != 0 || runner != caller {
 		t.Fatalf("offered %+v", tools)
 	}
-	tools, _ = m.hostedTools(Spec{CustomerID: "acme"}, "s", nil, caller)
+	tools, _ = m.hostedTools(Spec{CustomerID: "acme", ConfigID: "stream-support"}, "s", nil, caller)
 	if len(tools) != 0 {
-		t.Fatalf("a session naming no config was offered %+v", tools)
+		t.Fatalf("a session naming the agent only as a config was offered %+v", tools)
 	}
 }

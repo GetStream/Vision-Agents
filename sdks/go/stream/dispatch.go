@@ -190,22 +190,22 @@ func (d *Dispatch) OnCall(handler CallHandler) { d.call = handler }
 // OnMessage registers what to do with a message written to an agent that is not running.
 func (d *Dispatch) OnMessage(handler MessageHandler) { d.message = handler }
 
-// hosting is one set of functions this worker runs for every session on an agent config.
+// hosting is one set of functions this worker runs for every session under an agent id.
 type hosting struct {
-	configID  string
+	agentID   string
 	functions *tools.Registry
 	timeout   time.Duration
 }
 
-// Host runs these functions for every session opened on an agent config, whoever opened it.
+// Host runs these functions for every session opened under an agent id, whoever opened it.
 //
 // A session's own functions run in the process that opened it, which is no use to a
 // conversation opened from a browser that wants to read a source tree. Hosting is the other
-// direction: the router offers these functions to each session on the config and sends
+// direction: the router offers these functions to each session naming the agent and sends
 // every call to one of them here. timeout is how long the router gives one call; zero takes
 // its default. Call before Run.
-func (d *Dispatch) Host(configID string, functions *tools.Registry, timeout time.Duration) {
-	d.hosted = append(d.hosted, hosting{configID: configID, functions: functions, timeout: timeout})
+func (d *Dispatch) Host(agentID string, functions *tools.Registry, timeout time.Duration) {
+	d.hosted = append(d.hosted, hosting{agentID: agentID, functions: functions, timeout: timeout})
 }
 
 // host tells the router what this worker runs, once it is listening.
@@ -215,7 +215,7 @@ func (d *Dispatch) host() {
 		for _, function := range offer.functions.List() {
 			declared = append(declared, Frame{"name": function.Name, "description": function.Description, "parameters": function.Parameters})
 		}
-		d.tell(Frame{"type": "host_tools", "config_id": offer.configID, "tools": declared, "timeout_ms": offer.timeout.Milliseconds()})
+		d.tell(Frame{"type": "host_tools", "agent_id": offer.agentID, "tools": declared, "timeout_ms": offer.timeout.Milliseconds()})
 	}
 }
 
@@ -418,12 +418,12 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 		case "tool_call":
 			d.runHosted(ctx, frame)
 		case "hosting":
-			d.logger.Info("the router sends this worker's tools here", "config", frame.String("config_id"))
+			d.logger.Info("the router sends this worker's tools here", "agent", frame.String("agent_id"))
 		case "hosting_refused":
 			// Not worth waiting on: a worker whose tools were refused is one nobody will
 			// call, and saying so is better than sitting connected looking healthy.
-			return fmt.Errorf("%w for config %s: %s", errRefused,
-				frame.String("config_id"), frame.String("reason"))
+			return fmt.Errorf("%w for agent %s: %s", errRefused,
+				frame.String("agent_id"), frame.String("reason"))
 		case "pong":
 			select {
 			case d.pong <- struct{}{}:

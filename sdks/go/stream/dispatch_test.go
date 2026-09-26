@@ -492,13 +492,13 @@ func TestAHostedFunctionIsDeclaredAndAnsweredOverTheDispatchSocket(t *testing.T)
 		t.Fatal(err)
 	}
 	worker := waiting(t, router, DispatchOptions{})
-	worker.Host("support", functions, time.Minute)
+	worker.Host("stream-support", functions, time.Minute)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	stopped := run(t, ctx, worker)
 
 	declared := router.told(t, "host_tools")
-	if declared.String("config_id") != "support" || declared.Int("timeout_ms") != 60000 {
+	if declared.String("agent_id") != "stream-support" || declared.Int("timeout_ms") != 60000 {
 		t.Errorf("the router was told %v", declared)
 	}
 	answered := router.told(t, "tool_result")
@@ -512,7 +512,7 @@ func TestAHostedFunctionIsDeclaredAndAnsweredOverTheDispatchSocket(t *testing.T)
 func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 	// The first connection is cut without a close frame, the way a router pod being
 	// replaced ends it, and the second goes away with one. A worker that stopped at
-	// either would leave every session on the config without its tools.
+	// either would leave every session naming the agent without its tools.
 	var connections sync.Mutex
 	opened := 0
 	router := newPool(t, func(connection *websocket.Conn) {
@@ -534,7 +534,7 @@ func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 	}
 	worker := waiting(t, router, DispatchOptions{})
 	worker.firstRetry = 10 * time.Millisecond
-	worker.Host("support", functions, 0)
+	worker.Host("stream-support", functions, 0)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	stopped := run(t, ctx, worker)
@@ -553,7 +553,7 @@ func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if declared := router.told(t, "host_tools"); declared.String("config_id") != "support" {
+	if declared := router.told(t, "host_tools"); declared.String("agent_id") != "stream-support" {
 		t.Errorf("the reconnected worker declared %v", declared)
 	}
 	cancel()
@@ -564,14 +564,14 @@ func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 
 func TestAWorkerWhoseToolsAreRefusedStopsWaiting(t *testing.T) {
 	router := newPool(t, func(connection *websocket.Conn) {
-		_ = connection.WriteJSON(Frame{"type": "hosting_refused", "config_id": "support", "reason": "there is no such config"})
+		_ = connection.WriteJSON(Frame{"type": "hosting_refused", "agent_id": "stream-support", "reason": "hosting no tools is not hosting"})
 	})
 	functions := tools.NewRegistry()
 	if err := tools.Register(functions, "investigate_sdk", "Read SDK source", func(context.Context, struct{}) (any, error) { return "", nil }); err != nil {
 		t.Fatal(err)
 	}
 	worker := waiting(t, router, DispatchOptions{})
-	worker.Host("support", functions, 0)
+	worker.Host("stream-support", functions, 0)
 
 	if err := run(t, t.Context(), worker)(); err == nil {
 		t.Fatal("a worker nobody will call kept waiting")

@@ -266,24 +266,42 @@ func (s *DispatchSuite) nextCall(connection *websocket.Conn) string {
 	return id
 }
 
-func (s *DispatchSuite) TestHostedToolsNeedAConfigTheCustomerHolds() {
+func (s *DispatchSuite) TestHostedToolsAreKeptForTheAgentTheWorkerNames() {
 	connection := s.connect("acme", "")
 	s.Require().NoError(connection.WriteJSON(map[string]any{
-		"type": "host_tools", "config_id": "support",
+		"type": "host_tools", "agent_id": "stream-support",
 		"tools": []map[string]any{{"name": "investigate_sdk", "description": "Read SDK source"}},
 	}))
 
 	var reply map[string]any
 	s.Require().NoError(connection.ReadJSON(&reply))
-	s.Equal("hosting_refused", reply["type"], "without a store there is no config to hold")
-	tools, _ := s.pool.HostedTools("acme", "support")
+	s.Equal("hosting", reply["type"], "an agent id needs nothing stored to host for")
+	s.Equal("stream-support", reply["agent_id"])
+
+	tools, timeout := s.pool.HostedTools("acme", "stream-support")
+	s.Require().Len(tools, 1)
+	s.Equal("investigate_sdk", tools[0].Name)
+	s.Equal(2*time.Minute, timeout, "a worker that names no timeout takes the default")
+}
+
+func (s *DispatchSuite) TestHostedToolsNeedAnAgentToBeFor() {
+	connection := s.connect("acme", "")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type":  "host_tools",
+		"tools": []map[string]any{{"name": "investigate_sdk", "description": "Read SDK source"}},
+	}))
+
+	var reply map[string]any
+	s.Require().NoError(connection.ReadJSON(&reply))
+	s.Equal("hosting_refused", reply["type"])
+	tools, _ := s.pool.HostedTools("acme", "")
 	s.Empty(tools)
 }
 
 func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
 	connection := s.connect("acme", "")
 	worker := s.pool.Workers("acme")[0]
-	s.Require().NoError(s.pool.Host(worker, "support", []dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+	s.Require().NoError(s.pool.Host(worker, "stream-support", []dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
 
 	type answer struct {
 		output string
@@ -291,7 +309,7 @@ func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
 	}
 	answered := make(chan answer, 1)
 	go func() {
-		output, err := s.pool.RunHosted(s.T().Context(), "acme", "support",
+		output, err := s.pool.RunHosted(s.T().Context(), "acme", "stream-support",
 			dispatch.ToolCall{ID: "call-1", SessionID: "session-1", Name: "investigate_sdk", Arguments: `{"sdk":"android"}`})
 		answered <- answer{output, err}
 	}()

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -195,9 +194,9 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			Reason string `json:"reason"`
 			// At echoes back a ping, so the worker can measure the round trip itself.
 			At float64 `json:"at"`
-			// ConfigID, Tools and TimeoutMs are what a worker offers to run for every
-			// session on one agent config.
-			ConfigID  string       `json:"config_id"`
+			// AgentID, Tools and TimeoutMs are what a worker offers to run for every
+			// session opened under one agent id.
+			AgentID   string       `json:"agent_id"`
 			Tools     []hostedTool `json:"tools"`
 			TimeoutMs int          `json:"timeout_ms"`
 			// ID, Output and Error answer one hosted tool call.
@@ -233,7 +232,7 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			}
 
 		case "host_tools":
-			reply := s.hostTools(worker, report.ConfigID, report.Tools, report.TimeoutMs)
+			reply := s.hostTools(worker, report.AgentID, report.Tools, report.TimeoutMs)
 			select {
 			case replies <- reply:
 			case <-writerDone:
@@ -270,24 +269,17 @@ type hostedTool struct {
 	Parameters  map[string]any `json:"parameters"`
 }
 
-// hostTools records what a worker offers to run for sessions on an agent config, and says
+// hostTools records what a worker offers to run for sessions under an agent id, and says
 // whether it was taken.
 //
-// The config is checked against the worker's own customer, which is what makes this safe to
-// offer at all: a worker is trusted with its customer's conversations already, and naming a
-// config is not a way into anybody else's.
-func (s *Server) hostTools(worker *dispatch.Worker, configID string, declared []hostedTool, timeoutMs int) frame {
+// The offer is scoped to the worker's own customer, which is what makes it safe: a worker
+// is trusted with its customer's conversations already, and naming an agent is not a way
+// into anybody else's. The agent id need not be stored anywhere — the sessions this is for
+// are the ones a browser opens naming an agent and no config.
+func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []hostedTool, timeoutMs int) frame {
 	refuse := func(reason string) frame {
-		s.logger.Warn("refused a worker's hosted tools", "worker", worker.ID, "config", configID, "reason", reason)
-		return frame{"type": "hosting_refused", "config_id": configID, "reason": reason}
-	}
-	if s.store == nil {
-		return refuse(noConfigs)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := s.store.AgentConfig(ctx, worker.CustomerID, configID); err != nil {
-		return refuse(unknownConfig)
+		s.logger.Warn("refused a worker's hosted tools", "worker", worker.ID, "agent", agentID, "reason", reason)
+		return frame{"type": "hosting_refused", "agent_id": agentID, "reason": reason}
 	}
 	tools := make([]dispatch.Tool, 0, len(declared))
 	names := make([]string, 0, len(declared))
@@ -298,11 +290,11 @@ func (s *Server) hostTools(worker *dispatch.Worker, configID string, declared []
 		tools = append(tools, dispatch.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
 		names = append(names, tool.Name)
 	}
-	if err := s.dispatch.Host(worker, configID, tools, time.Duration(timeoutMs)*time.Millisecond); err != nil {
+	if err := s.dispatch.Host(worker, agentID, tools, time.Duration(timeoutMs)*time.Millisecond); err != nil {
 		return refuse(err.Error())
 	}
-	s.logger.Info("a worker hosts tools", "worker", worker.ID, "config", configID, "tools", names)
-	return frame{"type": "hosting", "config_id": configID, "tools": names}
+	s.logger.Info("a worker hosts tools", "worker", worker.ID, "agent", agentID, "tools", names)
+	return frame{"type": "hosting", "agent_id": agentID, "tools": names}
 }
 
 // toolCallFrame renders one hosted call for the wire.

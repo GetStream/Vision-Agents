@@ -13,22 +13,22 @@ import (
 // ToolHosts are the workers that run tools for sessions they did not open. The dispatch pool
 // is the one there is.
 type ToolHosts interface {
-	HostedTools(customerID, configID string) ([]dispatch.Tool, time.Duration)
-	RunHosted(ctx context.Context, customerID, configID string, call dispatch.ToolCall) (string, error)
+	HostedTools(customerID, agentID string) ([]dispatch.Tool, time.Duration)
+	RunHosted(ctx context.Context, customerID, agentID string, call dispatch.ToolCall) (string, error)
 }
 
-// HostTools lets sessions on an agent config use the tools a connected worker runs for it.
+// HostTools lets sessions under an agent id use the tools a connected worker runs for it.
 // Set once, before sessions are served.
 func (m *Manager) HostTools(hosts ToolHosts) { m.hosts = hosts }
 
-// hostedTools adds what workers run for the session's config to what the caller declared,
+// hostedTools adds what workers run for the session's agent to what the caller declared,
 // and returns the runner that sends those calls to them. A name the caller declared stays
 // the caller's: whoever opened the session is the one it asked to run it.
 func (m *Manager) hostedTools(spec Spec, sessionID string, declared []harness.Tool, next agent.ToolRunner) ([]harness.Tool, agent.ToolRunner) {
-	if m.hosts == nil || spec.ConfigID == "" {
+	if m.hosts == nil || spec.AgentID == "" {
 		return declared, next
 	}
-	offered, _ := m.hosts.HostedTools(spec.CustomerID, spec.ConfigID)
+	offered, _ := m.hosts.HostedTools(spec.CustomerID, spec.AgentID)
 	taken := map[string]bool{}
 	for _, tool := range declared {
 		taken[tool.Name] = true
@@ -44,7 +44,7 @@ func (m *Manager) hostedTools(spec Spec, sessionID string, declared []harness.To
 	if len(hosted) == 0 {
 		return declared, next
 	}
-	m.logger.Info("offering tools a worker hosts", "session", sessionID, "config", spec.ConfigID, "tools", len(hosted))
+	m.logger.Info("offering tools a worker hosts", "session", sessionID, "agent", spec.AgentID, "tools", len(hosted))
 	return declared, &hostedRunner{hosts: m.hosts, spec: spec, sessionID: sessionID, names: hosted, next: next}
 }
 
@@ -65,7 +65,7 @@ func (r *hostedRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Conten
 	if !r.names[call.Name] {
 		return r.next.Run(ctx, call)
 	}
-	output, err := r.hosts.RunHosted(ctx, r.spec.CustomerID, r.spec.ConfigID, dispatch.ToolCall{
+	output, err := r.hosts.RunHosted(ctx, r.spec.CustomerID, r.spec.AgentID, dispatch.ToolCall{
 		ID: call.ID, SessionID: r.sessionID, Name: call.Name, Arguments: call.Arguments,
 	})
 	if err != nil {

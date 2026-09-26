@@ -292,17 +292,18 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
-### A dispatch worker can run tools for every session on an agent config
+### A dispatch worker can run tools for every session under an agent id
 
-A worker on `/v1/dispatch` can send `host_tools` naming one of its customer's agent configs
-and the tools it runs for it. Every session opened on that config, whoever opened it, is then
-offered those tools, and each call reaches the worker as a `tool_call` frame and is answered
-with `tool_result`, within the worker's own `timeout_ms` (two minutes by default). This is
-how a session a browser opens gets a tool only a backend can run, such as reading source on
-a VM. A tool the session's own caller declares under the same name wins, a config the
-customer does not hold is refused with `hosting_refused`, and a call waiting on a worker
-that disconnects fails at once. The Go SDK exposes it as `Dispatch.Host(configID,
-functions, timeout)`.
+A worker on `/v1/dispatch` can send `host_tools` naming an `agent_id` and the tools it runs
+for it. Every session opened under that agent id, whoever opened it, is then offered those
+tools, and each call reaches the worker as a `tool_call` frame and is answered with
+`tool_result`, within the worker's own `timeout_ms` (two minutes by default). This is how a
+session a browser opens gets a tool only a backend can run, such as reading source on a VM:
+the agent id is what a plain session already names, so nothing has to be stored first. The
+agent id is scoped to the worker's own customer, a tool the session's own caller declares
+under the same name wins, hosting no tools or naming no agent is refused with
+`hosting_refused`, and a call waiting on a worker that disconnects fails at once. The Go SDK
+exposes it as `Dispatch.Host(agentID, functions, timeout)`.
 
 A Go `Dispatch` whose socket drops -- a router redeployed, a load balancer ending the
 connection -- now reconnects with a fresh token, backing off from one second to thirty, and

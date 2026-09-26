@@ -153,7 +153,7 @@ type Pool struct {
 	cursors map[string]int
 	next    int
 	// hosted is the tools workers run for other sessions, by customer and then agent
-	// config, and toolCursors whose turn it is for each tool.
+	// id, and toolCursors whose turn it is for each tool.
 	hosted      map[string]map[string][]*hosting
 	toolCursors map[string]int
 }

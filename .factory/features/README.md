@@ -23,6 +23,7 @@ edits them.
 | [Knowledge](knowledge.md)                      | sprint 9             | Built on turbopuffer                    |
 | [Telephony](telephony.md)                      | sprints 4, 12, 13    | Eight vendors of eleven; seven can dial |
 | [Inbound calls and dispatch](dispatch.md)      | sprint 14            | Built; round robin, two vendors can be rung |
+| [Direct and acceleration first](architectures.md) | sprints 8, 14     | Both shapes work; only Go can host tools |
 | [Transfer and IVR navigation](transfer.md)     | sprint 7             | Built on tool calling; DTMF at Telnyx only |
 | [Campaigns](campaigns.md)                      | sprint 9             | Built; no page in the dashboard         |
 | [Simulate and test](simulations.md)            | sprint 16            | Built for text and audio; nothing schedules one |
@@ -31,7 +32,7 @@ edits them.
 | [Voices of your own](voices.md)                | sprint 11            | Built; three providers of five can clone |
 | [Finetuning dataset](finetuning-dataset.md)    | sprint 5 C           | Not started                             |
 | [The Python SDK](sdk.md)                       | sprints 8, 13, 14    | Built; Daytona is the only sandbox      |
-| [The Go SDK](go-sdk.md)                        | sprint 10            | Built; no dispatch worker               |
+| [The Go SDK](go-sdk.md)                        | sprint 10            | Built; hosts tools over dispatch        |
 | [The dashboard](dashboard.md)                  | sprints 9, 15        | Built; the review score is a placeholder |
 | [Authentication](auth.md)                      | sprint 17            | Four modes; nothing creates a key or a setting but a database call |
 | [Hosting](hosting.md)                          | sprints 9, 17        | Built in the chat repository; not deployed |

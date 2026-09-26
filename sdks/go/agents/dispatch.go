@@ -146,10 +146,10 @@ func (d *Dispatch) OnCall(handler func(context.Context, InboundCall) error) {
 	d.dispatch.OnCall(handler)
 }
 
-// Host runs these functions for every session opened on an agent config, whoever opened it,
+// Host runs these functions for every session opened under an agent id, whoever opened it,
 // giving the router timeout for each call. See stream.Dispatch.Host.
-func (d *Dispatch) Host(configID string, functions Registrar, timeout time.Duration) {
-	d.dispatch.Host(configID, functions.Functions(), timeout)
+func (d *Dispatch) Host(agentID string, functions Registrar, timeout time.Duration) {
+	d.dispatch.Host(agentID, functions.Functions(), timeout)
 }
 
 // WorkerID is what the router calls this connection.

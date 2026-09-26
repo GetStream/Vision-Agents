@@ -36,9 +36,23 @@ sequenceDiagram
 | [callhooks.go](../../acceleration/internal/api/callhooks.go)        | `POST /v1/phone/hooks/stream`, where Stream reports an arriving call |
 | [phone/hooks.go](../../acceleration/internal/phone/hooks.go)        | Registering that URL with Stream, via `cmd/phone hooks -url` |
 | [dispatch.py](../../plugins/stream/vision_agents/plugins/stream/dispatch.py) | The worker side |
+| [tools.go](../../acceleration/internal/dispatch/tools.go)           | The tools workers host, by customer and agent id |
+| [stream/dispatch.go](../../sdks/go/stream/dispatch.go)              | The Go worker, which reconnects and can host tools |
 
 A worker sends `load` every fifteen seconds and `ping` to measure the round trip; the router
 answers `pong` and sends `call`. The worker replies `accepted` or `rejected`.
+
+## The same socket carries tools the other way
+
+A worker can also say what it runs for sessions it did not open. It sends `host_tools` with
+an agent id, its tools and a timeout, and the router answers `hosting` or `hosting_refused`.
+Every session opened under that agent id is then offered those tools, and each call arrives
+as `tool_call` and is answered with `tool_result`. That is how a conversation a browser
+opened against the router reaches a function only the customer's backend can run; see
+[architectures](architectures.md) for the two shapes this sits between.
+
+The agent id is scoped to the worker's customer and needs nothing stored: the sessions worth
+hosting for are the ones that name an agent and no config.
 
 ## Stream tells us, not the vendor
 
@@ -86,8 +100,8 @@ the webhook can arrive before the caller is in the session.
 
 - **Two vendors can be rung.** Only Twilio and Telnyx implement `ConfigureInbound`; see
   [telephony](telephony.md).
-- **A worker connects once.** `run()` returns when the socket closes; reconnecting is the
-  caller's problem.
+- **A Python worker connects once.** `run()` returns when the socket closes; reconnecting is
+  the caller's problem. The Go worker reconnects and declares what it hosts again.
 - **One pool, one process.** Nothing coordinates dispatch across routers, and worker ids are
   not stable across reconnects.
 - **Load-aware routing**, which is what the reported load is for.

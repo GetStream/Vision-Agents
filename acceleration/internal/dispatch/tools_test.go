@@ -8,7 +8,7 @@ import (
 
 var investigate = Tool{Name: "investigate_sdk", Description: "Read SDK source"}
 
-func TestAHostedToolIsOfferedOnlyForItsConfigAndCustomer(t *testing.T) {
+func TestAHostedToolIsOfferedOnlyForItsAgentAndCustomer(t *testing.T) {
 	pool := NewPool()
 	worker, _ := pool.Register("acme", 1)
 	if err := pool.Host(worker, "support", []Tool{investigate}, time.Minute); err != nil {
@@ -19,7 +19,7 @@ func TestAHostedToolIsOfferedOnlyForItsConfigAndCustomer(t *testing.T) {
 		t.Fatalf("offered %+v for %s", tools, timeout)
 	}
 	if tools, _ := pool.HostedTools("acme", "sales"); len(tools) != 0 {
-		t.Errorf("another config is offered %+v", tools)
+		t.Errorf("another agent is offered %+v", tools)
 	}
 	if tools, _ := pool.HostedTools("globex", "support"); len(tools) != 0 {
 		t.Errorf("another customer is offered %+v", tools)

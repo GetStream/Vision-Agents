@@ -20,7 +20,7 @@ const toolQueue = 64
 // A session's own tools are answered by whoever opened it, which is the right owner for a
 // function that lives beside the caller. Some do not: a browser opening a conversation
 // cannot read a source tree or reach a sandbox. A worker that can says so once, for an
-// agent config, and every session opened on that config is offered the tool and has its
+// agent id, and every session opened under that agent is offered the tool and has its
 // calls sent here.
 type Tool struct {
 	Name        string
@@ -47,7 +47,7 @@ type ToolResult struct {
 	Failure string
 }
 
-// hosting is one worker's offer of tools for one agent config.
+// hosting is one worker's offer of tools for one agent id.
 type hosting struct {
 	worker  *Worker
 	tools   []Tool
@@ -83,12 +83,12 @@ func (w *Worker) Resolve(id string, result ToolResult) bool {
 	return true
 }
 
-// Host records that a worker runs these tools for sessions on an agent config, replacing
-// whatever it offered for that config before. The config must already be known to belong to
-// the worker's customer: this is the pool, not the gate.
-func (p *Pool) Host(worker *Worker, configID string, tools []Tool, timeout time.Duration) error {
-	if configID == "" {
-		return errors.New("dispatch: hosted tools need the agent config they are for")
+// Host records that a worker runs these tools for sessions under an agent id, replacing
+// whatever it offered for that agent before. The offer is scoped to the worker's own
+// customer: this is the pool, not the gate.
+func (p *Pool) Host(worker *Worker, agentID string, tools []Tool, timeout time.Duration) error {
+	if agentID == "" {
+		return errors.New("dispatch: hosted tools need the agent they are for")
 	}
 	if len(tools) == 0 {
 		return errors.New("dispatch: hosting no tools is not hosting")
@@ -102,24 +102,24 @@ func (p *Pool) Host(worker *Worker, configID string, tools []Tool, timeout time.
 	if !p.registered(worker) {
 		return errors.New("dispatch: that worker has already gone")
 	}
-	byConfig := p.hosted[worker.CustomerID]
-	if byConfig == nil {
-		byConfig = map[string][]*hosting{}
-		p.hosted[worker.CustomerID] = byConfig
+	byAgent := p.hosted[worker.CustomerID]
+	if byAgent == nil {
+		byAgent = map[string][]*hosting{}
+		p.hosted[worker.CustomerID] = byAgent
 	}
-	offers := byConfig[configID][:0:0]
-	for _, offer := range byConfig[configID] {
+	offers := byAgent[agentID][:0:0]
+	for _, offer := range byAgent[agentID] {
 		if offer.worker != worker {
 			offers = append(offers, offer)
 		}
 	}
-	byConfig[configID] = append(offers, &hosting{worker: worker, tools: append([]Tool(nil), tools...), timeout: timeout})
+	byAgent[agentID] = append(offers, &hosting{worker: worker, tools: append([]Tool(nil), tools...), timeout: timeout})
 	return nil
 }
 
-// HostedTools is what the workers connected now run for sessions on one agent config, each
+// HostedTools is what the workers connected now run for sessions under one agent id, each
 // name once, and how long the slowest of them is given.
-func (p *Pool) HostedTools(customerID, configID string) ([]Tool, time.Duration) {
+func (p *Pool) HostedTools(customerID, agentID string) ([]Tool, time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -128,7 +128,7 @@ func (p *Pool) HostedTools(customerID, configID string) ([]Tool, time.Duration) 
 		seen    = map[string]bool{}
 		longest time.Duration
 	)
-	for _, offer := range p.hosted[customerID][configID] {
+	for _, offer := range p.hosted[customerID][agentID] {
 		longest = max(longest, offer.timeout)
 		for _, tool := range offer.tools {
 			if !seen[tool.Name] {
@@ -140,19 +140,19 @@ func (p *Pool) HostedTools(customerID, configID string) ([]Tool, time.Duration) 
 	return offered, longest
 }
 
-// RunHosted sends one call to a worker hosting that tool for the config and waits for its
+// RunHosted sends one call to a worker hosting that tool for the agent and waits for its
 // answer, the worker's own timeout, or the caller giving up.
 //
 // Workers take turns the way they do for calls, and one whose queue is full is passed over.
-func (p *Pool) RunHosted(ctx context.Context, customerID, configID string, call ToolCall) (string, error) {
+func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call ToolCall) (string, error) {
 	if call.ID == "" {
 		return "", errors.New("dispatch: a hosted call needs an id")
 	}
 	answer := make(chan ToolResult, 1)
 
 	p.mu.Lock()
-	offers := p.hosted[customerID][configID]
-	key := customerID + "\x00" + configID + "\x00" + call.Name
+	offers := p.hosted[customerID][agentID]
+	key := customerID + "\x00" + agentID + "\x00" + call.Name
 	start := p.toolCursors[key]
 	p.toolCursors[key] = start + 1
 	var chosen *hosting
@@ -220,8 +220,8 @@ func (p *Pool) registered(worker *Worker) bool {
 // conversation is told the tool went away rather than waiting out its timeout. The caller
 // holds the lock.
 func (p *Pool) unhost(worker *Worker) {
-	byConfig := p.hosted[worker.CustomerID]
-	for configID, offers := range byConfig {
+	byAgent := p.hosted[worker.CustomerID]
+	for agentID, offers := range byAgent {
 		kept := offers[:0:0]
 		for _, offer := range offers {
 			if offer.worker != worker {
@@ -229,12 +229,12 @@ func (p *Pool) unhost(worker *Worker) {
 			}
 		}
 		if len(kept) == 0 {
-			delete(byConfig, configID)
+			delete(byAgent, agentID)
 		} else {
-			byConfig[configID] = kept
+			byAgent[agentID] = kept
 		}
 	}
-	if len(byConfig) == 0 {
+	if len(byAgent) == 0 {
 		delete(p.hosted, worker.CustomerID)
 	}
 
