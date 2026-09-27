@@ -91,6 +91,11 @@ restoring the phone number routing) runs on normal shutdown, on Ctrl-C, and on
 SIGTERM, so `kill <pid>` and plain `pkill -f inbound_call.py` are safe. The
 examples then exit with the conventional `128 + SIGTERM` (143) status.
 
+The guard is installed before `--setup-telnyx` creates anything, so a signal
+that arrives *while* Telnyx is being set up also cleans up whatever was created
+up to that point. A second SIGTERM is ignored until the cleanup finishes, so
+repeated `kill` commands cannot cut it short.
+
 `kill -9` (SIGKILL) cannot be caught by any process, so it skips cleanup: the
 temporary Call Control App is left behind and the phone number stays routed to
 the dead ngrok webhook. If that happens, delete the leftover

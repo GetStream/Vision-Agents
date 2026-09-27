@@ -28,6 +28,7 @@ from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
 from vision_agents.plugins.telnyx.example_helpers import (
     TelnyxClient,
     TelnyxConfig,
+    TelnyxExampleResources,
     TelnyxSetupError,
     media_stream_url,
     parse_verified_telnyx_webhook,
@@ -223,32 +224,36 @@ def main() -> None:
     values = require_env(["STREAM_API_KEY", "STREAM_API_SECRET", "TELNYX_API_KEY"])
     telnyx_public_key = require_telnyx_public_key()
     telnyx_client = TelnyxClient(values["TELNYX_API_KEY"])
-    setup = prepare_telnyx_example_setup(
-        telnyx_client,
-        api_key=values["TELNYX_API_KEY"],
-        phone_number=args.phone_number or os.environ.get("TELNYX_PHONE_NUMBER"),
-        ngrok_url=args.ngrok_url or os.environ.get("NGROK_URL"),
-        call_control_app_id=(
-            args.call_control_app_id or os.environ.get("TELNYX_CALL_CONTROL_APP_ID")
-        ),
-        phone_number_id=(
-            args.phone_number_id or os.environ.get("TELNYX_PHONE_NUMBER_ID")
-        ),
-        setup_telnyx=args.setup_telnyx,
-        route_phone_number=True,
-    )
-    telnyx_config = setup.config
-    resolved_phone_number_id = setup.phone_number_id or (
-        args.phone_number_id or os.environ.get("TELNYX_PHONE_NUMBER_ID")
-    )
-    if not resolved_phone_number_id:
-        raise TelnyxSetupError(
-            "Missing TELNYX_PHONE_NUMBER_ID. Pass `--setup-telnyx` to discover "
-            "and route the Telnyx number automatically."
-        )
+    telnyx_resources = TelnyxExampleResources()
 
-    # Cleans up on normal shutdown, Ctrl-C, and SIGTERM (`kill <pid>`).
-    with telnyx_example_cleanup(telnyx_client, setup):
+    # Cleans up on normal shutdown, Ctrl-C, and SIGTERM (`kill <pid>`). Entered
+    # before setup so resources created partway through it are cleaned up too.
+    with telnyx_example_cleanup(telnyx_client, telnyx_resources):
+        setup = prepare_telnyx_example_setup(
+            telnyx_client,
+            api_key=values["TELNYX_API_KEY"],
+            phone_number=args.phone_number or os.environ.get("TELNYX_PHONE_NUMBER"),
+            ngrok_url=args.ngrok_url or os.environ.get("NGROK_URL"),
+            call_control_app_id=(
+                args.call_control_app_id or os.environ.get("TELNYX_CALL_CONTROL_APP_ID")
+            ),
+            phone_number_id=(
+                args.phone_number_id or os.environ.get("TELNYX_PHONE_NUMBER_ID")
+            ),
+            setup_telnyx=args.setup_telnyx,
+            route_phone_number=True,
+            resources=telnyx_resources,
+        )
+        telnyx_config = setup.config
+        resolved_phone_number_id = setup.phone_number_id or (
+            args.phone_number_id or os.environ.get("TELNYX_PHONE_NUMBER_ID")
+        )
+        if not resolved_phone_number_id:
+            raise TelnyxSetupError(
+                "Missing TELNYX_PHONE_NUMBER_ID. Pass `--setup-telnyx` to discover "
+                "and route the Telnyx number automatically."
+            )
+
         preflight_inbound(
             telnyx_client,
             config=telnyx_config,

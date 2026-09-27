@@ -10,7 +10,9 @@ import time
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from vision_agents.plugins.telnyx.example_helpers import (
+    TelnyxAPIError,
     TelnyxConfig,
+    TelnyxExampleResources,
     TelnyxSetupError,
     TelnyxWebhookVerificationError,
     cleanup_telnyx_example_setup,
@@ -37,6 +39,8 @@ class FakeTelnyxClient:
         phone_number=None,
         verified_number=None,
         outbound_voice_profile_id="profile-id",
+        update_failures=0,
+        delete_failures=0,
     ):
         self.app = app
         self.phone_number = phone_number
@@ -44,6 +48,9 @@ class FakeTelnyxClient:
         self.outbound_voice_profile_id = outbound_voice_profile_id
         self.call_control_apps: dict[str, dict] = {}
         self.deleted_app_ids: list[str] = []
+        self.connection_updates: list[tuple[str, str]] = []
+        self.update_failures = update_failures
+        self.delete_failures = delete_failures
         self.phone_connection_id = (
             phone_number.get("connection_id") if phone_number else None
         )
@@ -77,10 +84,17 @@ class FakeTelnyxClient:
         return {"data": app}
 
     def delete_call_control_app(self, app_id):
+        if self.delete_failures:
+            self.delete_failures -= 1
+            raise TelnyxAPIError(500, "delete failed")
         self.deleted_app_ids.append(app_id)
         self.call_control_apps.pop(app_id, None)
 
     def update_phone_number_connection(self, phone_number_id, connection_id):
+        if self.update_failures:
+            self.update_failures -= 1
+            raise TelnyxAPIError(500, "update failed")
+        self.connection_updates.append((phone_number_id, connection_id))
         self.phone_connection_id = connection_id
         if self.phone_number is not None:
             self.phone_number["connection_id"] = connection_id
@@ -384,6 +398,109 @@ def test_telnyx_example_cleanup_installs_and_restores_sigterm_handler():
     assert signal.getsignal(signal.SIGTERM) is original_handler
 
 
+def test_prepare_telnyx_example_setup_tracks_resources_while_creating_them():
+    client = FakeTelnyxClient(
+        phone_number={
+            "id": "phone-id",
+            "phone_number": "+15551234567",
+            "connection_id": "original-app-id",
+        },
+    )
+    resources = TelnyxExampleResources()
+    tracked_at_reroute: list[tuple[str | None, str | None]] = []
+    reroute = client.update_phone_number_connection
+
+    def recording_reroute(phone_number_id, connection_id):
+        tracked_at_reroute.append(
+            (resources.created_call_control_app_id, resources.original_connection_id)
+        )
+        reroute(phone_number_id, connection_id)
+
+    client.update_phone_number_connection = recording_reroute  # type: ignore[method-assign]
+
+    setup = prepare_telnyx_example_setup(
+        client,
+        api_key="key",
+        phone_number="+15551234567",
+        ngrok_url="example.ngrok-free.app",
+        setup_telnyx=True,
+        route_phone_number=True,
+        resources=resources,
+    )
+
+    # Both resources were already on the tracker before the re-route ran, so a
+    # signal arriving mid-setup still has everything it needs to clean up.
+    assert tracked_at_reroute == [("created-app-id", "original-app-id")]
+    assert resources == TelnyxExampleResources(
+        phone_number_id="phone-id",
+        created_call_control_app_id="created-app-id",
+        original_connection_id="original-app-id",
+    )
+    assert setup.created_call_control_app_id == "created-app-id"
+    assert setup.original_connection_id == "original-app-id"
+
+
+def test_prepare_telnyx_example_setup_rollback_is_not_repeated_by_the_guard():
+    # The re-route fails once, so setup rolls itself back while the cleanup
+    # guard is already active. Deleting the app twice would 404.
+    client = FakeTelnyxClient(
+        phone_number={
+            "id": "phone-id",
+            "phone_number": "+15551234567",
+            "connection_id": "original-app-id",
+        },
+        update_failures=1,
+    )
+    resources = TelnyxExampleResources()
+
+    with pytest.raises(TelnyxAPIError):
+        with telnyx_example_cleanup(client, resources):
+            prepare_telnyx_example_setup(
+                client,
+                api_key="key",
+                phone_number="+15551234567",
+                ngrok_url="example.ngrok-free.app",
+                setup_telnyx=True,
+                route_phone_number=True,
+                resources=resources,
+            )
+
+    assert client.deleted_app_ids == ["created-app-id"]
+    assert resources.created_call_control_app_id is None
+
+
+def test_telnyx_example_cleanup_retries_only_the_step_that_failed():
+    client = FakeTelnyxClient(
+        phone_number={
+            "id": "phone-id",
+            "phone_number": "+15551234567",
+            "connection_id": "original-app-id",
+        },
+        delete_failures=1,
+    )
+    resources = TelnyxExampleResources(
+        phone_number_id="phone-id",
+        created_call_control_app_id="created-app-id",
+        original_connection_id="original-app-id",
+    )
+
+    with pytest.raises(TelnyxSetupError, match="delete temporary"):
+        with telnyx_example_cleanup(client, resources):
+            pass
+
+    # Routing is restored and forgotten; the app deletion is still outstanding,
+    # so a partial cleanup is never recorded as finished.
+    assert client.connection_updates == [("phone-id", "original-app-id")]
+    assert resources.original_connection_id is None
+    assert resources.created_call_control_app_id == "created-app-id"
+
+    with telnyx_example_cleanup(client, resources):
+        pass
+
+    assert client.connection_updates == [("phone-id", "original-app-id")]
+    assert client.deleted_app_ids == ["created-app-id"]
+
+
 # Runs in a subprocess: the handler ends the process with the default SIGTERM
 # disposition, which cannot be observed in-process.
 SIGTERM_EXAMPLE_SCRIPT = '''
@@ -431,11 +548,127 @@ with telnyx_example_cleanup(MarkerClient(), setup):
 '''
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM is POSIX-only")
-def test_telnyx_example_cleanup_runs_on_sigterm(tmp_path):
+# SIGTERM is delivered from inside the fake client, i.e. while
+# prepare_telnyx_example_setup is still running.
+SIGTERM_DURING_SETUP_SCRIPT = '''
+import os
+import signal
+import sys
+
+from vision_agents.plugins.telnyx.example_helpers import (
+    TelnyxExampleResources,
+    prepare_telnyx_example_setup,
+    telnyx_example_cleanup,
+)
+
+marker = sys.argv[1]
+
+
+class MarkerClient:
+    """Fake TelnyxClient that gets SIGTERMed part-way through setup."""
+
+    def _record(self, line):
+        with open(marker, "a") as handle:
+            handle.write(line + "\\n")
+
+    def find_phone_number(self, phone_number):
+        return {
+            "id": "phone-id",
+            "phone_number": phone_number,
+            "connection_id": "original-app-id",
+        }
+
+    def get_first_outbound_voice_profile_id(self):
+        return "profile-id"
+
+    def create_call_control_app(
+        self, *, application_name, webhook_event_url, outbound_voice_profile_id
+    ):
+        self._record("create-app:created-app-id")
+        return {"data": {"id": "created-app-id"}}
+
+    def update_phone_number_connection(self, phone_number_id, connection_id):
+        self._record(f"route:{phone_number_id}:{connection_id}")
+        if connection_id == "created-app-id":
+            # The app exists and the number is re-routed: exactly the window the
+            # old code left uncovered.
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    def delete_call_control_app(self, app_id):
+        self._record(f"delete-app:{app_id}")
+
+
+client = MarkerClient()
+resources = TelnyxExampleResources()
+
+with telnyx_example_cleanup(client, resources):
+    prepare_telnyx_example_setup(
+        client,
+        api_key="key",
+        phone_number="+15551234567",
+        ngrok_url="example.ngrok-free.app",
+        setup_telnyx=True,
+        route_phone_number=True,
+        resources=resources,
+    )
+    raise AssertionError("SIGTERM should have ended the process during setup")
+'''
+
+
+# A second SIGTERM is delivered from inside the first cleanup.
+SECOND_SIGTERM_SCRIPT = '''
+import os
+import signal
+import sys
+import time
+
+from vision_agents.plugins.telnyx.example_helpers import (
+    TelnyxConfig,
+    TelnyxExampleSetup,
+    telnyx_example_cleanup,
+)
+
+marker = sys.argv[1]
+
+
+class MarkerClient:
+    """Fake TelnyxClient that gets a second SIGTERM while cleaning up."""
+
+    def _record(self, line):
+        with open(marker, "a") as handle:
+            handle.write(line + "\\n")
+
+    def update_phone_number_connection(self, phone_number_id, connection_id):
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(0.2)
+        self._record(f"restore-routing:{phone_number_id}:{connection_id}")
+
+    def delete_call_control_app(self, app_id):
+        self._record(f"delete-app:{app_id}")
+
+
+setup = TelnyxExampleSetup(
+    config=TelnyxConfig(
+        api_key="key",
+        call_control_app_id="created-app-id",
+        phone_number="+15551234567",
+        ngrok_url="example.ngrok-free.app",
+    ),
+    phone_number_id="phone-id",
+    created_call_control_app_id="created-app-id",
+    original_connection_id="original-app-id",
+)
+
+with telnyx_example_cleanup(MarkerClient(), setup):
+    print("READY", flush=True)
+    signal.pause()
+'''
+
+
+def _run_sigterm_example(tmp_path, source, *, send_sigterm):
     marker = tmp_path / "cleanup_calls.txt"
     script = tmp_path / "sigterm_example.py"
-    script.write_text(SIGTERM_EXAMPLE_SCRIPT)
+    script.write_text(source)
 
     process = subprocess.Popen(
         [sys.executable, str(script), str(marker)],
@@ -445,19 +678,58 @@ def test_telnyx_example_cleanup_runs_on_sigterm(tmp_path):
     )
     try:
         assert process.stdout is not None
-        assert process.stdout.readline().strip() == "READY"
-        # signal.pause() returns only once the handler has run.
-        time.sleep(0.1)
-        process.send_signal(signal.SIGTERM)
+        if send_sigterm:
+            assert process.stdout.readline().strip() == "READY"
+            # signal.pause() returns only once the handler has run.
+            time.sleep(0.1)
+            process.send_signal(signal.SIGTERM)
         process.wait(timeout=30)
     finally:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=10)
 
+    lines = marker.read_text().splitlines() if marker.exists() else []
+    return process.returncode, lines
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM is POSIX-only")
+def test_telnyx_example_cleanup_runs_on_sigterm(tmp_path):
+    returncode, lines = _run_sigterm_example(
+        tmp_path, SIGTERM_EXAMPLE_SCRIPT, send_sigterm=True
+    )
+
     # Killed by SIGTERM, i.e. the conventional 128 + 15 exit status.
-    assert process.returncode == -signal.SIGTERM
-    assert marker.read_text().splitlines() == [
+    assert returncode == -signal.SIGTERM
+    assert lines == [
+        "restore-routing:phone-id:original-app-id",
+        "delete-app:created-app-id",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM is POSIX-only")
+def test_telnyx_example_cleanup_covers_sigterm_during_setup(tmp_path):
+    returncode, lines = _run_sigterm_example(
+        tmp_path, SIGTERM_DURING_SETUP_SCRIPT, send_sigterm=False
+    )
+
+    assert returncode == -signal.SIGTERM
+    assert lines == [
+        "create-app:created-app-id",
+        "route:phone-id:created-app-id",
+        "route:phone-id:original-app-id",
+        "delete-app:created-app-id",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM is POSIX-only")
+def test_second_sigterm_does_not_interrupt_cleanup(tmp_path):
+    returncode, lines = _run_sigterm_example(
+        tmp_path, SECOND_SIGTERM_SCRIPT, send_sigterm=True
+    )
+
+    assert returncode == -signal.SIGTERM
+    assert lines == [
         "restore-routing:phone-id:original-app-id",
         "delete-app:created-app-id",
     ]
