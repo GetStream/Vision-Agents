@@ -1,6 +1,10 @@
 """Tests for the minimal Telnyx example helpers."""
 
 import base64
+import signal
+import subprocess
+import sys
+import threading
 import time
 
 import pytest
@@ -16,6 +20,7 @@ from vision_agents.plugins.telnyx.example_helpers import (
     preflight_inbound,
     preflight_outbound,
     require_env,
+    telnyx_example_cleanup,
     validate_call_control_app,
     validate_phone_number_routing,
     validate_verified_destination,
@@ -324,3 +329,135 @@ def test_preflight_inbound_requires_phone_number_to_route_to_app():
 
     with pytest.raises(TelnyxSetupError, match="not routed"):
         preflight_inbound(client, config=config, telnyx_phone_number_id="phone-id")
+
+
+def _routed_setup():
+    client = FakeTelnyxClient(
+        phone_number={
+            "id": "phone-id",
+            "phone_number": "+15551234567",
+            "connection_id": "original-app-id",
+        },
+    )
+    setup = prepare_telnyx_example_setup(
+        client,
+        api_key="key",
+        phone_number="+15551234567",
+        ngrok_url="example.ngrok-free.app",
+        setup_telnyx=True,
+        route_phone_number=True,
+    )
+    return client, setup
+
+
+def test_telnyx_example_cleanup_restores_resources_on_normal_exit():
+    client, setup = _routed_setup()
+
+    with telnyx_example_cleanup(client, setup):
+        assert client.phone_connection_id == "created-app-id"
+
+    assert client.phone_connection_id == "original-app-id"
+    assert client.deleted_app_ids == ["created-app-id"]
+
+
+def test_telnyx_example_cleanup_runs_once_when_the_body_raises():
+    client, setup = _routed_setup()
+
+    with pytest.raises(KeyboardInterrupt):
+        with telnyx_example_cleanup(client, setup):
+            raise KeyboardInterrupt
+
+    # Deleting the app twice would 404, so cleanup must happen exactly once.
+    assert client.deleted_app_ids == ["created-app-id"]
+
+
+def test_telnyx_example_cleanup_installs_and_restores_sigterm_handler():
+    if threading.current_thread() is not threading.main_thread():
+        pytest.skip("signal handlers can only be installed on the main thread")
+
+    client, setup = _routed_setup()
+    original_handler = signal.getsignal(signal.SIGTERM)
+
+    with telnyx_example_cleanup(client, setup):
+        assert signal.getsignal(signal.SIGTERM) is not original_handler
+
+    assert signal.getsignal(signal.SIGTERM) is original_handler
+
+
+# Runs in a subprocess: the handler ends the process with the default SIGTERM
+# disposition, which cannot be observed in-process.
+SIGTERM_EXAMPLE_SCRIPT = '''
+import signal
+import sys
+
+from vision_agents.plugins.telnyx.example_helpers import (
+    TelnyxConfig,
+    TelnyxExampleSetup,
+    telnyx_example_cleanup,
+)
+
+marker = sys.argv[1]
+
+
+class MarkerClient:
+    """Stands in for TelnyxClient and records the cleanup calls it receives."""
+
+    def _record(self, line):
+        with open(marker, "a") as handle:
+            handle.write(line + "\\n")
+
+    def update_phone_number_connection(self, phone_number_id, connection_id):
+        self._record(f"restore-routing:{phone_number_id}:{connection_id}")
+
+    def delete_call_control_app(self, app_id):
+        self._record(f"delete-app:{app_id}")
+
+
+setup = TelnyxExampleSetup(
+    config=TelnyxConfig(
+        api_key="key",
+        call_control_app_id="created-app-id",
+        phone_number="+15551234567",
+        ngrok_url="example.ngrok-free.app",
+    ),
+    phone_number_id="phone-id",
+    created_call_control_app_id="created-app-id",
+    original_connection_id="original-app-id",
+)
+
+with telnyx_example_cleanup(MarkerClient(), setup):
+    print("READY", flush=True)
+    signal.pause()
+'''
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM is POSIX-only")
+def test_telnyx_example_cleanup_runs_on_sigterm(tmp_path):
+    marker = tmp_path / "cleanup_calls.txt"
+    script = tmp_path / "sigterm_example.py"
+    script.write_text(SIGTERM_EXAMPLE_SCRIPT)
+
+    process = subprocess.Popen(
+        [sys.executable, str(script), str(marker)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "READY"
+        # signal.pause() returns only once the handler has run.
+        time.sleep(0.1)
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=30)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
+
+    # Killed by SIGTERM, i.e. the conventional 128 + 15 exit status.
+    assert process.returncode == -signal.SIGTERM
+    assert marker.read_text().splitlines() == [
+        "restore-routing:phone-id:original-app-id",
+        "delete-app:created-app-id",
+    ]

@@ -24,18 +24,17 @@ from vision_agents.plugins.telnyx.example_helpers import (
     TelnyxClient,
     TelnyxConfig,
     TelnyxSetupError,
-    cleanup_telnyx_example_setup,
     media_stream_url,
     parse_verified_telnyx_webhook,
     preflight_inbound,
     prepare_telnyx_example_setup,
     require_env,
     require_telnyx_public_key,
+    telnyx_example_cleanup,
 )
 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 load_dotenv()
 
@@ -183,6 +182,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Create a temporary Call Control App, route the phone number, and restore it on exit.",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        type=str.upper,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable asyncio debug mode.",
+    )
     return parser.parse_args()
 
 
@@ -190,6 +201,11 @@ def main() -> None:
     global telnyx_client, telnyx_config, telnyx_public_key
 
     args = parse_args()
+    logging.basicConfig(level=args.log_level)
+    if args.debug:
+        # uvicorn creates the event loop, so asyncio debug mode is set via env.
+        os.environ.setdefault("PYTHONASYNCIODEBUG", "1")
+
     values = require_env(
         ["STREAM_API_KEY", "STREAM_API_SECRET", "GOOGLE_API_KEY", "TELNYX_API_KEY"]
     )
@@ -219,7 +235,8 @@ def main() -> None:
             "and route the Telnyx number automatically."
         )
 
-    try:
+    # Cleans up on normal shutdown, Ctrl-C, and SIGTERM (`kill <pid>`).
+    with telnyx_example_cleanup(telnyx_client, setup):
         preflight_inbound(
             telnyx_client,
             config=telnyx_config,
@@ -227,9 +244,9 @@ def main() -> None:
         )
 
         logger.info("Inbound Telnyx runner ready for call %s", resolved_phone_number_id)
-        uvicorn.run(app, host=args.host, port=args.port)
-    finally:
-        cleanup_telnyx_example_setup(telnyx_client, setup)
+        uvicorn.run(
+            app, host=args.host, port=args.port, log_level=args.log_level.lower()
+        )
 
 
 if __name__ == "__main__":

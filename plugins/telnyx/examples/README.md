@@ -53,7 +53,8 @@ The examples auto-detect the local ngrok HTTPS tunnel. You can also set
 
 Use `--setup-telnyx` for the most direct local development flow. The example
 creates a temporary Telnyx Call Control App with webhook URL
-`https://<NGROK_URL>/telnyx/events` and deletes it on normal shutdown.
+`https://<NGROK_URL>/telnyx/events` and deletes it on shutdown (see
+[Shutdown and Cleanup](#shutdown-and-cleanup)).
 
 Outbound:
 
@@ -81,7 +82,33 @@ uv run plugins/telnyx/examples/voice_agent_call.py \
 ```
 
 For inbound calls, `--setup-telnyx` also routes the Telnyx number to the
-temporary Call Control App and restores the previous routing on normal shutdown.
+temporary Call Control App and restores the previous routing on shutdown.
+
+## Shutdown and Cleanup
+
+The `--setup-telnyx` cleanup (deleting the temporary Call Control App and
+restoring the phone number routing) runs on normal shutdown, on Ctrl-C, and on
+SIGTERM, so `kill <pid>` and plain `pkill -f inbound_call.py` are safe. The
+examples then exit with the conventional `128 + SIGTERM` (143) status.
+
+`kill -9` (SIGKILL) cannot be caught by any process, so it skips cleanup: the
+temporary Call Control App is left behind and the phone number stays routed to
+the dead ngrok webhook. If that happens, delete the leftover
+`vision-agents-example-*` app in the Telnyx portal and re-point your number.
+
+## Logging
+
+All three phone examples default to `INFO` and accept `--log-level`
+(`DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`, case-insensitive), which
+sets both the example and uvicorn log levels, plus `--debug` for asyncio debug
+mode. This matches the flags the `Runner`-based examples expose:
+
+```bash
+uv run plugins/telnyx/examples/inbound_call.py \
+  --setup-telnyx \
+  --phone-number +15551234567 \
+  --log-level debug
+```
 
 Restricted Telnyx accounts may only call verified destination numbers. The
 outbound example checks that by default. If your account is unrestricted, you can

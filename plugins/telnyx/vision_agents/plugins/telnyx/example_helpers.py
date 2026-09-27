@@ -2,14 +2,18 @@
 
 import base64
 import binascii
+import contextlib
 import json
+import logging
 import os
 import signal
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass
+from types import FrameType
 from typing import Any, Mapping
 
 from cryptography.exceptions import InvalidSignature
@@ -20,6 +24,8 @@ from fastapi import HTTPException, Request
 TELNYX_API_BASE_URL = "https://api.telnyx.com/v2"
 TELNYX_MEDIA_PATH = "/telnyx/media"
 TELNYX_EVENTS_PATH = "/telnyx/events"
+
+logger = logging.getLogger(__name__)
 
 
 class TelnyxSetupError(RuntimeError):
@@ -378,6 +384,59 @@ def cleanup_telnyx_example_setup(
     finally:
         if previous_sigint_handler is not None:
             signal.signal(signal.SIGINT, previous_sigint_handler)
+
+
+@contextlib.contextmanager
+def telnyx_example_cleanup(
+    client: TelnyxClient,
+    setup: TelnyxExampleSetup,
+) -> Iterator[None]:
+    """Run :func:`cleanup_telnyx_example_setup` exactly once, SIGTERM included.
+
+    Ctrl-C already unwinds into the ``finally`` below, but SIGTERM (``kill
+    <pid>``, and therefore plain ``pkill``) does not: uvicorn handles SIGTERM
+    itself, shuts the server down, and then re-raises the signal against the
+    handler that was installed before it started. With the default handler that
+    kills the process, so the temporary Call Control App is leaked and the phone
+    number stays routed to a dead webhook. Handling SIGTERM here turns that into
+    a normal cleanup followed by the conventional ``128 + SIGTERM`` exit status.
+
+    SIGKILL (``kill -9``) cannot be caught, so it still leaks those resources.
+
+    Call this from an example's ``main()``, which runs on the main thread; on any
+    other thread the SIGTERM handler is skipped and only the ``finally`` runs.
+    """
+    cleanup_done = False
+
+    def cleanup_once() -> None:
+        nonlocal cleanup_done
+        if cleanup_done:
+            return
+        cleanup_done = True
+        cleanup_telnyx_example_setup(client, setup)
+
+    def handle_sigterm(signal_number: int, _frame: FrameType | None) -> None:
+        logger.info("Received SIGTERM, cleaning up Telnyx example resources")
+        cleanup_once()
+        # Exit the way an unhandled SIGTERM would, so callers still see 143.
+        signal.signal(signal_number, signal.SIG_DFL)
+        signal.raise_signal(signal_number)
+
+    handler_installed = False
+    previous_handler: Any = None
+    try:
+        previous_handler = signal.signal(signal.SIGTERM, handle_sigterm)
+        handler_installed = True
+    except ValueError:
+        pass
+
+    try:
+        yield
+    finally:
+        if handler_installed:
+            with contextlib.suppress(ValueError):
+                signal.signal(signal.SIGTERM, previous_handler)
+        cleanup_once()
 
 
 def validate_call_control_app(
