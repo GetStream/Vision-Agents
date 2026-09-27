@@ -451,6 +451,11 @@ class Agent:
         return self._id
 
     @property
+    def call_type(self) -> str:
+        """The Stream call type the agent is (or will be) joined to."""
+        return self._call_type
+
+    @property
     def knowledge(self) -> KnowledgeBase:
         """What the agent looks things up in, as somewhere to put more of it.
 
