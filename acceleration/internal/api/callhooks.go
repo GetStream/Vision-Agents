@@ -155,8 +155,10 @@ func (s *Server) dispatchArrivingCall(r *http.Request, event callEvent) {
 
 // releaseEndedCall tears down the per-call SIP trunks a placed call or transfer created,
 // now that the call is over. Everything short of a malformed event is a 200: Stream
-// retries a non-2xx, and a trunk that could not be deleted this time is retried on the
-// next delivery or swept later, none of which a caller is waiting on.
+// retries a non-2xx, and nothing here is worth a redelivery: the caller is not waiting on
+// it, and cleanup is best-effort. ReleaseCall removes the record before deleting at Stream,
+// so a failed Stream delete is logged and the trunk leaks; a later delivery finds no record
+// to retry, and there is no sweeper.
 func (s *Server) releaseEndedCall(r *http.Request, event callEvent) {
 	if s.phone == nil {
 		return
