@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.model_call_timing import ModelCallTiming
+
 
 T = TypeVar("T", bound="TimelineEntry")
 
@@ -19,20 +23,34 @@ class TimelineEntry:
     Attributes:
         turn_id (str):
         started_at (datetime.datetime):
+        cadence_ms (float | Unset): Last transcript revision to a stable turn ready for the flow controller.
+        decision_ms (float | Unset): Stable turn to the main model request, including flow and queueing.
+        model_to_first_text_ms (float | Unset): Main model request to the first text delta admitted to the voice
+            pipeline.
+        text_to_tts_ms (float | Unset): First text delta to the first TTS request.
+        tts_to_audio_ms (float | Unset): First TTS request to the first audio chunk published to the edge.
+        model_calls (list[ModelCallTiming] | Unset): Individual model requests for this turn, including flow and
+            delegated work.
         heard (str | Unset): What the caller said, when it can be matched to this exchange.
         said (str | Unset): What the agent answered.
-        roundtrip_ms (float | Unset): How long the caller waited between finishing and being answered.
+        roundtrip_ms (float | Unset): Last transcript revision to first audio published; includes cadence settling.
         stt_latency_ms (float | None | Unset): The provider's decode time for the transcript that settled the turn.
         llm_ttft_ms (float | None | Unset): The wait between asking the model and its first token.
         tts_ttfb_ms (float | None | Unset): The wait between sending the first sentence and the first audio.
-        speech_end_to_audio_ms (float | None | Unset): Voice in to voice out, which is the whole of what the caller
-            felt.
+        speech_end_to_audio_ms (float | None | Unset): Last input audio to first output audio, estimated using provider
+            STT processing time plus roundtrip. It excludes network transport and playback.
         audio_out_ms (float | Unset): How much the agent spoke.
         interrupted (bool | Unset): Whether the caller talked over the answer.
     """
 
     turn_id: str
     started_at: datetime.datetime
+    cadence_ms: float | Unset = UNSET
+    decision_ms: float | Unset = UNSET
+    model_to_first_text_ms: float | Unset = UNSET
+    text_to_tts_ms: float | Unset = UNSET
+    tts_to_audio_ms: float | Unset = UNSET
+    model_calls: list[ModelCallTiming] | Unset = UNSET
     heard: str | Unset = UNSET
     said: str | Unset = UNSET
     roundtrip_ms: float | Unset = UNSET
@@ -48,6 +66,23 @@ class TimelineEntry:
         turn_id = self.turn_id
 
         started_at = self.started_at.isoformat()
+
+        cadence_ms = self.cadence_ms
+
+        decision_ms = self.decision_ms
+
+        model_to_first_text_ms = self.model_to_first_text_ms
+
+        text_to_tts_ms = self.text_to_tts_ms
+
+        tts_to_audio_ms = self.tts_to_audio_ms
+
+        model_calls: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.model_calls, Unset):
+            model_calls = []
+            for model_calls_item_data in self.model_calls:
+                model_calls_item = model_calls_item_data.to_dict()
+                model_calls.append(model_calls_item)
 
         heard = self.heard
 
@@ -91,6 +126,18 @@ class TimelineEntry:
                 "started_at": started_at,
             }
         )
+        if cadence_ms is not UNSET:
+            field_dict["cadence_ms"] = cadence_ms
+        if decision_ms is not UNSET:
+            field_dict["decision_ms"] = decision_ms
+        if model_to_first_text_ms is not UNSET:
+            field_dict["model_to_first_text_ms"] = model_to_first_text_ms
+        if text_to_tts_ms is not UNSET:
+            field_dict["text_to_tts_ms"] = text_to_tts_ms
+        if tts_to_audio_ms is not UNSET:
+            field_dict["tts_to_audio_ms"] = tts_to_audio_ms
+        if model_calls is not UNSET:
+            field_dict["model_calls"] = model_calls
         if heard is not UNSET:
             field_dict["heard"] = heard
         if said is not UNSET:
@@ -114,10 +161,31 @@ class TimelineEntry:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.model_call_timing import ModelCallTiming
+
         d = dict(src_dict)
         turn_id = d.pop("turn_id")
 
         started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
+
+        cadence_ms = d.pop("cadence_ms", UNSET)
+
+        decision_ms = d.pop("decision_ms", UNSET)
+
+        model_to_first_text_ms = d.pop("model_to_first_text_ms", UNSET)
+
+        text_to_tts_ms = d.pop("text_to_tts_ms", UNSET)
+
+        tts_to_audio_ms = d.pop("tts_to_audio_ms", UNSET)
+
+        _model_calls = d.pop("model_calls", UNSET)
+        model_calls: list[ModelCallTiming] | Unset = UNSET
+        if _model_calls is not UNSET:
+            model_calls = []
+            for model_calls_item_data in _model_calls:
+                model_calls_item = ModelCallTiming.from_dict(model_calls_item_data)
+
+                model_calls.append(model_calls_item)
 
         heard = d.pop("heard", UNSET)
 
@@ -170,6 +238,12 @@ class TimelineEntry:
         timeline_entry = cls(
             turn_id=turn_id,
             started_at=started_at,
+            cadence_ms=cadence_ms,
+            decision_ms=decision_ms,
+            model_to_first_text_ms=model_to_first_text_ms,
+            text_to_tts_ms=text_to_tts_ms,
+            tts_to_audio_ms=tts_to_audio_ms,
+            model_calls=model_calls,
             heard=heard,
             said=said,
             roundtrip_ms=roundtrip_ms,

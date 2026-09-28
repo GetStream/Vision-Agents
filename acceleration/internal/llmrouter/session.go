@@ -3,9 +3,11 @@ package llmrouter
 import (
 	"context"
 	"errors"
-	"github.com/openai/openai-go/v3"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/openai/openai-go/v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -59,16 +61,30 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 
 	stream, err := s.provider.Create(ctx, params)
 	if err != nil {
+		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
 		s.recorder.Record(s.config, routing.Stat{
 			Owner:        s.owner,
 			StartedAt:    startedAt,
+			OperationID:  params.ID,
+			Purpose:      params.Purpose,
+			TurnID:       params.TurnID,
+			DurationMs:   durationMs,
 			Success:      false,
 			ErrorCode:    "create_failed",
 			ErrorMessage: err.Error(),
 		})
+		slog.Info("model call timing", "call", s.owner.CallID, "operation", params.ID,
+			"purpose", params.Purpose, "turn", params.TurnID,
+			"provider", s.config.Provider, "model", s.config.Model,
+			"duration_ms", durationMs, "success", false)
+		if params.OnTiming != nil {
+			params.OnTiming(llm.CallTiming{OperationID: params.ID, Purpose: params.Purpose,
+				TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
+				DurationMs: durationMs, Success: false})
+		}
 		return nil, err
 	}
-	return stream.Observe(func(event llm.Event) { s.observe(startedAt, event) }), nil
+	return stream.Observe(func(event llm.Event) { s.observe(startedAt, params, event) }), nil
 }
 
 // Provider is the provider serving this session.
@@ -108,13 +124,24 @@ func (s *Session) Close() error {
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt time.Time, event llm.Event) {
+func (s *Session) observe(startedAt time.Time, params llm.ResponseParams, event llm.Event) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
 	}
 
 	response := completed.Response
+	slog.Info("model call timing", "call", s.owner.CallID, "operation", response.ID,
+		"purpose", params.Purpose, "turn", params.TurnID,
+		"provider", s.config.Provider, "model", s.config.Model,
+		"ttft_ms", response.TimeToFirstTokenMs, "duration_ms", response.DurationMs,
+		"success", response.Status != llm.StatusFailed)
+	if params.OnTiming != nil {
+		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
+			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
+			TTFTMs: response.TimeToFirstTokenMs, DurationMs: response.DurationMs,
+			Success: response.Status != llm.StatusFailed})
+	}
 
 	// The debit is taken here rather than where the response was asked for, because what a
 	// response costs is only known once it has settled. A caller who slipped in under the
@@ -128,8 +155,12 @@ func (s *Session) observe(startedAt time.Time, event llm.Event) {
 		response.Usage.InputTokens+response.Usage.OutputTokens)
 
 	s.recorder.Record(s.config, routing.Stat{
-		Owner:     s.owner,
-		StartedAt: startedAt,
+		Owner:       s.owner,
+		StartedAt:   startedAt,
+		OperationID: response.ID,
+		Purpose:     params.Purpose,
+		TurnID:      params.TurnID,
+		DurationMs:  response.DurationMs,
 		Usage: routing.Usage{
 			InputTokens:       response.Usage.InputTokens,
 			CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,

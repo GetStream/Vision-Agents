@@ -3134,6 +3134,31 @@ export type components = {
          * @enum {string}
          */
         readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "lcm" | "image" | "memory" | "knowledge" | "phone";
+        readonly ModelCallTiming: {
+            /**
+             * Format: double
+             * @description Request to completed response or failed create.
+             */
+            readonly duration_ms?: number;
+            /** Format: int64 */
+            readonly input_tokens?: number;
+            readonly model: string;
+            /** @description Response ID for this operation; retries can share an ID. */
+            readonly operation_id?: string;
+            /** Format: int64 */
+            readonly output_tokens?: number;
+            readonly provider: string;
+            /** @description reply, flow or subagent. */
+            readonly purpose?: string;
+            /** Format: date-time */
+            readonly started_at: string;
+            readonly success: boolean;
+            /**
+             * Format: double
+             * @description Request to first token.
+             */
+            readonly ttft_ms?: number;
+        };
         /**
          * @description What to change about the models for one session, over whatever its agent config decided.
          *     It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
@@ -4216,6 +4241,16 @@ export type components = {
              * @description How much the agent spoke.
              */
             readonly audio_out_ms?: number;
+            /**
+             * Format: double
+             * @description Last transcript revision to a stable turn ready for the flow controller.
+             */
+            readonly cadence_ms?: number;
+            /**
+             * Format: double
+             * @description Stable turn to the main model request, including flow and queueing.
+             */
+            readonly decision_ms?: number;
             /** @description What the caller said, when it can be matched to this exchange. */
             readonly heard?: string;
             /** @description Whether the caller talked over the answer. */
@@ -4225,16 +4260,23 @@ export type components = {
              * @description The wait between asking the model and its first token.
              */
             readonly llm_ttft_ms?: number | null;
+            /** @description Individual model requests for this turn, including flow and delegated work. */
+            readonly model_calls?: readonly components["schemas"]["ModelCallTiming"][];
             /**
              * Format: double
-             * @description How long the caller waited between finishing and being answered.
+             * @description Main model request to the first text delta admitted to the voice pipeline.
+             */
+            readonly model_to_first_text_ms?: number;
+            /**
+             * Format: double
+             * @description Last transcript revision to first audio published; includes cadence settling.
              */
             readonly roundtrip_ms?: number;
             /** @description What the agent answered. */
             readonly said?: string;
             /**
              * Format: double
-             * @description Voice in to voice out, which is the whole of what the caller felt.
+             * @description Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
              */
             readonly speech_end_to_audio_ms?: number | null;
             /** Format: date-time */
@@ -4244,6 +4286,16 @@ export type components = {
              * @description The provider's decode time for the transcript that settled the turn.
              */
             readonly stt_latency_ms?: number | null;
+            /**
+             * Format: double
+             * @description First text delta to the first TTS request.
+             */
+            readonly text_to_tts_ms?: number;
+            /**
+             * Format: double
+             * @description First TTS request to the first audio chunk published to the edge.
+             */
+            readonly tts_to_audio_ms?: number;
             /**
              * Format: double
              * @description The wait between sending the first sentence and the first audio.

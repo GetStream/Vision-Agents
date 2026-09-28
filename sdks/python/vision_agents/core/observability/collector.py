@@ -20,6 +20,13 @@ class MetricsCollector:
         self.agent_metrics = AgentMetrics()
         self.parent: Self | None = None
 
+    def on_call_join(self, duration_ms: float) -> None:
+        self.agent_metrics.call_join_ms__avg.update(duration_ms)
+        if self.parent is not None:
+            self.parent.on_call_join(duration_ms)
+        else:
+            metrics.call_join_ms.record(duration_ms)
+
     def merge(self, child: Self) -> None:
         """Make this collector the parent of ``child``.
 

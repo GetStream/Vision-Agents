@@ -32,6 +32,7 @@ type candidate struct {
 	Language     string
 	Confidence   float64
 	STTLatencyMs float64
+	RevisedAt    time.Time
 	ReadyAt      time.Time
 	// Unfinished says the words are a provisional revision of an utterance still in
 	// progress, put to the controller to decide the floor rather than settled.
@@ -302,6 +303,7 @@ func (c *cadence) emit(participantID string, generation int64) {
 		Language:     current.language,
 		Confidence:   current.confidence,
 		STTLatencyMs: current.latencyMs,
+		RevisedAt:    current.revisedAt,
 		ReadyAt:      time.Now(),
 	}
 	c.mu.Unlock()

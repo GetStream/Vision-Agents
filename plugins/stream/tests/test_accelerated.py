@@ -240,6 +240,40 @@ class TestAccelerated:
         assert turn.type == "agent_turn_ended"
         assert turn.interrupted
 
+    async def test_timing_frames_appear_in_the_agent_log(
+        self,
+        router: Router,
+        joined: stream.Accelerated,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        events = joined.remote_events()
+        await router.send(
+            {
+                "type": "model_call",
+                "turn_id": "turn-1",
+                "purpose": "flow",
+                "provider": "stub",
+                "model": "fast",
+                "ttft_ms": 80,
+                "duration_ms": 110,
+                "success": True,
+            }
+        )
+        await router.send(
+            {
+                "type": "turn",
+                "turn_id": "turn-1",
+                "cadence_ms": 350,
+                "speech_end_to_audio_ms": 1020,
+            }
+        )
+        await asyncio.wait_for(anext(events), SETTLE)
+
+        assert "purpose=flow" in caplog.text
+        assert "duration_ms=110" in caplog.text
+        assert "cadence_ms=350" in caplog.text
+        assert "speech_end_to_audio_ms=1020" in caplog.text
+
     async def test_the_call_ending_ends_the_events(
         self, router: Router, joined: stream.Accelerated
     ):

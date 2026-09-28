@@ -54,6 +54,10 @@ class AgentMetrics:
     Metrics aggregate over a single Agent call.
     """
 
+    call_join_ms__avg: Average = field(
+        default_factory=lambda: Average("Time to join a call")
+    )
+
     # STT Metrics
     stt_latency_ms__avg: Average = field(
         default_factory=lambda: Average("Average STT processing latency")

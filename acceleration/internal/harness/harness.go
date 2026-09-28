@@ -80,8 +80,9 @@ type Options struct {
 	// instructions every one of them opens with are written once and read back after.
 	// It is shared by every call the agent takes and means nothing to a provider whose
 	// capabilities do not report PromptCacheKey.
-	CacheKey string
-	Logger   *slog.Logger
+	CacheKey    string
+	OnModelCall func(llm.CallTiming)
+	Logger      *slog.Logger
 }
 
 // noted is something for the fast model to be told, and the skill it came from. The skill
@@ -177,6 +178,7 @@ func New(options Options) (*Harness, error) {
 
 	if options.Subagent != nil || options.OpenSubagent != nil {
 		h.tasks = newManager(options.Subagent, options.Tasks, options.Sandbox, options.Overwrites, h.logger)
+		h.tasks.onModelCall = options.OnModelCall
 		h.tasks.capture = options.Capture
 		if options.Subagent == nil {
 			h.tasks.open(options.OpenSubagent)
@@ -186,6 +188,7 @@ func New(options Options) (*Harness, error) {
 	}
 	if options.Controller != nil {
 		h.flow = newFlow(options.Controller, h.emitter, h.logger)
+		h.flow.onModelCall = options.OnModelCall
 	}
 	return h, nil
 }
@@ -289,6 +292,9 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 
 	return session.Create(ctx, llm.ResponseParams{
 		ID:                 turn.ID,
+		Purpose:            "reply",
+		TurnID:             turn.ID,
+		OnTiming:           h.options.OnModelCall,
 		Instructions:       instructions,
 		Input:              input,
 		MaxOutputTokens:    h.options.MaxTokens,

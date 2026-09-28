@@ -51,7 +51,7 @@ func (s *CallsSuite) TestEachExchangeCarriesWhatWasSaidInIt() {
 		s.said("agent", "any time.", 12),
 	}
 
-	timeline := timelineOf(turns, said)
+	timeline := timelineOf(turns, said, nil)
 
 	s.Require().Len(timeline, 2)
 	s.Require().NotNil(timeline[0].Heard)
@@ -67,13 +67,34 @@ func (s *CallsSuite) TestEachExchangeCarriesWhatWasSaidInIt() {
 func (s *CallsSuite) TestAnExchangeNobodyWroteDownIsStillMeasured() {
 	// The timings are this service's own, and they are the point of the view. A call
 	// whose transcript was never stored still shows what the caller waited for.
-	timeline := timelineOf([]store.Turn{s.turn("t1", 0, 500)}, nil)
+	timeline := timelineOf([]store.Turn{s.turn("t1", 0, 500)}, nil, nil)
 
 	s.Require().Len(timeline, 1)
 	s.Nil(timeline[0].Heard)
 	s.Nil(timeline[0].Said)
 	s.Require().NotNil(timeline[0].RoundtripMs)
 	s.InDelta(500, *timeline[0].RoundtripMs, 0.001)
+}
+
+func (s *CallsSuite) TestEachModelCallIsAttributedToItsTurn() {
+	turns := []store.Turn{s.turn("t1", 0, 900), s.turn("t2", 10, 700)}
+	ms := func(value float64) *float64 { return &value }
+	models := []store.Request{
+		{TurnID: "t1", Purpose: "flow", OperationID: "flow-1", StartedAt: s.base, LatencyMs: ms(80), DurationMs: ms(110), Success: true},
+		{TurnID: "t1", Purpose: "reply", OperationID: "reply-1", StartedAt: s.base.Add(time.Second), LatencyMs: ms(200), DurationMs: ms(450), Success: true},
+		{TurnID: "t2", Purpose: "subagent", OperationID: "task-1", StartedAt: s.base.Add(10 * time.Second), LatencyMs: ms(300), DurationMs: ms(600), Success: true},
+		{TurnID: "", Purpose: "reply", StartedAt: s.base.Add(11 * time.Second)},
+	}
+
+	timeline := timelineOf(turns, nil, models)
+	s.Require().Len(timeline, 2)
+	s.Require().NotNil(timeline[0].ModelCalls)
+	s.Require().Len(*timeline[0].ModelCalls, 2)
+	s.Equal("flow-1", *(*timeline[0].ModelCalls)[0].OperationId)
+	s.InDelta(450, *(*timeline[0].ModelCalls)[1].DurationMs, 0.001)
+	s.Require().NotNil(timeline[1].ModelCalls)
+	s.Require().Len(*timeline[1].ModelCalls, 1)
+	s.Equal("subagent", *(*timeline[1].ModelCalls)[0].Purpose)
 }
 
 func (s *CallsSuite) TestWhatWasSaidAfterTheLastExchangeStillBelongsToIt() {
@@ -83,7 +104,7 @@ func (s *CallsSuite) TestWhatWasSaidAfterTheLastExchangeStillBelongsToIt() {
 		s.said("agent", "goodbye.", 30),
 	}
 
-	timeline := timelineOf(turns, said)
+	timeline := timelineOf(turns, said, nil)
 
 	s.Require().Len(timeline, 1)
 	s.Require().NotNil(timeline[0].Said)
@@ -127,7 +148,7 @@ func (s *CallsSuite) TestALineSaidBeforeTheFirstExchangeIsNotPartOfIt() {
 		s.said("agent", "we are.", 12),
 	}
 
-	timeline := timelineOf(turns, said)
+	timeline := timelineOf(turns, said, nil)
 
 	s.Require().Len(timeline, 1)
 	s.Require().NotNil(timeline[0].Heard)

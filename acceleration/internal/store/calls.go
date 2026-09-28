@@ -239,6 +239,31 @@ func (s *Store) CallTurns(ctx context.Context, customerID, agentID string, from 
 	return turns, nil
 }
 
+// CallModelCalls returns every model response in one call, including flow and delegated
+// requests, in the order they were sent. TurnID relates each request to its exchange.
+func (s *Store) CallModelCalls(ctx context.Context, customerID, agentID, callID string, from time.Time, to *time.Time) ([]Request, error) {
+	if customerID == "" || agentID == "" {
+		return nil, errors.New("store: a customer and an agent id are required")
+	}
+	query := s.db.NewSelect().Model((*Request)(nil)).
+		Where("customer_id = ?", customerID).
+		Where("agent_id = ?", agentID).
+		Where("modality = ?", "llm").
+		Where("started_at >= ?", from).
+		Order("started_at ASC", "id ASC")
+	if callID != "" {
+		query = query.Where("call_id = ?", callID)
+	}
+	if to != nil {
+		query = query.Where("started_at <= ?", *to)
+	}
+	var requests []Request
+	if err := query.Scan(ctx, &requests); err != nil {
+		return nil, fmt.Errorf("store: call model calls: %w", err)
+	}
+	return requests, nil
+}
+
 // UsedModel is a provider/model that successfully served a call.
 type UsedModel struct {
 	Modality string `bun:"modality"`

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -123,6 +124,11 @@ type Responded struct {
 
 func (Responded) isAgentEvent() {}
 
+// ModelCall reports one provider attempt, including flow and delegated work.
+type ModelCall struct{ llm.CallTiming }
+
+func (ModelCall) isAgentEvent() {}
+
 // Blocked means the guardrail refused a turn, so what the caller hears is the policy's
 // refusal rather than the model's reply.
 //
@@ -167,15 +173,21 @@ func (Spoke) isAgentEvent() {}
 type Turn struct {
 	TurnID      string
 	Participant stt.Participant
-	// StartedAt is when the settled transcript arrived, which is when the wait begins.
+	// StartedAt is when the last transcript revision arrived, before cadence settling.
 	StartedAt time.Time
+	// These consecutive legs run from transcript arrival to the first audio published.
+	CadenceMs          float64
+	DecisionMs         float64
+	ModelToFirstTextMs float64
+	TextToTTSMs        float64
+	TTSToAudioMs       float64
 	// STTLatencyMs is what the transcriber spent settling the turn.
 	STTLatencyMs float64
 	// LLMTTFTMs is the wait between asking the model and its first token.
 	LLMTTFTMs float64
 	// TTSTTFBMs is the wait between sending the first sentence and the first audio.
 	TTSTTFBMs float64
-	// RoundtripMs is the whole delay: settled transcript to first audio published.
+	// RoundtripMs is the whole delay: last transcript revision to first audio published.
 	RoundtripMs float64
 	// SpeechEndToAudioMs is voice in to voice out: the roundtrip plus the time the
 	// transcriber spent deciding the participant had stopped.

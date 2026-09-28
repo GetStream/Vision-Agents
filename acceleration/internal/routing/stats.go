@@ -44,7 +44,11 @@ type Owner struct {
 // cannot record a row that disagrees with the routing decision it came from.
 type Stat struct {
 	Owner
-	StartedAt time.Time
+	StartedAt   time.Time
+	OperationID string
+	Purpose     string
+	TurnID      string
+	DurationMs  float64
 	Usage
 	// LatencyMs is how long the customer waited for the work to be useful.
 	LatencyMs float64
@@ -109,6 +113,9 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		Provider:          config.Provider,
 		Model:             config.Model,
 		StartedAt:         entry.StartedAt,
+		OperationID:       entry.OperationID,
+		Purpose:           entry.Purpose,
+		TurnID:            entry.TurnID,
 		AudioMs:           entry.AudioMs,
 		Characters:        entry.Characters,
 		InputTokens:       entry.InputTokens,
@@ -123,6 +130,10 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	if entry.LatencyMs > 0 {
 		latency := entry.LatencyMs
 		request.LatencyMs = &latency
+	}
+	if entry.DurationMs > 0 {
+		duration := entry.DurationMs
+		request.DurationMs = &duration
 	}
 
 	select {

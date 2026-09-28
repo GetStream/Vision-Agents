@@ -107,6 +107,7 @@ from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
 from .modality import Modality
+from .model_call_timing import ModelCallTiming
 from .model_overwrites import ModelOverwrites
 from .model_overwrites_thinking import ModelOverwritesThinking
 from .model_overwrites_verbosity import ModelOverwritesVerbosity
@@ -339,6 +340,7 @@ __all__ = (
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
     "Modality",
+    "ModelCallTiming",
     "ModelOverwrites",
     "ModelOverwritesThinking",
     "ModelOverwritesVerbosity",

@@ -1071,6 +1071,14 @@ turn never reaches the legs that come after the interruption. A leg that never h
 left out of the percentiles rather than counted as instant. `GET /v1/turns/stats` reports
 them.
 
+For a single call, `GET /v1/agents/calls/{id}/timeline` shows cadence settling, the
+decision before the reply model, first reply text, TTS submission and first audio at the
+edge. Its `model_calls` list keeps flow, reply and subagent requests separate, with TTFT
+and full duration for each attempt. `speech_end_to_audio_ms` estimates the delay from the
+last input audio using provider STT processing time; it cannot include network transit
+or browser playback. The router logs call join and ICE timing, while the Python
+accelerated agent prints join, per-model and per-turn timing in its console.
+
 **Memory and phone are recorded but not routed.** There is one memory store and one vendor
 per number, so the provider and route paths do not serve those modalities while the
 statistics paths do.

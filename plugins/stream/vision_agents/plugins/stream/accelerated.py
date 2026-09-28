@@ -432,6 +432,22 @@ class Accelerated(OmniLLM):
         """Turn one session frame into an event, or into a tool call to run."""
         kind = frame.get("type", "")
 
+        if kind == "model_call":
+            logger.info(
+                "model call timing call=%s turn=%s operation=%s purpose=%s provider=%s model=%s "
+                "ttft_ms=%s duration_ms=%s success=%s",
+                self.session.call_id if self.session else "",
+                frame.get("turn_id", ""),
+                frame.get("operation_id", ""),
+                frame.get("purpose", ""),
+                frame.get("provider", ""),
+                frame.get("model", ""),
+                frame.get("ttft_ms", 0),
+                frame.get("duration_ms", 0),
+                frame.get("success", False),
+            )
+            return
+
         if kind == "tool_cancel":
             running = self._tool_tasks.get(str(frame.get("id", "")))
             if running is not None:
@@ -457,6 +473,21 @@ class Accelerated(OmniLLM):
 
         event = _event_of(frame)
         if event is not None:
+            if kind == "turn":
+                logger.info(
+                    "voice turn timing call=%s turn=%s stt_ms=%s cadence_ms=%s "
+                    "decision_ms=%s model_to_first_text_ms=%s text_to_tts_ms=%s "
+                    "tts_to_audio_ms=%s speech_end_to_audio_ms=%s",
+                    self.session.call_id if self.session else "",
+                    frame.get("turn_id", ""),
+                    frame.get("stt_latency_ms", 0),
+                    frame.get("cadence_ms", 0),
+                    frame.get("decision_ms", 0),
+                    frame.get("model_to_first_text_ms", 0),
+                    frame.get("text_to_tts_ms", 0),
+                    frame.get("tts_to_audio_ms", 0),
+                    frame.get("speech_end_to_audio_ms", 0),
+                )
             await self._events.put(event)
 
     async def _run_tool(self, frame: dict[str, Any]) -> None:

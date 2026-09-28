@@ -6839,6 +6839,31 @@ components:
         started_at:
           type: string
           format: date-time
+        cadence_ms:
+          type: number
+          format: double
+          description: Last transcript revision to a stable turn ready for the flow controller.
+        decision_ms:
+          type: number
+          format: double
+          description: Stable turn to the main model request, including flow and queueing.
+        model_to_first_text_ms:
+          type: number
+          format: double
+          description: Main model request to the first text delta admitted to the voice pipeline.
+        text_to_tts_ms:
+          type: number
+          format: double
+          description: First text delta to the first TTS request.
+        tts_to_audio_ms:
+          type: number
+          format: double
+          description: First TTS request to the first audio chunk published to the edge.
+        model_calls:
+          type: array
+          description: Individual model requests for this turn, including flow and delegated work.
+          items:
+            $ref: "#/components/schemas/ModelCallTiming"
         heard:
           type: string
           description: What the caller said, when it can be matched to this exchange.
@@ -6848,7 +6873,7 @@ components:
         roundtrip_ms:
           type: number
           format: double
-          description: How long the caller waited between finishing and being answered.
+          description: Last transcript revision to first audio published; includes cadence settling.
         stt_latency_ms:
           type: number
           format: double
@@ -6868,7 +6893,7 @@ components:
           type: number
           format: double
           nullable: true
-          description: Voice in to voice out, which is the whole of what the caller felt.
+          description: Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
         audio_out_ms:
           type: number
           format: double
@@ -6876,6 +6901,40 @@ components:
         interrupted:
           type: boolean
           description: Whether the caller talked over the answer.
+
+    ModelCallTiming:
+      type: object
+      required: [started_at, provider, model, success]
+      properties:
+        operation_id:
+          type: string
+          description: Response ID for this operation; retries can share an ID.
+        purpose:
+          type: string
+          description: reply, flow or subagent.
+        started_at:
+          type: string
+          format: date-time
+        provider:
+          type: string
+        model:
+          type: string
+        ttft_ms:
+          type: number
+          format: double
+          description: Request to first token.
+        duration_ms:
+          type: number
+          format: double
+          description: Request to completed response or failed create.
+        input_tokens:
+          type: integer
+          format: int64
+        output_tokens:
+          type: integer
+          format: int64
+        success:
+          type: boolean
 
     CallEvent:
       type: object

@@ -14,6 +14,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"time"
 
 	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/audio/opus"
@@ -103,6 +104,7 @@ type Edge struct {
 	left        bool
 
 	leaveOnce sync.Once
+	leftDone  chan struct{}
 }
 
 // New validates the options and returns an Edge. It connects nothing; Join does that.
@@ -142,12 +144,14 @@ func New(options Options) (*Edge, error) {
 		attending: emit.New[agent.Attendance](attendanceBuffer),
 		speaker:   newSpeaker(options.Logger),
 		listening: map[string]chan struct{}{},
+		leftDone:  make(chan struct{}),
 	}, nil
 }
 
 // Join connects, subscribes to what the participants are already saying, and publishes the
 // agent's own audio track.
 func (e *Edge) Join(ctx context.Context) error {
+	started := time.Now()
 	client, err := e.connect()
 	if err != nil {
 		return err
@@ -155,12 +159,14 @@ func (e *Edge) Join(ctx context.Context) error {
 	e.client = client
 
 	e.call = client.Call(e.options.CallType, e.options.CallID)
+	signalingStarted := time.Now()
 	joined, err := e.call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		e.listen(remote)
 	})))
 	if err != nil {
 		return fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err)
 	}
+	signalingMs := float64(time.Since(signalingStarted).Microseconds()) / 1000
 
 	// Joining subscribes to nothing, so the SFU has to be told what to forward: whatever is
 	// already being published, and then whatever is published later.
@@ -169,18 +175,26 @@ func (e *Edge) Join(ctx context.Context) error {
 	subscriptions := slices.Clone(e.subscribed)
 	e.mu.Unlock()
 
+	subscribeStarted := time.Now()
 	if err := e.call.SubscribeToTracks(ctx, subscriptions...); err != nil {
 		return fmt.Errorf("streamedge: subscribe: %w", err)
 	}
+	subscribeMs := float64(time.Since(subscribeStarted).Microseconds()) / 1000
 	e.watchForNewTracks(ctx)
 	// Registered before the people already here are reported, so somebody arriving during
 	// this is reported once rather than not at all.
 	e.watchAttendance()
 	e.reportPresent(joined.GetCallState())
 
+	publishStarted := time.Now()
 	if err := e.publish(); err != nil {
 		return err
 	}
+	e.logger.Info("call connection timing", "signaling_ms", signalingMs,
+		"subscribe_ms", subscribeMs,
+		"publish_ms", float64(time.Since(publishStarted).Microseconds())/1000,
+		"join_ms", float64(time.Since(started).Microseconds())/1000)
+	go e.reportICE(ctx, started)
 
 	e.logger.Info("joined the call",
 		"user", e.options.User.ID, "session", e.call.SessionID.Load(), "tracks", len(subscriptions))
@@ -215,6 +229,7 @@ func (e *Edge) Leave() error {
 func (e *Edge) Call() *rtc.Call { return e.call }
 
 func (e *Edge) leave() error {
+	close(e.leftDone)
 	e.mu.Lock()
 	e.left = true
 	unregisters := e.unregisters
@@ -244,6 +259,44 @@ func (e *Edge) leave() error {
 		e.client.Close()
 	}
 	return errors.Join(failures...)
+}
+
+// reportICE observes the two peer connections without replacing the SDK's own ICE
+// callbacks. Sampling adds at most 20 ms to the reported connection time.
+func (e *Edge) reportICE(ctx context.Context, started time.Time) {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.NewTimer(30 * time.Second)
+	defer timeout.Stop()
+	var publisherMs, subscriberMs float64
+	for {
+		if pc := e.call.PublisherPC(); pc != nil && publisherMs == 0 && iceConnected(pc.ICEConnectionState()) {
+			publisherMs = float64(time.Since(started).Microseconds()) / 1000
+		}
+		if pc := e.call.SubscriberPC(); pc != nil && subscriberMs == 0 && iceConnected(pc.ICEConnectionState()) {
+			subscriberMs = float64(time.Since(started).Microseconds()) / 1000
+		}
+		if publisherMs > 0 && subscriberMs > 0 {
+			e.logger.Info("ice connection timing", "publisher_ms", publisherMs,
+				"subscriber_ms", subscriberMs, "connected_ms", max(publisherMs, subscriberMs))
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-timeout.C:
+			e.logger.Warn("ice connection did not complete", "publisher_ms", publisherMs,
+				"subscriber_ms", subscriberMs)
+			return
+		case <-ctx.Done():
+			return
+		case <-e.leftDone:
+			return
+		}
+	}
+}
+
+func iceConnected(state webrtc.ICEConnectionState) bool {
+	return state == webrtc.ICEConnectionStateConnected || state == webrtc.ICEConnectionStateCompleted
 }
 
 // connect builds the SDK client, preferring a token over a secret.
@@ -472,4 +525,3 @@ func audioSubscriptions(state *sfu_models.CallState, selfUserID string) []*signa
 	}
 	return subscriptions
 }
-
