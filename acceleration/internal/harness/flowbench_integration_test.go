@@ -30,17 +30,22 @@ import (
 // two vendors is not something an integration suite should do by walking past it.
 const benchmarkEnvVar = "FLOW_BENCHMARK"
 
-// defaultGemmaTarget is the Gemma 4 deployment of our own, behind GEMMA_BASE_URL.
-const defaultGemmaTarget = "gemma/gemma-4-26B-A4B-it"
+// modelsEnvVar names the router targets to compare, comma separated: an alias such as
+// llm-flow, or a provider and model such as cerebras/gemma-4-31b. Each is asked the production
+// prompt and read with the production parser.
+const modelsEnvVar = "FLOW_BENCHMARK_MODELS"
 
-// gemmaTargetEnvVar names a different incumbent, which is how the same set is put to Gemma 4
-// 31B on Cerebras' public inference API, or to whatever replaces it.
-const gemmaTargetEnvVar = "FLOW_BENCHMARK_GEMMA"
+// defaultModels are the controller as deployed and the Gemma 4 deployment of our own, behind
+// GEMMA_BASE_URL. A target that cannot be reached is skipped rather than failing the run.
+const defaultModels = "llm-flow,gemma/gemma-4-26B-A4B-it"
 
-// gemmaRepeats is how often each case is put to Gemma. It samples, so one answer measures a
+// setsEnvVar picks the labelled sets, comma separated, from written and ami.
+const setsEnvVar = "FLOW_BENCHMARK_SETS"
+
+// modelRepeats is how often each case is put to a model. It samples, so one answer measures a
 // draw rather than the model, and a controller that flips between two answers for the same
 // words is a controller that flips mid-call.
-const gemmaRepeats = 3
+const modelRepeats = 3
 
 // jevRepeats is one. Jev returns the distribution rather than a draw from it, so asking twice
 // measures the network.
@@ -91,13 +96,13 @@ type arm struct {
 	repeats int
 	// price turns what a judgement consumed into millionths of a dollar.
 	price func(routing.Usage) int64
-	judge func(ctx context.Context, one flowCase, attempt int) (judgement, error)
+	judge func(ctx context.Context, set flowSet, one flowCase, attempt int) (judgement, error)
 }
 
 type FlowBenchmarkSuite struct {
 	suite.Suite
-	ctx context.Context
-	set flowSet
+	ctx  context.Context
+	sets []string
 }
 
 func TestFlowBenchmarkSuite(t *testing.T) {
@@ -109,45 +114,44 @@ func (s *FlowBenchmarkSuite) SetupSuite() {
 		s.T().Skip(benchmarkEnvVar + " not set")
 	}
 	s.ctx = context.Background()
-
-	set, err := loadFlowSet()
-	s.Require().NoError(err)
-	s.set = set
+	s.sets = strings.Split(envOr(setsEnvVar, writtenSet+","+amiSet), ",")
 }
 
-// TestFlowControllerBenchmark puts every case to every arm that has a key and reports what each
-// would have made the agent do.
+// TestFlowControllerBenchmark puts every case of every set to every arm that can be reached and
+// reports what each would have made the agent do.
 func (s *FlowBenchmarkSuite) TestFlowControllerBenchmark() {
-	arms := []arm{}
-	if gemma := s.gemmaArm(); gemma != nil {
-		arms = append(arms, *gemma)
-	}
-	for _, jev := range s.jevArms() {
-		arms = append(arms, jev)
-	}
-	s.Require().NotEmpty(arms, "no arm can be reached: set GEMMA_BASE_URL with "+
-		"BASETEN_API_KEY, or TYPESAFE_API_KEY, or both")
+	arms := s.modelArms()
+	arms = append(arms, s.jevArms()...)
+	s.Require().NotEmpty(arms, "no arm can be reached: name a target in "+modelsEnvVar+
+		" whose provider has a key, or set TYPESAFE_API_KEY")
 
-	tallies := make([]tally, 0, len(arms))
-	for _, one := range arms {
-		s.T().Logf("running %s over %d cases, %d times each",
-			one.name, len(s.set.Cases), one.repeats)
-		tallies = append(tallies, s.run(one))
+	var report strings.Builder
+	results := map[string][]tally{}
+	for _, name := range s.sets {
+		set, err := loadFlowSet(name)
+		s.Require().NoError(err)
+		tallies := make([]tally, 0, len(arms))
+		for _, one := range arms {
+			s.T().Logf("running %s over the %s set, %d cases, %d times each",
+				one.name, name, len(set.Cases), one.repeats)
+			tallies = append(tallies, s.run(one, set))
+		}
+		report.WriteString(s.report(name, set, tallies))
+		results[name] = tallies
 	}
 
-	report := s.report(tallies)
-	fmt.Print(report)
-	s.write(report, tallies)
+	fmt.Print(report.String())
+	s.write(report.String(), results)
 }
 
 // run puts every case to one arm, in order and one at a time, because a benchmark that reports
 // latency cannot also be saturating the provider it is measuring.
-func (s *FlowBenchmarkSuite) run(one arm) tally {
+func (s *FlowBenchmarkSuite) run(one arm, set flowSet) tally {
 	counted := newTally(one)
-	for _, subject := range s.set.Cases {
+	for _, subject := range set.Cases {
 		for attempt := range one.repeats {
 			ctx, cancel := context.WithTimeout(s.ctx, benchDeadline)
-			decided, err := s.ask(ctx, one, subject, attempt)
+			decided, err := s.ask(ctx, one, set, subject, attempt)
 			cancel()
 			if err != nil {
 				// A vendor that will not answer is worth reporting as its own failure rather
@@ -164,11 +168,11 @@ func (s *FlowBenchmarkSuite) run(one arm) tally {
 
 // ask asks once, and again after a wait when the vendor said it was too busy.
 func (s *FlowBenchmarkSuite) ask(
-	ctx context.Context, one arm, subject flowCase, attempt int,
+	ctx context.Context, one arm, set flowSet, subject flowCase, attempt int,
 ) (judgement, error) {
 	var last error
 	for try := range retries {
-		decided, err := one.judge(ctx, subject, attempt)
+		decided, err := one.judge(ctx, set, subject, attempt)
 		if err == nil {
 			return decided, nil
 		}
@@ -196,17 +200,13 @@ func busy(err error) bool {
 		strings.Contains(message, "too many requests")
 }
 
-// gemmaArm is the incumbent: the production prompt, the production parser, and the fallback the
-// controller takes when the answer will not parse.
+// modelArms are the router targets being compared, each asked exactly as the production
+// controller asks: its prompt, its parser, and the fallback it takes when an answer will not
+// parse.
 //
-// Nil when the target cannot be reached, which is how an undeployed Gemma or a missing key
-// leaves the Jev arms to run on their own rather than taking the whole benchmark with it.
-func (s *FlowBenchmarkSuite) gemmaArm() *arm {
-	target := os.Getenv(gemmaTargetEnvVar)
-	if target == "" {
-		target = defaultGemmaTarget
-	}
-
+// A target that cannot be reached is left out, which is how an undeployed Gemma or a missing
+// key leaves the others to run rather than taking the whole benchmark with it.
+func (s *FlowBenchmarkSuite) modelArms() []arm {
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)
 	router, err := llmrouter.New(llmrouter.Options{
@@ -217,23 +217,31 @@ func (s *FlowBenchmarkSuite) gemmaArm() *arm {
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
 
-	session, err := router.Start(s.ctx, llmrouter.Request{
-		CustomerID: "flow-benchmark", Target: target,
-	})
-	if err != nil {
-		s.T().Logf("skipping the Gemma arm, %s is out of reach: %v", target, err)
-		return nil
+	var arms []arm
+	for _, target := range strings.Split(envOr(modelsEnvVar, defaultModels), ",") {
+		session, err := router.Start(s.ctx, llmrouter.Request{
+			CustomerID: "flow-benchmark", Target: target,
+		})
+		if err != nil {
+			s.T().Logf("skipping %s, it is out of reach: %v", target, err)
+			continue
+		}
+		s.T().Cleanup(func() { _ = session.Close() })
+		arms = append(arms, modelArm(target, session))
 	}
-	s.T().Cleanup(func() { _ = session.Close() })
+	return arms
+}
 
+// modelArm asks one router session the production question.
+func modelArm(target string, session *llmrouter.Session) arm {
 	price := session.Price()
-	return &arm{
-		name:    "gemma",
+	return arm{
+		name:    target,
 		model:   session.Provider() + "/" + session.Model(),
-		repeats: gemmaRepeats,
+		repeats: modelRepeats,
 		price:   price.CostMicros,
-		judge: func(ctx context.Context, one flowCase, attempt int) (judgement, error) {
-			turn := one.turn(one.ID+"-"+strconv.Itoa(attempt), s.set.Contracts)
+		judge: func(ctx context.Context, set flowSet, one flowCase, attempt int) (judgement, error) {
+			turn := one.turn(one.ID+"-"+strconv.Itoa(attempt), set.Contracts)
 			askedAt := time.Now()
 			stream, err := session.Create(ctx, llm.ResponseParams{
 				ID:           turn.ID,
@@ -281,7 +289,7 @@ func (s *FlowBenchmarkSuite) gemmaArm() *arm {
 }
 
 // jevArms are the two ways of asking Jev the same thing: the two choices on their own, closest
-// to what Gemma is asked, and the same two with the judgements the conversation already
+// to what the model arms are asked, and the same two with the judgements the conversation already
 // hard-codes asked for separately and applied in code. Empty when there is no key.
 func (s *FlowBenchmarkSuite) jevArms() []arm {
 	if os.Getenv("TYPESAFE_API_KEY") == "" {
@@ -305,8 +313,8 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 			model:   client.Model(),
 			repeats: jevRepeats,
 			price:   price,
-			judge: func(ctx context.Context, one flowCase, attempt int) (judgement, error) {
-				return s.askJev(ctx, client, one, attempt, jevChoices(), false)
+			judge: func(ctx context.Context, set flowSet, one flowCase, attempt int) (judgement, error) {
+				return s.askJev(ctx, client, set, one, attempt, jevChoices(), false)
 			},
 		},
 		{
@@ -314,8 +322,8 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 			model:   client.Model(),
 			repeats: jevRepeats,
 			price:   price,
-			judge: func(ctx context.Context, one flowCase, attempt int) (judgement, error) {
-				return s.askJev(ctx, client, one, attempt, jevComposed(), true)
+			judge: func(ctx context.Context, set flowSet, one flowCase, attempt int) (judgement, error) {
+				return s.askJev(ctx, client, set, one, attempt, jevComposed(), true)
 			},
 		},
 	}
@@ -390,6 +398,7 @@ func jevComposed() map[string]lcm.Question {
 func (s *FlowBenchmarkSuite) askJev(
 	ctx context.Context,
 	client *typesafe.Client,
+	set flowSet,
 	one flowCase,
 	attempt int,
 	questions map[string]lcm.Question,
@@ -397,7 +406,7 @@ func (s *FlowBenchmarkSuite) askJev(
 ) (judgement, error) {
 	askedAt := time.Now()
 	answered, err := client.Classify(ctx, lcm.Request{
-		State:     one.state(s.set.Contracts),
+		State:     one.state(set.Contracts),
 		Questions: questions,
 	})
 	if err != nil {
@@ -612,15 +621,18 @@ func share(part, whole int) string {
 	return fmt.Sprintf("%.1f%%", 100*float64(part)/float64(whole))
 }
 
-// report writes the tables a human reads.
-func (s *FlowBenchmarkSuite) report(tallies []tally) string {
+// report writes the tables a human reads about one set.
+func (s *FlowBenchmarkSuite) report(name string, set flowSet, tallies []tally) string {
 	for i := range tallies {
 		tallies[i].settle()
 	}
 
 	var out strings.Builder
-	fmt.Fprintf(&out, "\n## Results\n\nRun %s over %d cases.\n\n",
-		time.Now().UTC().Format(time.RFC3339), len(s.set.Cases))
+	fmt.Fprintf(&out, "\n## The %s set\n\nRun %s over %d cases.\n\n",
+		name, time.Now().UTC().Format(time.RFC3339), len(set.Cases))
+	if set.Source != "" {
+		fmt.Fprintf(&out, "Taken from the %s.\n\n", set.Source)
+	}
 
 	fmt.Fprintln(&out, "| Arm | Model | Correct | Floor free | Agent talking |"+
 		" Missed stop | False stop | Unreadable | Flipped | p50 | p95 | $/1k |")
@@ -635,7 +647,7 @@ func (s *FlowBenchmarkSuite) report(tallies []tally) string {
 		// a flip rate of nothing.
 		flipped := "n/a"
 		if counted.Repeats > 1 {
-			flipped = share(counted.Flipped, len(s.set.Cases))
+			flipped = share(counted.Flipped, len(set.Cases))
 		}
 		fmt.Fprintf(&out,
 			"| %s | `%s` | %s | %s | %s | %s | %s | %d | %s | %.0fms | %.0fms | $%.3f |\n",
@@ -659,8 +671,12 @@ func (s *FlowBenchmarkSuite) report(tallies []tally) string {
 		fmt.Fprint(&out, " --- |")
 	}
 	fmt.Fprintln(&out)
+	counts := set.counts()
 	for _, state := range flowStates {
-		fmt.Fprintf(&out, "| `%s` | `%s` |", state, s.set.expected(state))
+		if counts[state] == 0 {
+			continue
+		}
+		fmt.Fprintf(&out, "| `%s` | `%s` |", state, set.expected(state))
 		for _, counted := range tallies {
 			scored := counted.ByState[state]
 			fmt.Fprintf(&out, " %s |", share(scored.Correct, scored.Judged))
@@ -669,7 +685,7 @@ func (s *FlowBenchmarkSuite) report(tallies []tally) string {
 	}
 
 	for _, counted := range tallies {
-		fmt.Fprintf(&out, "\n### What %s did instead\n\n", counted.Arm)
+		fmt.Fprintf(&out, "\n### What %s did instead on the %s set\n\n", counted.Arm, name)
 		fmt.Fprintf(&out,
 			"Rows are what the case wanted, columns what the arm would have done.\n\n")
 		fmt.Fprint(&out, "| wanted |")
@@ -710,16 +726,26 @@ func (s *FlowBenchmarkSuite) report(tallies []tally) string {
 }
 
 // write keeps the run, because a table in a terminal is not a baseline.
-func (s *FlowBenchmarkSuite) write(report string, tallies []tally) {
+func (s *FlowBenchmarkSuite) write(report string, results map[string][]tally) {
 	out := filepath.Join("testdata", "flowbench-out",
 		time.Now().UTC().Format("20060102-150405"))
 	s.Require().NoError(os.MkdirAll(out, 0o755))
 
 	s.Require().NoError(os.WriteFile(filepath.Join(out, "report.md"), []byte(report), 0o644))
 
-	sort.Slice(tallies, func(i, j int) bool { return tallies[i].Arm < tallies[j].Arm })
-	encoded, err := json.MarshalIndent(tallies, "", "  ")
+	for _, tallies := range results {
+		sort.Slice(tallies, func(i, j int) bool { return tallies[i].Arm < tallies[j].Arm })
+	}
+	encoded, err := json.MarshalIndent(results, "", "  ")
 	s.Require().NoError(err)
 	s.Require().NoError(os.WriteFile(filepath.Join(out, "summary.json"), encoded, 0o644))
 	s.T().Logf("wrote %s", out)
+}
+
+// envOr is the variable's value, or fallback when it is unset.
+func envOr(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }
