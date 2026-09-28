@@ -216,7 +216,7 @@ func main() {
 		}
 		must(json.Unmarshal(raw, &set))
 		for _, c := range set.Cases {
-			known[normal(c.Heard)] = true
+			known[identity(c)] = true
 		}
 	}
 	contracts := map[string]string{}
@@ -235,11 +235,11 @@ func main() {
 			continue
 		}
 		for i, c := range answer.Cases {
-			key := normal(c.Heard)
-			if key == "" || known[key] || (j.s.speaking && strings.TrimSpace(c.AgentSaid) == "") {
+			key := identity(c)
+			if normal(c.Heard) == "" || known[key] || (j.s.speaking && strings.TrimSpace(c.AgentSaid) == "") {
 				continue
 			}
-			if j.s.name == "continue-echo" && !strings.Contains(normal(c.AgentSaid), key) {
+			if j.s.name == "continue-echo" && !strings.Contains(normal(c.AgentSaid), normal(c.Heard)) {
 				continue // an echo repeats the agent's own words
 			}
 			known[key] = true
@@ -308,6 +308,12 @@ func lastObject(text string) string {
 		return text
 	}
 	return text[start : end+1]
+}
+
+// identity is what makes two cases the same case: the words, and what the agent was saying
+// when they came. A backchannel's words repeat from case to case; its moment does not.
+func identity(c flowCase) string {
+	return normal(c.Heard) + "|" + normal(c.AgentSaid)
 }
 
 var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
