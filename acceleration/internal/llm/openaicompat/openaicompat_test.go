@@ -450,7 +450,9 @@ func (s *OpenAICompatSuite) TestJSONIsOnlyAskedForWhenWanted() {
 
 func (s *OpenAICompatSuite) TestClosingAStreamSettlesWhatHadAlreadyArrived() {
 	s.hold = make(chan struct{})
-	s.frames = []string{textFrame("I was saying"), usageFrame(11, 0, 4, 0, "")}
+	// Usage must be read before cancellation; a frame merely flushed by the server
+	// can still be in transit when Close cancels the upstream request.
+	s.frames = []string{usageFrame(11, 0, 4, 0, ""), textFrame("I was saying")}
 	provider := s.provider(Options{})
 
 	stream, err := provider.Create(context.Background(), llm.ResponseParams{

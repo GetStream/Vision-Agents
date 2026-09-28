@@ -26,8 +26,6 @@ members = [
     "vision-agents-plugins-huggingface",
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",
-    "vision-agents-plugins-lemonslice",
-    "vision-agents-plugins-liveavatar",
     "vision-agents-plugins-local",
     "vision-agents-plugins-minimax",
     "vision-agents-plugins-mistral",
@@ -6485,12 +6483,6 @@ inworld = [
 kokoro = [
     { name = "vision-agents-plugins-kokoro" },
 ]
-lemonslice = [
-    { name = "vision-agents-plugins-lemonslice" },
-]
-liveavatar = [
-    { name = "vision-agents-plugins-liveavatar" },
-]
 local = [
     { name = "vision-agents-plugins-local" },
 ]
@@ -6603,8 +6595,6 @@ requires-dist = [
     { name = "vision-agents-plugins-huggingface", marker = "extra == 'huggingface'", editable = "plugins/huggingface" },
     { name = "vision-agents-plugins-inworld", marker = "extra == 'inworld'", editable = "plugins/inworld" },
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'kokoro'", editable = "plugins/kokoro" },
-    { name = "vision-agents-plugins-lemonslice", marker = "extra == 'lemonslice'", editable = "plugins/lemonslice" },
-    { name = "vision-agents-plugins-liveavatar", marker = "extra == 'liveavatar'", editable = "plugins/liveavatar" },
     { name = "vision-agents-plugins-local", marker = "extra == 'local'", editable = "plugins/local" },
     { name = "vision-agents-plugins-minimax", marker = "extra == 'minimax'", editable = "plugins/minimax" },
     { name = "vision-agents-plugins-mistral", marker = "extra == 'mistral'", editable = "plugins/mistral" },
@@ -6630,7 +6620,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "stream", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "stream", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -7065,66 +7055,6 @@ requires-dist = [
     { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "vision-agents", editable = "sdks/python" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "vision-agents-plugins-lemonslice"
-source = { editable = "plugins/lemonslice" }
-dependencies = [
-    { name = "httpx" },
-    { name = "livekit" },
-    { name = "livekit-api" },
-    { name = "vision-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.28.1,<1" },
-    { name = "livekit", specifier = ">=1.1.2,<2" },
-    { name = "livekit-api", specifier = ">=1.1.0,<2" },
-    { name = "vision-agents", editable = "sdks/python" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "vision-agents-plugins-liveavatar"
-source = { editable = "plugins/liveavatar" }
-dependencies = [
-    { name = "httpx" },
-    { name = "livekit" },
-    { name = "vision-agents" },
-    { name = "websockets" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.28.1,<1" },
-    { name = "livekit", specifier = ">=1.1.2,<2" },
-    { name = "vision-agents", editable = "sdks/python" },
-    { name = "websockets", specifier = ">=13.0,<16" },
 ]
 
 [package.metadata.requires-dev]
