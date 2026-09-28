@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -359,10 +360,31 @@ func (s *Server) Handler() http.Handler {
 // A 5xx is logged at error level. An access log at a busy deployment is the one stream
 // nobody reads all of, and a server error that only appears in it is a server error nobody
 // notices.
+//
+// A panic is logged with its stack and answered with a 500 here, then panicked again so
+// Sentry still reports it. Sentry recovers without writing a status, which net/http sends
+// as an empty 200, and a request that panicked would otherwise leave no line at all.
 func (s *Server) withRequestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &loggedResponse{ResponseWriter: w}
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				return
+			}
+			// ErrAbortHandler is net/http's own way of dropping a connection, not a bug.
+			if recovered != http.ErrAbortHandler {
+				customer, _ := CustomerFrom(r.Context())
+				s.logger.Error("a request panicked",
+					"method", r.Method, "path", r.URL.Path, "customer", customer,
+					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
+				if recorder.code == 0 && recorder.written == 0 && !recorder.hijacked {
+					http.Error(recorder, `{"error":"internal error"}`, http.StatusInternalServerError)
+				}
+			}
+			panic(recovered)
+		}()
 		next.ServeHTTP(recorder, r)
 
 		customer, _ := CustomerFrom(r.Context())
