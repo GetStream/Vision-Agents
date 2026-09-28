@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -142,6 +143,22 @@ func loadFlowSet(name string) (flowSet, error) {
 	var set flowSet
 	if err := json.Unmarshal(raw, &set); err != nil {
 		return flowSet{}, fmt.Errorf("harness: decode the flow set: %w", err)
+	}
+	return set, set.validate()
+}
+
+// loadNamedSet reads one of the embedded sets by name, or a set file by its path.
+func loadNamedSet(name string) (flowSet, error) {
+	if _, known := flowSetFiles[name]; known {
+		return loadFlowSet(name)
+	}
+	raw, err := os.ReadFile(name)
+	if err != nil {
+		return flowSet{}, err
+	}
+	var set flowSet
+	if err := json.Unmarshal(raw, &set); err != nil {
+		return flowSet{}, fmt.Errorf("harness: decode %s: %w", name, err)
 	}
 	return set, set.validate()
 }
