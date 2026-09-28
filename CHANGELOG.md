@@ -1190,6 +1190,10 @@ Two tools in one reply each started a generate, and the second stole the floor s
 
 `GeminiLLM.simple_response` crashed with `ValueError('content parts are required.')` when the model echoed an already-executed function call in a follow-up turn. `_dedup_and_execute` filtered it out, leaving the follow-up `chat.send_message_stream(parts=[], ...)` with an empty list, which google-genai rejects. The multi-hop loop now exits cleanly when every requested call is a duplicate.
 
+### Router: sentences from a per-sentence voice were heard spliced together (#675)
+
+A voice that takes each sentence as its own request (Gemini TTS, Fish, Speechify) synthesised a reply's sentences side by side, and the agent played their audio in the order it arrived, so a two-sentence reply sounded like two voices talking over each other. The router now holds each sentence's audio until the ones before it have finished, while still synthesising them in parallel. A barge-in drops everything held, and every sentence is still settled and billed.
+
 # v0.6.2
 
 ## Breaking Changes
