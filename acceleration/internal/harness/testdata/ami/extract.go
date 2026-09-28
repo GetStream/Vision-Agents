@@ -100,7 +100,26 @@ type flowCase struct {
 func main() {
 	in := flag.String("in", "", "unpacked AMI manual annotations; downloaded when empty")
 	out := flag.String("out", "", "where to write the set; standard output when empty")
+	all := flag.Bool("all", false, "keep every case found rather than spreading perState of each")
+	exclude := flag.String("exclude", "", "a set whose meeting series are left out, so that "+
+		"cases for training share no speakers with it")
 	flag.Parse()
+
+	// A series, such as ES2002, is four meetings of the same four people.
+	series := func(meeting string) string { return strings.TrimRight(meeting, "abcd") }
+	excluded := map[string]bool{}
+	if *exclude != "" {
+		raw, err := os.ReadFile(*exclude)
+		must(err)
+		var other struct {
+			Cases []flowCase `json:"cases"`
+		}
+		must(json.Unmarshal(raw, &other))
+		for _, one := range other.Cases {
+			// Source reads "AMI <meeting> <seconds>s".
+			excluded[series(strings.Fields(one.Source)[1])] = true
+		}
+	}
 
 	corpus, err := open(*in)
 	must(err)
@@ -114,7 +133,7 @@ func main() {
 		base := path.Base(file)
 		meeting, speaker := strings.Split(base, ".")[0], strings.Split(base, ".")[1]
 		// The scenario meetings are the ones the contract describes.
-		if !regexp.MustCompile(`^(ES|IS|TS)`).MatchString(meeting) {
+		if !regexp.MustCompile(`^(ES|IS|TS)`).MatchString(meeting) || excluded[series(meeting)] {
 			continue
 		}
 		words, err := readWords(corpus, "words/"+meeting+"."+speaker+".words.xml")
@@ -150,7 +169,10 @@ func main() {
 		Contracts: map[string]string{"meeting": contract},
 	}
 	for _, state := range []string{"respond", "wait", "stop", "continue-ack"} {
-		picked := spread(found[state], perState)
+		picked := found[state]
+		if !*all {
+			picked = spread(picked, perState)
+		}
 		fmt.Fprintf(os.Stderr, "%s: %d found, %d kept\n", state, len(found[state]), len(picked))
 		set.Cases = append(set.Cases, picked...)
 	}
