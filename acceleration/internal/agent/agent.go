@@ -220,7 +220,9 @@ type Agent struct {
 	// cascade pipeline has its own.
 	replies chan llm.Event
 	// streams are the replies still being generated, by turn. Closing one is barge-in.
-	streams map[string]*llm.Stream
+	streams        map[string]*llm.Stream
+	previews       map[string]*replyPreview
+	modelCallTimes map[string]float64
 	// generatingCancel abandons a conversation Create that has not returned a stream yet.
 	// Interrupt used to Close only an existing stream, so a reply waiting on headers kept
 	// the event loop and the floor until Cerebras answered.
@@ -434,6 +436,8 @@ func New(options Options) (*Agent, error) {
 		voices:           map[string]string{},
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
+		previews:         map[string]*replyPreview{},
+		modelCallTimes:   map[string]float64{},
 		generatingCancel: map[string]context.CancelFunc{},
 		cadence:          settling,
 		duplex:           listening,
@@ -492,6 +496,9 @@ func New(options Options) (*Agent, error) {
 
 // finishTurn reports a measured exchange and records it.
 func (a *Agent) finishTurn(turn Turn) {
+	a.mu.Lock()
+	delete(a.modelCallTimes, turn.TurnID)
+	a.mu.Unlock()
 	a.logger.Info("voice turn timing", "turn", turn.TurnID,
 		"stt_ms", turn.STTLatencyMs, "cadence_ms", turn.CadenceMs,
 		"decision_ms", turn.DecisionMs, "model_to_first_text_ms", turn.ModelToFirstTextMs,
@@ -503,6 +510,19 @@ func (a *Agent) finishTurn(turn Turn) {
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)
 	}
+}
+
+func (a *Agent) recordModelCall(timing llm.CallTiming) {
+	if timing.Purpose == "reply" && timing.Success {
+		if !a.turns.modelTiming(timing.TurnID, timing.TTFTMs) {
+			a.mu.Lock()
+			if a.previews[timing.TurnID] != nil {
+				a.modelCallTimes[timing.TurnID] = timing.TTFTMs
+			}
+			a.mu.Unlock()
+		}
+	}
+	a.emitter.Send(ModelCall{CallTiming: timing})
 }
 
 // Join opens the model and voice sessions, then joins the call and starts listening.
@@ -896,6 +916,15 @@ func (a *Agent) close() error {
 	if cancel != nil {
 		cancel()
 	}
+	a.mu.Lock()
+	previews := make([]string, 0, len(a.previews))
+	for turnID := range a.previews {
+		previews = append(previews, turnID)
+	}
+	a.mu.Unlock()
+	for _, turnID := range previews {
+		a.cancelPreview(turnID)
+	}
 
 	// The edge leaves first: it is the source of the audio that keeps the rest busy.
 	var failures []error
@@ -1164,6 +1193,11 @@ func (a *Agent) act(actions []Action) {
 // perform carries out one decision. Every branch here is mechanical: which provider to
 // touch and in what order. Why any of it is happening was settled in converse.
 func (a *Agent) perform(action Action) {
+	if action.Kind == ActSupersede {
+		a.cancelPreview(action.TurnID)
+	} else if action.Kind != ActAsk && action.Kind != ActAnswer {
+		a.cancelPreview(action.Candidate.ID)
+	}
 	switch action.Kind {
 	case ActBackchannel:
 		a.backchannel(action.Participant, action.Text)
@@ -1231,6 +1265,10 @@ func (a *Agent) ask(ready candidate) {
 	// Speech the voice has finished sending is still on its way out of the edge, so the
 	// agent counts as speaking until it has drained.
 	speaking = speaking || a.speechPending()
+	if !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
+		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking) {
+		a.preview(ready, current, instructions)
+	}
 
 	if err := current.Decide(harness.FlowTurn{
 		ID:           ready.ID,
@@ -1243,9 +1281,81 @@ func (a *Agent) ask(ready candidate) {
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 	}); err != nil {
+		a.cancelPreview(ready.ID)
 		a.converse.Unasked(ready.ID)
 		a.fail(err, "flow")
 	}
+}
+
+type previewResult struct {
+	stream *llm.Stream
+	err    error
+}
+
+type replyPreview struct {
+	model     *llmrouter.Session
+	turn      harness.Turn
+	ready     chan previewResult
+	events    chan llm.Event
+	cancel    context.CancelFunc
+	startedAt time.Time
+}
+
+func (a *Agent) preview(ready candidate, current *harness.Harness, instructions string) {
+	model := current.PreviewModel()
+	if model == nil {
+		return
+	}
+	a.mu.Lock()
+	if a.closed || a.harness != current || a.switching.Load() {
+		a.mu.Unlock()
+		return
+	}
+	history := append(a.replayLocked(), a.userTurnLocked(ready.Text, nil))
+	ctx, cancel := context.WithCancel(a.ctx)
+	turn := harness.Turn{ID: ready.ID, Instructions: instructions, History: history,
+		Note: a.duplex.Note(ready.Confidence)}
+	p := &replyPreview{model: model, turn: turn, ready: make(chan previewResult, 1),
+		events: make(chan llm.Event, replyBuffer), cancel: cancel,
+		startedAt: time.Now()}
+	a.previews[ready.ID] = p
+	a.running.Add(1)
+	a.mu.Unlock()
+
+	go func() {
+		defer a.running.Done()
+		defer close(p.events)
+		stream, err := current.Preview(ctx, turn)
+		p.ready <- previewResult{stream: stream, err: err}
+		if err != nil || stream == nil {
+			return
+		}
+		stop := context.AfterFunc(ctx, func() { _ = stream.Close() })
+		defer stop()
+		defer stream.Close()
+		for stream.Next() {
+			select {
+			case p.events <- stream.Current():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (a *Agent) cancelPreview(turnID string) {
+	if turnID == "" {
+		return
+	}
+	a.mu.Lock()
+	p := a.previews[turnID]
+	delete(a.previews, turnID)
+	delete(a.modelCallTimes, turnID)
+	a.mu.Unlock()
+	if p == nil {
+		return
+	}
+	p.cancel()
 }
 
 // anotherVoiceLocked reports whether a turn came from somebody other than the person whose
@@ -1323,6 +1433,9 @@ func (a *Agent) respond(participant stt.Participant, text string, listened heard
 // respondCandidate answers a settled turn. The note is what the conversation decided the
 // model should know beyond the words, and is empty on a turn that is simply answered.
 func (a *Agent) respondCandidate(ready candidate, note string) error {
+	if note != "" {
+		a.cancelPreview(ready.ID)
+	}
 	return a.respondTurn(ready.ID, ready.Participant, ready.Text, heard{
 		at:           ready.ReadyAt,
 		revisedAt:    ready.RevisedAt,
@@ -1412,6 +1525,15 @@ func (a *Agent) respondTurn(
 	a.mu.Unlock()
 
 	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
+	a.turns.decided(turnID, time.Now())
+	a.mu.Lock()
+	if ttft := a.modelCallTimes[turnID]; ttft > 0 {
+		a.turns.modelTiming(turnID, ttft)
+	}
+	if preview := a.previews[turnID]; preview != nil {
+		a.turns.modelStarted(turnID, preview.startedAt)
+	}
+	a.mu.Unlock()
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 
 	return a.generate(harness.Turn{
@@ -1532,12 +1654,14 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 		return nil
 	}
 	current := a.harness
+	preview := a.previews[turn.ID]
+	delete(a.previews, turn.ID)
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()
 
-	go a.startReply(current, turn, ctx, screen)
+	go a.startReply(current, turn, ctx, screen, preview)
 	return nil
 }
 
@@ -1553,6 +1677,7 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 // policy refuses has cost some tokens nobody will read, which is the trade.
 func (a *Agent) startReply(
 	current *harness.Harness, turn harness.Turn, ctx context.Context, screen string,
+	preview *replyPreview,
 ) {
 	defer a.pumps.Done()
 	defer a.finishGenerate(turn.ID)
@@ -1570,8 +1695,35 @@ func (a *Agent) startReply(
 		screening = nil
 	}
 
-	a.turns.modelStarted(turn.ID, time.Now())
-	stream, err := current.Respond(ctx, turn)
+	var stream *llm.Stream
+	var err error
+	usingPreview := false
+	if preview != nil {
+		if preview.turn.Instructions == turn.Instructions && preview.turn.Note == turn.Note &&
+			slices.EqualFunc(preview.turn.History, turn.History, llm.SameMessage) &&
+			current.AdoptPreview(turn, preview.model) {
+			defer preview.cancel()
+			select {
+			case result := <-preview.ready:
+				stream, err = result.stream, result.err
+				usingPreview = stream != nil && err == nil
+			case <-ctx.Done():
+				preview.cancel()
+				return
+			}
+		} else {
+			preview.cancel()
+		}
+	}
+	if preview != nil && stream == nil && ctx.Err() == nil {
+		// The preview may have failed or lost a race to new context. The accepted
+		// turn still deserves the ordinary reply path.
+		err = nil
+	}
+	if stream == nil && err == nil {
+		a.turns.modelStarted(turn.ID, time.Now())
+		stream, err = current.Respond(ctx, turn)
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return
@@ -1612,7 +1764,23 @@ func (a *Agent) startReply(
 		}
 	}
 
+	if usingPreview {
+		a.pumpPreview(turn.ID, preview)
+		return
+	}
 	a.pump(turn.ID, stream)
+}
+
+func (a *Agent) pumpPreview(turnID string, preview *replyPreview) {
+	a.mu.Lock()
+	replies := a.replies
+	a.mu.Unlock()
+	for event := range preview.events {
+		replies <- event
+	}
+	a.mu.Lock()
+	delete(a.streams, turnID)
+	a.mu.Unlock()
 }
 
 // screening is a guardrail check running beside the model.

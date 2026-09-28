@@ -177,6 +177,7 @@ type stubLLM struct {
 	// refuses, if set, is returned instead of a response: the model a session opens onto
 	// happily but that answers nothing, which is what a rejected key looks like.
 	refuses error
+	delay   time.Duration
 
 	// scripts are the responses handed out, keyed by the id the caller correlates on, so
 	// a test can write one as it goes and see which were abandoned.
@@ -191,11 +192,18 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	hold, refuses := s.holdCreate, s.refuses
+	hold, refuses, delay := s.holdCreate, s.refuses, s.delay
 	s.mu.Unlock()
 
 	if refuses != nil {
 		return nil, refuses
+	}
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	if hold != nil {
@@ -323,6 +331,7 @@ type stubTTS struct {
 	interrupts int
 	// silent stops the stub producing audio, so a test can hold a turn open.
 	silent bool
+	delay  time.Duration
 }
 
 func newStubTTS(streaming bool) *stubTTS {
@@ -334,24 +343,31 @@ func (s *stubTTS) Start(context.Context) error { return nil }
 func (s *stubTTS) Synthesize(request tts.Request) error {
 	s.mu.Lock()
 	s.said = append(s.said, request)
-	silent := s.silent
+	silent, delay := s.silent, s.delay
 	s.mu.Unlock()
 
 	if silent {
 		return nil
 	}
 	if request.Text != "" {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 		s.emitter.Send(tts.AudioChunk{
 			SynthesisID: request.ID,
 			Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
 		})
 	}
 	if request.Final {
+		ttfb := float64(delay.Milliseconds())
+		if delay == 0 {
+			ttfb = 5
+		}
 		s.emitter.Send(tts.SynthesisComplete{
 			SynthesisID:       request.ID,
 			Characters:        int64(len(request.Text)),
 			AudioDurationMs:   10,
-			TimeToFirstByteMs: 5,
+			TimeToFirstByteMs: ttfb,
 		})
 	}
 	return nil
@@ -994,9 +1010,106 @@ func (s *AgentSuite) TestBackgroundSpeechIsIgnored() {
 
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
 		"the flow controller never considered the speech")
-	s.Empty(s.model.requests(), "speech addressed to somebody else should stay in the background")
+	s.Empty(s.edge.heard(), "a speculative reply must not speak before the floor decision")
 	s.Empty(s.agent.History())
 	s.Zero(countOf[Heard](s.reported()))
+}
+
+func (s *AgentSuite) TestReplyIsReadyWhileTheControllerDecidesButCannotSpeakEarly() {
+	s.join(true)
+	s.flow.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is the weather")
+
+	s.eventually(func() bool {
+		return len(s.flow.requests()) == 1 && len(s.model.requests()) == 1
+	}, "the reply did not start beside the floor decision")
+	s.Empty(s.edge.heard())
+	s.Empty(s.agent.History())
+
+	decision := s.flow.requests()[0].ID
+	s.eventually(func() bool { return s.flow.script(decision) != nil }, "flow did not open")
+	s.flow.writes(decision, `{"disposition":"respond","floor":"continue"}`)
+	s.flow.finishes(decision)
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 },
+		"the accepted preview was not spoken")
+	s.Equal("what is the weather", s.agent.History()[0].Content)
+	s.Len(s.model.requests(), 1, "the accepted preview was requested again")
+}
+
+func (s *AgentSuite) TestConcurrentDecisionAndReplyReduceTimeToFirstAudio() {
+	s.join(true)
+	s.flow.delay = 550 * time.Millisecond
+	s.model.delay = 650 * time.Millisecond
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "tell me a story")
+
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 },
+		"the paced turn never reached audio")
+	turn, _ := firstOf[Turn](s.reported())
+	s.T().Logf("paced voice turn: speech_end_to_audio_ms=%.0f cadence_ms=%.0f decision_ms=%.0f model_to_first_text_ms=%.0f tts_to_audio_ms=%.0f",
+		turn.SpeechEndToAudioMs, turn.CadenceMs, turn.DecisionMs,
+		turn.ModelToFirstTextMs, turn.TTSToAudioMs)
+	s.Greater(turn.DecisionMs, 500.0)
+	s.Greater(turn.SpeechEndToAudioMs, 850.0)
+	s.Less(turn.SpeechEndToAudioMs, 1250.0,
+		"the two provider waits should overlap instead of adding to the critical path")
+}
+
+func (s *AgentSuite) pacedVoiceTurn(flow, reply, voice time.Duration, sttMs float64) Turn {
+	s.join(true)
+	s.flow.delay = flow
+	s.model.delay = reply
+	s.voice.delay = voice
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.saysAfter(participant, "could you help me plan dinner?", sttMs)
+	s.Require().Eventually(func() bool { return countOf[Turn](s.reported()) == 1 },
+		5*time.Second, 5*time.Millisecond, "the paced voice turn never reached audio")
+	turn, _ := firstOf[Turn](s.reported())
+	s.T().Logf("paced voice turn: speech_end_to_audio_ms=%.0f stt_ms=%.0f cadence_ms=%.0f decision_ms=%.0f model_to_first_text_ms=%.0f tts_to_audio_ms=%.0f llm_ttft_ms=%.0f",
+		turn.SpeechEndToAudioMs, turn.STTLatencyMs, turn.CadenceMs, turn.DecisionMs,
+		turn.ModelToFirstTextMs, turn.TTSToAudioMs, turn.LLMTTFTMs)
+	return turn
+}
+
+func (s *AgentSuite) TestPacedVoiceTurnWithSlowController() {
+	turn := s.pacedVoiceTurn(1050*time.Millisecond, 825*time.Millisecond,
+		900*time.Millisecond, 170)
+	s.InDelta(2470, turn.SpeechEndToAudioMs, 100,
+		"decision and reply should overlap while STT, cadence and TTS remain on the path")
+}
+
+func (s *AgentSuite) TestPacedVoiceTurnWithSlowReply() {
+	turn := s.pacedVoiceTurn(450*time.Millisecond, 650*time.Millisecond,
+		450*time.Millisecond, 120)
+	s.InDelta(1570, turn.SpeechEndToAudioMs, 100,
+		"the slower reply should continue through the controller decision")
+}
+
+func (s *AgentSuite) TestRevisedSpeechCannotReleaseAnObsoletePreview() {
+	s.join(true)
+	s.flow.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.mutters(participant, "set the timer for five")
+	s.eventually(func() bool {
+		return len(s.flow.requests()) == 1 && len(s.model.requests()) == 1
+	}, "the first stable revision was not previewed")
+	s.mutters(participant, "set the timer for fifteen minutes")
+	s.eventually(func() bool {
+		return len(s.flow.requests()) == 2 && len(s.model.requests()) == 2
+	}, "the revision did not replace the first request")
+	decision := s.flow.requests()[1].ID
+	s.eventually(func() bool { return s.flow.script(decision) != nil }, "revised flow did not open")
+	s.flow.writes(decision, `{"disposition":"respond","floor":"continue"}`)
+	s.flow.finishes(decision)
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 },
+		"the revised turn was not spoken")
+	s.Equal("set the timer for fifteen minutes", s.agent.History()[0].Content)
+	s.Len(s.agent.History(), 2, "the obsolete turn entered conversation history")
 }
 
 func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller() {
@@ -1047,8 +1160,14 @@ func (s *AgentSuite) TestAmbiguousSpeechAsksAClarifyingQuestion() {
 
 	s.mutters(participant, "do it like last time")
 
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Contains(s.model.requests()[0].Instructions, "ambiguous")
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if strings.Contains(request.Instructions, "ambiguous") {
+				return true
+			}
+		}
+		return false
+	}, "the clarification was never requested")
 }
 
 func (s *AgentSuite) TestAnEmptyTurnIsNotAnswered() {

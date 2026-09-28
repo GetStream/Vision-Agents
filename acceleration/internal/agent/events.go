@@ -176,6 +176,8 @@ type Turn struct {
 	// StartedAt is when the last transcript revision arrived, before cadence settling.
 	StartedAt time.Time
 	// These consecutive legs run from transcript arrival to the first audio published.
+	// A reply begun beside the floor decision contributes only its remaining wait after
+	// approval; its full provider duration is reported by the model-call event.
 	CadenceMs          float64
 	DecisionMs         float64
 	ModelToFirstTextMs float64

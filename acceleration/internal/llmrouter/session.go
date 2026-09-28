@@ -84,7 +84,8 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		}
 		return nil, err
 	}
-	return stream.Observe(func(event llm.Event) { s.observe(startedAt, params, event) }), nil
+	createdAt := time.Now()
+	return stream.Observe(func(event llm.Event) { s.observe(startedAt, createdAt, params, event) }), nil
 }
 
 // Provider is the provider serving this session.
@@ -124,22 +125,27 @@ func (s *Session) Close() error {
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt time.Time, params llm.ResponseParams, event llm.Event) {
+func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, event llm.Event) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
 	}
 
 	response := completed.Response
+	// A provider may wait for response headers before returning its stream. The stream's
+	// own clock starts only then, but the caller has been waiting since Create began.
+	headersMs := float64(createdAt.Sub(startedAt).Microseconds()) / 1000
+	ttftMs := headersMs + response.TimeToFirstTokenMs
+	durationMs := headersMs + response.DurationMs
 	slog.Info("model call timing", "call", s.owner.CallID, "operation", response.ID,
 		"purpose", params.Purpose, "turn", params.TurnID,
 		"provider", s.config.Provider, "model", s.config.Model,
-		"ttft_ms", response.TimeToFirstTokenMs, "duration_ms", response.DurationMs,
+		"ttft_ms", ttftMs, "duration_ms", durationMs,
 		"success", response.Status != llm.StatusFailed)
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
 			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
-			TTFTMs: response.TimeToFirstTokenMs, DurationMs: response.DurationMs,
+			TTFTMs: ttftMs, DurationMs: durationMs,
 			Success: response.Status != llm.StatusFailed})
 	}
 
@@ -160,7 +166,7 @@ func (s *Session) observe(startedAt time.Time, params llm.ResponseParams, event 
 		OperationID: response.ID,
 		Purpose:     params.Purpose,
 		TurnID:      params.TurnID,
-		DurationMs:  response.DurationMs,
+		DurationMs:  durationMs,
 		Usage: routing.Usage{
 			InputTokens:       response.Usage.InputTokens,
 			CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,
@@ -168,7 +174,7 @@ func (s *Session) observe(startedAt time.Time, params llm.ResponseParams, event 
 		},
 		// Time to first token is what the caller actually waited for; the rest of the
 		// answer arrives while they are already reading or hearing it.
-		LatencyMs: response.TimeToFirstTokenMs,
+		LatencyMs: ttftMs,
 		Success:   response.Status != llm.StatusFailed,
 		ErrorCode: errorCode(response),
 	})
