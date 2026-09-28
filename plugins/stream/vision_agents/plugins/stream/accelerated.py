@@ -22,6 +22,7 @@ from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from ._backend import Backend
+from ._latency import render_turn
 from ._generated.api.default import close_session, create_session, list_agent_configs
 from ._generated.models import (
     CreateSessionRequest,
@@ -143,6 +144,7 @@ class Accelerated(OmniLLM):
         self._running: set[asyncio.Task] = set()
         self._tool_tasks: dict[str, asyncio.Task] = {}
         self._events: asyncio.Queue[Optional[RemoteEvent]] = asyncio.Queue()
+        self._pending_model_calls: dict[str, list[dict[str, Any]]] = {}
 
     @property
     def uses_video_observations(self) -> bool:
@@ -433,6 +435,14 @@ class Accelerated(OmniLLM):
         kind = frame.get("type", "")
 
         if kind == "model_call":
+            turn_id = str(frame.get("turn_id", ""))
+            if turn_id:
+                if (
+                    turn_id not in self._pending_model_calls
+                    and len(self._pending_model_calls) >= 32
+                ):
+                    self._pending_model_calls.pop(next(iter(self._pending_model_calls)))
+                self._pending_model_calls.setdefault(turn_id, []).append(frame)
             logger.info(
                 "model call timing call=%s turn=%s operation=%s purpose=%s provider=%s model=%s "
                 "ttft_ms=%s duration_ms=%s success=%s",
@@ -474,19 +484,11 @@ class Accelerated(OmniLLM):
         event = _event_of(frame)
         if event is not None:
             if kind == "turn":
+                calls = self._pending_model_calls.pop(str(frame.get("turn_id", "")), [])
                 logger.info(
-                    "voice turn timing call=%s turn=%s stt_ms=%s cadence_ms=%s "
-                    "decision_ms=%s model_to_first_text_ms=%s text_to_tts_ms=%s "
-                    "tts_to_audio_ms=%s speech_end_to_audio_ms=%s",
+                    "call=%s\n%s",
                     self.session.call_id if self.session else "",
-                    frame.get("turn_id", ""),
-                    frame.get("stt_latency_ms", 0),
-                    frame.get("cadence_ms", 0),
-                    frame.get("decision_ms", 0),
-                    frame.get("model_to_first_text_ms", 0),
-                    frame.get("text_to_tts_ms", 0),
-                    frame.get("tts_to_audio_ms", 0),
-                    frame.get("speech_end_to_audio_ms", 0),
+                    render_turn(frame, calls),
                 )
             await self._events.put(event)
 

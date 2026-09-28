@@ -1076,8 +1076,11 @@ decision before the reply model, first reply text, TTS submission and first audi
 edge. Its `model_calls` list keeps flow, reply and subagent requests separate, with TTFT
 and full duration for each attempt. `speech_end_to_audio_ms` estimates the delay from the
 last input audio using provider STT processing time; it cannot include network transit
-or browser playback. The router logs call join and ICE timing, while the Python
-accelerated agent prints join, per-model and per-turn timing in its console.
+or browser playback. The router logs call join and each ICE peer connection
+independently; the subscriber can stay idle until someone publishes a track. The Python
+accelerated agent prints join and per-model timing, plus a console DAG for each turn.
+Model-call durations annotate the stages they overlap and are not added to the
+speech-to-audio path.
 
 **Memory and phone are recorded but not routed.** There is one memory store and one vendor
 per number, so the provider and route paths do not serve those modalities while the

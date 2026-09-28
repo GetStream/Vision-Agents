@@ -268,24 +268,26 @@ func (e *Edge) reportICE(ctx context.Context, started time.Time) {
 	defer ticker.Stop()
 	timeout := time.NewTimer(30 * time.Second)
 	defer timeout.Stop()
+	timeoutCh := timeout.C
 	var publisherMs, subscriberMs float64
 	for {
 		if pc := e.call.PublisherPC(); pc != nil && publisherMs == 0 && iceConnected(pc.ICEConnectionState()) {
 			publisherMs = float64(time.Since(started).Microseconds()) / 1000
+			e.logger.Info("ice connection timing", "peer", "publisher", "connected_ms", publisherMs)
+			timeout.Stop()
+			timeoutCh = nil
 		}
 		if pc := e.call.SubscriberPC(); pc != nil && subscriberMs == 0 && iceConnected(pc.ICEConnectionState()) {
 			subscriberMs = float64(time.Since(started).Microseconds()) / 1000
+			e.logger.Info("ice connection timing", "peer", "subscriber", "connected_ms", subscriberMs)
 		}
 		if publisherMs > 0 && subscriberMs > 0 {
-			e.logger.Info("ice connection timing", "publisher_ms", publisherMs,
-				"subscriber_ms", subscriberMs, "connected_ms", max(publisherMs, subscriberMs))
 			return
 		}
 		select {
 		case <-ticker.C:
-		case <-timeout.C:
-			e.logger.Warn("ice connection did not complete", "publisher_ms", publisherMs,
-				"subscriber_ms", subscriberMs)
+		case <-timeoutCh:
+			e.logger.Warn("publisher ice connection did not complete")
 			return
 		case <-ctx.Done():
 			return
