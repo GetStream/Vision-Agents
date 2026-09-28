@@ -56,6 +56,12 @@ module GetStream
           body: "ClaimGuestRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "classify" => {
+          method: :post, path: "/v1/classify",
+          path_params: [].freeze, query: [].freeze,
+          body: "ClassifyRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "closeSession" => {
           method: :delete, path: "/v1/agents/sessions/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -867,6 +873,26 @@ module GetStream
           properties: %w[guest_id user_id sessions_moved].freeze,
           required: %w[guest_id user_id sessions_moved].freeze, open: false
         }.freeze,
+        "ClassifyAnswer" => {
+          properties: %w[type yes chosen level legend probabilities confidence].freeze,
+          required: %w[type].freeze, open: false
+        }.freeze,
+        "ClassifyQuestion" => {
+          properties: %w[type instructions options levels yes no].freeze,
+          required: %w[type instructions].freeze, open: false
+        }.freeze,
+        "ClassifyRequest" => {
+          properties: %w[target state questions tags].freeze,
+          required: %w[state questions].freeze, open: false
+        }.freeze,
+        "ClassifyResult" => {
+          properties: %w[provider model answers usage].freeze,
+          required: %w[provider model answers usage].freeze, open: false
+        }.freeze,
+        "ClassifyUsage" => {
+          properties: %w[input_tokens output_tokens].freeze,
+          required: %w[input_tokens output_tokens].freeze, open: false
+        }.freeze,
         "CommandReceipt" => {
           properties: %w[command_id user_message_id assistant_message_id state duplicate].freeze,
           required: %w[command_id user_message_id assistant_message_id state duplicate].freeze, open: false
@@ -880,7 +906,7 @@ module GetStream
           required: %w[contacts].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[text images].freeze,
+          properties: %w[text images command_id].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
@@ -994,6 +1020,10 @@ module GetStream
         "LlmOptions" => {
           properties: %w[target providers max_output_tokens temperature reasoning_effort format verbosity tool_choice store prompt_cache_key metadata].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "ModelCallTiming" => {
+          properties: %w[operation_id purpose started_at provider model ttft_ms duration_ms input_tokens output_tokens success].freeze,
+          required: %w[started_at provider model success].freeze, open: false
         }.freeze,
         "ModelOverwrites" => {
           properties: %w[llm stt tts sts subagent search thinking temperature max_output_tokens verbosity].freeze,
@@ -1224,7 +1254,7 @@ module GetStream
           required: %w[type text].freeze, open: false
         }.freeze,
         "TimelineEntry" => {
-          properties: %w[turn_id started_at heard said roundtrip_ms stt_latency_ms llm_ttft_ms tts_ttfb_ms speech_end_to_audio_ms audio_out_ms interrupted].freeze,
+          properties: %w[turn_id started_at cadence_ms decision_ms model_to_first_text_ms text_to_tts_ms tts_to_audio_ms model_calls heard said roundtrip_ms stt_latency_ms llm_ttft_ms tts_ttfb_ms speech_end_to_audio_ms audio_out_ms interrupted].freeze,
           required: %w[turn_id started_at].freeze, open: false
         }.freeze,
         "ToolResultCommand" => {

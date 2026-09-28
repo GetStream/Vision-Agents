@@ -1543,6 +1543,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/classify": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ask a classifier typed questions about a piece of text
+         * @description The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+         *     Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+         *     A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+         */
+        readonly post: operations["classify"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/data/changes": {
         readonly parameters: {
             readonly query?: never;
@@ -2553,6 +2575,90 @@ export type components = {
             /** @description How many conversations moved onto the account. */
             readonly sessions_moved: number;
             readonly user_id: string;
+        };
+        /** @description Which fields carry the answer depends on the type. A noul fills yes alone. A choice fills chosen, probabilities and confidence. A score fills level, legend, probabilities and confidence. */
+        readonly ClassifyAnswer: {
+            /** @description The likeliest option of a choice. */
+            readonly chosen?: string;
+            /**
+             * Format: double
+             * @description How peaked the distribution is, not whether acting on it is safe.
+             */
+            readonly confidence?: number;
+            /** @description A score's levels by index, as decimal strings. */
+            readonly legend?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Format: double
+             * @description Where a score landed, which may be between two of its levels.
+             */
+            readonly level?: number;
+            /** @description The distribution the answer came from: options for a choice, level indices for a score. They sum to one. */
+            readonly probabilities?: {
+                readonly [key: string]: number;
+            };
+            readonly type: components["schemas"]["ClassifyQuestionType"];
+            /**
+             * Format: double
+             * @description The probability a noul is true, from 0 to 1.
+             */
+            readonly yes?: number;
+        };
+        readonly ClassifyQuestion: {
+            /** @example Is the customer asking for a refund? */
+            readonly instructions: string;
+            /** @description A score's levels, in order, each describing a concrete situation. */
+            readonly levels?: readonly string[];
+            /** @description What no means for a noul, where the instructions do not say it. */
+            readonly no?: string;
+            /** @description A choice's options, each with a description of what it covers or an empty string where the name says it. Include one for "none of these" whenever the options may not cover an input. */
+            readonly options?: {
+                readonly [key: string]: string;
+            };
+            readonly type: components["schemas"]["ClassifyQuestionType"];
+            /** @description What yes means for a noul, where the instructions do not say it. */
+            readonly yes?: string;
+        };
+        /**
+         * @description noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
+         * @enum {string}
+         */
+        readonly ClassifyQuestionType: "noul" | "choice" | "score";
+        readonly ClassifyRequest: {
+            /** @description Keyed by ids of the caller's own choosing, which is how the answers come back. An id is not part of what is asked, so a question carries its whole meaning in its instructions. */
+            readonly questions: {
+                readonly [key: string]: components["schemas"]["ClassifyQuestion"];
+            };
+            /**
+             * @description What the questions are about: a string for plain text, or a JSON object whose parts a question can name, such as `message`.
+             * @example I was charged twice this month and nobody has answered my email.
+             */
+            readonly state: unknown;
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * @description A provider/model or a capability shortcut. Empty takes classify-fast.
+             * @example classify-fast
+             */
+            readonly target?: string;
+        };
+        readonly ClassifyResult: {
+            readonly answers: {
+                readonly [key: string]: components["schemas"]["ClassifyAnswer"];
+            };
+            /** @description The version that answered, which is worth recording when the target was an alias. */
+            readonly model: string;
+            readonly provider: string;
+            readonly usage: components["schemas"]["ClassifyUsage"];
+        };
+        /** @description What the request read and wrote. The state's tokens are counted once however many questions shared them. */
+        readonly ClassifyUsage: {
+            /** Format: int64 */
+            readonly input_tokens: number;
+            /** Format: int64 */
+            readonly output_tokens: number;
         };
         readonly CommandReceipt: {
             readonly assistant_message_id: string;
@@ -7388,6 +7494,51 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly classify: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ClassifyRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The answers, under the ids they were asked under */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ClassifyResult"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The classifier is rate limiting. Ask again after a wait. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The classifier is overloaded or could not be reached. Ask again after a wait. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly listDataChanges: {
