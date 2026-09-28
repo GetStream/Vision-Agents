@@ -144,6 +144,7 @@ func main() {
 	model := flag.String("model", "muse-spark-1.3-contributor", "the writer")
 	effort := flag.String("effort", "max", "the writer's reasoning effort")
 	limit := flag.Int("limit", 0, "make only this many calls, for a trial")
+	more := flag.String("more", "", "extra calls for some states, such as shorten=3: calls per business for them")
 	flag.Parse()
 	if *work == "" || *out == "" {
 		fmt.Fprintln(os.Stderr, "usage: generate -work DIR -out FILE")
@@ -162,6 +163,11 @@ func main() {
 			n := *variants
 			if s.outbound {
 				n *= 3
+			}
+			for _, extra := range strings.Split(*more, ",") {
+				if name, count, ok := strings.Cut(extra, "="); ok && name == s.name {
+					fmt.Sscan(count, &n)
+				}
 			}
 			for v := range n {
 				jobs = append(jobs, job{b, s, v})
@@ -247,11 +253,19 @@ func main() {
 			c.State, c.Expect, c.Contract = j.s.name, j.s.expect, j.b.name
 			c.Source = "synthetic, written by " + *model
 			c.AgentSpeaking = j.s.speaking
-			if c.AgentSpeaking {
-				// An agent cut off mid-sentence has no closing punctuation yet.
-				c.Unfinished = !strings.ContainsAny(lastRune(strings.TrimSpace(c.AgentSaid)), ".?!")
-			} else {
+			if !c.AgentSpeaking {
 				c.AgentSaid = ""
+			}
+			// Unfinished means the caller's words are still arriving: the provisional ruling
+			// made mid-interjection. A backchannel, a noise and an echo are ruled on as they
+			// arrive; a stop or a shorten mostly is, sometimes once settled; words for somebody
+			// else in the room are ruled on once settled, since mid-utterance an ignore can only
+			// mean carrying on. This follows the written set.
+			switch j.s.name {
+			case "continue-ack", "continue-noise", "continue-echo":
+				c.Unfinished = true
+			case "stop", "shorten":
+				c.Unfinished = fnv32(c.ID)%5 != 0
 			}
 			switch j.s.name {
 			case "wait-menu":
@@ -322,12 +336,13 @@ func normal(s string) string {
 	return strings.TrimSpace(nonWord.ReplaceAllString(strings.ToLower(s), " "))
 }
 
-func lastRune(s string) string {
-	if s == "" {
-		return ""
+// fnv32 is FNV-1a, a stable choice per case.
+func fnv32(s string) uint32 {
+	h := uint32(2166136261)
+	for i := range len(s) {
+		h = (h ^ uint32(s[i])) * 16777619
 	}
-	r := []rune(s)
-	return string(r[len(r)-1])
+	return h
 }
 
 func lastLine(s string) string {
