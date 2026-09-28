@@ -6,12 +6,12 @@ from typing import AsyncIterator
 
 import websockets.exceptions
 from deepgram import AsyncDeepgramClient
-from deepgram.speak.v1.socket_client import AsyncV1SocketClient
-from deepgram.speak.v1.types import (
-    SpeakV1Cleared,
-    SpeakV1Flushed,
-    SpeakV1Text,
-    SpeakV1Warning,
+from deepgram.speak.v2.socket_client import AsyncV2SocketClient
+from deepgram.speak.v2.types import (
+    SpeakV2Speak,
+    SpeakV2SpeechInterrupted,
+    SpeakV2SpeechMetadata,
+    SpeakV2Warning,
 )
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core import tts
@@ -19,19 +19,19 @@ from vision_agents.core import tts
 logger = logging.getLogger(__name__)
 
 
-# Sample rates supported by Deepgram TTS websocket API.
-_SUPPORTED_RATES = {8000, 16000, 24000, 48000}
+# Sample rates supported by Deepgram Flux TTS websocket API.
+_SUPPORTED_RATES = {8000, 16000, 24000, 32000, 44100, 48000}
 
 
 class TTS(tts.TTS):
-    """Deepgram Text-to-Speech using the WebSocket streaming API.
+    """Deepgram Text-to-Speech using Flux TTS (`/v2/speak`).
 
     Keeps a persistent websocket connection open across synthesis calls
     to avoid per-call connection overhead and audio discontinuities.
 
     References:
-    - https://developers.deepgram.com/docs/text-to-speech
-    - https://developers.deepgram.com/docs/tts-models
+    - https://developers.deepgram.com/docs/flux-tts/overview
+    - https://developers.deepgram.com/docs/flux-tts/voices
     """
 
     # This implementation accepts partial text detlas
@@ -40,16 +40,18 @@ class TTS(tts.TTS):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "aura-2-thalia-en",
+        model: str = "flux-haley-en",
         sample_rate: int = 16000,
+        speed: float | None = None,
         client: AsyncDeepgramClient | None = None,
     ):
         """Initialize Deepgram TTS.
 
         Args:
             api_key: Deepgram API key. If not provided, will use DEEPGRAM_API_KEY env var.
-            model: Voice model to use. Defaults to "aura-2-thalia-en".
+            model: Flux voice model. Defaults to "flux-haley-en".
             sample_rate: Audio sample rate in Hz. Defaults to 16000.
+            speed: Optional speech-rate multiplier (0.85–1.15 in 0.05 steps).
             client: Optional pre-configured AsyncDeepgramClient instance.
         """
         super().__init__(provider_name="deepgram")
@@ -62,6 +64,13 @@ class TTS(tts.TTS):
                 f"Deepgram TTS supports sample rates {sorted(_SUPPORTED_RATES)}; got {sample_rate}"
             )
 
+        if model.startswith("aura"):
+            raise ValueError(
+                "Deepgram TTS uses Flux models (e.g. flux-haley-en, flux-kit-en). "
+                "Aura model strings are not supported. See "
+                "https://developers.deepgram.com/docs/flux-tts/voices"
+            )
+
         if client is not None:
             self.client = client
         else:
@@ -69,8 +78,9 @@ class TTS(tts.TTS):
 
         self.model = model
         self.sample_rate = sample_rate
+        self.speed = speed
 
-        self._socket: AsyncV1SocketClient | None = None
+        self._socket: AsyncV2SocketClient | None = None
         self._exit_stack = AsyncExitStack()
 
         self._generation = 0
@@ -110,37 +120,38 @@ class TTS(tts.TTS):
         self._stop_event.clear()
 
         try:
-            await socket.send_text(SpeakV1Text(text=text, type="Speak"))
+            await socket.send_speak(SpeakV2Speak(text=text))
             await socket.send_flush()
         except (websockets.exceptions.ConnectionClosed, ConnectionError):
             logger.warning("Deepgram TTS websocket dropped, reconnecting")
             await self._reset_connection()
             socket = await self._ensure_connection()
-            await socket.send_text(SpeakV1Text(text=text, type="Speak"))
+            await socket.send_speak(SpeakV2Speak(text=text))
             await socket.send_flush()
 
         self._generation += 1
         return self._receive_audio(socket, self._generation)
 
     async def stop_audio(self) -> None:
-        """Send Clear to cancel in-flight synthesis on the server."""
+        """Send Interrupt to cancel in-flight synthesis on the server."""
         self._stop_event.set()
         if self._socket is not None:
             try:
-                await self._socket.send_clear()
+                await self._socket.send_interrupt()
             except (websockets.exceptions.ConnectionClosed, ConnectionError):
                 await self._reset_connection()
 
-    async def _ensure_connection(self) -> AsyncV1SocketClient:
+    async def _ensure_connection(self) -> AsyncV2SocketClient:
         """Open the websocket if not already connected."""
         if self._socket is not None:
             return self._socket
 
         socket = await self._exit_stack.enter_async_context(
-            self.client.speak.v1.connect(
+            self.client.speak.v2.connect(
                 model=self.model,
                 encoding="linear16",
                 sample_rate=str(self.sample_rate),
+                speed=self.speed,
             )
         )
         self._socket = socket
@@ -158,11 +169,11 @@ class TTS(tts.TTS):
             self._exit_stack = AsyncExitStack()
             self._socket = None
 
-    async def _drain(self, socket: AsyncV1SocketClient) -> None:
+    async def _drain(self, socket: AsyncV2SocketClient) -> None:
         """Consume any stale messages left on the websocket after interrupts.
 
         Uses a short timeout rather than waiting for a specific sentinel,
-        because Deepgram may not send Cleared if nothing was active.
+        because Deepgram may not send SpeechInterrupted if nothing was active.
         """
         while True:
             try:
@@ -174,11 +185,9 @@ class TTS(tts.TTS):
                 break
 
     async def _receive_audio(
-        self, socket: AsyncV1SocketClient, generation: int
+        self, socket: AsyncV2SocketClient, generation: int
     ) -> AsyncIterator[PcmData]:
-        """
-        Yield PcmData for each websocket message until flushed.
-        """
+        """Yield PcmData for each websocket message until SpeechMetadata."""
         async for message in socket:
             if self._stop_event.is_set() or self._generation != generation:
                 break
@@ -189,9 +198,7 @@ class TTS(tts.TTS):
                     channels=1,
                     format=AudioFormat.S16,
                 )
-            elif isinstance(message, SpeakV1Flushed):
+            elif isinstance(message, (SpeakV2SpeechMetadata, SpeakV2SpeechInterrupted)):
                 break
-            elif isinstance(message, SpeakV1Cleared):
-                continue
-            elif isinstance(message, SpeakV1Warning):
+            elif isinstance(message, SpeakV2Warning):
                 logger.warning("Deepgram TTS warning: %s", message)

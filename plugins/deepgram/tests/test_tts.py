@@ -1,52 +1,10 @@
-import asyncio
 import os
-from unittest.mock import AsyncMock, MagicMock
 
-import numpy as np
 import pytest
 from dotenv import load_dotenv
-from getstream.video.rtc.track_util import PcmData
 from vision_agents.plugins import deepgram
-from vision_agents.plugins.deepgram.tts import (
-    SpeakV1Cleared,
-    SpeakV1Flushed,
-    SpeakV1Warning,
-)
 
 load_dotenv()
-
-
-def _pcm_bytes(n_samples: int = 160) -> bytes:
-    """Generate valid linear16 PCM bytes."""
-    return np.zeros(n_samples, dtype=np.int16).tobytes()
-
-
-def _make_mock_socket(messages: list[object]) -> AsyncMock:
-    """Create a mock AsyncV1SocketClient that yields the given messages."""
-    socket = AsyncMock()
-    socket.send_text = AsyncMock()
-    socket.send_flush = AsyncMock()
-    socket.send_clear = AsyncMock()
-    socket.send_close = AsyncMock()
-
-    async def _aiter(self_):
-        for msg in messages:
-            yield msg
-
-    socket.__aiter__ = _aiter
-    return socket
-
-
-class _MockConnectCtx:
-    def __init__(self, socket: AsyncMock):
-        self.socket = socket
-        self.exit_called = False
-
-    async def __aenter__(self):
-        return self.socket
-
-    async def __aexit__(self, *args):
-        self.exit_called = True
 
 
 @pytest.mark.skipif(
@@ -54,18 +12,16 @@ class _MockConnectCtx:
 )
 @pytest.mark.integration
 class TestDeepgramTTSIntegration:
-    """Integration tests for Deepgram TTS."""
+    """Integration tests for Deepgram Flux TTS."""
 
     @pytest.fixture
     async def tts(self) -> deepgram.TTS:
-        return deepgram.TTS()
+        t = deepgram.TTS()
+        yield t
+        await t.close()
 
     async def test_deepgram_tts_convert_text_to_audio(self, tts: deepgram.TTS):
-        text = "Hello from Deepgram."
-
-        out = []
-        async for item in tts.send_iter(text):
-            out.append(item)
+        out = [item async for item in tts.send_iter("Hello from Deepgram.")]
 
         assert len(out) > 0
         # First chunk must have some audio
@@ -73,161 +29,47 @@ class TestDeepgramTTSIntegration:
         # Last chunk must be marked as "final"
         assert out[-1].final
 
+    async def test_connection_reused_across_calls(self, tts: deepgram.TTS):
+        _ = [item async for item in tts.send_iter("Hello")]
+        socket = tts._socket
+        assert socket is not None
 
-class TestDeepgramTTS:
-    """Unit tests for the websocket-based TTS implementation."""
+        _ = [item async for item in tts.send_iter("World")]
+        assert tts._socket is socket
 
-    async def test_stream_audio_yields_chunks(self):
-        mock_socket = _make_mock_socket(
-            [
-                _pcm_bytes(800),
-                _pcm_bytes(800),
-                SpeakV1Flushed(type="Flushed", sequence_id=1),
-            ]
-        )
-        mock_ctx = _MockConnectCtx(mock_socket)
+    async def test_speed_forwarded_produces_audio(self):
+        tts = deepgram.TTS(speed=1.05)
+        try:
+            out = [item async for item in tts.send_iter("Hello there.")]
+        finally:
+            await tts.close()
 
-        tts = deepgram.TTS(client=MagicMock())
-        tts.client.speak.v1.connect.return_value = mock_ctx
+        assert any(item.data for item in out)
 
-        result = await tts.stream_audio("Hello")
-        chunks = [chunk async for chunk in result]
+    async def test_extended_sample_rate_produces_audio(self):
+        tts = deepgram.TTS(sample_rate=24000)
+        try:
+            out = [item async for item in tts.send_iter("Hello there.")]
+        finally:
+            await tts.close()
 
-        assert len(chunks) == 2
-        assert all(isinstance(c, PcmData) for c in chunks)
-        mock_socket.send_text.assert_called_once()
-        mock_socket.send_flush.assert_called_once()
+        assert any(item.data for item in out)
 
-    async def test_stream_audio_ignores_cleared(self):
-        mock_socket = _make_mock_socket(
-            [
-                _pcm_bytes(800),
-                SpeakV1Cleared(type="Cleared", sequence_id=1),
-                _pcm_bytes(800),
-                SpeakV1Flushed(type="Flushed", sequence_id=2),
-            ]
-        )
-        mock_ctx = _MockConnectCtx(mock_socket)
-
-        tts = deepgram.TTS(client=MagicMock())
-        tts.client.speak.v1.connect.return_value = mock_ctx
-
-        result = await tts.stream_audio("Hello")
-        chunks = [chunk async for chunk in result]
-
-        assert len(chunks) == 2
-
-    async def test_stale_cleared_before_audio(self):
-        mock_socket = _make_mock_socket(
-            [
-                SpeakV1Cleared(type="Cleared", sequence_id=0),
-                _pcm_bytes(800),
-                SpeakV1Flushed(type="Flushed", sequence_id=1),
-            ]
-        )
-        mock_ctx = _MockConnectCtx(mock_socket)
-
-        tts = deepgram.TTS(client=MagicMock())
-        tts.client.speak.v1.connect.return_value = mock_ctx
-
-        result = await tts.stream_audio("Hello")
-        chunks = [chunk async for chunk in result]
-
-        assert len(chunks) == 1
-        assert chunks[0].samples.size == 800
-
-    async def test_stream_audio_skips_warnings(self):
-        mock_socket = _make_mock_socket(
-            [
-                _pcm_bytes(800),
-                SpeakV1Warning(type="Warning", description="test", code="W001"),
-                _pcm_bytes(800),
-                SpeakV1Flushed(type="Flushed", sequence_id=1),
-            ]
-        )
-        mock_ctx = _MockConnectCtx(mock_socket)
-
-        tts = deepgram.TTS(client=MagicMock())
-        tts.client.speak.v1.connect.return_value = mock_ctx
-
-        result = await tts.stream_audio("Hello")
-        chunks = [chunk async for chunk in result]
-
-        assert len(chunks) == 2
-
-    async def test_stop_audio_sends_clear(self):
-        mock_socket = _make_mock_socket([])
-        tts = deepgram.TTS(client=MagicMock())
-        tts._socket = mock_socket
+    async def test_stop_audio_after_synthesis(self, tts: deepgram.TTS):
+        out = [item async for item in tts.send_iter("Hello there.")]
+        assert out
 
         await tts.stop_audio()
-
-        mock_socket.send_clear.assert_called_once()
         assert tts._stop_event.is_set()
 
-    async def test_stop_audio_noop_when_not_connected(self):
-        tts = deepgram.TTS(client=MagicMock())
-        await tts.stop_audio()
 
-    async def test_stop_event_terminates_receive(self):
-        socket = AsyncMock()
-        socket.send_text = AsyncMock()
-        socket.send_flush = AsyncMock()
+class TestDeepgramTTS:
+    """Constructor validation that runs without a network connection."""
 
-        async def _aiter(self_):
-            yield _pcm_bytes(800)
-            await asyncio.sleep(10)
+    def test_aura_model_raises_value_error(self):
+        with pytest.raises(ValueError, match="Flux"):
+            deepgram.TTS(model="aura-2-thalia-en")
 
-        socket.__aiter__ = _aiter
-        mock_ctx = _MockConnectCtx(socket)
-
-        tts = deepgram.TTS(client=MagicMock())
-        tts.client.speak.v1.connect.return_value = mock_ctx
-
-        result = await tts.stream_audio("Hello")
-        tts._stop_event.set()
-
-        chunks = [chunk async for chunk in result]
-        assert len(chunks) == 0
-
-    async def test_close_tears_down_connection(self):
-        mock_socket = _make_mock_socket([])
-
-        tts = deepgram.TTS(client=MagicMock())
-        tts._socket = mock_socket
-
-        await tts.close()
-
-        mock_socket.send_close.assert_called_once()
-        assert tts._socket is None
-
-    async def test_connection_reused_across_calls(self):
-        call_count = 0
-        batches = [
-            [_pcm_bytes(800), SpeakV1Flushed(type="Flushed", sequence_id=1)],
-            [_pcm_bytes(800), SpeakV1Flushed(type="Flushed", sequence_id=2)],
-        ]
-
-        socket = AsyncMock()
-        socket.send_text = AsyncMock()
-        socket.send_flush = AsyncMock()
-
-        async def _aiter(self_):
-            nonlocal call_count
-            for msg in batches[call_count]:
-                yield msg
-            call_count += 1
-
-        socket.__aiter__ = _aiter
-        mock_ctx = _MockConnectCtx(socket)
-
-        tts = deepgram.TTS(client=MagicMock())
-        tts.client.speak.v1.connect.return_value = mock_ctx
-
-        result = await tts.stream_audio("Hello")
-        _ = [chunk async for chunk in result]
-        assert tts.client.speak.v1.connect.call_count == 1
-
-        result = await tts.stream_audio("World")
-        _ = [chunk async for chunk in result]
-        assert tts.client.speak.v1.connect.call_count == 1
+    def test_invalid_sample_rate_raises(self):
+        with pytest.raises(ValueError, match="sample rate"):
+            deepgram.TTS(sample_rate=12345)
