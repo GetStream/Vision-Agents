@@ -1078,7 +1078,9 @@ and full duration for each attempt. `speech_end_to_audio_ms` estimates the delay
 last input audio using provider STT processing time; it cannot include network transit
 or browser playback. The router logs call join and each ICE peer connection
 independently; the subscriber can stay idle until someone publishes a track. The Python
-accelerated agent prints join and per-model timing, plus a console DAG for each turn.
+accelerated agent records join duration. Set `log_latency=True` on `stream.Accelerated`
+(or `VOICE_LATENCY_DAG=1` for `simple_voice_ai`) to print per-model timing and a console
+DAG for each turn. The router records metrics regardless of this logging flag.
 Model-call durations annotate the stages they overlap and are not added to the
 speech-to-audio path.
 

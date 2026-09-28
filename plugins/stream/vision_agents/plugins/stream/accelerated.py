@@ -85,6 +85,7 @@ class Accelerated(OmniLLM):
         keyterms: Optional[list[str]] = None,
         video_source: str = "",
         video_max_frames: int = 0,
+        log_latency: bool = False,
     ):
         """Configure a pipeline to run remotely.
 
@@ -115,6 +116,8 @@ class Accelerated(OmniLLM):
                 member IDs. Empty leaves whatever the stored config named.
             video_source: Camera or processor source for delegated capture.
             video_max_frames: Recent frames per task (1–8); zero uses configuration.
+            log_latency: Print per-model timing and a turn DAG to agent stdout.
+                Disabled by default; metrics are still recorded by the router.
         """
         super().__init__()
         self.provider_name = "stream"
@@ -132,6 +135,7 @@ class Accelerated(OmniLLM):
         self.keyterms = keyterms or []
         self.video_source = video_source
         self.video_max_frames = video_max_frames
+        self.log_latency = log_latency
 
         self.backend = Backend(url=url, customer_id=customer_id)
         # A knowledge base belongs to the stored config that reads it, so an agent
@@ -435,6 +439,8 @@ class Accelerated(OmniLLM):
         kind = frame.get("type", "")
 
         if kind == "model_call":
+            if not self.log_latency:
+                return
             turn_id = str(frame.get("turn_id", ""))
             if turn_id:
                 if (
@@ -483,7 +489,7 @@ class Accelerated(OmniLLM):
 
         event = _event_of(frame)
         if event is not None:
-            if kind == "turn":
+            if kind == "turn" and self.log_latency:
                 calls = self._pending_model_calls.pop(str(frame.get("turn_id", "")), [])
                 logger.info(
                     "call=%s\n%s",

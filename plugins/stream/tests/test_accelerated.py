@@ -246,6 +246,7 @@ class TestAccelerated:
         joined: stream.Accelerated,
         caplog: pytest.LogCaptureFixture,
     ):
+        joined.log_latency = True
         events = joined.remote_events()
         await router.send(
             {
@@ -300,6 +301,25 @@ class TestAccelerated:
         assert "+-- reply stub/answer: TTFT 90 ms, full 600 ms" in caplog.text
         assert "[TTS handoff 20 ms]" in caplog.text
         assert "[first audio 130 ms]" in caplog.text
+
+    async def test_latency_logging_is_quiet_by_default(
+        self,
+        router: Router,
+        joined: stream.Accelerated,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        assert joined.log_latency is False
+        events = joined.remote_events()
+        await router.send(
+            {"type": "model_call", "turn_id": "turn-1", "purpose": "flow"}
+        )
+        await router.send(
+            {"type": "turn", "turn_id": "turn-1", "speech_end_to_audio_ms": 1020}
+        )
+        await asyncio.wait_for(anext(events), SETTLE)
+
+        assert "model call timing" not in caplog.text
+        assert "voice latency DAG" not in caplog.text
 
     async def test_the_call_ending_ends_the_events(
         self, router: Router, joined: stream.Accelerated
