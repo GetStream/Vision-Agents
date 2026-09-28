@@ -696,7 +696,7 @@ answering candidate=turn-1787
 
 `Edge` is four methods (`Join`, `Audio`, `PublishAudio`, `Leave`), which is what lets the
 whole flow be tested in-process against a loopback rather than only against a real call.
-`streamedge` is the real one: it joins over the private `getstream-go-webrtc` SDK, subscribes
+`streamedge` is the real one: it joins over the `getstream-go-webrtc` SDK, subscribes
 to the audio of everyone else in the call (joining subscribes to nothing on its own), decodes
 inbound Opus to 16 kHz mono, and encodes the agent's speech back to 48 kHz Opus.
 
