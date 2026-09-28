@@ -26,7 +26,9 @@ from livekit.plugins import openai
 
 load_dotenv()
 
-PIPELINE = os.environ.get("VOICEBENCH_LIVEKIT_PIPELINE", "inference").strip() or "inference"
+PIPELINE = (
+    os.environ.get("VOICEBENCH_LIVEKIT_PIPELINE", "inference").strip() or "inference"
+)
 
 server = AgentServer(
     host="127.0.0.1",
@@ -94,13 +96,19 @@ def build_session() -> AgentSession:
         raise RuntimeError(f"voicebench: unknown LIVEKIT pipeline {PIPELINE!r}")
     tts_model = _env("VOICEBENCH_LIVEKIT_TTS", "inworld/inworld-tts-2-flash")
     voice = _env("VOICEBENCH_LIVEKIT_VOICE", "Ashley")
-    tts = inference.TTS(model=tts_model, voice=voice) if voice else inference.TTS(model=tts_model)
+    tts = (
+        inference.TTS(model=tts_model, voice=voice)
+        if voice
+        else inference.TTS(model=tts_model)
+    )
     return AgentSession(
         stt=inference.STT(
             model=_env("VOICEBENCH_LIVEKIT_STT", "google/gemini-3.5-transcribe-live"),
             language="en",
         ),
-        llm=inference.LLM(model=_env("VOICEBENCH_LIVEKIT_MODEL", "google/gemini-3.5-flash-lite")),
+        llm=inference.LLM(
+            model=_env("VOICEBENCH_LIVEKIT_MODEL", "google/gemini-3.5-flash-lite")
+        ),
         tts=tts,
     )
 

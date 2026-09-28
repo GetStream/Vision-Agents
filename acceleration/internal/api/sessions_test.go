@@ -671,8 +671,8 @@ func (s *SessionAPISuite) TestTheSocketCanSpeakAndEndTheCall() {
 	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "close"}))
 
 	s.Require().Eventually(func() bool {
-		return len(s.listed("acme")) == 0 ||
-			s.listed("acme")[0].State == SessionState("ended")
+		sessions := s.listed("acme")
+		return len(sessions) == 0 || sessions[0].State == SessionState("ended")
 	}, settleFor, 5*time.Millisecond, "the call outlived the socket that closed it")
 }
 

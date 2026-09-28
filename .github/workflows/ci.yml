@@ -134,27 +134,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check for dashboard
+        id: dashboard
+        working-directory: .
+        run: echo "present=$([[ -f dashboard/package-lock.json ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
+        if: steps.dashboard.outputs.present == 'true'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
       - name: Install
+        if: steps.dashboard.outputs.present == 'true'
         run: npm ci
 
       # The dashboard's types come from the same spec the Go and Python clients do, so a
       # spec edited without regenerating them is a dashboard already reading a shape the
       # router no longer answers with.
       - name: Check the generated types are in step with the spec
+        if: steps.dashboard.outputs.present == 'true'
         run: |
           npm run types
           git diff --exit-code -- src/lib/api.d.ts
 
       - name: Lint
+        if: steps.dashboard.outputs.present == 'true'
         run: npm run lint
 
       - name: Build
+        if: steps.dashboard.outputs.present == 'true'
         run: npm run build
 
 # Cancel in-flight runs for the same branch/PR when new commits arrive
