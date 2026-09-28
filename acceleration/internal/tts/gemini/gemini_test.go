@@ -93,7 +93,7 @@ func (s *GeminiSuite) TestNewDefaultsTo38FlashTTS() {
 	s.Equal("gemini-3.8-flash-tts", provider.Model())
 	s.Equal(ProviderName, provider.Provider())
 	s.Equal(24_000, provider.SampleRate())
-	s.Empty(provider.Voice(), "no voice leaves the model's own")
+	s.Equal("Kore", provider.Voice(), "no voice asked for must not leave Gemini picking one per sentence")
 	s.False(provider.Streaming(), "one request per utterance means whole sentences only")
 	s.False(provider.Performs(), "square-bracketed directions would be read out")
 	s.Empty(provider.Prompt())
@@ -202,12 +202,14 @@ func (s *GeminiSuite) TestARequestCanPickItsOwnVoiceAndLanguage() {
 	s.Equal("fr", body.GenerationConfig.SpeechConfig.LanguageCode)
 }
 
-func (s *GeminiSuite) TestNothingAskedLeavesTheVoiceAndLanguageToTheModel() {
+func (s *GeminiSuite) TestEveryRequestIsSpokenInTheDefaultVoiceWhenNoneWasAskedFor() {
 	provider := s.newTTS(Options{})
 
 	body := provider.body("hello", tts.Request{})
 
-	s.Nil(body.GenerationConfig.SpeechConfig)
+	s.Require().NotNil(body.GenerationConfig.SpeechConfig)
+	s.Equal("Kore", body.GenerationConfig.SpeechConfig.VoiceConfig.Voice)
+	s.Empty(body.GenerationConfig.SpeechConfig.LanguageCode, "the language is still left to the model")
 }
 
 func (s *GeminiSuite) TestSynthesizeFailsBeforeStart() {

@@ -38,6 +38,10 @@ const ProviderName = "gemini"
 // DefaultModel is Gemini 3.8 Flash TTS, the expressive one of the two 3.8 voices.
 const DefaultModel = "gemini-3.8-flash-tts"
 
+// DefaultVoice is Kore, a prebuilt voice. Asked for no voice, Gemini picks one per
+// request, and every request is one sentence, so an agent's voice would change mid-reply.
+const DefaultVoice = "Kore"
+
 // DefaultBaseURL is the Gemini API, versioned. The model and method are appended per
 // request.
 const DefaultBaseURL = "https://generativelanguage.googleapis.com/v1beta"
@@ -59,7 +63,7 @@ type Options struct {
 	APIKey string
 	Model  string
 	// Voice is a prebuilt voice such as Kore, or a designed or replicated voice_ id.
-	// Empty leaves the model's own.
+	// Empty uses DefaultVoice.
 	Voice string
 	// Language is the code to speak in, such as en or en-US. Empty lets the model detect
 	// it from the text.
@@ -176,6 +180,9 @@ func New(options Options) (*TTS, error) {
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
+	}
+	if options.Voice == "" {
+		options.Voice = DefaultVoice
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = DefaultBaseURL
@@ -308,7 +315,7 @@ func (t *TTS) Provider() string { return ProviderName }
 // Model implements tts.TTS.
 func (t *TTS) Model() string { return t.options.Model }
 
-// Voice is the session's voice, or empty when Gemini picks one.
+// Voice is the session's voice.
 func (t *TTS) Voice() string { return t.options.Voice }
 
 // Streaming reports false: the model takes a whole transcript per request, so a caller

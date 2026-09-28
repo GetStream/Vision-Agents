@@ -1194,6 +1194,10 @@ Two tools in one reply each started a generate, and the second stole the floor s
 
 A voice that takes each sentence as its own request (Gemini TTS, Fish, Speechify) synthesised a reply's sentences side by side, and the agent played their audio in the order it arrived, so a two-sentence reply sounded like two voices talking over each other. The router now holds each sentence's audio until the ones before it have finished, while still synthesising them in parallel. A barge-in drops everything held, and every sentence is still settled and billed.
 
+### Router: Gemini TTS changed voice from one sentence to the next
+
+Asked for no voice, Gemini picks one on every request, and the router sends it one request per sentence, so an agent without a configured voice could sound like a different person on each reply. Gemini TTS now defaults to the prebuilt voice Kore. A voice named on the agent or the request still wins.
+
 # v0.6.2
 
 ## Breaking Changes
