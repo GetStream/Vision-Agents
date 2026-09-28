@@ -55,12 +55,19 @@ var supportedSampleRates = []int{8_000, 16_000, 22_050, 24_000, 32_000, 44_100, 
 // upstream, so it is only sent when it applies.
 var multilingualModels = []string{"eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_multilingual_v2"}
 
-// dialogueModelPrefix marks the v3 family, which is the only one that acts audio tags.
-// Everything before it reads a bracket out as the word inside it.
-const dialogueModelPrefix = "eleven_v3"
+// dialogueModelPrefixes mark the v3 and v4 families, the only ones that act audio tags.
+// Everything before them reads a bracket out as the word inside it.
+var dialogueModelPrefixes = []string{"eleven_v3", "eleven_v4"}
 
 // Performs reports whether a model acts audio tags rather than reading them out.
-func Performs(model string) bool { return strings.HasPrefix(model, dialogueModelPrefix) }
+func Performs(model string) bool {
+	for _, prefix := range dialogueModelPrefixes {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // AudioTagPrompt is what a model writing for a v3 voice is told about directing it. The
 // tags named are examples rather than a closed set: the voice takes any bracketed
