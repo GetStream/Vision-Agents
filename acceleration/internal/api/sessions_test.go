@@ -149,6 +149,9 @@ func routableConfig() routing.ModalityConfig {
 		}},
 		Aliases: map[string]routing.Alias{
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
+			// The flow controller is a target of its own, and a session cannot start
+			// without one: an agent that cannot tell who holds the floor never answers.
+			"llm-flow": {Languages: []string{"en"}, RequireRealtime: true},
 		},
 	}
 }
@@ -461,6 +464,72 @@ func (s *SessionAPISuite) TestTheSocketAsksTheCallerToRunItsOwnToolsAndUsesTheAn
 	s.Equal("lookup_order", ran["tool"])
 	s.Equal("it ships tomorrow", ran["result"])
 	s.Empty(ran["error"])
+}
+
+func (s *SessionAPISuite) TestASocketSayingAPersonWasAskedIsGivenTheirDeadlineNotAMachines() {
+	// A refund the caller approves on their phone. The machine's deadline is set to
+	// almost nothing here, so a call still answered afterwards is one the notice moved
+	// onto the person's.
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "refund_order", Arguments: "{}"}}
+	timeout := 50
+	created := s.creates(CreateSessionRequest{
+		CallId:        callID("call-1"),
+		ToolTimeoutMs: &timeout,
+		Tools:         &[]SessionTool{{Name: "refund_order", Description: "refund an order"}},
+	})
+	connection := s.watches(created.Id, "acme")
+
+	s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/respond", "acme",
+		SayRequest{Text: "refund my order"})
+
+	asked := s.await(connection, "tool_call")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type":         "tool_waiting",
+		"tool_call_id": asked["id"],
+		"question":     "Refund 78.00 for order A-1042?",
+	}))
+
+	waiting := s.await(connection, "tool_waiting")
+	s.Equal(asked["id"], waiting["tool_call_id"])
+	s.Equal("Refund 78.00 for order A-1042?", waiting["question"])
+
+	time.Sleep(150 * time.Millisecond)
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type":         "tool_result",
+		"tool_call_id": asked["id"],
+		"output":       "refunded 78.00",
+	}))
+
+	ran := s.await(connection, "tool_ran")
+	s.Equal("refunded 78.00", ran["result"])
+	s.Empty(ran["error"], "a refund somebody took their time over is not a failure")
+}
+
+func (s *SessionAPISuite) TestAQuestionNobodyAnsweredIsTakenOffTheScreen() {
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "refund_order", Arguments: "{}"}}
+	approval := 50
+	created := s.creates(CreateSessionRequest{
+		CallId:            callID("call-1"),
+		ApprovalTimeoutMs: &approval,
+		Tools:             &[]SessionTool{{Name: "refund_order", Description: "refund an order"}},
+	})
+	connection := s.watches(created.Id, "acme")
+
+	s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/respond", "acme",
+		SayRequest{Text: "refund my order"})
+
+	asked := s.await(connection, "tool_call")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type":         "tool_waiting",
+		"tool_call_id": asked["id"],
+	}))
+
+	expired := s.await(connection, "tool_expired")
+	s.Equal(asked["id"], expired["tool_call_id"])
+
+	ran := s.await(connection, "tool_ran")
+	s.Contains(ran["result"], "Nobody approved this")
+	s.Empty(ran["error"], "nobody approving it is not the tool failing")
 }
 
 func (s *SessionAPISuite) TestAToolTheCallerCouldNotRunIsToldToTheModelInWords() {

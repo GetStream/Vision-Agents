@@ -169,6 +169,9 @@ type stubLLM struct {
 	// keepCalling asks for them on every reply instead, which is the model that answers
 	// a tool that failed by reaching for it again.
 	keepCalling bool
+	// thenCalls are the tools the second reply asks for, which is the model that reaches
+	// for one in the turn reporting what the last one came back with.
+	thenCalls []llm.ToolCall
 
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can interrupt while Create has not come back.
@@ -213,8 +216,11 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		reply = append([]string(nil), s.then...)
 	}
 	var calls []llm.ToolCall
-	if first || s.keepCalling {
+	switch {
+	case first || s.keepCalling:
 		calls = append([]llm.ToolCall(nil), s.calls...)
+	case len(s.asked) == 2:
+		calls = append([]llm.ToolCall(nil), s.thenCalls...)
 	}
 	s.mu.Unlock()
 

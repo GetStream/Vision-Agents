@@ -53,6 +53,8 @@ public struct AgentEvent: Sendable, Hashable {
         case taskSettled = "task_settled"
         case taskCancelled = "task_cancelled"
         case toolCall = "tool_call"
+        case toolWaiting = "tool_waiting"
+        case toolExpired = "tool_expired"
         case toolRan = "tool_ran"
         case transferred
         case pressed
@@ -88,6 +90,9 @@ extension AgentEvent {
 }
 
 extension AgentEvent {
+    /// The call a `tool_waiting` or `tool_expired` frame is about.
+    public var toolCallID: String { self["tool_call_id"].stringValue }
+
     /// A tool the model wants run, or nil when this event is not a tool call.
     public var toolCall: ToolCall? {
         guard kind == .toolCall else { return nil }

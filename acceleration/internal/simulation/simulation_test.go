@@ -346,6 +346,9 @@ func scriptedConfig() routing.ModalityConfig {
 		}},
 		Aliases: map[string]routing.Alias{
 			"llm-fast": {Languages: []string{"en"}, RequireRealtime: true},
+			// The flow controller is a target of its own, and a conversation cannot open
+			// without one: an agent that cannot tell who holds the floor never answers.
+			"llm-flow": {Languages: []string{"en"}, RequireRealtime: true},
 		},
 	}
 }

@@ -160,6 +160,23 @@ func toolFrame(index int, id, name, arguments string) string {
 	}}, nil)
 }
 
+// unnumberedToolFrame renders a call from a provider that does not number the calls in a
+// turn. Gemini's compatibility layer leaves the index out altogether and sends each call
+// whole, which is what this is.
+func unnumberedToolFrame(id, name, arguments string) string {
+	call := map[string]any{
+		"type":     "function",
+		"function": map[string]any{"name": name, "arguments": arguments},
+	}
+	if id != "" {
+		call["id"] = id
+	}
+	return frame([]any{map[string]any{
+		"index": 0,
+		"delta": map[string]any{"tool_calls": []any{call}},
+	}}, nil)
+}
+
 // signedToolFrame renders a call from a provider that signs what it asks for, which it
 // nests under extra_content beside the function rather than inside it.
 func signedToolFrame(index int, id, name, arguments, signature string) string {
@@ -726,6 +743,44 @@ func (s *OpenAICompatSuite) TestSeveralToolCallsKeepTheirOwnArguments() {
 	s.Equal(`{"digits":"1"}`, response.ToolCalls[0].Arguments)
 	s.Equal("transfer", response.ToolCalls[1].Name)
 	s.Equal(`{"to":"+15550001111"}`, response.ToolCalls[1].Arguments)
+}
+
+func (s *OpenAICompatSuite) TestUnnumberedToolCallsAreNotRunTogether() {
+	// Gemini's compatibility layer sends no index on a tool call at all. Taking the
+	// missing field for zero put both calls in the same slot: one call under the second
+	// name with the two argument objects concatenated, which no tool can be run from and
+	// which every later turn was rejected for once it was in the history.
+	s.frames = []string{
+		unnumberedToolFrame("call-1", "lookup_order", `{"order_id":"A-1042"}`),
+		unnumberedToolFrame("call-2", "refund_order", `{"order_id":"A-1042","amount":"78.00"}`),
+		usageFrame(20, 0, 12, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Require().Len(response.ToolCalls, 2)
+	s.Equal("lookup_order", response.ToolCalls[0].Name)
+	s.Equal(`{"order_id":"A-1042"}`, response.ToolCalls[0].Arguments)
+	s.Equal("refund_order", response.ToolCalls[1].Name)
+	s.Equal(`{"order_id":"A-1042","amount":"78.00"}`, response.ToolCalls[1].Arguments)
+}
+
+func (s *OpenAICompatSuite) TestAnUnnumberedToolCallStillAssemblesFromFragments() {
+	// The id comes with the first fragment and nothing after it says which call the rest
+	// belongs to, so an unnumbered fragment continues the call before it.
+	s.frames = []string{
+		unnumberedToolFrame("call-1", "refund_order", `{"order_id":`),
+		unnumberedToolFrame("", "", `"A-1042"}`),
+		usageFrame(20, 0, 8, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Require().Len(response.ToolCalls, 1)
+	s.Equal("refund_order", response.ToolCalls[0].Name)
+	s.Equal(`{"order_id":"A-1042"}`, response.ToolCalls[0].Arguments)
 }
 
 func (s *OpenAICompatSuite) TestSpeechAndAToolCallArriveTogether() {

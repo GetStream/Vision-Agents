@@ -68,6 +68,9 @@ class CreateSessionRequest:
             rather than dropped.
         tools (list[SessionTool] | Unset):
         tool_timeout_ms (int | Unset): How long the model waits for a tool result. Zero is the default.
+        approval_timeout_ms (int | Unset): How long it waits instead once the caller has sent `tool_waiting`, which says
+            a person has been asked to allow the call. Zero is the default, which is minutes rather than the seconds a
+            machine gets.
         tags (CreateSessionRequestTags | Unset): Cost labels, carried onto every request the session makes.
         memory (SessionMemory | Unset): Who the session's memories are about. Without a user id nothing is recalled or
             stored, which is the case for a call with nobody identified on it.
@@ -101,6 +104,7 @@ class CreateSessionRequest:
     skill_names: list[str] | Unset = UNSET
     tools: list[SessionTool] | Unset = UNSET
     tool_timeout_ms: int | Unset = UNSET
+    approval_timeout_ms: int | Unset = UNSET
     tags: CreateSessionRequestTags | Unset = UNSET
     memory: SessionMemory | Unset = UNSET
     phone: SessionPhone | Unset = UNSET
@@ -179,6 +183,8 @@ class CreateSessionRequest:
 
         tool_timeout_ms = self.tool_timeout_ms
 
+        approval_timeout_ms = self.approval_timeout_ms
+
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
@@ -248,6 +254,8 @@ class CreateSessionRequest:
             field_dict["tools"] = tools
         if tool_timeout_ms is not UNSET:
             field_dict["tool_timeout_ms"] = tool_timeout_ms
+        if approval_timeout_ms is not UNSET:
+            field_dict["approval_timeout_ms"] = approval_timeout_ms
         if tags is not UNSET:
             field_dict["tags"] = tags
         if memory is not UNSET:
@@ -341,6 +349,8 @@ class CreateSessionRequest:
 
         tool_timeout_ms = d.pop("tool_timeout_ms", UNSET)
 
+        approval_timeout_ms = d.pop("approval_timeout_ms", UNSET)
+
         _tags = d.pop("tags", UNSET)
         tags: CreateSessionRequestTags | Unset
         if isinstance(_tags, Unset):
@@ -390,6 +400,7 @@ class CreateSessionRequest:
             skill_names=skill_names,
             tools=tools,
             tool_timeout_ms=tool_timeout_ms,
+            approval_timeout_ms=approval_timeout_ms,
             tags=tags,
             memory=memory,
             phone=phone,

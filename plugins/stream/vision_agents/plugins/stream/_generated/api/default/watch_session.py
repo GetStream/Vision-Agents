@@ -83,8 +83,8 @@ def sync_detailed(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded`, `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`,
-    `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`,
-    `overlap_decided`, `conversation_compacted`, `error` and `left`.
+    `tool_call`, `tool_waiting`, `tool_expired`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `error` and `left`.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -94,6 +94,13 @@ def sync_detailed(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
     `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
     answered: everything else is a report.
+    A tool that waits on a person is answered the same way, later. The client sends `tool_waiting`
+    naming the `tool_call_id` and, if it likes, the `question` it put on screen; the conversation then
+    waits `approval_timeout_ms` for that call rather than the `tool_timeout_ms` it gives a machine, and
+    repeats the notice as a `tool_waiting` frame so anything else watching knows why the agent went
+    quiet. Nobody has to answer at all: when the wait runs out the model is told nothing was approved
+    and the client is sent `tool_expired` for that call, which is what takes the question off the
+    screen. A `tool_result` after that answers nobody and is dropped.
 
     Args:
         id (str):
@@ -134,8 +141,8 @@ def sync(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded`, `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`,
-    `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`,
-    `overlap_decided`, `conversation_compacted`, `error` and `left`.
+    `tool_call`, `tool_waiting`, `tool_expired`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `error` and `left`.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -145,6 +152,13 @@ def sync(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
     `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
     answered: everything else is a report.
+    A tool that waits on a person is answered the same way, later. The client sends `tool_waiting`
+    naming the `tool_call_id` and, if it likes, the `question` it put on screen; the conversation then
+    waits `approval_timeout_ms` for that call rather than the `tool_timeout_ms` it gives a machine, and
+    repeats the notice as a `tool_waiting` frame so anything else watching knows why the agent went
+    quiet. Nobody has to answer at all: when the wait runs out the model is told nothing was approved
+    and the client is sent `tool_expired` for that call, which is what takes the question off the
+    screen. A `tool_result` after that answers nobody and is dropped.
 
     Args:
         id (str):
@@ -180,8 +194,8 @@ async def asyncio_detailed(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded`, `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`,
-    `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`,
-    `overlap_decided`, `conversation_compacted`, `error` and `left`.
+    `tool_call`, `tool_waiting`, `tool_expired`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `error` and `left`.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -191,6 +205,13 @@ async def asyncio_detailed(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
     `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
     answered: everything else is a report.
+    A tool that waits on a person is answered the same way, later. The client sends `tool_waiting`
+    naming the `tool_call_id` and, if it likes, the `question` it put on screen; the conversation then
+    waits `approval_timeout_ms` for that call rather than the `tool_timeout_ms` it gives a machine, and
+    repeats the notice as a `tool_waiting` frame so anything else watching knows why the agent went
+    quiet. Nobody has to answer at all: when the wait runs out the model is told nothing was approved
+    and the client is sent `tool_expired` for that call, which is what takes the question off the
+    screen. A `tool_result` after that answers nobody and is dropped.
 
     Args:
         id (str):
@@ -229,8 +250,8 @@ async def asyncio(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded`, `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`,
-    `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`,
-    `overlap_decided`, `conversation_compacted`, `error` and `left`.
+    `tool_call`, `tool_waiting`, `tool_expired`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `error` and `left`.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -240,6 +261,13 @@ async def asyncio(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
     `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
     answered: everything else is a report.
+    A tool that waits on a person is answered the same way, later. The client sends `tool_waiting`
+    naming the `tool_call_id` and, if it likes, the `question` it put on screen; the conversation then
+    waits `approval_timeout_ms` for that call rather than the `tool_timeout_ms` it gives a machine, and
+    repeats the notice as a `tool_waiting` frame so anything else watching knows why the agent went
+    quiet. Nobody has to answer at all: when the wait runs out the model is told nothing was approved
+    and the client is sent `tool_expired` for that call, which is what takes the question off the
+    screen. A `tool_result` after that answers nobody and is dropped.
 
     Args:
         id (str):

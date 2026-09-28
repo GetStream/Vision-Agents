@@ -2323,6 +2323,11 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tool_timeout_ms`.
             internal var toolTimeoutMs: Swift.Int?
+            /// How long it waits instead once the caller has sent `tool_waiting`, which says a person has been asked to allow the call. Zero is the default, which is minutes rather than the seconds a machine gets.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/approval_timeout_ms`.
+            internal var approvalTimeoutMs: Swift.Int?
             /// Cost labels, carried onto every request the session makes.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tags`.
@@ -2381,6 +2386,7 @@ extension Components {
             ///   - skillNames: Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped.
             ///   - tools:
             ///   - toolTimeoutMs: How long the model waits for a tool result. Zero is the default.
+            ///   - approvalTimeoutMs: How long it waits instead once the caller has sent `tool_waiting`, which says a person has been asked to allow the call. Zero is the default, which is minutes rather than the seconds a machine gets.
             ///   - tags: Cost labels, carried onto every request the session makes.
             ///   - memory:
             ///   - phone:
@@ -2412,6 +2418,7 @@ extension Components {
                 skillNames: [Swift.String]? = nil,
                 tools: [Components.Schemas.SessionTool]? = nil,
                 toolTimeoutMs: Swift.Int? = nil,
+                approvalTimeoutMs: Swift.Int? = nil,
                 tags: Components.Schemas.CreateSessionRequest.TagsPayload? = nil,
                 memory: Components.Schemas.SessionMemory? = nil,
                 phone: Components.Schemas.SessionPhone? = nil
@@ -2443,6 +2450,7 @@ extension Components {
                 self.skillNames = skillNames
                 self.tools = tools
                 self.toolTimeoutMs = toolTimeoutMs
+                self.approvalTimeoutMs = approvalTimeoutMs
                 self.tags = tags
                 self.memory = memory
                 self.phone = phone
@@ -2475,6 +2483,7 @@ extension Components {
                 case skillNames = "skill_names"
                 case tools
                 case toolTimeoutMs = "tool_timeout_ms"
+                case approvalTimeoutMs = "approval_timeout_ms"
                 case tags
                 case memory
                 case phone

@@ -19,10 +19,14 @@ fetching a dependency's whole graph, and SwiftPM's pruning has changed across re
 Video's `StreamWebRTC` is a 47 MB binary artifact, so this matters.
 
 ```
-core  VisionAgentsCore  generated client, socket, conversation state
+core  VisionAgentsCore  generated client, socket, conversation state, AG-UI
 ui    VisionAgentsUI    SwiftUI views over that state          -> core
 rtc   VisionAgentsRTC   joining the call over Stream Video     -> core
 ```
+
+`ag-ui-swift` is in `core` rather than a package of its own because it is what the session
+speaks, and it is pure Swift with nothing behind it. That is the test for anything else that
+wants to be in `core`: no binary, no transitive graph.
 
 - `ui` holds no networking. `rtc` maps Stream's types into ours and keeps them out of `core`'s
   public API.
@@ -125,6 +129,50 @@ them is a convenience on top (`argumentValues`), not a requirement.
 Quote frames **verbatim from `frameOf`** in
 [`sessionws.go`](../../../acceleration/internal/api/sessionws.go) in tests, so a rename on the
 Go side fails here rather than in somebody's app.
+
+## AG-UI
+
+The session speaks the protocol as well as the router's own frames, and both come off the one
+read loop. `AGUITranslator` is where the mapping lives, and it is a **value type** for the
+reason `Conversation` is: it is tested by feeding it frames quoted from `frameOf` and running
+what comes out through AG-UI's own `EventVerifier` and `ConversationState`. Anything published
+that the verifier rejects is a bug, not a difference of opinion.
+
+The two models do not line up, so the differences are written down rather than smoothed over:
+
+- **A run is an exchange, not a turn.** A turn the model finished by asking for a tool becomes
+  a run of its own, because the router reports the turn as responded *before* it hands the call
+  over, and the answer to a tool is a second turn.
+- **Only what the protocol has a place for is translated.** Metrics, participants, audio
+  timings, flow decisions and pressed digits are dropped; they stay on `AgentEvent`. Do not
+  invent a `CUSTOM` event to carry them — a run that cannot close is worse than a frame nobody
+  translated.
+- **A skill is an activity, not a step.** Steps have to close before `RUN_FINISHED` and
+  delegated work outlives its turn, so a step would leave runs that cannot be closed.
+- **What the caller typed is published by `send`,** because the router only reports what it
+  *heard*, which a text session never does. A `heard` frame that repeats it is dropped.
+- **A tool result is published by the SDK,** since the router does not report a client tool's
+  result back to the device that produced it.
+
+Human in the loop is `AgentTool.approval`: a question, so the SDK asks instead of running.
+What it is waiting for is an AG-UI `Interrupt` on `pendingApprovals` and on the `RUN_FINISHED`
+that ended the run, and `resume(_:)` answers it — `approve`/`decline` are sugar over that. A
+refusal goes back as the tool's *result*, not its error: the tool did not fail, it did not run,
+and a model told a tool failed apologises for a fault instead of relaying the answer.
+
+**The router is told the question is on screen.** Publishing the card also sends `tool_waiting`
+for that call, which is what buys a person minutes instead of the seconds a tool gets — without
+it the model is told the refund failed while the caller is still reading the card, and their
+answer, when it comes, is dropped. The other half is `tool_expired`: the router gave up and
+told the model nobody approved it, so the card leaves `pendingApprovals` rather than staying up
+to answer a turn that has moved on.
+
+Exposing AG-UI's own types (`Event`, `Interrupt`, `ResumeEntry`) publicly is deliberate and is
+the exception to "nothing crossing the public API comes from a dependency": the protocol is the
+point, and a parallel set of our own types would be a second vocabulary for the same thing. It
+costs a semantic-version coupling to `ag-ui-swift`, which is why it is pinned. Declare the
+product in every target that imports it — inheriting a module through a dependency is not a
+dependency.
 
 ## The generated client
 
@@ -281,4 +329,6 @@ Reject it if it:
 - wraps `CancellationError`, or reports an HTTP status as a transport failure;
 - hand-edits generated code, or adds a client method for an `x-server-side-only` operation;
 - adds a theme object, a `NavigationStack`, or an asset-name string to `ui`;
+- publishes AG-UI events the protocol's own verifier rejects, or leaves a run that cannot be
+  closed;
 - asserts that a method was called.

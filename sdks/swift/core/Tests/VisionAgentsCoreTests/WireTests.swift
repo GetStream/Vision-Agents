@@ -78,12 +78,30 @@ import Testing
             Command.toolResult(id: "c1", output: nil, error: "no such order"),
             #"{"error":"no such order","output":"","tool_call_id":"c1","type":"tool_result"}"#
         ),
+        (
+            Command.toolWaiting(id: "c1", question: "Refund 78.00?"),
+            #"{"question":"Refund 78.00?","tool_call_id":"c1","type":"tool_waiting"}"#
+        ),
+        (
+            Command.toolWaiting(id: "c1", question: nil),
+            #"{"question":"","tool_call_id":"c1","type":"tool_waiting"}"#
+        ),
     ])
     func aCommandEncodesToWhatTheRouterReads(command: Command, expected: String) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
 
         #expect(String(decoding: try encoder.encode(command), as: UTF8.self) == expected)
+    }
+
+    @Test func aCallExpiringNamesTheCallItIsAbout() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(#"{"type":"tool_expired","tool_call_id":"c1"}"#.utf8))
+
+        #expect(event.kind == .toolExpired)
+        #expect(event.toolCallID == "c1")
+        #expect(event.toolCall == nil, "nothing is being asked for, a wait is being ended")
     }
 
     @Test func aToolSchemaSaysWhichArgumentsAreRequired() throws {

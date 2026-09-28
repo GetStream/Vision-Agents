@@ -100,6 +100,9 @@ type Spec struct {
 	Tools []harness.Tool
 	// ToolTimeoutMs bounds how long the model waits on one of them. Zero is the default.
 	ToolTimeoutMs int
+	// ApprovalTimeoutMs bounds how long it waits instead once the caller says a person
+	// has been asked to allow a call. Zero is the default.
+	ApprovalTimeoutMs int
 
 	// Backchannel murmurs while a participant is still talking, the way a person does.
 	Backchannel bool

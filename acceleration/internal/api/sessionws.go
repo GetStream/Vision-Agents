@@ -182,6 +182,8 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			Output string `json:"output"`
 			// Error is what to tell the model instead, when the tool did not work.
 			Error string `json:"error"`
+			// Question is what a person was asked, which tool_waiting carries.
+			Question string `json:"question"`
 			// Text carries say and respond.
 			Text string `json:"text"`
 			// Instructions carries the instructions command.
@@ -201,6 +203,14 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 				// The commonest reason is a result for a call that already timed out,
 				// which is worth a line in a log and nothing more.
 				s.logger.Debug("a tool result answered nothing",
+					"session", found.ID(), "call", command.ToolCallID)
+			}
+
+		case "tool_waiting":
+			// A person has been asked, so the conversation stops counting the seconds it
+			// gives a machine and waits for them instead.
+			if !found.WaitTool(command.ToolCallID, command.Question) {
+				s.logger.Debug("a tool nobody is waiting on was said to be waiting",
 					"session", found.ID(), "call", command.ToolCallID)
 			}
 
@@ -247,6 +257,16 @@ func frameOf(event session.Event) (frame, bool) {
 			"name":      typed.Name,
 			"arguments": typed.Arguments,
 		}, true
+
+	case session.ToolWaiting:
+		return frame{
+			"type":         "tool_waiting",
+			"tool_call_id": typed.ID,
+			"question":     typed.Question,
+		}, true
+
+	case session.ToolExpired:
+		return frame{"type": "tool_expired", "tool_call_id": typed.ID}, true
 
 	case agent.Joined:
 		return frame{"type": "joined", "at": typed.At}, true

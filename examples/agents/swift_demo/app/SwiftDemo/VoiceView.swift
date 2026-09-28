@@ -1,3 +1,4 @@
+import AGUI
 import SwiftUI
 import VisionAgentsCore
 import VisionAgentsRTC
@@ -20,6 +21,16 @@ struct VoiceView: View {
             if let voice {
                 TranscriptView(turns: voice.session.turns, state: voice.session.state)
                     .frame(maxHeight: .infinity)
+                // Approving a refund by voice is the same approval as in writing: the agent
+                // asks, the card appears here, and the call waits on the answer.
+                ForEach(voice.session.pendingApprovals) { pending in
+                    ApprovalView(
+                        approval: pending,
+                        approve: { try? await voice.session.approve(pending) },
+                        decline: { try? await voice.session.decline(pending) }
+                    )
+                    .padding(.horizontal)
+                }
                 AgentStatusView(state: voice.session.state)
                 VoiceCallView(voice: voice)
                     .task { await voice.session.start() }
@@ -61,7 +72,7 @@ struct VoiceView: View {
         Task {
             do {
                 voice = try await VoiceSession.start(
-                    agents: Demo.agents, agent: agent, tools: [Demo.lookupOrder])
+                    agents: Demo.agents, agent: agent, tools: Demo.tools)
             } catch is CancellationError {
             } catch {
                 failure = error.localizedDescription

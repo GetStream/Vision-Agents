@@ -62,6 +62,67 @@ refused now, rather than falling back to a default nobody asked for.
 
 ## New Features
 
+### Swift SDK: AG-UI events, and tools somebody has to approve
+
+`AgentSession` speaks the [AG-UI protocol][agui]. `aguiEvents()` hands each caller its own
+stream of the conversation as protocol events, so an app written against AG-UI reads a session
+without knowing whose router is behind it:
+
+```swift
+var thread = ConversationState()          // AG-UI's own reducer
+for await event in chat.aguiEvents() {
+    thread.apply(event)
+}
+```
+
+A tool declared with an `approval` question is no longer run when the model asks for it. The
+SDK asks first, as one of the protocol's interrupts:
+
+```swift
+let refund = AgentTool(
+    name: "refund_order",
+    description: "Refund an order the caller is owed money for.",
+    parameters: .strings(["order_id": "the order number"], required: ["order_id"]),
+    approval: { arguments in "Refund order \(arguments["order_id"]?.stringValue ?? "")?" }
+) { arguments in await Orders.local.refund(arguments["order_id"]?.stringValue ?? "") }
+```
+
+What it is waiting for is on `session.pendingApprovals` and on the `RUN_FINISHED` that ended
+the run. `approve(_:)`, `decline(_:reason:)` or `resume(_:)` answers it; the agent holds its
+turn open on the router until one of them does, so what it says next is what actually
+happened. `ConversationView` draws a card for anything pending, and `ApprovalView` is public
+for hosts that arrange the parts themselves.
+
+The SDK also tells the router the question is on somebody's screen, so the wait is a person's
+rather than a machine's — see the acceleration entry below for the `tool_waiting` frame behind
+it. The card leaves `pendingApprovals` on its own if nobody ever answers.
+
+`examples/agents/swift_demo` shows the whole flow: ask it to refund order `A-1042`, approve or
+decline the card, and watch the runs in the Chat tab's **Events** sheet.
+
+[agui]: https://github.com/martinmitrevski/ag-ui-swift
+
+### Acceleration: a tool can wait on a person
+
+A tool the caller runs used to get one deadline, `tool_timeout_ms`, whether a machine was
+answering it or somebody reading a card on their phone. Thirty seconds is generous for the
+one and no time at all for the other: a refund somebody was still looking at was reported to
+the model as a tool that had failed, the agent apologised for a fault that had not happened,
+and the approval, when it came, was dropped.
+
+The session socket now carries a notice for it. A client that has put a question in front of
+a person sends
+
+```json
+{"type": "tool_waiting", "tool_call_id": "call-1", "question": "Refund 78.00 for order A-1042?"}
+```
+
+and that call waits `approval_timeout_ms` — five minutes by default — instead. The notice is
+repeated as a `tool_waiting` frame to everything watching the session, so a dashboard can say
+why the agent went quiet. Nobody has to answer at all: when the wait runs out the model is
+told nobody approved it, in words rather than as a failure, and the client is sent
+`tool_expired` for that call so the question can come off the screen.
+
 ### Speech-to-text routing: a priority list, a data policy, and configs from YAML
 
 `SttOptions` now says more about where a transcript may come from than which model to ask.
@@ -370,6 +431,33 @@ own and was the one the agent answered.
 
 A flush is now folded into the utterance in progress rather than ending it, and a turn ends
 where the words read as a finished sentence, which is the only boundary the protocol offers.
+
+### Gemini: two tools in one turn were run as one broken call
+
+Gemini's OpenAI-compatible endpoint sends no `index` on a streamed tool call. The missing
+field read as zero, so every call in a turn was accumulated in the same slot: a turn that
+asked for `lookup_order` and `refund_order` arrived as one call, under the second name, with
+both argument objects concatenated into JSON nothing can parse. The tool could not be run,
+and because the malformed call went into the conversation history every later turn came back
+`400 Bad Request` from Gemini — the agent went quiet for the rest of the call.
+
+A call that arrives without an index now gets one of its own, keyed by the id it came with.
+This is in `openaicompat`, so it covers every provider on that path.
+
+### Acceleration: a tool asked for in answer to another one reports back
+
+A model that looks an order up and then refunds it asks for the second tool in the turn that
+reported the first, and that turn's outcome was never spoken: somebody who approved a refund
+on their phone heard nothing about whether it went through. A tool that *failed* in a
+tool-answer turn still gets no reply, which is what stops a model answering a broken trunk by
+reaching for it again.
+
+### Acceleration: a tool waiting on its caller no longer silences the conversation
+
+Tools were run on the goroutine reading the harness, so everything else the harness had to
+say — a flow ruling, a settled skill, another tool request — queued behind whatever tool was
+in flight. A tool that waits on a person made that a freeze for as long as they took to
+answer. Tools now run beside that loop.
 
 ### Acceleration: say what a tool found, and talk through a cough
 

@@ -77,19 +77,31 @@ func (s *AgentSuite) onACall() {
 type stubToolRunner struct {
 	result string
 	err    error
+	// hold, if set, is waited on before answering, which is the tool that waits on a
+	// person: the approval card is on their phone and nothing comes back until they tap.
+	hold <-chan struct{}
 
 	mu   sync.Mutex
 	runs []llm.ToolCall
 }
 
-func (r *stubToolRunner) Run(_ context.Context, call llm.ToolCall) (string, error) {
+func (r *stubToolRunner) Run(ctx context.Context, call llm.ToolCall) (string, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.runs = append(r.runs, call)
-	if r.err != nil {
-		return "", r.err
+	hold, failure, result := r.hold, r.err, r.result
+	r.mu.Unlock()
+
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
-	return r.result, nil
+	if failure != nil {
+		return "", failure
+	}
+	return result, nil
 }
 
 func (r *stubToolRunner) asked() []llm.ToolCall {
@@ -287,6 +299,31 @@ func (s *AgentSuite) TestAToolThatKeepsFailingIsNotAnsweredForever() {
 	}, "a failing transfer was retried without the caller saying anything")
 }
 
+func (s *AgentSuite) TestAToolReachedForInAnswerToAnotherStillReportsBack() {
+	// A model that looks an order up and then refunds it asks for the second tool in the
+	// turn that reported the first. That outcome was swallowed, so somebody who approved a
+	// refund on their phone heard nothing at all about whether it went through.
+	s.ownsTools("refunded 78.00")
+	s.join(false)
+	s.model.reply = []string{"Let me look that up."}
+	// Silent from the second reply on, so the turn under test is the one the agent takes
+	// to report the second tool rather than anything the model had queued to say.
+	s.model.then = []string{}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	s.model.thenCalls = []llm.ToolCall{
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"12"}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "refund my order")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 2 },
+		"the second tool was never reached for")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 3 },
+		"nobody was told what the second tool came back with")
+}
+
 func (s *AgentSuite) TestATurnThatCalledAToolIsRememberedWithTheCallOnIt() {
 	// The provider matches the result against the call it answers, so the turn cannot be
 	// recorded as plain speech.
@@ -400,6 +437,59 @@ func (s *AgentSuite) TestACallersOwnToolIsRunByThemAndItsAnswerReachesTheConvers
 		ToolCallID: "call-1",
 	})
 	s.never(s.left, "answering a question is not a reason to hang up")
+}
+
+func (s *AgentSuite) TestAToolWaitingOnItsCallerDoesNotSilenceTheConversation() {
+	// A tool that waits on a person -- a refund they approve on their phone -- was run on
+	// the goroutine reading the harness, so every flow ruling behind it waited too and the
+	// agent answered nothing at all until the wait was over.
+	approve := make(chan struct{})
+	s.ownsTools("refunded 78.00")
+	s.runner.hold = approve
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Still here."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "refund my order")
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the tool was never asked for")
+
+	s.says(participant, "are you still there")
+
+	s.eventually(func() bool { return s.spokenText("Still here.") },
+		"the caller was answered nothing while the tool waited")
+	close(approve)
+	s.Equal("refunded 78.00", s.awaitToolRan().Result, "the approved tool never came back")
+}
+
+func (s *AgentSuite) TestTwoToolsComingBackAtOnceStillSpeakOnce() {
+	// Both tools are released together, which they can be now that each is run on a
+	// goroutine of its own. One reply is owed however they land: a second generate would
+	// take the floor from the first and the caller would hear neither result.
+	release := make(chan struct{})
+	s.ownsTools("both orders found")
+	s.runner.hold = release
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Both came back."}
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"1"}`},
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"2"}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where are my orders")
+	s.eventually(func() bool { return len(s.runner.asked()) == 2 }, "both tools should run")
+
+	close(release)
+
+	s.eventually(func() bool { return s.spokenText("Both came back") },
+		"the caller was left in silence after both tools came back")
+	s.never(func() bool { return len(s.model.requests()) > 2 },
+		"two tools answering together must not each start a generate")
 }
 
 func (s *AgentSuite) TestWhatAToolFoundOutIsSpokenRatherThanWaitedOn() {

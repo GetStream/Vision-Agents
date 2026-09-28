@@ -613,6 +613,13 @@ caller's own functions live wherever the caller is, so the model asks for one he
 answer comes back from there, and a caller that does not answer inside the tool timeout
 leaves the model to carry on without it rather than leaving the call silent.
 
+A tool that waits on a person waits longer. The caller sends `tool_waiting` for that call --
+a refund is on somebody's phone, and they have to read it before they mean it -- and the
+conversation gives it `approval_timeout_ms`, minutes rather than seconds, and says so as a
+`tool_waiting` frame of its own so a dashboard knows why the agent went quiet. If the wait
+runs out the model is told nobody approved it, which is not the same thing as the tool
+failing, and the caller is sent `tool_expired` so the question can come off the screen.
+
 Sessions are keyed by customer. A session id that exists but belongs to somebody else is
 reported as not existing at all, since a forbidden would confirm it was real.
 

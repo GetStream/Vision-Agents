@@ -213,6 +213,42 @@ type puller struct {
 
 	err  error
 	done bool
+
+	// slots is where each tool call's deltas are accumulated, by the id the provider gave
+	// it, for the providers that do not number the calls in a turn.
+	slots map[string]int64
+	// slot is the last one allocated, which is where a delta carrying no id belongs.
+	slot int64
+}
+
+// accumulate is the index the writer gathers one tool call's deltas under.
+//
+// OpenAI numbers the calls in a turn and repeats the number on every delta, which is what
+// the writer keys on. Gemini sends no number at all, so a turn asking for two tools would
+// have both land on zero: one call under the second one's name, with the two argument
+// objects concatenated into JSON that nothing can parse. Worse, that call goes into the
+// history, and every later turn is a provider rejecting the conversation.
+//
+// So a call that arrives without a number gets one of its own, keyed by its id. A delta
+// with neither is a continuation of the call before it, which is how a provider that omits
+// the number would stream arguments a piece at a time.
+func (p *puller) accumulate(call openai.ChatCompletionChunkChoiceDeltaToolCall) int64 {
+	if call.JSON.Index.Valid() {
+		return call.Index
+	}
+	if call.ID == "" {
+		return p.slot
+	}
+	if slot, known := p.slots[call.ID]; known {
+		p.slot = slot
+		return slot
+	}
+	if p.slots == nil {
+		p.slots = map[string]int64{}
+	}
+	p.slot = int64(len(p.slots))
+	p.slots[call.ID] = p.slot
+	return p.slot
 }
 
 // Advance reads one chunk and records what it carried.
@@ -247,7 +283,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 		w.ReasoningText(reasoning(choice.Delta.JSON.ExtraFields))
 		for _, call := range choice.Delta.ToolCalls {
 			w.FunctionCall(
-				call.Index,
+				p.accumulate(call),
 				call.ID,
 				call.Function.Name,
 				call.Function.Arguments,

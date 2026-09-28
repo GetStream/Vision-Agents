@@ -313,6 +313,8 @@ type Agent struct {
 
 	running   sync.WaitGroup
 	closeOnce sync.Once
+	// tools are the goroutines running what the model asked for, one per call.
+	tools sync.WaitGroup
 }
 
 // New validates the options and returns an Agent. It opens nothing; Join does that.
@@ -788,6 +790,11 @@ func (a *Agent) close() error {
 			<-drained
 		}
 	}
+	// The tools the harness asked for run beside that loop, and each one answers with a
+	// turn. They are waited for before the model closes, so none of them is starting a
+	// turn once the streams it would be pumped through are gone. The context was
+	// cancelled above, which is what stops one that is still waiting on its caller.
+	a.tools.Wait()
 	// Closing the model abandons every reply still being generated, which is what lets the
 	// goroutine draining each one reach the end of its stream. Only once they have all
 	// stopped can the channel they share close, and only then does the speaking goroutine
@@ -1229,6 +1236,12 @@ func (a *Agent) noteToolDone() {
 // Two tools in one reply used to each start a generate, and the second stole speakingTurn
 // so the first result was never said.
 func (a *Agent) queueToolReply() {
+	// Under the lock the agent's own turns are taken with, because tools come back on
+	// goroutines of their own now: two finishing together could each read nothing
+	// generating and each start a turn, which is the same bug by another route.
+	a.following.Lock()
+	defer a.following.Unlock()
+
 	a.mu.Lock()
 	a.toolReply = true
 	wait := a.pendingTools > 0 || a.generating
@@ -1770,7 +1783,16 @@ func (a *Agent) consumeHarness() {
 			})
 
 		case harness.ToolRequested:
-			a.runTool(typed)
+			// On a goroutine of its own, because a tool takes as long as whoever
+			// answers it and everything else the harness has to say arrives on this
+			// one channel behind it. A tool waiting on a person to approve a refund
+			// used to hold up every flow ruling and every settled skill with it, so
+			// the conversation went quiet until the wait was over.
+			a.tools.Add(1)
+			go func() {
+				defer a.tools.Done()
+				a.runTool(typed)
+			}()
 
 		case harness.Settled:
 			a.converse.Delegated(typed.Result)

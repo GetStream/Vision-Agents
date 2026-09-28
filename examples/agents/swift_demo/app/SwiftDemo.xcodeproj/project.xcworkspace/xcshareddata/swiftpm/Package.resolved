@@ -2,6 +2,14 @@
   "originHash" : "cc67ee5cf01d37b96c69c71b647a89957878e4ea03439816b2314494cce08f6e",
   "pins" : [
     {
+      "identity" : "ag-ui-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/martinmitrevski/ag-ui-swift",
+      "state" : {
+        "revision" : "48e7b711f738bd029dc6ca0db2b6a126a0f1bb1d"
+      }
+    },
+    {
       "identity" : "eventsource",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mattt/eventsource.git",

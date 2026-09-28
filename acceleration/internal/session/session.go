@@ -83,6 +83,25 @@ type ToolCall struct {
 	Arguments string
 }
 
+// ToolWaiting is a call that is on a person's screen, waiting to be allowed.
+//
+// The caller running the tool says so; the session repeats it, because the conversation
+// going quiet is a fact about the call and anybody watching it -- a dashboard, a second
+// device, the transcript -- is owed the reason.
+type ToolWaiting struct {
+	// ID is the call being held, which is the one a result must quote.
+	ID string
+	// Question is what the person was asked, when the caller sent one.
+	Question string
+}
+
+// ToolExpired is a call nobody answered in time. Whoever is holding the question open can
+// take it down: the model has already been told what happened, so an answer now would be
+// answering nobody.
+type ToolExpired struct {
+	ID string
+}
+
 // Session is one conversation this process is running on somebody's behalf.
 type Session struct {
 	id      string
@@ -256,6 +275,21 @@ func (s *Session) SetInstructions(text string) {
 // anything was.
 func (s *Session) ResolveTool(id, output, failure string) bool {
 	return s.tools.Resolve(id, output, failure)
+}
+
+// WaitTool says a person has been asked to allow a call, so the conversation waits for
+// them rather than for a machine. It reports whether anything was still waiting.
+func (s *Session) WaitTool(id, question string) bool {
+	if !s.tools.Waiting(id) {
+		return false
+	}
+	s.broadcast(ToolWaiting{ID: id, Question: question})
+	return true
+}
+
+// expireTool says a call gave up waiting, so a question still on screen can come down.
+func (s *Session) expireTool(id string) {
+	s.broadcast(ToolExpired{ID: id})
 }
 
 // Close leaves the call and releases everything the session opened. It is safe to call

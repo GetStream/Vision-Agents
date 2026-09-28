@@ -7,8 +7,8 @@ text conversation should not download it.
 
 | Package | Module | Depends on | What it is |
 | --- | --- | --- | --- |
-| `core/` | `VisionAgentsCore` | OpenAPI runtime, URLSession | The generated client, the session socket, and the conversation state |
-| `ui/` | `VisionAgentsUI` | `core`, `stream-chat-swift-ai` | SwiftUI views over that state |
+| `core/` | `VisionAgentsCore` | OpenAPI runtime, URLSession, AG-UI | The generated client, the session socket, and the conversation state |
+| `ui/` | `VisionAgentsUI` | `core`, `stream-chat-swift-ai`, AG-UI | SwiftUI views over that state |
 | `rtc/` | `VisionAgentsRTC` | `core`, `stream-video-swift` | Joining the call, so the conversation can be spoken |
 
 iOS 17 is the floor. It is `@Observable`'s floor, and the alternative was an `ObservableObject`
@@ -40,8 +40,9 @@ With `VisionAgentsUI` a whole conversation is one view:
 ConversationView(session: chat)
 ```
 
-`TranscriptView`, `Composer` and `AgentStatusView` are public and work on their own, so a host
-that wants a different arrangement takes them apart rather than fighting `ConversationView`.
+`TranscriptView`, `Composer`, `AgentStatusView` and `ApprovalView` are public and work on their
+own, so a host that wants a different arrangement takes them apart rather than fighting
+`ConversationView`.
 
 The transcript and the composer are Stream's [AI chat components][ai], so an app that already
 uses them gets one composer rather than two that almost agree. What the agent says is rendered
@@ -61,6 +62,28 @@ supply and without which iOS terminates the app the first time it asks:
 
 [ai]: https://github.com/GetStream/stream-chat-swift-ai
 
+### AG-UI
+
+A session speaks [AG-UI][agui], so an app written against the protocol reads one without
+knowing whose router is behind it. `aguiEvents()` is the whole of the events half:
+
+```swift
+var thread = ConversationState()          // AG-UI's own reducer
+for await event in chat.aguiEvents() {
+    thread.apply(event)                   // messages, tool calls, shared state
+}
+```
+
+Every caller gets a stream of its own, because one shared stream is not a broadcast. A
+consumer that stops keeping up is finished rather than left quietly missing events.
+
+What the router publishes is a turn and what AG-UI describes is a run, so the translation is
+written down in `AGUITranslator`: an exchange is a run, the reply is one message that streams,
+a skill is an activity, and the instrumentation a run has no place for — who joined, how long
+the audio took, what the flow controller decided — is dropped and stays on `AgentEvent`.
+
+[agui]: https://github.com/martinmitrevski/ag-ui-swift
+
 ### A tool that runs on the phone
 
 The agent runs in the backend; a tool you give it runs here. That is the point — it can read
@@ -77,6 +100,42 @@ let lookup = AgentTool(
 
 let chat = try await agents.chat(agent: "swift_demo", tools: [lookup])
 ```
+
+### A tool somebody has to allow first
+
+Give a tool an `approval` question and the SDK stops running it on the model's word. The
+question is an AG-UI interrupt, so the same value is on `pendingApprovals` and on the
+`RUN_FINISHED` that ended the run:
+
+```swift
+let refund = AgentTool(
+    name: "refund_order",
+    description: "Refund an order the caller is owed money for.",
+    parameters: .strings(["order_id": "the order number"], required: ["order_id"]),
+    approval: { arguments in "Refund order \(arguments["order_id"]?.stringValue ?? "")?" }
+) { arguments in
+    await Orders.local.refund(arguments["order_id"]?.stringValue ?? "")
+}
+```
+
+`ConversationView` draws a card for anything pending; a host that wants its own passes a
+`@ViewBuilder`, or reads `session.pendingApprovals` itself. Either way it is answered with
+
+```swift
+try await chat.approve(pending)                     // the tool runs now
+try await chat.decline(pending, reason: "too much") // it never runs, and the model is told
+```
+
+or, in the protocol's own terms, `chat.resume([.resolved(pending.id, payload: ["approved": true])])`.
+The agent is holding its turn open on the router the whole time, so what it says next is what
+actually happened.
+
+The SDK tells the router the question is on screen, so the wait is a person's rather than a
+machine's: minutes, set by `approval_timeout_ms`, instead of the seconds a tool that has not
+answered is given. Nobody has to answer at all. When the router runs out of patience it tells
+the model nothing was approved -- so the agent says that, rather than that the refund failed --
+and the card leaves `pendingApprovals` on its own, because tapping it then would be answering
+a turn that has moved on.
 
 ### One modality at a time
 

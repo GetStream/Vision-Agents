@@ -12,9 +12,11 @@
 		A1000103 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000003 /* ChatView.swift */; };
 		A1000104 /* VoiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000004 /* VoiceView.swift */; };
 		A1000105 /* Demo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000005 /* Demo.swift */; };
+		A1000106 /* EventsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000007 /* EventsView.swift */; };
 		A1000201 /* VisionAgentsCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1000301 /* VisionAgentsCore */; };
 		A1000202 /* VisionAgentsUI in Frameworks */ = {isa = PBXBuildFile; productRef = A1000302 /* VisionAgentsUI */; };
 		A1000203 /* VisionAgentsRTC in Frameworks */ = {isa = PBXBuildFile; productRef = A1000303 /* VisionAgentsRTC */; };
+		A1000204 /* AGUI in Frameworks */ = {isa = PBXBuildFile; productRef = A1000304 /* AGUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +26,7 @@
 		A1000004 /* VoiceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceView.swift; sourceTree = "<group>"; };
 		A1000005 /* Demo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Demo.swift; sourceTree = "<group>"; };
 		A1000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1000007 /* EventsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsView.swift; sourceTree = "<group>"; };
 		A1000010 /* SwiftDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -35,6 +38,7 @@
 				A1000201 /* VisionAgentsCore in Frameworks */,
 				A1000202 /* VisionAgentsUI in Frameworks */,
 				A1000203 /* VisionAgentsRTC in Frameworks */,
+				A1000204 /* AGUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -57,6 +61,7 @@
 				A1000003 /* ChatView.swift */,
 				A1000004 /* VoiceView.swift */,
 				A1000005 /* Demo.swift */,
+				A1000007 /* EventsView.swift */,
 				A1000006 /* Info.plist */,
 			);
 			path = SwiftDemo;
@@ -90,6 +95,7 @@
 				A1000301 /* VisionAgentsCore */,
 				A1000302 /* VisionAgentsUI */,
 				A1000303 /* VisionAgentsRTC */,
+				A1000304 /* AGUI */,
 			);
 			productName = SwiftDemo;
 			productReference = A1000010 /* SwiftDemo.app */;
@@ -153,6 +159,7 @@
 				A1000103 /* ChatView.swift in Sources */,
 				A1000104 /* VoiceView.swift in Sources */,
 				A1000105 /* Demo.swift in Sources */,
+				A1000106 /* EventsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -300,6 +307,10 @@
 		A1000303 /* VisionAgentsRTC */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = VisionAgentsRTC;
+		};
+		A1000304 /* AGUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AGUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

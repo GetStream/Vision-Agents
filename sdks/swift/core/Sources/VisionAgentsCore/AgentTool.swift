@@ -15,6 +15,15 @@ public struct AgentTool: Sendable {
     /// A JSON Schema object describing the arguments, or nil for a tool that takes none.
     public let parameters: JSONValue?
 
+    /// What to ask before this runs, written from the arguments the model sent, or nil for a
+    /// tool that just runs.
+    ///
+    /// A tool with one of these is a person in the loop: the SDK does not run it, it asks.
+    /// What it is waiting for turns up on `AgentSession.pendingApprovals` and on
+    /// `aguiEvents()` as the AG-UI interrupt the run ended on, and nothing happens until
+    /// somebody answers it.
+    public let approval: (@Sendable ([String: JSONValue]) -> String)?
+
     /// Runs the tool. What it returns is given to the model as the result; throwing tells the
     /// model the tool failed and why.
     public let run: @Sendable ([String: JSONValue]) async throws -> String
@@ -23,11 +32,13 @@ public struct AgentTool: Sendable {
         name: String,
         description: String,
         parameters: JSONValue? = nil,
+        approval: (@Sendable ([String: JSONValue]) -> String)? = nil,
         run: @escaping @Sendable ([String: JSONValue]) async throws -> String
     ) {
         self.name = name
         self.description = description
         self.parameters = parameters
+        self.approval = approval
         self.run = run
     }
 }

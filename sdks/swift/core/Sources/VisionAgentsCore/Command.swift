@@ -2,8 +2,8 @@ import Foundation
 
 /// One thing a client can do to a running conversation over its socket.
 ///
-/// These are the six commands `readCommands` in the router accepts. Everything else a caller
-/// might want is a request rather than a frame.
+/// These are the commands `readCommands` in the router accepts. Everything else a caller might
+/// want is a request rather than a frame.
 public enum Command: Sendable, Hashable {
     /// Speak this without going through the model.
     case say(String)
@@ -15,13 +15,16 @@ public enum Command: Sendable, Hashable {
     case instructions(String)
     /// Answer a tool call. One of `output` or `error` says how it went.
     case toolResult(id: String, output: String?, error: String?)
+    /// Say a person has been asked to allow a tool call, so the conversation waits for them
+    /// rather than for a machine. The answer is still a `toolResult`, later.
+    case toolWaiting(id: String, question: String?)
     /// End the session.
     case close
 }
 
 extension Command: Encodable {
     private enum CodingKeys: String, CodingKey {
-        case type, text, instructions, toolCallID = "tool_call_id", output, error
+        case type, text, instructions, toolCallID = "tool_call_id", output, error, question
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -45,6 +48,10 @@ extension Command: Encodable {
             // absent, so sending the empty string and sending nothing are the same thing.
             try container.encode(output ?? "", forKey: .output)
             try container.encode(error ?? "", forKey: .error)
+        case .toolWaiting(let id, let question):
+            try container.encode("tool_waiting", forKey: .type)
+            try container.encode(id, forKey: .toolCallID)
+            try container.encode(question ?? "", forKey: .question)
         case .close:
             try container.encode("close", forKey: .type)
         }

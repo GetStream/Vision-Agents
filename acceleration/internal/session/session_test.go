@@ -759,6 +759,107 @@ func (s *SessionSuite) TestAToolNobodyAnswersGivesUpRatherThanHangingTheTurn() {
 	s.Require().NotNil(awaitToolCall(events), "the caller was never asked in the first place")
 }
 
+func (s *SessionSuite) TestAToolAPersonWasAskedAboutWaitsForThemRatherThanForAMachine() {
+	// The card is on somebody's phone. A refund used to be given the same seconds as a
+	// machine, so the model was told it had failed while the caller was still reading it.
+	s.manages()
+	created := s.joins(Spec{
+		ToolTimeoutMs:     60,
+		ApprovalTimeoutMs: 60_000,
+		Tools:             []harness.Tool{{Name: "refund_order", Description: "refund an order"}},
+	})
+
+	events, detach := created.Watch()
+	defer detach()
+
+	answered := make(chan string, 1)
+	go func() {
+		result, _ := created.tools.Run(context.Background(),
+			llm.ToolCall{ID: "call-1", Name: "refund_order"})
+		answered <- result
+	}()
+	s.Require().NotNil(awaitToolCall(events), "the caller was never asked")
+
+	s.True(created.WaitTool("call-1", "Refund 78.00 for order A-1042?"))
+	time.Sleep(150 * time.Millisecond)
+	s.True(created.ResolveTool("call-1", "refunded 78.00", ""),
+		"the machine's deadline was still the person's")
+
+	select {
+	case result := <-answered:
+		s.Equal("refunded 78.00", result)
+	case <-time.After(settleFor):
+		s.Fail("the approved call never came back")
+	}
+}
+
+func (s *SessionSuite) TestAQuestionOnSomebodysScreenIsReportedToEverybodyWatching() {
+	// A dashboard, or a second device, is owed the reason the conversation went quiet.
+	s.manages()
+	created := s.joins(Spec{
+		ApprovalTimeoutMs: 60_000,
+		Tools:             []harness.Tool{{Name: "refund_order", Description: "refund an order"}},
+	})
+
+	events, detach := created.Watch()
+	defer detach()
+
+	go created.tools.Run(context.Background(), llm.ToolCall{ID: "call-1", Name: "refund_order"})
+	s.Require().NotNil(awaitToolCall(events), "the caller was never asked")
+
+	s.True(created.WaitTool("call-1", "Refund 78.00 for order A-1042?"))
+
+	waiting := awaitEvent[ToolWaiting](events)
+	s.Require().NotNil(waiting)
+	s.Equal("call-1", waiting.ID)
+	s.Equal("Refund 78.00 for order A-1042?", waiting.Question)
+}
+
+func (s *SessionSuite) TestNobodyApprovingIsToldToTheModelAndTakesTheQuestionDown() {
+	// Nothing failed: the caller never said yes. A model told the tool broke apologises
+	// for a fault where it should be saying the refund was not approved, and the question
+	// has to come off the screen or tapping it answers a turn that has moved on.
+	s.manages()
+	created := s.joins(Spec{
+		ToolTimeoutMs:     60_000,
+		ApprovalTimeoutMs: 60,
+		Tools:             []harness.Tool{{Name: "refund_order", Description: "refund an order"}},
+	})
+
+	events, detach := created.Watch()
+	defer detach()
+
+	answered := make(chan string, 1)
+	go func() {
+		result, err := created.tools.Run(context.Background(),
+			llm.ToolCall{ID: "call-1", Name: "refund_order"})
+		s.NoError(err, "nobody approving it is not a failure of the tool")
+		answered <- result
+	}()
+	s.Require().NotNil(awaitToolCall(events), "the caller was never asked")
+	s.True(created.WaitTool("call-1", "Refund 78.00 for order A-1042?"))
+
+	select {
+	case result := <-answered:
+		s.Contains(result, "Nobody approved this")
+	case <-time.After(settleFor):
+		s.Fail("the model was never told")
+	}
+
+	expired := awaitEvent[ToolExpired](events)
+	s.Require().NotNil(expired)
+	s.Equal("call-1", expired.ID)
+	s.False(created.ResolveTool("call-1", "refunded 78.00", ""),
+		"an answer after the question came down answers nobody")
+}
+
+func (s *SessionSuite) TestSayingAPersonWasAskedAboutACallNobodyIsWaitingOnIsDropped() {
+	s.manages()
+	created := s.joins(Spec{})
+
+	s.False(created.WaitTool("call-nobody-asked-for", "Allow it?"))
+}
+
 func (s *SessionSuite) TestAnAnswerToAToolNobodyIsWaitingOnIsDropped() {
 	// The commonest cause is a caller answering a call that already timed out, which is
 	// not worth failing anything over.
@@ -1005,6 +1106,25 @@ func awaitReply(events <-chan Event) string {
 			}
 		case <-deadline:
 			return ""
+		}
+	}
+}
+
+// awaitEvent waits for the next event of one type, which is how a test reads past the
+// reports a conversation makes on its way to the one it is about.
+func awaitEvent[E Event](events <-chan Event) *E {
+	deadline := time.After(settleFor)
+	for {
+		select {
+		case event, open := <-events:
+			if !open {
+				return nil
+			}
+			if wanted, ok := event.(E); ok {
+				return &wanted
+			}
+		case <-deadline:
+			return nil
 		}
 	}
 }

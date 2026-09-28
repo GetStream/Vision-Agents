@@ -73,13 +73,18 @@ func run(ctx context.Context, dir string) error {
 	// wipe the instructions and skills the sync had just written. A subagent is what makes a
 	// skill mean anything -- without one the fast model answers everything itself.
 	config, err := agents.DefineAgent(ctx, client, acceleration.AgentConfigRequest{
-		Name:     folder.Name,
-		Stt:      text("deepgram/flux-general-en"),
-		Tts:      text("cartesia/sonic-preview"),
-		Llm:      text("gemini/gemini-3.8-flash"),
+		Name: folder.Name,
+		Stt:  text("deepgram/flux-general-en"),
+		Tts:  text("cartesia/sonic-preview"),
+		// The shortcut rather than one model by name. A named model is the one thing this
+		// config cannot route around: it has broken this demo twice, once when the model was
+		// retired from router.yaml and once when the Google project hit its spending cap, and
+		// both times the agent answered nothing at all. `llm-fast` prefers the same model and
+		// falls to the rest of the tier while it is unavailable.
+		Llm:      text("llm-fast"),
 		Subagent: text("openai/gpt-5.6-sol"),
 		Greeting: text("Larkspur support, how can I help?"),
-		Keyterms: &[]string{"Larkspur", "store credit"},
+		Keyterms: &[]string{"Larkspur", "store credit", "refund"},
 	})
 	if err != nil {
 		return err
@@ -129,11 +134,17 @@ func run(ctx context.Context, dir string) error {
 	return nil
 }
 
-// sync pushes the directory, dropping the knowledge base if the router has nowhere to put it.
+// sync pushes the directory, folding the knowledge base into the instructions if the router
+// has nowhere to put it.
 //
-// Knowledge needs an embeddings provider, which a deployment can be run without. The agent is
-// worth having either way: it loses the returns policy and keeps its instructions and its
-// skill, so it says it does not know rather than not answering at all.
+// Knowledge needs an embeddings provider, which a deployment can be run without -- and this
+// demo is meant to run on a router somebody started five minutes ago. Dropping the policy
+// left an agent that could not answer the one question the demo is about: the refund skill
+// asked the caller what the returns policy said, and went round again on whatever they
+// answered. So the documents are written into the prompt instead. It is not what a knowledge
+// base is for -- a real one is looked up a passage at a time rather than read in full every
+// turn, and it holds more than fits in a prompt -- but a shop's returns policy is four
+// paragraphs, and an agent that knows them is the point.
 func sync(
 	ctx context.Context,
 	client *acceleration.ClientWithResponses,
@@ -152,7 +163,20 @@ func sync(
 		return nil, fmt.Errorf("the router refused the sync: %s", refused)
 	}
 
-	fmt.Printf("\nknowledge  skipped: %s\n", refused)
+	fmt.Printf("\nknowledge  %s\n           so it goes in the prompts instead\n", refused)
+	documents := *wanted.Knowledge
+	inlined := told(*wanted.Instructions, documents)
+	wanted.Instructions = &inlined
+	// The skills as well, and not only the agent: a skill runs on the subagent under its own
+	// instructions and the conversation so far, and the agent's prompt is not part of either.
+	// Without this the refund skill asks the caller what the returns policy says.
+	if wanted.Skills != nil {
+		skills := append([]acceleration.SkillRequest(nil), *wanted.Skills...)
+		for i := range skills {
+			skills[i].Instructions = told(skills[i].Instructions, documents)
+		}
+		wanted.Skills = &skills
+	}
 	wanted.Knowledge = nil
 	retried, err := client.SyncAgentWithResponse(ctx, wanted)
 	if err != nil {
@@ -162,6 +186,22 @@ func sync(
 		return nil, fmt.Errorf("the router refused the sync: %s", complaint(retried))
 	}
 	return retried.JSON200, nil
+}
+
+// told renders the knowledge base as part of a prompt, for the router that cannot hold one.
+//
+// It says the policy is here rather than somewhere to look it up, because both prompts say
+// to look things up and the tool that does is not offered on a deployment with nowhere to
+// look.
+func told(prompt string, documents []acceleration.KnowledgeDocument) string {
+	written := &strings.Builder{}
+	written.WriteString(prompt)
+	written.WriteString("\n\nWhat the shop has written down is below, rather than " +
+		"somewhere to look it up. Answer out of it, and never guess past it.\n")
+	for _, document := range documents {
+		fmt.Fprintf(written, "\n## %s\n\n%s\n", document.Source, document.Text)
+	}
+	return written.String()
 }
 
 func complaint(response *acceleration.SyncAgentResponse) string {

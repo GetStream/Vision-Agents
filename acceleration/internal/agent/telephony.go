@@ -121,10 +121,14 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 		// tool and the menu is what answers next, so talking over it would be talking to
 		// nobody.
 		//
-		// A turn that is itself the answer to a tool does not get another, or a model
-		// that responds to a broken trunk by trying it again would keep the call and the
-		// bill going without the caller hearing a word.
-		if requested.Call.Name != toolPress && !strings.HasPrefix(requested.TurnID, toolPrefix) {
+		// A tool that failed in a turn which was itself the answer to a tool does not get
+		// another, or a model that responds to a broken trunk by trying it again would
+		// keep the call and the bill going without the caller hearing a word. One that
+		// worked does: a model that looks an order up and then refunds it asks for the
+		// second tool in the turn that reported the first, and the caller who approved
+		// the refund is owed the outcome rather than silence.
+		chained := strings.HasPrefix(requested.TurnID, toolPrefix)
+		if requested.Call.Name != toolPress && (err == nil || !chained) {
 			a.queueToolReply()
 		}
 		return

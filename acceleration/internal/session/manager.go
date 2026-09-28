@@ -181,7 +181,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
+		time.Duration(spec.ApprovalTimeoutMs)*time.Millisecond,
 		created.askTool,
+		created.expireTool,
 	)
 
 	// The built-in tools are this process's to run rather than the caller's. They go

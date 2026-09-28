@@ -8,7 +8,7 @@ instructions.md      what the agent is told
 skills/              what it can go away and think about
 knowledge/           what it can look things up in
 configure/main.go    the backend half: pushes all of the above
-app/                 the phone half: chat, voice, and a tool that runs on the device
+app/                 the phone half: chat, voice, and two tools that run on the device
 ```
 
 ## Run it
@@ -65,6 +65,16 @@ Two calls do the configuring, and the order matters:
 `SyncAgent` also fingerprints the directory, so running it twice with nothing changed does
 nothing.
 
+A knowledge base needs an embeddings provider, and a router started five minutes ago may have
+none. Rather than storing an agent that cannot answer the one question this demo is about,
+`configure` writes `knowledge/policy.md` into the prompts instead — the agent's and the skill's,
+because a skill runs on the subagent under its own instructions and never sees the agent's. Set
+`TURBOPUFFER_API_KEY` and it is a real knowledge base, looked up a passage at a time.
+
+Re-run it after changing `acceleration/internal/routing/router.yaml` too, not only after
+changing this directory: a stored config names models, and a model that has been renamed or
+retired there is a 400 in the middle of a call.
+
 ## What the app shows
 
 - **The agent picker** lists `listAgentConfigs`, one of the reads a device may make.
@@ -76,6 +86,34 @@ nothing.
   what the video SDK joins — they are not the same id.
 - **`lookup_order`** is a tool the model calls that runs in `Demo.swift`. Its data never leaves
   the phone; the agent asks, and only sees the answer. Ask about order `A-1042` or `A-1043`.
+- **`refund_order`** is the same kind of tool with somebody in the loop. It is declared with an
+  `approval` question, so the SDK does not run it when the model asks: a card appears with
+  *Refund 78.00 for order A-1042?* and nothing happens until it is answered. The agent is
+  holding its turn open on the router the whole time, so what it says next is what actually
+  happened — approve it and it confirms the refund, decline it and it says nothing was
+  refunded. Take your time: the SDK tells the router a person is being asked, so the wait is a
+  person's rather than the seconds a tool gets, and if nobody ever answers the agent says the
+  refund was not approved and the card comes down. It works the same in the Voice tab,
+  mid-call.
+- **Events** in the Chat toolbar is the same conversation as AG-UI protocol events, off
+  `session.aguiEvents()`. The approval is `RUN_FINISHED` with an interrupt on it, and
+  approving is what starts the run that carries `TOOL_CALL_RESULT`.
+
+## Try the approval
+
+```
+Refund order A-1042.
+```
+
+The agent looks the order up, hands the money decision to the `refund_decision` skill, tells
+you what it worked out, and then asks to be allowed to issue it. The returns policy says an
+unopened order goes back for what was paid less return postage, so `A-1042` is refundable and
+`A-1043`, which is worn, is not: ask for that one and the skill says no and nothing is ever
+asked of you.
+
+The orders in `Demo.swift` say how long ago they were delivered rather than on what date,
+because nothing tells the model what today is: given a date and a thirty-day window it asks you
+what the date is instead of deciding.
 
 ## No auth
 

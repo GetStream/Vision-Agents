@@ -1125,6 +1125,9 @@ type CreateSessionRequest struct {
 	// AgentId Keys transcripts and statistics. Empty means the call id.
 	AgentId *string `json:"agent_id,omitempty"`
 
+	// ApprovalTimeoutMs How long it waits instead once the caller has sent `tool_waiting`, which says a person has been asked to allow the call. Zero is the default, which is minutes rather than the seconds a machine gets.
+	ApprovalTimeoutMs *int `json:"approval_timeout_ms,omitempty"`
+
 	// Backchannel Murmur while a participant is still talking, the way a person does.
 	Backchannel *bool `json:"backchannel,omitempty"`
 
