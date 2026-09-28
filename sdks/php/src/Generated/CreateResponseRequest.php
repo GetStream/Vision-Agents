@@ -15,6 +15,8 @@ final readonly class CreateResponseRequest
         public string $text,
         /** @var list<ImageSource>|null */
         public ?array $images = null,
+        // Required for personal persistent text conversations, and text only. Reuse this ID and identical text for re...
+        public ?string $commandId = null,
     ) {
     }
 
@@ -26,6 +28,7 @@ final readonly class CreateResponseRequest
         return new self(
             text: Json::string($data, 'text'),
             images: array_key_exists('images', $data) && $data['images'] !== null ? array_map(ImageSource::fromArray(...), Json::objects($data, 'images')) : null,
+            commandId: array_key_exists('command_id', $data) && $data['command_id'] !== null ? Json::string($data, 'command_id') : null,
         );
     }
 
@@ -40,6 +43,9 @@ final readonly class CreateResponseRequest
         $out['text'] = $this->text;
         if ($this->images !== null) {
             $out['images'] = array_map(static fn (ImageSource $each): array => $each->toArray(), $this->images);
+        }
+        if ($this->commandId !== null) {
+            $out['command_id'] = $this->commandId;
         }
         return $out;
     }

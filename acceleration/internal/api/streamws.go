@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -52,6 +53,8 @@ type Streams struct {
 	STS *stsrouter.Router
 	// Search answers a question at /v1/search.
 	Search *searchrouter.Router
+	// LCM answers typed questions about a piece of text at /v1/classify.
+	LCM *lcmrouter.Router
 	// Transcriptions and Speech run the non-realtime jobs, against the batch half of each
 	// vendor rather than the streaming one.
 	Transcriptions *sttrouter.Recordings

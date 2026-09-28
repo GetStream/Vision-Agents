@@ -218,6 +218,27 @@ func (e CampaignState) Valid() bool {
 	}
 }
 
+// Defines values for ClassifyQuestionType.
+const (
+	Choice ClassifyQuestionType = "choice"
+	Noul   ClassifyQuestionType = "noul"
+	Score  ClassifyQuestionType = "score"
+)
+
+// Valid indicates whether the value is a known member of the ClassifyQuestionType enum.
+func (e ClassifyQuestionType) Valid() bool {
+	switch e {
+	case Choice:
+		return true
+	case Noul:
+		return true
+	case Score:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ContactState.
 const (
 	ContactStateCalling ContactState = "calling"
@@ -1831,6 +1852,91 @@ type ClaimGuestResult struct {
 	// SessionsMoved How many conversations moved onto the account.
 	SessionsMoved int    `json:"sessions_moved"`
 	UserId        string `json:"user_id"`
+}
+
+// ClassifyAnswer Which fields carry the answer depends on the type. A noul fills yes alone. A choice fills chosen, probabilities and confidence. A score fills level, legend, probabilities and confidence.
+type ClassifyAnswer struct {
+	// Chosen The likeliest option of a choice.
+	Chosen *string `json:"chosen,omitempty"`
+
+	// Confidence How peaked the distribution is, not whether acting on it is safe.
+	Confidence *float64 `json:"confidence,omitempty"`
+
+	// Legend A score's levels by index, as decimal strings.
+	Legend *map[string]string `json:"legend,omitempty"`
+
+	// Level Where a score landed, which may be between two of its levels.
+	Level *float64 `json:"level,omitempty"`
+
+	// Probabilities The distribution the answer came from: options for a choice, level indices for a score. They sum to one.
+	Probabilities *map[string]float64 `json:"probabilities,omitempty"`
+
+	// Type noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
+	Type ClassifyQuestionType `json:"type"`
+
+	// Yes The probability a noul is true, from 0 to 1.
+	Yes *float64 `json:"yes,omitempty"`
+}
+
+// ClassifyQuestion defines model for ClassifyQuestion.
+type ClassifyQuestion struct {
+	// Instructions Example: Is the customer asking for a refund?
+	Instructions string `json:"instructions"`
+
+	// Levels A score's levels, in order, each describing a concrete situation.
+	Levels *[]string `json:"levels,omitempty"`
+
+	// No What no means for a noul, where the instructions do not say it.
+	No *string `json:"no,omitempty"`
+
+	// Options A choice's options, each with a description of what it covers or an empty string where the name says it. Include one for "none of these" whenever the options may not cover an input.
+	Options *map[string]string `json:"options,omitempty"`
+
+	// Type noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
+	Type ClassifyQuestionType `json:"type"`
+
+	// Yes What yes means for a noul, where the instructions do not say it.
+	Yes *string `json:"yes,omitempty"`
+}
+
+// ClassifyQuestionType noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
+type ClassifyQuestionType string
+
+// ClassifyRequest defines model for ClassifyRequest.
+type ClassifyRequest struct {
+	// Questions Keyed by ids of the caller's own choosing, which is how the answers come back. An id is not part of what is asked, so a question carries its whole meaning in its instructions.
+	Questions map[string]ClassifyQuestion `json:"questions"`
+
+	// State What the questions are about: a string for plain text, or a JSON object whose parts a question can name, such as `message`.
+	//
+	//
+	// Example: I was charged twice this month and nobody has answered my email.
+	State interface{}        `json:"state"`
+	Tags  *map[string]string `json:"tags,omitempty"`
+
+	// Target A provider/model or a capability shortcut. Empty takes classify-fast.
+	//
+	//
+	// Example: classify-fast
+	Target *string `json:"target,omitempty"`
+}
+
+// ClassifyResult defines model for ClassifyResult.
+type ClassifyResult struct {
+	Answers map[string]ClassifyAnswer `json:"answers"`
+
+	// Model The version that answered, which is worth recording when the target was an alias.
+	Model    string `json:"model"`
+	Provider string `json:"provider"`
+
+	// Usage What the request read and wrote. The state's tokens are counted once however many questions shared them.
+	Usage ClassifyUsage `json:"usage"`
+}
+
+// ClassifyUsage What the request read and wrote. The state's tokens are counted once however many questions shared them.
+type ClassifyUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
 }
 
 // CommandReceipt defines model for CommandReceipt.
@@ -4542,6 +4648,9 @@ type PreviewVoiceJSONRequestBody = VoicePreviewRequest
 // AddVoiceSampleJSONRequestBody defines body for AddVoiceSample for application/json ContentType.
 type AddVoiceSampleJSONRequestBody = VoiceSampleRequest
 
+// ClassifyJSONRequestBody defines body for Classify for application/json ContentType.
+type ClassifyJSONRequestBody = ClassifyRequest
+
 // GenerateImageJSONRequestBody defines body for GenerateImage for application/json ContentType.
 type GenerateImageJSONRequestBody = ImageGenerationRequest
 
@@ -5739,6 +5848,28 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClassifyWithBody Ask a classifier typed questions about a piece of text
+	//
+	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/classify (the `Classify` operationId).
+	ClassifyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// Classify Ask a classifier typed questions about a piece of text
+	//
+	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/classify (the `Classify` operationId).
+	Classify(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListDataChanges What has happened to this app's rows since a cursor
 	//
@@ -8257,6 +8388,48 @@ func (c *Client) AddVoiceSampleWithBody(ctx context.Context, id ResourceID, cont
 // Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 func (c *Client) AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddVoiceSampleRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClassifyWithBody Ask a classifier typed questions about a piece of text
+//
+// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/classify (the `Classify` operationId).
+func (c *Client) ClassifyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClassifyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// Classify Ask a classifier typed questions about a piece of text
+//
+// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/classify (the `Classify` operationId).
+func (c *Client) Classify(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClassifyRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13409,6 +13582,46 @@ func NewAddVoiceSampleRequestWithBody(server string, id ResourceID, contentType 
 	return req, nil
 }
 
+// NewClassifyRequest calls the generic Classify builder with application/json body
+func NewClassifyRequest(server string, body ClassifyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClassifyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewClassifyRequestWithBody constructs an http.Request for the Classify method, with any body, and a specified content type
+func NewClassifyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/classify")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListDataChangesRequest constructs an http.Request for the ListDataChanges method
 func NewListDataChangesRequest(server string, params *ListDataChangesParams) (*http.Request, error) {
 	var err error
@@ -16355,6 +16568,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSampleWithResponse(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
+
+	// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
+	//
+	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/classify (the `Classify` operationId).
+	ClassifyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClassifyResponse, error)
+
+	// ClassifyWithResponse Ask a classifier typed questions about a piece of text
+	//
+	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/classify (the `Classify` operationId).
+	ClassifyWithResponse(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyResponse, error)
 
 	// ListDataChangesWithResponse What has happened to this app's rows since a cursor
 	//
@@ -22340,6 +22575,82 @@ func (r AddVoiceSampleResponse) ContentType() string {
 	return ""
 }
 
+type ClassifyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClassifyResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClassifyResponse) GetJSON200() *ClassifyResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ClassifyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ClassifyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ClassifyResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ClassifyResponse) GetJSON429() *Error {
+	return r.JSON429
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ClassifyResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ClassifyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClassifyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClassifyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClassifyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListDataChangesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26506,6 +26817,40 @@ func (c *ClientWithResponses) AddVoiceSampleWithResponse(ctx context.Context, id
 		return nil, err
 	}
 	return ParseAddVoiceSampleResponse(rsp)
+}
+
+// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
+//
+// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/classify (the `Classify` operationId).
+func (c *ClientWithResponses) ClassifyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClassifyResponse, error) {
+	rsp, err := c.ClassifyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClassifyResponse(rsp)
+}
+
+// ClassifyWithResponse Ask a classifier typed questions about a piece of text
+//
+// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/classify (the `Classify` operationId).
+func (c *ClientWithResponses) ClassifyWithResponse(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyResponse, error) {
+	rsp, err := c.Classify(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClassifyResponse(rsp)
 }
 
 // ListDataChangesWithResponse What has happened to this app's rows since a cursor
@@ -31540,6 +31885,67 @@ func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseClassifyResponse parses an HTTP response from a ClassifyWithResponse call
+func ParseClassifyResponse(rsp *http.Response) (*ClassifyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClassifyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClassifyResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
