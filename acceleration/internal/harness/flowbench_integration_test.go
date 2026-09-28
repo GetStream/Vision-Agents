@@ -455,6 +455,9 @@ func TestFlowTrainExport(t *testing.T) {
 			require.NoError(t, encoder.Encode(map[string]any{
 				"id": one.ID, "set": name, "state": one.State, "question": localQuestion(one),
 				"options": labels, "input": localInput(one, set), "correct": correct,
+				// The words themselves, as they appear in input, so a trainer can vary how they
+				// are written without that varying with the label.
+				"heard": one.Heard,
 			}))
 		}
 	}
