@@ -31,8 +31,8 @@ import (
 const benchmarkEnvVar = "FLOW_BENCHMARK"
 
 // modelsEnvVar names the router targets to compare, comma separated: an alias such as
-// llm-flow, a provider and model such as cerebras/gemma-4-31b, or all for every LLM the
-// router is configured with. Each is asked the production prompt and read with the
+// llm-flow, a provider and model such as cerebras/gemma-4-31b, all for every LLM the router is
+// configured with, or none to run only the Jev arms. Each is asked the production prompt and read with the
 // production parser.
 const modelsEnvVar = "FLOW_BENCHMARK_MODELS"
 
@@ -55,6 +55,15 @@ const modelRepeats = 3
 // jevRepeats is one. Jev returns the distribution rather than a draw from it, so asking twice
 // measures the network.
 const jevRepeats = 1
+
+// jevModel pins the version, because jev-latest moves when a release ships and a comparison
+// across runs is only a comparison if the same model answered both.
+const jevModel = "jev-1.13.0"
+
+// jevRecentTurns is how much of the conversation the decomposed arm sends. TypeSafe's own
+// guidance is that accuracy falls as the state fills with what the decision does not need, and
+// who holds the floor now is decided by the last exchange rather than the call's history.
+const jevRecentTurns = 2
 
 // jevNeutral is the only threshold in the composed arm, and it is the point at which a
 // probability stops leaning one way. Anything else would be a number fitted to this set.
@@ -304,6 +313,7 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 	}
 
 	client, err := typesafe.New(typesafe.Options{
+		Model:   jevModel,
 		Timeout: benchDeadline,
 		Logger:  slog.New(slog.DiscardHandler),
 	})
@@ -332,6 +342,135 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 				return s.askJev(ctx, client, set, one, attempt, jevComposed(), true)
 			},
 		},
+		{
+			name:    "jev-decomposed",
+			model:   client.Model(),
+			repeats: jevRepeats,
+			price:   price,
+			judge: func(ctx context.Context, set flowSet, one flowCase, attempt int) (judgement, error) {
+				return s.askJevDecomposed(ctx, client, set, one, attempt)
+			},
+		},
+	}
+}
+
+// jevDecomposed is every fact the conversation's policy turns on, each asked as its own yes or
+// no, which is how TypeSafe says its model is meant to be used: one well-scoped question at a
+// time, answered literally, with the combining done in code. No question asks what to do.
+func jevDecomposed() map[string]lcm.Question {
+	return map[string]lcm.Question{
+		"addressed_to_agent": lcm.Noul(
+			"Were the words in `heard` meant for the agent described in `agent_was_told`?",
+			"Spoken to the agent, whether or not they are finished.",
+			"Spoken to somebody else in the room, to a pet or a child, read off a television, "+
+				"or otherwise not meant for the agent."),
+		"finished": lcm.Noul(
+			"Is `heard` a complete thought that now waits for the agent to reply?",
+			"The speaker has said what they meant to say and expects an answer.",
+			"The words stop part way through a sentence, a list, a number or a name, so "+
+				"more is coming."),
+		"still_growing": lcm.Noul(
+			"Does `heard` end part way through a number, an identifier or a time that the "+
+				"speaker is still reading out?",
+			"It ends mid-sequence, so more digits or words are still coming.",
+			"Whatever number it contains is complete, or it contains none."),
+		"recorded_menu": lcm.Noul(
+			"Is `heard` a recording reading out its options rather than a person talking?",
+			"An automated menu, hold message or greeting.",
+			"A person speaking, however stilted."),
+		"non_speech": lcm.Noul(
+			"Is `heard` a noise rather than words: a cough, a sneeze, a laugh, a door, "+
+				"static, or something else in the room?",
+			"A noise, or a transcriber's description of one.",
+			"Words the speaker meant to say, however short."),
+		"ambiguous": lcm.Noul(
+			"Is what `heard` asks the agent to do impossible to act on without asking which "+
+				"thing the speaker means?",
+			"It points at something `conversation` does not pin down, such as \"the usual\", "+
+				"\"change it\" or \"put it back\" with nothing saying what it is.",
+			"What is wanted is clear from `heard` and `conversation`, or it asks for nothing."),
+		"echo": lcm.Noul(
+			"Is `heard` the agent's own words from `agent_has_said` coming back, word for word "+
+				"or nearly?",
+			"The same words the agent just said, as a line echoing back.",
+			"Words of the speaker's own."),
+		"acknowledgement": lcm.Noul(
+			"Is `heard` only a brief sign that the speaker is listening, such as \"yeah\", "+
+				"\"okay\" or \"right\"?",
+			"A listening noise that asks for nothing.",
+			"It says or asks something."),
+		"adds_to_request": lcm.Noul(
+			"Does `heard` add to what the speaker asked for, without contradicting what the "+
+				"agent is saying in `agent_has_said`?",
+			"An addition such as \"and Saturday as well\" or \"and put us on the patio\".",
+			"It corrects the agent, asks something unrelated, or adds nothing."),
+		"objects": lcm.Noul(
+			"Does `heard` correct the agent, tell it to stop or wait, or ask it something new, "+
+				"while it is saying `agent_has_said`?",
+			"A correction such as \"no, make it six\", \"that's the wrong date\", \"wait\", "+
+				"or a new question.",
+			"It agrees, acknowledges, repeats the agent, or is not for the agent at all."),
+	}
+}
+
+// askJevDecomposed asks every fact at once over a trimmed state and decides in code.
+func (s *FlowBenchmarkSuite) askJevDecomposed(
+	ctx context.Context, client *typesafe.Client, set flowSet, one flowCase, attempt int,
+) (judgement, error) {
+	state := one.state(set.Contracts)
+	if said := state["conversation"].([]map[string]string); len(said) > jevRecentTurns {
+		state["conversation"] = said[len(said)-jevRecentTurns:]
+	}
+
+	askedAt := time.Now()
+	answered, err := client.Classify(ctx, lcm.Request{State: state, Questions: jevDecomposed()})
+	if err != nil {
+		return judgement{}, err
+	}
+	return judgement{
+		CaseID:  one.ID,
+		State:   one.State,
+		Attempt: attempt,
+		Expect:  one.Expect,
+		TookMs:  float64(time.Since(askedAt).Microseconds()) / 1000,
+		Usage:   routing.Usage{InputTokens: answered.Usage.InputTokens},
+		Got:     decomposedOutcome(one, answered.Answers),
+	}, nil
+}
+
+// decomposedOutcome is the conversation's policy written over facts rather than over a model's
+// choice of what to do. The order is the order of precedence: whether the words were speech,
+// then whether they were for the agent, then what they ask of it.
+func decomposedOutcome(one flowCase, answers map[string]lcm.Answer) flowOutcome {
+	yes := func(fact string) bool { return answers[fact].Yes >= jevNeutral }
+
+	if !one.AgentSpeaking {
+		switch {
+		case yes("non_speech"), !yes("addressed_to_agent"):
+			return outcomeIgnore
+		case yes("recorded_menu"), yes("still_growing"), !yes("finished"):
+			return outcomeWait
+		case yes("ambiguous"):
+			return outcomeClarify
+		default:
+			return outcomeAnswer
+		}
+	}
+	switch {
+	case yes("non_speech"), yes("echo"), yes("acknowledgement"):
+		return outcomeContinue
+	case !yes("addressed_to_agent"):
+		// Mid-utterance an ignore can only leave the agent talking, as in overlapRuled.
+		if one.Unfinished {
+			return outcomeContinue
+		}
+		return outcomeIgnore
+	case yes("adds_to_request"):
+		return outcomeShorten
+	case yes("objects"):
+		return outcomeInterrupt
+	default:
+		return outcomeContinue
 	}
 }
 
@@ -756,9 +895,14 @@ func envOr(name, fallback string) string {
 	return fallback
 }
 
-// targets reads a list of router targets, where all means every configured LLM.
+// targets reads a list of router targets, where all means every configured LLM and none
+// means no model at all, which leaves the Jev arms to run on their own.
 func targets(config routing.Config, listed string) []string {
-	if listed != "all" {
+	switch listed {
+	case "none":
+		return nil
+	case "all":
+	default:
 		return strings.Split(listed, ",")
 	}
 	var every []string
