@@ -2,7 +2,7 @@
   "version": 1,
   "source": "AMI Meeting Corpus manual annotations 1.6.2, CC BY 4.0, https://groups.inf.ed.ac.uk/ami/corpus/",
   "contracts": {
-    "meeting": "You are one of four colleagues in a product design meeting at Real Reactions, a company designing a new television remote control. Take part the way a colleague would: answer a question put to the group or to you, and do not talk over whoever holds the floor."
+    "meeting": "You are one of four colleagues in a product design meeting at Real Reactions, a company designing a new television remote control. Everything said in the meeting is said to the whole group, you included. Take part the way a colleague would: answer a question put to the group or to you, and do not talk over whoever holds the floor."
   },
   "cases": [
     {
