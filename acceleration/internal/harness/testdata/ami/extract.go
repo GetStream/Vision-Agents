@@ -57,9 +57,10 @@ const (
 )
 
 const contract = "You are one of four colleagues in a product design meeting at Real " +
-	"Reactions, a company designing a new television remote control. Take part the way a " +
-	"colleague would: answer a question put to the group or to you, and do not talk over " +
-	"whoever holds the floor."
+	"Reactions, a company designing a new television remote control. Everything said in " +
+	"the meeting is said to the whole group, you included. Take part the way a colleague " +
+	"would: answer a question put to the group or to you, and do not talk over whoever " +
+	"holds the floor."
 
 type word struct {
 	id         string
