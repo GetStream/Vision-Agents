@@ -25,6 +25,8 @@ type stubTTS struct {
 	// performs and prompt are what a voice that acts stage directions reports.
 	performs bool
 	prompt   string
+	// perSentence is a voice that takes each sentence as its own request.
+	perSentence bool
 }
 
 func newStubTTS() *stubTTS {
@@ -50,7 +52,7 @@ func (s *stubTTS) Close() error {
 
 func (s *stubTTS) Provider() string { return "stub" }
 func (s *stubTTS) Model() string    { return "stub-model" }
-func (s *stubTTS) Streaming() bool  { return true }
+func (s *stubTTS) Streaming() bool  { return !s.perSentence }
 func (s *stubTTS) Performs() bool   { return s.performs }
 func (s *stubTTS) Prompt() string   { return s.prompt }
 
@@ -113,7 +115,10 @@ func (s *TTSRouterSuite) newSession() (*Session, *stubTTS) {
 }
 
 func (s *TTSRouterSuite) sessionFor(config routing.ProviderConfig) (*Session, *stubTTS) {
-	provider := newStubTTS()
+	return s.sessionOver(newStubTTS(), config)
+}
+
+func (s *TTSRouterSuite) sessionOver(provider *stubTTS, config routing.ProviderConfig) (*Session, *stubTTS) {
 	recorder := routing.NewRecorder(routing.TTS, nil, nil, slog.Default())
 	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder)
 
@@ -364,6 +369,33 @@ func (s *TTSRouterSuite) TestSessionForwardsProviderEventsUntouched() {
 	chunk, ok := events[1].(tts.AudioChunk)
 	s.Require().True(ok)
 	s.Equal(2400, len(chunk.Audio.Samples), "audio should reach the caller unchanged")
+}
+
+func (s *TTSRouterSuite) TestAVoiceThatTakesOneSentenceAtATimeIsHeardInOrder() {
+	provider := newStubTTS()
+	provider.perSentence = true
+	session, _ := s.sessionOver(provider, routing.ProviderConfig{Provider: "stub", Model: "stub-model"})
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "first", Text: "Take your time.", Final: true}))
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "second", Text: "I'm right here.", Final: true}))
+
+	pcm := audio.PcmData{Samples: make([]int16, 2400), SampleRate: 24_000, Channels: 1}
+	provider.emitter.Send(tts.AudioChunk{SynthesisID: "second", Index: 0, Audio: pcm})
+	provider.emitter.Send(tts.AudioChunk{SynthesisID: "first", Index: 0, Audio: pcm})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "second"})
+	provider.emitter.Send(tts.AudioChunk{SynthesisID: "first", Index: 1, Audio: pcm})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "first"})
+	s.Require().NoError(session.Close())
+
+	var heard []string
+	for _, event := range s.drain(session) {
+		switch typed := event.(type) {
+		case tts.AudioChunk:
+			heard = append(heard, typed.SynthesisID)
+		case tts.SynthesisComplete:
+			heard = append(heard, typed.SynthesisID+" done")
+		}
+	}
+	s.Equal([]string{"first", "first", "first done", "second", "second done"}, heard)
 }
 
 func (s *TTSRouterSuite) TestSessionClosesItsEventChannelWithTheProvider() {

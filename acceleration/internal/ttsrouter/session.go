@@ -43,6 +43,11 @@ func newSession(
 	owner routing.Owner,
 	recorder *routing.Recorder,
 ) *Session {
+	// A voice that takes each sentence as its own request works on them side by side, and
+	// heard as it arrives their audio is spliced together.
+	if !provider.Streaming() {
+		provider = tts.InOrder(provider)
+	}
 	session := &Session{
 		provider: provider,
 		config:   config,
