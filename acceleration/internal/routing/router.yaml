@@ -1018,13 +1018,63 @@ tts:
       # Enterprise customers", and everyone else shares until the Data use toggle is off.
       # History is kept by default with no published window, and Zero Retention Mode -
       # which would cover both halves for speech - is Enterprise-only, sent per request as
-      # enable_logging=false. The three ElevenLabs models below are the same account and
+      # enable_logging=false. The other ElevenLabs models below are the same account and
       # the same answer.
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
       price:
         per_million_chars: 50.0
+
+    # v4 Turbo is v4 tuned for real time, a median ~100 ms to first audio by ElevenLabs'
+    # own count. Like v3 conversational it acts audio tags and is served only on the
+    # text-to-dialogue socket. Artificial Analysis has not ranked it yet. Priced at the
+    # list rate: the 72% launch discount ends on 2026-10-12.
+    - provider: elevenlabs
+      model: eleven_v4_turbo
+      description: "ElevenLabs v4 tuned for real time. Performs audio tags such as [laughs]."
+      languages:
+        [
+          ar,
+          bg,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fil,
+          fr,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          ms,
+          nl,
+          no,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          tr,
+          uk,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+      price:
+        per_million_chars: 40.0
 
     # Multilingual v2 is the quality model: better prosody, slower to first audio.
     - provider: elevenlabs
@@ -1124,6 +1174,56 @@ tts:
         retention: unspecified
       price:
         per_million_chars: 110.0
+
+    # v4 is the quality model that succeeds v3, first on the Artificial Analysis voice
+    # arena at its launch. It is on the same text-to-dialogue socket as v3 conversational.
+    # Priced at the list rate: the 72% launch discount ends on 2026-10-12.
+    - provider: elevenlabs
+      model: eleven_v4
+      description: "ElevenLabs' best voice. Performs audio tags such as [laughs]."
+      benchmark: { elo: 1319 }
+      languages:
+        [
+          ar,
+          bg,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fil,
+          fr,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          ms,
+          nl,
+          no,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          tr,
+          uk,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: high-quality
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+      price:
+        per_million_chars: 80.0
 
     # Gemini 3.8 Flash TTS, second on the Artificial Analysis voice arena behind Sonic 3.6
     # and first on pronunciation robustness. It takes a whole sentence per request and

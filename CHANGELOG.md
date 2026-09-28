@@ -561,6 +561,13 @@ The point of them is that the list is reviewed here instead of in every config t
 today's answer. The cost is that it is an opinion with a date on it rather than something that
 follows from what the models declare, which is why the date is in the config beside them.
 
+### ElevenLabs v4 and v4 Turbo voices
+
+The router now speaks with `elevenlabs/eleven_v4`, first on the Artificial Analysis voice
+arena, and `elevenlabs/eleven_v4_turbo`, its real-time variant, in the high-quality and
+low-latency tiers. Both act audio tags such as `[laughs]` and are served on the
+text-to-dialogue socket like `eleven_v3_conversational`, with the same `ELEVENLABS_API_KEY`.
+
 ### Three more realtime transcription models: Ink 2, Inworld STT 1 and Scribe v2 Realtime
 
 The router now streams to Cartesia's `cartesia/ink-2`, Inworld's `inworld/inworld-stt-1`

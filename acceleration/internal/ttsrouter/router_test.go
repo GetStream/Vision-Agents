@@ -225,7 +225,7 @@ func (s *TTSRouterSuite) TestAVendorNamedForALiveCallGetsTheirStreamingModel() {
 	var built []routing.Spec
 	router := s.newStubbedRouter(&built)
 
-	// ElevenLabs has four models here, and eleven_v3 is the one that returns a file
+	// ElevenLabs has six models here, and eleven_v3 is the one that returns a file
 	// rather than streaming. A socket asking for the vendor by name must not get it.
 	session, err := router.Start(s.ctx, Request{
 		CustomerID: "acme",
