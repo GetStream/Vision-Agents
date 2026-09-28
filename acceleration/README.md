@@ -82,11 +82,18 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_POSTGRES_DSN`   | Postgres DSN. Without it, nothing is recorded              |
 | `ROUTER_REDIS_ADDR`     | Redis `host:port`. Without it, routing ignores health      |
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
+| `ROUTER_PUBLIC_URL`     | Public router origin used as the OAuth redirect base for connectors |
+| `DASHBOARD_BASE_URL`    | Complete dashboard return URL after OAuth consent, including the path and app/config query; its origin is trusted by the popup handoff. Defaults to `http://localhost:3000` |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless a browser app calls this deployment. The same list decides which origins may open a socket. A deployment reached through Stream's proxy needs the proxy to let a preflight through as well, since a browser cannot authenticate one |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
-| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose |
+| `ROUTER_AUTH_KEK`       | Legacy name for key version 1; unseals stored API keys and encrypts connector credentials. Keep outside the database |
+| `ROUTER_AUTH_KEK_VERSION` | Positive integer for the key version used for new encryption; defaults to `1` |
+| `ROUTER_AUTH_KEK_V1`, `ROUTER_AUTH_KEK_V2`, … | Versioned keyring entries. The current version must be configured; retain older versions while stored rows or pending OAuth attempts still use them |
+| `SLACK_MCP_CLIENT_ID` / `SLACK_MCP_CLIENT_SECRET` | Confidential Slack app used for user OAuth. The app must be eligible for Slack MCP and include the selected user scopes |
+| `GITHUB_MCP_CLIENT_ID` | Optional GitHub public OAuth client ID; unset uses the server's dynamic registration |
+| `SALESFORCE_MCP_CLIENT_ID` / `SALESFORCE_MCP_CLIENT_SECRET` | Salesforce External Client App for hosted MCP. Set the client ID; the secret is optional when PKCE is enabled. Register the router callback URL in the app. |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
@@ -150,9 +157,16 @@ A key is two values with different jobs. The id is public — `vak_live_…`, en
 checksum so a truncated paste is rejected before the database is asked, and it is what a
 log line names so an operator can revoke the right one. The secret is `vas_live_…`, shown
 once and then held only sealed: verifying a token means recomputing its signature, which
-means the secret cannot be hashed, so it is encrypted with AES-256-GCM under
-`ROUTER_AUTH_KEK` and a leaked backup yields ciphertext. `kek_version` is there so that key
-can be rotated by re-wrapping rows rather than by reissuing every secret.
+means the secret cannot be hashed, so it is encrypted with AES-256-GCM under the router's
+high-entropy key-encryption key from a deployment secret store and a leaked backup yields
+ciphertext. `kek_version` lets an operator
+rotate that key without reissuing every secret: configure the old value as
+`ROUTER_AUTH_KEK_V1`, set the new value as `ROUTER_AUTH_KEK_V2`, and set
+`ROUTER_AUTH_KEK_VERSION=2`. Existing API keys and connector credentials are rewrapped when
+successfully used; pending OAuth authorization attempts carry their own version and expire
+within ten minutes. Remove an old version only after the database has no remaining rows at
+that version and outstanding authorization attempts have expired. `ROUTER_AUTH_KEK` remains
+a compatibility alias for version 1.
 
 Every failure is one 401 with one body, because a caller that could tell an unknown key
 from a bad signature could use the difference to find out which keys exist. Revoking a key
@@ -1158,11 +1172,20 @@ go run ./cmd/phone list
 go run ./cmd/phone release -number +1719XXXXXXX
 ```
 
-`cmd/router` applies migrations on startup. To run them by hand:
+`cmd/router` applies migrations on startup. When upgrading a database with the old
+per-agent connector schema, startup first applies the reusable-connection schema, transfers
+connected Slack, Calendly, Cal.com, and Salesforce accounts into encrypted app-owned
+connections, and only then removes the old plaintext table and `agent_configs.plugins`
+column. Configure `ROUTER_AUTH_KEK` before upgrading if any supported account is connected;
+startup stops before the removal migration if an account cannot be encrypted and verified.
 
-```bash
-goose -dir migrations postgres "$ROUTER_POSTGRES_DSN" up
-```
+Imported accounts require reauthorization so the new OAuth flow can verify the account and
+provider configuration. Existing config selections become fixed connector bindings with
+zero tool grants; review the discovered tool schemas and grant the required tools before an
+agent can use them. Gong, Linear, and GitHub are in the new catalog but were not in the old
+catalog. Shopify, inactive logins, and providers outside the supported catalog are omitted.
+Do not run the final Goose migration directly: the router must perform the encrypted
+transfer between schema migrations.
 
 ## Test
 
@@ -1336,3 +1359,7 @@ reject callbacks, transcription URLs, audio over 8 MiB and text over 16,000
 characters; the request's cancellation propagates and execution is bounded to
 90 seconds. Existing asynchronous recording behavior is unchanged. In Go use
 `Recorded{Audio: clip, Inline: true}` or `TTS().InlineRecording(...)`.
+
+### Connector engineering handover
+
+See [the connector handover](docs/connector-handover.md) for architecture, authentication, local setup, verified provider flows, and the remaining release work. [The design](docs/connector-design.md) and [Eve research](docs/eve-connectors-research.md) provide the supporting rationale.
