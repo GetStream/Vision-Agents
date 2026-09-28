@@ -20,9 +20,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
-// DefaultDialogueModel is the v3 model meant for conversation. The other one, eleven_v3,
-// is for scripted dialogue between several speakers.
-const DefaultDialogueModel = "eleven_v3_conversational"
+// DefaultDialogueModel is v4 tuned for real time, the dialogue model meant for conversation.
+const DefaultDialogueModel = "eleven_v4_turbo"
 
 // dialoguePath is the endpoint that serves the v3 models. It is a different protocol from
 // the one above, not another model on the same socket.
