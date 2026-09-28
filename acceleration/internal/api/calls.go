@@ -347,6 +347,10 @@ func (s *Server) GetCallTimeline(ctx context.Context, request GetCallTimelineReq
 	if err != nil {
 		return nil, err
 	}
+	models, err := s.store.CallModelCalls(ctx, customerID, call.AgentID, call.CallID, call.StartedAt, call.EndedAt)
+	if err != nil {
+		return nil, err
+	}
 
 	// The transcript is worth having but not worth failing over: the timings are the
 	// part of this view that only this service holds.
@@ -359,7 +363,7 @@ func (s *Server) GetCallTimeline(ctx context.Context, request GetCallTimelineReq
 		}
 	}
 
-	return GetCallTimeline200JSONResponse(timelineOf(turns, said)), nil
+	return GetCallTimeline200JSONResponse(timelineOf(turns, said, models)), nil
 }
 
 // timelineOf pairs each exchange with the lines said during it.
@@ -368,12 +372,35 @@ func (s *Server) GetCallTimeline(ctx context.Context, request GetCallTimelineReq
 // goes, so a line belongs to the last turn that had started when it was stored. Within a
 // turn the first line is what the caller said and the last is what the agent answered,
 // which is what a two-line exchange always is.
-func timelineOf(turns []store.Turn, said []chatlog.Spoken) []TimelineEntry {
+func timelineOf(turns []store.Turn, said []chatlog.Spoken, models []store.Request) []TimelineEntry {
+	modelCalls := make(map[string][]ModelCallTiming)
+	for _, request := range models {
+		if request.TurnID == "" {
+			continue
+		}
+		modelCalls[request.TurnID] = append(modelCalls[request.TurnID], ModelCallTiming{
+			OperationId:  optional(request.OperationID),
+			Purpose:      optional(request.Purpose),
+			StartedAt:    request.StartedAt,
+			Provider:     request.Provider,
+			Model:        request.Model,
+			TtftMs:       request.LatencyMs,
+			DurationMs:   request.DurationMs,
+			InputTokens:  &request.InputTokens,
+			OutputTokens: &request.OutputTokens,
+			Success:      request.Success,
+		})
+	}
 	timeline := make([]TimelineEntry, 0, len(turns))
 	for index, turn := range turns {
 		entry := TimelineEntry{
 			TurnId:             turn.TurnID,
 			StartedAt:          turn.StartedAt,
+			CadenceMs:          turn.CadenceMs,
+			DecisionMs:         turn.DecisionMs,
+			ModelToFirstTextMs: turn.ModelToFirstTextMs,
+			TextToTtsMs:        turn.TextToTTSMs,
+			TtsToAudioMs:       turn.TTSToAudioMs,
 			RoundtripMs:        turn.RoundtripMs,
 			SttLatencyMs:       turn.STTLatencyMs,
 			LlmTtftMs:          turn.LLMTTFTMs,
@@ -381,6 +408,9 @@ func timelineOf(turns []store.Turn, said []chatlog.Spoken) []TimelineEntry {
 			SpeechEndToAudioMs: turn.SpeechEndToAudioMs,
 			AudioOutMs:         turn.AudioOutMs,
 			Interrupted:        &turn.Interrupted,
+		}
+		if calls := modelCalls[turn.TurnID]; len(calls) > 0 {
+			entry.ModelCalls = &calls
 		}
 
 		var until time.Time

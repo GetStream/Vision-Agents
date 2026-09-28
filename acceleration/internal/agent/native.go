@@ -350,7 +350,7 @@ func (a *Agent) replyStarted(started sts.ResponseStarted) {
 	a.mu.Unlock()
 
 	if !waiting.IsZero() {
-		a.turns.begin(started.ResponseID, participant, waiting, 0)
+		a.turns.begin(started.ResponseID, participant, waiting, waiting, 0)
 	}
 	a.emitter.Send(Responding{TurnID: started.ResponseID, Participant: participant, Prompt: prompt})
 }

@@ -55,8 +55,9 @@ type manager struct {
 	// overwrites is what the caller asked to change about how the model answers, written
 	// over delegated work as well as over the conversation itself: somebody who asked for
 	// more thinking meant the thinking, which is what runs here.
-	overwrites options.LLM
-	logger     *slog.Logger
+	overwrites  options.LLM
+	onModelCall func(llm.CallTiming)
+	logger      *slog.Logger
 
 	results *emit.Emitter[Result]
 
@@ -244,7 +245,9 @@ func (m *manager) ask(running *task, messages []llm.Message) (*llm.Stream, error
 	overwrites := m.overwrites
 	m.mu.Unlock()
 	return model.Create(running.ctx, llm.ResponseParams{
-		ID: running.id, Instructions: running.instructions, Input: messages, Tools: m.tools(),
+		ID: running.id, Purpose: "subagent", TurnID: running.turnID,
+		OnTiming:     m.onModelCall,
+		Instructions: running.instructions, Input: messages, Tools: m.tools(),
 	}.Overwrite(overwrites))
 }
 

@@ -492,6 +492,13 @@ func New(options Options) (*Agent, error) {
 
 // finishTurn reports a measured exchange and records it.
 func (a *Agent) finishTurn(turn Turn) {
+	a.logger.Info("voice turn timing", "turn", turn.TurnID,
+		"stt_ms", turn.STTLatencyMs, "cadence_ms", turn.CadenceMs,
+		"decision_ms", turn.DecisionMs, "model_to_first_text_ms", turn.ModelToFirstTextMs,
+		"text_to_tts_ms", turn.TextToTTSMs, "tts_to_audio_ms", turn.TTSToAudioMs,
+		"transcript_to_audio_ms", turn.RoundtripMs,
+		"speech_end_to_audio_ms", turn.SpeechEndToAudioMs,
+		"interrupted", turn.Interrupted)
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)
@@ -1280,6 +1287,7 @@ func (a *Agent) abandon(turnID string) {
 // sure it was of the words.
 type heard struct {
 	at           time.Time
+	revisedAt    time.Time
 	sttLatencyMs float64
 	confidence   float64
 }
@@ -1317,6 +1325,7 @@ func (a *Agent) respond(participant stt.Participant, text string, listened heard
 func (a *Agent) respondCandidate(ready candidate, note string) error {
 	return a.respondTurn(ready.ID, ready.Participant, ready.Text, heard{
 		at:           ready.ReadyAt,
+		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
 		confidence:   ready.Confidence,
 	}, note, nil)
@@ -1370,7 +1379,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	instructions := a.instructions()
 	a.mu.Unlock()
 
-	a.turns.begin(turnID, participant, time.Now(), 0)
+	a.turns.begin(turnID, participant, time.Now(), time.Time{}, 0)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant})
 
 	return a.generate(harness.Turn{
@@ -1402,7 +1411,7 @@ func (a *Agent) respondTurn(
 	instructions := a.instructions()
 	a.mu.Unlock()
 
-	a.turns.begin(turnID, participant, listened.at, listened.sttLatencyMs)
+	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 
 	return a.generate(harness.Turn{
@@ -1561,6 +1570,7 @@ func (a *Agent) startReply(
 		screening = nil
 	}
 
+	a.turns.modelStarted(turn.ID, time.Now())
 	stream, err := current.Respond(ctx, turn)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -1749,6 +1759,7 @@ func (a *Agent) say(turnID, delta string) {
 	if speech == "" {
 		return
 	}
+	a.turns.firstText(turnID, time.Now())
 	a.replying = turnID
 
 	// A stage direction is addressed to the voice, not to the caller: it is taken out of
@@ -2231,6 +2242,7 @@ func (a *Agent) speakSentence(turnID, text string) error {
 	if voice == nil {
 		return errors.New("agent: not joined")
 	}
+	a.turns.ttsStarted(turnID, time.Now())
 
 	if !voice.Streaming() {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
@@ -2252,6 +2264,7 @@ func (a *Agent) speakWhole(turnID, text string) error {
 	if voice == nil {
 		return errors.New("agent: not joined")
 	}
+	a.turns.ttsStarted(turnID, time.Now())
 	a.begin()
 	return voice.Synthesize(tts.Request{ID: turnID, Text: text, Final: true})
 }

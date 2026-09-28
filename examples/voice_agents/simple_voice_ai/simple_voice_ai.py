@@ -1,10 +1,13 @@
 import logging
+import os
+import sys
 
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner
+from vision_agents.plugins import stream
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 load_dotenv()
 
@@ -22,13 +25,15 @@ Needs a router: see acceleration/README.md, then point STREAM_ACCELERATION_URL a
 
 
 async def create_agent(**kwargs) -> Agent:
+    name = "simple_voice_ai"
     return Agent(
-        config="simple_voice_ai",
+        config=name,
+        llm=stream.Accelerated(
+            config=name, log_latency=os.getenv("VOICE_LATENCY_DAG") == "1"
+        ),
         # What this call's spend is filed under, so a bill can be read by environment,
         # customer or feature rather than as one number.
         cost_tracking={"env": "production"},
-        # Which memories the agent may recall: whoever it is talking to, and nobody else.
-        memory_filter={"user_id": "123"},
     )
 
 

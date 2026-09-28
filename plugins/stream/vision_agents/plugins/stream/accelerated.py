@@ -22,6 +22,7 @@ from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from ._backend import Backend
+from ._latency import render_turn
 from ._generated.api.default import close_session, create_session, list_agent_configs
 from ._generated.models import (
     CreateSessionRequest,
@@ -84,6 +85,7 @@ class Accelerated(OmniLLM):
         keyterms: Optional[list[str]] = None,
         video_source: str = "",
         video_max_frames: int = 0,
+        log_latency: bool = False,
     ):
         """Configure a pipeline to run remotely.
 
@@ -114,6 +116,8 @@ class Accelerated(OmniLLM):
                 member IDs. Empty leaves whatever the stored config named.
             video_source: Camera or processor source for delegated capture.
             video_max_frames: Recent frames per task (1–8); zero uses configuration.
+            log_latency: Print per-model timing and a turn DAG to agent stdout.
+                Disabled by default; metrics are still recorded by the router.
         """
         super().__init__()
         self.provider_name = "stream"
@@ -131,6 +135,7 @@ class Accelerated(OmniLLM):
         self.keyterms = keyterms or []
         self.video_source = video_source
         self.video_max_frames = video_max_frames
+        self.log_latency = log_latency
 
         self.backend = Backend(url=url, customer_id=customer_id)
         # A knowledge base belongs to the stored config that reads it, so an agent
@@ -143,6 +148,7 @@ class Accelerated(OmniLLM):
         self._running: set[asyncio.Task] = set()
         self._tool_tasks: dict[str, asyncio.Task] = {}
         self._events: asyncio.Queue[Optional[RemoteEvent]] = asyncio.Queue()
+        self._pending_model_calls: dict[str, list[dict[str, Any]]] = {}
 
     @property
     def uses_video_observations(self) -> bool:
@@ -432,6 +438,32 @@ class Accelerated(OmniLLM):
         """Turn one session frame into an event, or into a tool call to run."""
         kind = frame.get("type", "")
 
+        if kind == "model_call":
+            if not self.log_latency:
+                return
+            turn_id = str(frame.get("turn_id", ""))
+            if turn_id:
+                if (
+                    turn_id not in self._pending_model_calls
+                    and len(self._pending_model_calls) >= 32
+                ):
+                    self._pending_model_calls.pop(next(iter(self._pending_model_calls)))
+                self._pending_model_calls.setdefault(turn_id, []).append(frame)
+            logger.info(
+                "model call timing call=%s turn=%s operation=%s purpose=%s provider=%s model=%s "
+                "ttft_ms=%s duration_ms=%s success=%s",
+                self.session.call_id if self.session else "",
+                frame.get("turn_id", ""),
+                frame.get("operation_id", ""),
+                frame.get("purpose", ""),
+                frame.get("provider", ""),
+                frame.get("model", ""),
+                frame.get("ttft_ms", 0),
+                frame.get("duration_ms", 0),
+                frame.get("success", False),
+            )
+            return
+
         if kind == "tool_cancel":
             running = self._tool_tasks.get(str(frame.get("id", "")))
             if running is not None:
@@ -457,6 +489,13 @@ class Accelerated(OmniLLM):
 
         event = _event_of(frame)
         if event is not None:
+            if kind == "turn" and self.log_latency:
+                calls = self._pending_model_calls.pop(str(frame.get("turn_id", "")), [])
+                logger.info(
+                    "call=%s\n%s",
+                    self.session.call_id if self.session else "",
+                    render_turn(frame, calls),
+                )
             await self._events.put(event)
 
     async def _run_tool(self, frame: dict[str, Any]) -> None:

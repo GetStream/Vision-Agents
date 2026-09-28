@@ -2494,6 +2494,27 @@ type MessageContent1 = []ContentPart
 // Example: tts
 type Modality string
 
+// ModelCallTiming defines model for ModelCallTiming.
+type ModelCallTiming struct {
+	// DurationMs Request to completed response or failed create.
+	DurationMs  *float64 `json:"duration_ms,omitempty"`
+	InputTokens *int64   `json:"input_tokens,omitempty"`
+	Model       string   `json:"model"`
+
+	// OperationId Response ID for this operation; retries can share an ID.
+	OperationId  *string `json:"operation_id,omitempty"`
+	OutputTokens *int64  `json:"output_tokens,omitempty"`
+	Provider     string  `json:"provider"`
+
+	// Purpose reply, flow or subagent.
+	Purpose   *string   `json:"purpose,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+	Success   bool      `json:"success"`
+
+	// TtftMs Request to first token.
+	TtftMs *float64 `json:"ttft_ms,omitempty"`
+}
+
 // ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
 // It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
 type ModelOverwrites struct {
@@ -3698,6 +3719,12 @@ type TimelineEntry struct {
 	// AudioOutMs How much the agent spoke.
 	AudioOutMs *float64 `json:"audio_out_ms,omitempty"`
 
+	// CadenceMs Last transcript revision to a stable turn ready for the flow controller.
+	CadenceMs *float64 `json:"cadence_ms,omitempty"`
+
+	// DecisionMs Stable turn to the main model request, including flow and queueing.
+	DecisionMs *float64 `json:"decision_ms,omitempty"`
+
 	// Heard What the caller said, when it can be matched to this exchange.
 	Heard *string `json:"heard,omitempty"`
 
@@ -3707,18 +3734,30 @@ type TimelineEntry struct {
 	// LlmTtftMs The wait between asking the model and its first token.
 	LlmTtftMs *float64 `json:"llm_ttft_ms,omitempty"`
 
-	// RoundtripMs How long the caller waited between finishing and being answered.
+	// ModelCalls Individual model requests for this turn, including flow and delegated work.
+	ModelCalls *[]ModelCallTiming `json:"model_calls,omitempty"`
+
+	// ModelToFirstTextMs Main model request to the first text delta admitted to the voice pipeline.
+	ModelToFirstTextMs *float64 `json:"model_to_first_text_ms,omitempty"`
+
+	// RoundtripMs Last transcript revision to first audio published; includes cadence settling.
 	RoundtripMs *float64 `json:"roundtrip_ms,omitempty"`
 
 	// Said What the agent answered.
 	Said *string `json:"said,omitempty"`
 
-	// SpeechEndToAudioMs Voice in to voice out, which is the whole of what the caller felt.
+	// SpeechEndToAudioMs Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
 	SpeechEndToAudioMs *float64  `json:"speech_end_to_audio_ms,omitempty"`
 	StartedAt          time.Time `json:"started_at"`
 
 	// SttLatencyMs The provider's decode time for the transcript that settled the turn.
 	SttLatencyMs *float64 `json:"stt_latency_ms,omitempty"`
+
+	// TextToTtsMs First text delta to the first TTS request.
+	TextToTtsMs *float64 `json:"text_to_tts_ms,omitempty"`
+
+	// TtsToAudioMs First TTS request to the first audio chunk published to the edge.
+	TtsToAudioMs *float64 `json:"tts_to_audio_ms,omitempty"`
 
 	// TtsTtfbMs The wait between sending the first sentence and the first audio.
 	TtsTtfbMs *float64 `json:"tts_ttfb_ms,omitempty"`

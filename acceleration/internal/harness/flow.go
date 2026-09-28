@@ -61,9 +61,10 @@ type FlowTurn struct {
 }
 
 type flow struct {
-	model   *llmrouter.Session
-	emitter *Emitter
-	logger  *slog.Logger
+	model       *llmrouter.Session
+	emitter     *Emitter
+	logger      *slog.Logger
+	onModelCall func(llm.CallTiming)
 
 	mu sync.Mutex
 	// pending holds each candidate still with the controller: when it was asked about, so
@@ -197,6 +198,9 @@ func (f *flow) run(asked *candidate) {
 	f.mu.Unlock()
 	stream, err := model.Create(asked.ctx, llm.ResponseParams{
 		ID:           turn.ID,
+		Purpose:      "flow",
+		TurnID:       turn.ID,
+		OnTiming:     f.onModelCall,
 		Instructions: flowInstructions + "\n\nThe agent has been told:\n" + turn.Instructions,
 		Input:        []llm.Message{{Role: llm.User, Content: flowQuestion(turn)}},
 		// A decision is one small JSON object. Gemini 3 still thinks first, and 32 tokens

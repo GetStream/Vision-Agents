@@ -33,10 +33,13 @@ type turnTracker struct {
 
 // openTurn is a turn that has not finished yet.
 type openTurn struct {
-	participant stt.Participant
-	// heardAt is when the settled transcript arrived, which is when the wait the
-	// participant feels begins.
-	heardAt      time.Time
+	participant  stt.Participant
+	transcriptAt time.Time
+	readyAt      time.Time
+	modelAt      time.Time
+	firstTextAt  time.Time
+	ttsAt        time.Time
+	firstAudioAt time.Time
 	sttLatencyMs float64
 	llmTTFTMs    float64
 	ttsTTFBMs    float64
@@ -61,14 +64,42 @@ func newTurnTracker(finished func(Turn)) *turnTracker {
 
 // begin opens a turn. The speech-to-text latency is the provider's own decode time for
 // the transcript that settled it.
-func (t *turnTracker) begin(turnID string, participant stt.Participant, heardAt time.Time, sttLatencyMs float64) {
+func (t *turnTracker) begin(turnID string, participant stt.Participant, readyAt, transcriptAt time.Time, sttLatencyMs float64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if transcriptAt.IsZero() {
+		transcriptAt = readyAt
+	}
 
 	t.open[turnID] = &openTurn{
 		participant:  participant,
-		heardAt:      heardAt,
+		transcriptAt: transcriptAt,
+		readyAt:      readyAt,
 		sttLatencyMs: sttLatencyMs,
+	}
+}
+
+func (t *turnTracker) modelStarted(turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil && current.modelAt.IsZero() {
+		current.modelAt = at
+	}
+}
+
+func (t *turnTracker) firstText(turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil && current.firstTextAt.IsZero() {
+		current.firstTextAt = at
+	}
+}
+
+func (t *turnTracker) ttsStarted(turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil && current.ttsAt.IsZero() {
+		current.ttsAt = at
 	}
 }
 
@@ -79,10 +110,11 @@ func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 	defer t.mu.Unlock()
 
 	current, ok := t.open[turnID]
-	if !ok || current.roundtripMs > 0 {
+	if !ok || !current.firstAudioAt.IsZero() {
 		return
 	}
-	current.roundtripMs = msBetween(current.heardAt, at)
+	current.firstAudioAt = at
+	current.roundtripMs = msBetween(current.transcriptAt, at)
 }
 
 // dropped records speech that was synthesised but never reached the participant. A turn
@@ -174,13 +206,18 @@ func (t *turnTracker) report(finished *Turn) {
 
 func measure(turnID string, current *openTurn) Turn {
 	return Turn{
-		TurnID:       turnID,
-		Participant:  current.participant,
-		StartedAt:    current.heardAt,
-		STTLatencyMs: current.sttLatencyMs,
-		LLMTTFTMs:    current.llmTTFTMs,
-		TTSTTFBMs:    current.ttsTTFBMs,
-		RoundtripMs:  current.roundtripMs,
+		TurnID:             turnID,
+		Participant:        current.participant,
+		StartedAt:          current.transcriptAt,
+		STTLatencyMs:       current.sttLatencyMs,
+		CadenceMs:          leg(current.transcriptAt, current.readyAt),
+		DecisionMs:         leg(current.readyAt, current.modelAt),
+		ModelToFirstTextMs: leg(current.modelAt, current.firstTextAt),
+		TextToTTSMs:        leg(current.firstTextAt, current.ttsAt),
+		TTSToAudioMs:       leg(current.ttsAt, current.firstAudioAt),
+		LLMTTFTMs:          current.llmTTFTMs,
+		TTSTTFBMs:          current.ttsTTFBMs,
+		RoundtripMs:        current.roundtripMs,
 		// Voice in to voice out is the wait the participant felt plus the time the
 		// transcriber spent deciding the turn was over, since that ran first.
 		SpeechEndToAudioMs: speechEndToAudio(current),
@@ -199,6 +236,13 @@ func speechEndToAudio(current *openTurn) float64 {
 
 func msBetween(from, to time.Time) float64 {
 	return float64(to.Sub(from).Microseconds()) / 1000
+}
+
+func leg(from, to time.Time) float64 {
+	if from.IsZero() || to.IsZero() || to.Before(from) {
+		return 0
+	}
+	return msBetween(from, to)
 }
 
 // turnRecorder writes finished turns to Postgres off the conversation's path. A
@@ -242,6 +286,11 @@ func (r *turnRecorder) Record(turn Turn) {
 		TurnID:             turn.TurnID,
 		Tags:               r.owner.Tags,
 		StartedAt:          turn.StartedAt.UTC(),
+		CadenceMs:          measured(turn.CadenceMs),
+		DecisionMs:         measured(turn.DecisionMs),
+		ModelToFirstTextMs: measured(turn.ModelToFirstTextMs),
+		TextToTTSMs:        measured(turn.TextToTTSMs),
+		TTSToAudioMs:       measured(turn.TTSToAudioMs),
 		STTLatencyMs:       measured(turn.STTLatencyMs),
 		LLMTTFTMs:          measured(turn.LLMTTFTMs),
 		TTSTTFBMs:          measured(turn.TTSTTFBMs),

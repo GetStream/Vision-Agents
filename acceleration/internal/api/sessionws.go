@@ -409,12 +409,26 @@ func frameOf(event session.Event) (frame, bool) {
 			"participant":            participantOf(typed.Participant),
 			"started_at":             typed.StartedAt,
 			"stt_latency_ms":         typed.STTLatencyMs,
+			"cadence_ms":             typed.CadenceMs,
+			"decision_ms":            typed.DecisionMs,
+			"model_to_first_text_ms": typed.ModelToFirstTextMs,
+			"text_to_tts_ms":         typed.TextToTTSMs,
+			"tts_to_audio_ms":        typed.TTSToAudioMs,
 			"llm_ttft_ms":            typed.LLMTTFTMs,
 			"tts_ttfb_ms":            typed.TTSTTFBMs,
 			"roundtrip_ms":           typed.RoundtripMs,
 			"speech_end_to_audio_ms": typed.SpeechEndToAudioMs,
 			"audio_out_ms":           typed.AudioOutMs,
 			"interrupted":            typed.Interrupted,
+		}, true
+
+	case agent.ModelCall:
+		return frame{
+			"type": "model_call", "operation_id": typed.OperationID,
+			"purpose": typed.Purpose, "turn_id": typed.TurnID,
+			"provider": typed.Provider, "model": typed.Model,
+			"ttft_ms": typed.TTFTMs, "duration_ms": typed.DurationMs,
+			"success": typed.Success,
 		}, true
 
 	case agent.Delegated:
