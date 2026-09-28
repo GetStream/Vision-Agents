@@ -2,10 +2,12 @@ package harness
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,6 +18,10 @@ import (
 // answer beside it. A labeller of training data is measured this way before its labels are
 // trusted.
 const teacherDirEnvVar = "FLOW_TEACHER_DIR"
+
+// teacherSetsEnvVar lists the sets to ask about, comma separated: written, ami, or the path of a
+// set file, such as generated training cases to have a second labeller vote on.
+const teacherSetsEnvVar = "FLOW_TEACHER_SETS"
 
 // teacherSamplesEnvVar is how often each case is asked, three when unset. Several samples
 // show whether the labeller agrees with itself, which is what a label filter keys on.
@@ -35,12 +41,18 @@ func TestFlowTeacher(t *testing.T) {
 		samples, err = strconv.Atoi(raw)
 		require.NoError(t, err)
 	}
-	for _, name := range []string{writtenSet, amiSet} {
-		set, err := loadFlowSet(name)
+	names := os.Getenv(teacherSetsEnvVar)
+	if names == "" {
+		names = writtenSet + "," + amiSet
+	}
+	for _, name := range strings.Split(names, ",") {
+		set, err := loadNamedSet(name)
 		require.NoError(t, err)
+		name = strings.TrimSuffix(filepath.Base(name), ".json")
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, name), 0o755))
 		var asked, right, unreadable, cases, majorityRight, unanimous, unanimousRight int
 		missed := map[flowState][2]int{}
+		verdicts := map[string]flowOutcome{} // each answered case's majority outcome
 		for _, one := range set.Cases {
 			turn := one.turn(one.ID, set.Contracts)
 			prompt := flowInstructions + "\n\nThe agent has been told:\n" + turn.Instructions +
@@ -82,6 +94,7 @@ func TestFlowTeacher(t *testing.T) {
 					top = outcome
 				}
 			}
+			verdicts[one.ID] = top
 			if top == one.Expect {
 				majorityRight++
 			}
@@ -92,6 +105,9 @@ func TestFlowTeacher(t *testing.T) {
 				}
 			}
 		}
+		encoded, err := json.MarshalIndent(verdicts, "", " ")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name, "verdicts.json"), encoded, 0o644))
 		if asked == 0 {
 			t.Logf("%s: %d prompts written, no answers yet", name, len(set.Cases)*samples)
 			continue

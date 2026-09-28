@@ -463,22 +463,6 @@ func TestFlowTrainExport(t *testing.T) {
 	}
 }
 
-// loadNamedSet reads one of the embedded sets by name, or a set file by its path.
-func loadNamedSet(name string) (flowSet, error) {
-	if _, known := flowSetFiles[name]; known {
-		return loadFlowSet(name)
-	}
-	raw, err := os.ReadFile(name)
-	if err != nil {
-		return flowSet{}, err
-	}
-	var set flowSet
-	if err := json.Unmarshal(raw, &set); err != nil {
-		return flowSet{}, fmt.Errorf("harness: decode %s: %w", name, err)
-	}
-	return set, set.validate()
-}
-
 // localQuestion is the production policy for the situation the case is in, in the production
 // prompt's own words, less the output format the letters replace.
 func localQuestion(one flowCase) string {
