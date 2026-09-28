@@ -1623,13 +1623,13 @@ tts:
 
     # Quality: the live voices that win the Artificial Analysis speech arena, in the order
     # they placed - ElevenLabs v4, Sonic 3.6, Inworld TTS-2, Inworld TTS-2 Flash, Breeze
-    # TTS 2, ElevenLabs v3 Conversational. Like the STT groups this names its members, so it
-    # is only as current as the leaderboard it was read from. No tier requirement: the arena
-    # ranks how a voice sounds, and two of the six are low-latency anyway. Last reviewed
-    # 2026-09.
+    # TTS 2 - with ElevenLabs v4 Turbo in the place v3 Conversational held. Like the STT
+    # groups this names its members, so it is only as current as the leaderboard it was read
+    # from. No tier requirement: the arena ranks how a voice sounds, and two of the six are
+    # low-latency anyway. Last reviewed 2026-09.
     tts-quality:
       title: Quality
-      description: "The live voices listeners rate best in the Artificial Analysis arena. Prefers ElevenLabs v4, then Cartesia Sonic 3.6, Inworld, Breeze and ElevenLabs v3."
+      description: "The live voices listeners rate best in the Artificial Analysis arena. Prefers ElevenLabs v4, then Cartesia Sonic 3.6, Inworld, Breeze and ElevenLabs v4 Turbo."
       require_realtime: true
       prefer: elevenlabs/eleven_v4
       only:
@@ -1638,7 +1638,7 @@ tts:
         - inworld/inworld-tts-2
         - inworld/inworld-tts-2-flash
         - breeze/breeze-tts-2
-        - elevenlabs/eleven_v3_conversational
+        - elevenlabs/eleven_v4_turbo
 
     # The default voice: ElevenLabs v4 Turbo, pinned so a session that names no voice
     # speaks with the one this deployment chose. Health orders the rest of the tier behind
