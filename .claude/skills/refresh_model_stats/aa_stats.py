@@ -150,7 +150,11 @@ def llm_hosts(slug: str) -> None:
     seen = set()
     for value in flight(f"models/{slug}/providers"):
         for d in dicts(value):
-            host, model, performance = d.get("host"), d.get("model"), d.get("performance")
+            host, model, performance = (
+                d.get("host"),
+                d.get("model"),
+                d.get("performance"),
+            )
             if not (
                 isinstance(host, dict)
                 and isinstance(model, dict)

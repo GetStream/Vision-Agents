@@ -88,7 +88,9 @@ def audit(spec: dict) -> list[str]:
         if operation is None:
             complaints.append(f"{name} is not in the spec")
         elif not operation.get("x-client-accessible"):
-            complaints.append(f"{name} is server-side only and cannot be in a client SDK")
+            complaints.append(
+                f"{name} is server-side only and cannot be in a client SDK"
+            )
     return complaints
 
 
@@ -115,7 +117,9 @@ def undefault(node: object) -> object:
     override kept its ``True``.
     """
     if isinstance(node, dict):
-        return {key: undefault(value) for key, value in node.items() if key != "default"}
+        return {
+            key: undefault(value) for key, value in node.items() if key != "default"
+        }
     if isinstance(node, list):
         return [undefault(value) for value in node]
     return node
@@ -128,7 +132,8 @@ def prune(spec: dict) -> dict:
         kept = {
             method: operation
             for method, operation in methods.items()
-            if isinstance(operation, dict) and operation.get("operationId") in OPERATIONS
+            if isinstance(operation, dict)
+            and operation.get("operationId") in OPERATIONS
         }
         if kept:
             paths[path] = kept
@@ -149,7 +154,9 @@ def prune(spec: dict) -> dict:
         "info": spec["info"],
         "paths": paths,
         "components": {
-            section: {name: undefault(components[section][name]) for name in sorted(names)}
+            section: {
+                name: undefault(components[section][name]) for name in sorted(names)
+            }
             for section, names in keep.items()
         },
     }
@@ -164,7 +171,9 @@ def main(argv: list[str]) -> int:
         return 1
 
     if "--check" in argv:
-        print(f"{len(OPERATIONS)} client operations and a socket, none server-side only")
+        print(
+            f"{len(OPERATIONS)} client operations and a socket, none server-side only"
+        )
         return 0
 
     work = KOTLIN / ".codegen"
@@ -175,18 +184,29 @@ def main(argv: list[str]) -> int:
     options = ",".join(f"{key}={value}" for key, value in GENERATOR_OPTIONS.items())
     result = subprocess.run(
         [
-            "docker", "run", "--rm",
-            "-v", f"{work}:/work",
-            IMAGE, "generate",
-            "-i", "/work/spec.yaml",
-            "-g", "kotlin",
-            "-o", "/work/out",
-            "--global-property", "models,modelDocs=false,modelTests=false",
-            "--additional-properties", options,
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{work}:/work",
+            IMAGE,
+            "generate",
+            "-i",
+            "/work/spec.yaml",
+            "-g",
+            "kotlin",
+            "-o",
+            "/work/out",
+            "--global-property",
+            "models,modelDocs=false,modelTests=false",
+            "--additional-properties",
+            options,
             # An open-ended object stays JSON rather than becoming Map<String, Any>, which
             # kotlinx.serialization cannot read.
-            "--type-mappings", "AnyType=JsonElement",
-            "--import-mappings", "JsonElement=kotlinx.serialization.json.JsonElement",
+            "--type-mappings",
+            "AnyType=JsonElement",
+            "--import-mappings",
+            "JsonElement=kotlinx.serialization.json.JsonElement",
         ]
     )
     if result.returncode != 0:
