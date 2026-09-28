@@ -12,6 +12,8 @@ from pathlib import Path
 import yaml
 from vision_agents.core.harness import Skill
 
+from ._generated.models import AgentConnectorBinding
+
 AGENT_FILE = "agent.yaml"
 AGENT_STAMP = ".agent_sync"
 INSTRUCTIONS_FILE = "instructions.md"
@@ -73,7 +75,7 @@ class Settings:
     search: str = ""
     greeting: str = ""
     sandbox: str = ""
-    plugins: list[str] = field(default_factory=list)
+    connectors: list[AgentConnectorBinding] | None = None
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -285,8 +287,8 @@ def _declare(path: Path) -> Settings:
             settings.greeting = _word(value)
         elif field_name == "sandbox":
             settings.sandbox = _word(value)
-        elif field_name == "plugins":
-            settings.plugins = _terms(path, field_name, value)
+        elif field_name == "connectors":
+            settings.connectors = _connectors(path, value)
         elif field_name == "keyterms":
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":
@@ -314,6 +316,16 @@ def _terms(path: Path, field_name: str, value: object) -> list[str]:
     if not isinstance(value, list):
         raise ValueError(f"{path} should give {field_name} as a list")
     return [_word(item) for item in value if _word(item)]
+
+
+def _connectors(path: Path, value: object) -> list[AgentConnectorBinding]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(
+        not isinstance(binding, dict) for binding in value
+    ):
+        raise ValueError(f"{path} should give connectors as a list of mappings")
+    return [AgentConnectorBinding.from_dict(binding) for binding in value]
 
 
 def _tags(path: Path, value: object) -> dict[str, str]:

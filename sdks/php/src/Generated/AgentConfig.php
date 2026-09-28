@@ -30,8 +30,8 @@ final readonly class AgentConfig
         public ?string $guardrail = null,
         /** @var list<string>|null */
         public ?array $skills = null,
-        /** @var list<string>|null */
-        public ?array $plugins = null,
+        /** @var list<array<string, mixed>>|null */
+        public ?array $connectors = null,
         /** @var list<string>|null */
         public ?array $keyterms = null,
         public ?string $knowledgeNamespace = null,
@@ -66,7 +66,7 @@ final readonly class AgentConfig
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             skills: array_key_exists('skills', $data) && $data['skills'] !== null ? Json::strings($data, 'skills') : null,
-            plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::strings($data, 'plugins') : null,
+            connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? Json::objects($data, 'connectors') : null,
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
@@ -124,8 +124,8 @@ final readonly class AgentConfig
         if ($this->skills !== null) {
             $out['skills'] = $this->skills;
         }
-        if ($this->plugins !== null) {
-            $out['plugins'] = $this->plugins;
+        if ($this->connectors !== null) {
+            $out['connectors'] = $this->connectors;
         }
         if ($this->keyterms !== null) {
             $out['keyterms'] = $this->keyterms;

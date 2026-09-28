@@ -320,7 +320,7 @@ const SCALARS = new Set([
   "greeting",
   "sandbox",
 ]);
-const LISTS = new Set(["plugins", "keyterms"]);
+const LISTS = new Set(["keyterms"]);
 
 /**
  * Reads agent.yaml: what the agent is called, and what it runs on.
@@ -336,10 +336,9 @@ const LISTS = new Set(["plugins", "keyterms"]);
  *   max_frames: 2
  * ```
  *
- * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for two lists
- * and two small mappings, and a YAML library would land in every browser bundle. A key
- * nobody knows is refused rather than dropped, since a misspelled `llm` that goes quietly is
- * a config running on a model the file does not name.
+ * Parsed by hand so a YAML library does not land in every browser bundle. A key nobody knows
+ * is refused rather than dropped, since a misspelled `llm` that goes quietly is a config
+ * running on a model the file does not name.
  */
 export function parseDeclaration(content: string, where = AGENT_FILE): Declaration {
   const declared: Declaration = {};
@@ -362,8 +361,24 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
 
     // What is indented under a key with nothing after it is its list or its mapping.
     const nested: string[] = [];
-    while (index + 1 < lines.length && /^\s+\S/.test(lines[index + 1] as string)) {
-      nested.push((lines[++index] as string).trim());
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1] as string;
+      if (!next.trim()) {
+        let nextNested = index + 2;
+        while (nextNested < lines.length && !(lines[nextNested] as string).trim()) {
+          nextNested++;
+        }
+        if (nextNested < lines.length && /^\s+\S/.test(lines[nextNested] as string)) {
+          index = nextNested - 1;
+          continue;
+        }
+        break;
+      }
+      if (/^\s+\S/.test(next)) {
+        nested.push(lines[++index] as string);
+        continue;
+      }
+      break;
     }
 
     if (SCALARS.has(key)) {
@@ -375,15 +390,19 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
         assign(declared, key, value);
       }
     } else if (LISTS.has(key)) {
-      const items = inline ? flowList(inline, key, where) : nested.map((item) => listItem(item, key, where));
+      const items = inline
+        ? flowList(inline, key, where)
+        : nested.map((item) => listItem(item.trim(), key, where));
       const named = items.filter((item) => item);
       if (named.length > 0) {
-        declared[key as "plugins" | "keyterms"] = named;
+        declared[key as "keyterms"] = named;
       }
+    } else if (key === "connectors") {
+      declared.connectors = parseConnectorBindings(nested, inline, where);
     } else if (key === "tags") {
-      declared.tags = mapping(nested, inline, key, where);
+      declared.tags = mapping(nested.map((item) => item.trim()), inline, key, where);
     } else if (key === "video") {
-      declared.video = video(mapping(nested, inline, key, where), where);
+      declared.video = video(mapping(nested.map((item) => item.trim()), inline, key, where), where);
     } else {
       throw new ConfigurationError(
         `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
@@ -391,6 +410,242 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
     }
   }
   return declared;
+}
+
+interface YAMLLine {
+  indent: number;
+  value: string;
+}
+
+function parseConnectorBindings(
+  nested: string[],
+  inline: string,
+  where: string,
+): Schemas["AgentConnectorBinding"][] {
+  let value: unknown;
+  if (inline) {
+    try {
+      value = JSON.parse(inline) as unknown;
+    } catch {
+      throw new ConfigurationError(`${where}: connectors should be a list of mappings`);
+    }
+  } else {
+    const lines: YAMLLine[] = [];
+    for (const line of nested) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+      const prefix = /^ */.exec(line)?.[0] ?? "";
+      if (line.includes("\t", 0) && /^\s*\t/.test(line)) {
+        throw new ConfigurationError(`${where}: connectors indentation cannot use tabs`);
+      }
+      lines.push({ indent: prefix.length, value: trimmed.replace(/\s+#.*$/, "").trimEnd() });
+    }
+    if (lines.length === 0) {
+      value = [];
+    } else {
+      const [parsed, next] = parseConnectorBlock(lines, 0, lines[0]?.indent ?? 0);
+      if (next !== lines.length) {
+        throw new ConfigurationError(`${where}: connectors contain an unsupported YAML value`);
+      }
+      value = parsed;
+    }
+  }
+  if (!Array.isArray(value)) {
+    throw new ConfigurationError(`${where}: connectors should be a list of mappings`);
+  }
+  return value.map((item, index) => connectorBinding(item, index, where));
+}
+
+function parseConnectorBlock(lines: YAMLLine[], start: number, indent: number): [unknown, number] {
+  const first = lines[start];
+  if (!first || first.indent !== indent) {
+    throw new ConfigurationError("connectors have invalid indentation");
+  }
+  if (first.value === "-" || first.value.startsWith("- ")) {
+    const values: unknown[] = [];
+    let index = start;
+    while (lines[index]?.indent === indent) {
+      const item = lines[index]?.value ?? "";
+      if (item !== "-" && !item.startsWith("- ")) {
+        break;
+      }
+      const rest = item.slice(1).trim();
+      if (!rest) {
+        const child = lines[index + 1];
+        if (!child || child.indent <= indent) {
+          throw new ConfigurationError("connectors contain an empty list item");
+        }
+        const [value, next] = parseConnectorBlock(lines, index + 1, child.indent);
+        values.push(value);
+        index = next;
+        continue;
+      }
+      if (/^[A-Za-z_][\w-]*:/.test(rest)) {
+        const [key, initialValue, afterInitial] = connectorEntry(rest, lines, index + 1, indent + 2);
+        const record: Record<string, unknown> = { [key]: initialValue };
+        index = afterInitial;
+        while (lines[index]?.indent === indent + 2 && !lines[index]?.value.startsWith("- ")) {
+          const [nextKey, nextValue, nextIndex] = connectorEntry(
+            lines[index]?.value ?? "",
+            lines,
+            index + 1,
+            indent + 2,
+          );
+          if (Object.hasOwn(record, nextKey)) {
+            throw new ConfigurationError(`connectors repeat ${JSON.stringify(nextKey)}`);
+          }
+          record[nextKey] = nextValue;
+          index = nextIndex;
+        }
+        values.push(record);
+        continue;
+      }
+      values.push(connectorScalar(rest));
+      index++;
+      if ((lines[index]?.indent ?? 0) > indent) {
+        throw new ConfigurationError("connectors contain a nested scalar");
+      }
+    }
+    return [values, index];
+  }
+
+  const record: Record<string, unknown> = {};
+  let index = start;
+  while (lines[index]?.indent === indent) {
+    const line = lines[index]?.value ?? "";
+    if (line === "-" || line.startsWith("- ")) {
+      break;
+    }
+    const [key, value, next] = connectorEntry(line, lines, index + 1, indent);
+    if (Object.hasOwn(record, key)) {
+      throw new ConfigurationError(`connectors repeat ${JSON.stringify(key)}`);
+    }
+    record[key] = value;
+    index = next;
+  }
+  return [record, index];
+}
+
+function connectorEntry(
+  line: string,
+  lines: YAMLLine[],
+  nextIndex: number,
+  indent: number,
+): [string, unknown, number] {
+  const entry = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(line);
+  if (!entry) {
+    throw new ConfigurationError("connectors contain a value that is not a key and value");
+  }
+  const key = entry[1] as string;
+  const raw = (entry[2] ?? "").trim();
+  if (raw) {
+    return [key, connectorScalar(raw), nextIndex];
+  }
+  const child = lines[nextIndex];
+  if (!child || child.indent <= indent) {
+    return [key, null, nextIndex];
+  }
+  const [value, next] = parseConnectorBlock(lines, nextIndex, child.indent);
+  return [key, value, next];
+}
+
+function connectorScalar(value: string): unknown {
+  if (value.startsWith("[") || value.startsWith("{")) {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      throw new ConfigurationError("connectors flow values must be valid JSON");
+    }
+  }
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value === "null" || value === "~") return null;
+  if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) return Number(value);
+  const quoted = /^(?:"(.*)"|'(.*)')$/.exec(value);
+  return quoted ? (quoted[1] ?? (quoted[2] as string).replaceAll("''", "'")) : value;
+}
+
+function connectorBinding(value: unknown, index: number, where: string): Schemas["AgentConnectorBinding"] {
+  const record = connectorRecord(value, `connectors[${index}]`, where);
+  connectorKeys(record, ["name", "connector_id", "connection", "tools", "required", "timeout_ms"], where);
+  const connection = connectorRecord(record["connection"], `connectors[${index}].connection`, where);
+  connectorKeys(connection, ["type", "connection_id"], where);
+  if (connection["type"] !== "fixed" && connection["type"] !== "session") {
+    throw new ConfigurationError(`${where}: connectors[${index}].connection.type must be fixed or session`);
+  }
+  const tools = record["tools"];
+  if (!Array.isArray(tools)) {
+    throw new ConfigurationError(`${where}: connectors[${index}].tools should be a list`);
+  }
+  const grants = tools.map((tool, toolIndex) => {
+    const grant = connectorRecord(tool, `connectors[${index}].tools[${toolIndex}]`, where);
+    connectorKeys(grant, ["name", "schema_digest"], where);
+    const schemaDigest = connectorString(
+      grant["schema_digest"],
+      `connectors[${index}].tools[${toolIndex}].schema_digest`,
+      where,
+    );
+    if (!/^[a-f0-9]{64}$/.test(schemaDigest)) {
+      throw new ConfigurationError(
+        `${where}: connectors[${index}].tools[${toolIndex}].schema_digest should be a SHA-256 digest`,
+      );
+    }
+    return {
+      name: connectorString(grant["name"], `connectors[${index}].tools[${toolIndex}].name`, where),
+      schema_digest: schemaDigest,
+    };
+  });
+  if (record["required"] !== undefined && typeof record["required"] !== "boolean") {
+    throw new ConfigurationError(`${where}: connectors[${index}].required should be true or false`);
+  }
+  if (
+    record["timeout_ms"] !== undefined &&
+    (typeof record["timeout_ms"] !== "number" || !Number.isInteger(record["timeout_ms"]))
+  ) {
+    throw new ConfigurationError(`${where}: connectors[${index}].timeout_ms should be an integer`);
+  }
+  const connectionId = connection["connection_id"];
+  if (connection["type"] === "fixed" && typeof connectionId !== "string") {
+    throw new ConfigurationError(`${where}: fixed connector bindings need connection_id`);
+  }
+  if (connection["type"] === "session" && connectionId !== undefined) {
+    throw new ConfigurationError(`${where}: session connector bindings cannot set connection_id`);
+  }
+  return {
+    name: connectorString(record["name"], `connectors[${index}].name`, where),
+    connector_id: connectorString(record["connector_id"], `connectors[${index}].connector_id`, where),
+    connection: {
+      type: connection["type"],
+      ...(typeof connectionId === "string" ? { connection_id: connectionId } : {}),
+    },
+    tools: grants,
+    ...(typeof record["required"] === "boolean" ? { required: record["required"] } : {}),
+    ...(typeof record["timeout_ms"] === "number" ? { timeout_ms: record["timeout_ms"] } : {}),
+  };
+}
+
+function connectorRecord(value: unknown, path: string, where: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ConfigurationError(`${where}: ${path} should be a mapping`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function connectorKeys(record: Record<string, unknown>, keys: string[], where: string): void {
+  for (const key of Object.keys(record)) {
+    if (!keys.includes(key)) {
+      throw new ConfigurationError(`${where}: unknown connector setting ${JSON.stringify(key)}`);
+    }
+  }
+}
+
+function connectorString(value: unknown, path: string, where: string): string {
+  if (typeof value !== "string" || !value) {
+    throw new ConfigurationError(`${where}: ${path} should be a non-empty string`);
+  }
+  return value;
 }
 
 function assign(declared: Declaration, key: string, value: string): void {

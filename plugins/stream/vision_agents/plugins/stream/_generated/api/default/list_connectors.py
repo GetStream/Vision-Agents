@@ -5,8 +5,8 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.connector_definition import ConnectorDefinition
 from ...models.error import Error
-from ...models.plugin import Plugin
 from ...types import UNSET, Response, Unset
 
 
@@ -23,7 +23,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/agents/plugins",
+        "url": "/v1/agents/connectors",
         "params": params,
     }
 
@@ -32,12 +32,12 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[Plugin] | None:
+) -> Error | list[ConnectorDefinition] | None:
     if response.status_code == 200:
         response_200 = []
         _response_200 = response.json()
         for response_200_item_data in _response_200:
-            response_200_item = Plugin.from_dict(response_200_item_data)
+            response_200_item = ConnectorDefinition.from_dict(response_200_item_data)
 
             response_200.append(response_200_item)
 
@@ -61,7 +61,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[Plugin]]:
+) -> Response[Error | list[ConnectorDefinition]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -74,11 +74,11 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     q: str | Unset = UNSET,
-) -> Response[Error | list[Plugin]]:
-    """The hosted MCP servers an agent may attach
+) -> Response[Error | list[ConnectorDefinition]]:
+    """Search built-in and app-defined MCP connectors
 
-     A built-in catalog, not the customer's own rows. q filters by name, category or description.
-    Connecting one is a login on a config, not a change to this list.
+     Returns provider endpoints and supported auth modes, never provider credentials. Built-in providers
+    and tenant-owned custom definitions are listed together.
 
     Args:
         q (str | Unset):
@@ -88,7 +88,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Plugin]]
+        Response[Error | list[ConnectorDefinition]]
     """
 
     kwargs = _get_kwargs(
@@ -106,11 +106,11 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     q: str | Unset = UNSET,
-) -> Error | list[Plugin] | None:
-    """The hosted MCP servers an agent may attach
+) -> Error | list[ConnectorDefinition] | None:
+    """Search built-in and app-defined MCP connectors
 
-     A built-in catalog, not the customer's own rows. q filters by name, category or description.
-    Connecting one is a login on a config, not a change to this list.
+     Returns provider endpoints and supported auth modes, never provider credentials. Built-in providers
+    and tenant-owned custom definitions are listed together.
 
     Args:
         q (str | Unset):
@@ -120,7 +120,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Plugin]
+        Error | list[ConnectorDefinition]
     """
 
     return sync_detailed(
@@ -133,11 +133,11 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     q: str | Unset = UNSET,
-) -> Response[Error | list[Plugin]]:
-    """The hosted MCP servers an agent may attach
+) -> Response[Error | list[ConnectorDefinition]]:
+    """Search built-in and app-defined MCP connectors
 
-     A built-in catalog, not the customer's own rows. q filters by name, category or description.
-    Connecting one is a login on a config, not a change to this list.
+     Returns provider endpoints and supported auth modes, never provider credentials. Built-in providers
+    and tenant-owned custom definitions are listed together.
 
     Args:
         q (str | Unset):
@@ -147,7 +147,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Plugin]]
+        Response[Error | list[ConnectorDefinition]]
     """
 
     kwargs = _get_kwargs(
@@ -163,11 +163,11 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     q: str | Unset = UNSET,
-) -> Error | list[Plugin] | None:
-    """The hosted MCP servers an agent may attach
+) -> Error | list[ConnectorDefinition] | None:
+    """Search built-in and app-defined MCP connectors
 
-     A built-in catalog, not the customer's own rows. q filters by name, category or description.
-    Connecting one is a login on a config, not a change to this list.
+     Returns provider endpoints and supported auth modes, never provider credentials. Built-in providers
+    and tenant-owned custom definitions are listed together.
 
     Args:
         q (str | Unset):
@@ -177,7 +177,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Plugin]
+        Error | list[ConnectorDefinition]
     """
 
     return (

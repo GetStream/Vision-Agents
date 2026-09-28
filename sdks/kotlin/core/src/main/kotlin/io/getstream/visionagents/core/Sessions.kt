@@ -2,6 +2,7 @@ package io.getstream.visionagents.core
 
 import io.getstream.visionagents.core.generated.CreateSessionRequest
 import io.getstream.visionagents.core.generated.ForkSessionRequest
+import io.getstream.visionagents.core.generated.SessionConnectorBinding
 import io.getstream.visionagents.core.generated.Session as SessionSchema
 import io.getstream.visionagents.core.generated.SessionTool
 import io.ktor.http.HttpMethod
@@ -48,6 +49,9 @@ public class Sessions internal constructor(
             tts = options.tts,
             voice = options.voice,
             tools = options.tools.ifEmpty { null }?.map { SessionTool(it.name, it.description, it.parameters) },
+            connectorBindings = options.connectorBindings.ifEmpty { null }?.map {
+                SessionConnectorBinding(it.name, it.connectionId)
+            },
             tags = options.tags.ifEmpty { null },
         )
         val created = backend.post(

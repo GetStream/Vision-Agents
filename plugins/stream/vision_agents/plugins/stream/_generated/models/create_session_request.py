@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.create_session_request_custom import CreateSessionRequestCustom
     from ..models.create_session_request_tags import CreateSessionRequestTags
     from ..models.model_overwrites import ModelOverwrites
+    from ..models.session_connector_binding import SessionConnectorBinding
     from ..models.session_memory import SessionMemory
     from ..models.session_phone import SessionPhone
     from ..models.session_skill import SessionSkill
@@ -44,6 +45,8 @@ class CreateSessionRequest:
             caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is
             refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too,
             since there is no sensible answer when they disagree.
+        connector_bindings (list[SessionConnectorBinding] | Unset): Explicit account selection for config bindings whose
+            connection type is session. Each selected connection is checked against the verified caller.
         incognito (bool | Unset): Hold the conversation and record nothing about it: no session row, no turns, no
             transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as
             any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused,
@@ -114,6 +117,7 @@ class CreateSessionRequest:
     text: bool | Unset = False
     config_id: str | Unset = UNSET
     agent: str | Unset = UNSET
+    connector_bindings: list[SessionConnectorBinding] | Unset = UNSET
     incognito: bool | Unset = False
     title: str | Unset = UNSET
     description: str | Unset = UNSET
@@ -165,6 +169,13 @@ class CreateSessionRequest:
         config_id = self.config_id
 
         agent = self.agent
+
+        connector_bindings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connector_bindings, Unset):
+            connector_bindings = []
+            for connector_bindings_item_data in self.connector_bindings:
+                connector_bindings_item = connector_bindings_item_data.to_dict()
+                connector_bindings.append(connector_bindings_item)
 
         incognito = self.incognito
 
@@ -283,6 +294,8 @@ class CreateSessionRequest:
             field_dict["config_id"] = config_id
         if agent is not UNSET:
             field_dict["agent"] = agent
+        if connector_bindings is not UNSET:
+            field_dict["connector_bindings"] = connector_bindings
         if incognito is not UNSET:
             field_dict["incognito"] = incognito
         if title is not UNSET:
@@ -365,6 +378,9 @@ class CreateSessionRequest:
             CreateSessionRequestTags,
         )
         from ..models.model_overwrites import ModelOverwrites
+        from ..models.session_connector_binding import (
+            SessionConnectorBinding,
+        )
         from ..models.session_memory import SessionMemory
         from ..models.session_phone import SessionPhone
         from ..models.session_skill import SessionSkill
@@ -385,6 +401,17 @@ class CreateSessionRequest:
         config_id = d.pop("config_id", UNSET)
 
         agent = d.pop("agent", UNSET)
+
+        _connector_bindings = d.pop("connector_bindings", UNSET)
+        connector_bindings: list[SessionConnectorBinding] | Unset = UNSET
+        if _connector_bindings is not UNSET:
+            connector_bindings = []
+            for connector_bindings_item_data in _connector_bindings:
+                connector_bindings_item = SessionConnectorBinding.from_dict(
+                    connector_bindings_item_data
+                )
+
+                connector_bindings.append(connector_bindings_item)
 
         incognito = d.pop("incognito", UNSET)
 
@@ -513,6 +540,7 @@ class CreateSessionRequest:
             text=text,
             config_id=config_id,
             agent=agent,
+            connector_bindings=connector_bindings,
             incognito=incognito,
             title=title,
             description=description,

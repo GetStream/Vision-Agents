@@ -181,6 +181,27 @@ class TestAccelerated:
         finally:
             await llm.leave_remote()
 
+    async def test_session_connector_accounts_reach_the_router(
+        self, router: Router, call: RemoteCall
+    ):
+        llm = stream.Accelerated(
+            url=router.url,
+            customer_id="acme",
+            connector_bindings=[
+                stream.SessionConnectorBinding(
+                    name="crm", connection_id="conn_alice"
+                )
+            ],
+        )
+        await llm.join_remote(call)
+        try:
+            assert router.created is not None
+            assert router.created["connector_bindings"] == [
+                {"name": "crm", "connection_id": "conn_alice"}
+            ]
+        finally:
+            await llm.leave_remote()
+
     async def test_cost_labels_reach_the_session_as_tags(
         self, router: Router, joined: stream.Accelerated
     ):

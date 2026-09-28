@@ -79,13 +79,16 @@ voice: aurora
 search: search-fast
 greeting: Thanks for calling, how can I help?
 sandbox: daytona
-plugins:
-  - gmail
 keyterms:
   - Vision Agents
 tags:
   project: support
 ```
+
+Connectors are managed by a trusted backend: it creates and authorizes an account, reviews
+the available tools, and saves an explicit tool grant on the agent config. A session that
+acts for a verified user selects that user's account when it starts. The Python SDK carries
+those session selections; provider credentials stay in the backend.
 
 Everything but the name is optional, and a setting the file leaves out leaves whatever is
 stored, so a model chosen in the dashboard survives a sync that says nothing about it. A key

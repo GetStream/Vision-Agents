@@ -28,6 +28,7 @@ final readonly class Sessions
      * A field left null is left out, so the config decides it.
      *
      * @param array<string, mixed>|null $custom anything of the caller's own a later query can match on
+     * @param list<array<string, string>>|null $connectorBindings accounts for session-scoped connector bindings
      */
     public function create(
         ?string $title = null,
@@ -40,6 +41,7 @@ final readonly class Sessions
         ?ModelOverwrites $modelOverwrites = null,
         ?string $callId = null,
         ?string $userId = null,
+        ?array $connectorBindings = null,
     ): Session {
         $request = new CreateSessionRequest(
             conversationId: $conversationId,
@@ -54,6 +56,7 @@ final readonly class Sessions
             custom: $custom,
             modelOverwrites: $modelOverwrites,
             userId: $userId,
+            connectorBindings: $connectorBindings,
         );
         $created = $this->client->post('/v1/agents/sessions', body: $request->toArray());
         return new Session($this->client, SessionRow::fromArray(Json::asObject($created)));

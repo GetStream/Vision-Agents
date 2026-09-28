@@ -1,94 +1,81 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..types import UNSET, Unset
+if TYPE_CHECKING:
+    from ..models.connector_tool_input_schema import ConnectorToolInputSchema
 
-T = TypeVar("T", bound="Plugin")
+
+T = TypeVar("T", bound="ConnectorTool")
 
 
 @_attrs_define
-class Plugin:
-    """One hosted MCP server from the built-in catalog.
-
+class ConnectorTool:
+    """
     Attributes:
-        id (str):
         name (str):
-        category (str):
         description (str):
-        instance_required (bool | Unset):
-        instance_hint (str | Unset):
+        input_schema (ConnectorToolInputSchema):
+        schema_digest (str):
     """
 
-    id: str
     name: str
-    category: str
     description: str
-    instance_required: bool | Unset = UNSET
-    instance_hint: str | Unset = UNSET
+    input_schema: ConnectorToolInputSchema
+    schema_digest: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
-
         name = self.name
-
-        category = self.category
 
         description = self.description
 
-        instance_required = self.instance_required
+        input_schema = self.input_schema.to_dict()
 
-        instance_hint = self.instance_hint
+        schema_digest = self.schema_digest
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "id": id,
                 "name": name,
-                "category": category,
                 "description": description,
+                "input_schema": input_schema,
+                "schema_digest": schema_digest,
             }
         )
-        if instance_required is not UNSET:
-            field_dict["instance_required"] = instance_required
-        if instance_hint is not UNSET:
-            field_dict["instance_hint"] = instance_hint
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.connector_tool_input_schema import (
+            ConnectorToolInputSchema,
+        )
+
         d = dict(src_dict)
-        id = d.pop("id")
-
         name = d.pop("name")
-
-        category = d.pop("category")
 
         description = d.pop("description")
 
-        instance_required = d.pop("instance_required", UNSET)
+        input_schema = ConnectorToolInputSchema.from_dict(d.pop("input_schema"))
 
-        instance_hint = d.pop("instance_hint", UNSET)
+        schema_digest = d.pop("schema_digest")
 
-        plugin = cls(
-            id=id,
+        connector_tool = cls(
             name=name,
-            category=category,
             description=description,
-            instance_required=instance_required,
-            instance_hint=instance_hint,
+            input_schema=input_schema,
+            schema_digest=schema_digest,
         )
 
-        plugin.additional_properties = d
-        return plugin
+        connector_tool.additional_properties = d
+        return connector_tool
 
     @property
     def additional_keys(self) -> list[str]:

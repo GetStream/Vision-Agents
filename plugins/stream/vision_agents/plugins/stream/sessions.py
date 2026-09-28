@@ -28,6 +28,7 @@ from ._generated.models import (
     ListSessionsState,
     ModelOverwrites,
     SearchSessionsState,
+    SessionConnectorBinding,
     Session as SessionRow,
     SessionTool,
     SessionToolParameters,
@@ -59,9 +60,9 @@ class SessionEvent:
     ``kind`` is the backend's own name for it: joined, hearing, heard, decision, responding,
     response_delta, responded, blocked, spoke, turn, delegated, task_settled, task_cancelled,
     tool_started, tool_ran, transferred, pressed, looked_up, backchannel, interrupted,
-    overlap_decided, conversation_compacted, error and left. The fields below are filled from
-    whichever of those carry them, and ``frame`` is the whole thing for anything they do not
-    cover.
+    overlap_decided, conversation_compacted, connector_unavailable, error and left. The
+    fields below are filled from whichever of those carry them, and ``frame`` is the whole
+    thing for anything they do not cover.
     """
 
     kind: str = ""
@@ -96,6 +97,7 @@ class SessionOptions:
         instructions: Overrides the agent's own system prompt for this conversation.
         user_id: Who the conversation belongs to, for a backend opening one on somebody's
             behalf. A client acting for a user leaves it empty: the token already says who.
+        connector_bindings: Accounts to use for declared session-scoped connector aliases.
         interim: Also report what the caller is part way through saying.
         decisions: Report the router's own routing decisions. Off here by default, because it
             is the router explaining itself several times a second.
@@ -114,6 +116,7 @@ class SessionOptions:
     conversation_id: str = ""
     instructions: str = ""
     user_id: str = ""
+    connector_bindings: list[SessionConnectorBinding] = field(default_factory=list)
 
     interim: bool = False
     decisions: bool = False
@@ -253,6 +256,8 @@ class Sessions:
             request.user_id = options.user_id
         if options.model_overwrites is not None:
             request.model_overwrites = options.model_overwrites
+        if options.connector_bindings:
+            request.connector_bindings = options.connector_bindings
         if options.custom:
             request.custom = CreateSessionRequestCustom.from_dict(options.custom)
 

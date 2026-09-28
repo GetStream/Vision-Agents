@@ -1,5 +1,16 @@
 import Foundation
 
+/// Selects a user-owned connector account for one session.
+public struct SessionConnectorSelection: Sendable, Hashable {
+    public let name: String
+    public let connectionID: String
+
+    public init(name: String, connectionID: String) {
+        self.name = name
+        self.connectionID = connectionID
+    }
+}
+
 /// A running or finished conversation.
 public struct Session: Sendable, Hashable, Identifiable {
     /// What the router holds this session by. This addresses the session and its socket, and

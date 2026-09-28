@@ -71,8 +71,8 @@ module GetStream
       READABLE = %w[.md .mdx .txt .rst .yaml .yml].freeze
 
       SETTING_STRINGS = %w[name description mode stt tts sts voice llm subagent search greeting sandbox].freeze
-      SETTING_LISTS = %w[plugins keyterms].freeze
-      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[tags video]).freeze
+      SETTING_LISTS = %w[keyterms].freeze
+      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[connectors tags video]).freeze
       VIDEO_KEYS = %w[source max_frames].freeze
 
       attr_reader :path, :name, :declaration, :settings, :instructions, :guardrail, :skills,
@@ -195,6 +195,12 @@ module GetStream
           end
 
           value.map(&:to_s)
+        when "connectors"
+          unless value.is_a?(Array) && value.all? { |each| each.is_a?(Hash) }
+            raise ConfigurationError, "#{file}: connectors should be a list of mappings"
+          end
+
+          value
         when "tags"
           raise ConfigurationError, "#{file}: tags should be a mapping" unless value.is_a?(Hash)
 

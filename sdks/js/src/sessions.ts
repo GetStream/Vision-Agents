@@ -13,10 +13,12 @@ import { Session, type SessionOptions } from "./session.js";
 export interface SessionSpec
   extends Omit<
     Schemas["CreateSessionRequest"],
-    "agent" | "config_id" | "model_overwrites" | "tools"
+    "agent" | "config_id" | "model_overwrites" | "tools" | "connector_bindings"
   > {
   /** What to change about the models for this conversation alone. */
   modelOverwrites?: Schemas["ModelOverwrites"];
+  /** Which authorized accounts to use for session-selected connector bindings. */
+  connectorBindings?: Schemas["SessionConnectorBinding"][];
 }
 
 /** Opening a session, plus how it is watched. */
@@ -64,7 +66,15 @@ export class Sessions {
    * what the resource surface is mostly for: a conversation somebody comes back to.
    */
   create(options: CreateSessionOptions = {}): Promise<Session> {
-    const { tools, interim, decisions, watch, modelOverwrites, ...rest } = options;
+    const {
+      tools,
+      interim,
+      decisions,
+      watch,
+      modelOverwrites,
+      connectorBindings,
+      ...rest
+    } = options;
     const request: Schemas["CreateSessionRequest"] = {
       agent: this.agent,
       // Held in writing unless a call was named. A session resource is a conversation, and
@@ -72,6 +82,7 @@ export class Sessions {
       ...(rest.call_id ? {} : { text: true }),
       ...rest,
       ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}),
+      ...(connectorBindings ? { connector_bindings: connectorBindings } : {}),
     };
     return Session.open(this.client, request, {
       ...(tools ? { tools } : {}),

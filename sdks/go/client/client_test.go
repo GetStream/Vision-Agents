@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -262,6 +263,9 @@ func TestASessionIsOpenedAgainstTheAgentByName(t *testing.T) {
 		ModelOverwrites: &acceleration.ModelOverwrites{
 			Thinking: thinking("high"),
 		},
+		ConnectorBindings: []acceleration.SessionConnectorBinding{{
+			Name: "crm", ConnectionId: "conn_alice",
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -284,6 +288,11 @@ func TestASessionIsOpenedAgainstTheAgentByName(t *testing.T) {
 	overwrites, _ := body["model_overwrites"].(map[string]any)
 	if overwrites["thinking"] != "high" {
 		t.Errorf("the model overwrites went over as %v", body["model_overwrites"])
+	}
+	if got := body["connector_bindings"]; !reflect.DeepEqual(got, []any{
+		map[string]any{"name": "crm", "connection_id": "conn_alice"},
+	}) {
+		t.Errorf("the selected connector accounts went over as %v", got)
 	}
 	if session.ID() != "session-1" {
 		t.Errorf("the session is %q", session.ID())

@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
@@ -7,7 +7,6 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error import Error
-from ...models.plugin_connection import PluginConnection
 from ...types import Response
 
 
@@ -16,8 +15,8 @@ def _get_kwargs(
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/agents/configs/{id}/plugins".format(
+        "method": "delete",
+        "url": "/v1/agents/connections/{id}".format(
             id=quote(str(id), safe=""),
         ),
     }
@@ -27,16 +26,10 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[PluginConnection] | None:
-    if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for response_200_item_data in _response_200:
-            response_200_item = PluginConnection.from_dict(response_200_item_data)
-
-            response_200.append(response_200_item)
-
-        return response_200
+) -> Any | Error | None:
+    if response.status_code == 204:
+        response_204 = cast(Any, None)
+        return response_204
 
     if response.status_code == 400:
         response_400 = Error.from_dict(response.json())
@@ -66,7 +59,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[PluginConnection]]:
+) -> Response[Any | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,8 +72,11 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+) -> Response[Any | Error]:
+    """Disconnect an account everywhere it is bound
+
+     Immediately denies future tool dispatches and deletes the local encrypted credentials. This does not
+    claim the provider revoked already-issued tokens.
 
     Args:
         id (str):
@@ -90,7 +86,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[Any | Error]
     """
 
     kwargs = _get_kwargs(
@@ -108,8 +104,11 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+) -> Any | Error | None:
+    """Disconnect an account everywhere it is bound
+
+     Immediately denies future tool dispatches and deletes the local encrypted credentials. This does not
+    claim the provider revoked already-issued tokens.
 
     Args:
         id (str):
@@ -119,7 +118,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        Any | Error
     """
 
     return sync_detailed(
@@ -132,8 +131,11 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+) -> Response[Any | Error]:
+    """Disconnect an account everywhere it is bound
+
+     Immediately denies future tool dispatches and deletes the local encrypted credentials. This does not
+    claim the provider revoked already-issued tokens.
 
     Args:
         id (str):
@@ -143,7 +145,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[Any | Error]
     """
 
     kwargs = _get_kwargs(
@@ -159,8 +161,11 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+) -> Any | Error | None:
+    """Disconnect an account everywhere it is bound
+
+     Immediately denies future tool dispatches and deletes the local encrypted credentials. This does not
+    claim the provider revoked already-issued tokens.
 
     Args:
         id (str):
@@ -170,7 +175,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        Any | Error
     """
 
     return (

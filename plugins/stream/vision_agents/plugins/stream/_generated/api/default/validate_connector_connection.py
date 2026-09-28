@@ -6,42 +6,30 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.authorize_plugin_request import AuthorizePluginRequest
+from ...models.connector_validation import ConnectorValidation
 from ...models.error import Error
-from ...models.plugin_authorization import PluginAuthorization
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
     id: str,
-    plugin_id: str,
-    *,
-    body: AuthorizePluginRequest | Unset = UNSET,
 ) -> dict[str, Any]:
-    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize".format(
+        "url": "/v1/agents/connections/{id}/validate".format(
             id=quote(str(id), safe=""),
-            plugin_id=quote(str(plugin_id), safe=""),
         ),
     }
 
-    if not isinstance(body, Unset):
-        _kwargs["json"] = body.to_dict()
-
-    headers["Content-Type"] = "application/json"
-
-    _kwargs["headers"] = headers
     return _kwargs
 
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | PluginAuthorization | None:
+) -> ConnectorValidation | Error | None:
     if response.status_code == 200:
-        response_200 = PluginAuthorization.from_dict(response.json())
+        response_200 = ConnectorValidation.from_dict(response.json())
 
         return response_200
 
@@ -73,7 +61,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | PluginAuthorization]:
+) -> Response[ConnectorValidation | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -84,34 +72,24 @@ def _build_response(
 
 def sync_detailed(
     id: str,
-    plugin_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: AuthorizePluginRequest | Unset = UNSET,
-) -> Response[Error | PluginAuthorization]:
-    """Start a plugin login
-
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
-    Salesforce need an instance url, because they have no single global host.
-    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+) -> Response[ConnectorValidation | Error]:
+    """Check connectivity and refresh the cached tool list
 
     Args:
         id (str):
-        plugin_id (str):
-        body (AuthorizePluginRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | PluginAuthorization]
+        Response[ConnectorValidation | Error]
     """
 
     kwargs = _get_kwargs(
         id=id,
-        plugin_id=plugin_id,
-        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -123,68 +101,48 @@ def sync_detailed(
 
 def sync(
     id: str,
-    plugin_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: AuthorizePluginRequest | Unset = UNSET,
-) -> Error | PluginAuthorization | None:
-    """Start a plugin login
-
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
-    Salesforce need an instance url, because they have no single global host.
-    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+) -> ConnectorValidation | Error | None:
+    """Check connectivity and refresh the cached tool list
 
     Args:
         id (str):
-        plugin_id (str):
-        body (AuthorizePluginRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | PluginAuthorization
+        ConnectorValidation | Error
     """
 
     return sync_detailed(
         id=id,
-        plugin_id=plugin_id,
         client=client,
-        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
     id: str,
-    plugin_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: AuthorizePluginRequest | Unset = UNSET,
-) -> Response[Error | PluginAuthorization]:
-    """Start a plugin login
-
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
-    Salesforce need an instance url, because they have no single global host.
-    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+) -> Response[ConnectorValidation | Error]:
+    """Check connectivity and refresh the cached tool list
 
     Args:
         id (str):
-        plugin_id (str):
-        body (AuthorizePluginRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | PluginAuthorization]
+        Response[ConnectorValidation | Error]
     """
 
     kwargs = _get_kwargs(
         id=id,
-        plugin_id=plugin_id,
-        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -194,35 +152,25 @@ async def asyncio_detailed(
 
 async def asyncio(
     id: str,
-    plugin_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: AuthorizePluginRequest | Unset = UNSET,
-) -> Error | PluginAuthorization | None:
-    """Start a plugin login
-
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
-    Salesforce need an instance url, because they have no single global host.
-    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+) -> ConnectorValidation | Error | None:
+    """Check connectivity and refresh the cached tool list
 
     Args:
         id (str):
-        plugin_id (str):
-        body (AuthorizePluginRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | PluginAuthorization
+        ConnectorValidation | Error
     """
 
     return (
         await asyncio_detailed(
             id=id,
-            plugin_id=plugin_id,
             client=client,
-            body=body,
         )
     ).parsed

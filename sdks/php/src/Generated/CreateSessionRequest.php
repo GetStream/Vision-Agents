@@ -92,6 +92,8 @@ final readonly class CreateSessionRequest
         public ?SessionMemory $memory = null,
         public ?SessionPhone $phone = null,
         public ?SessionVideo $video = null,
+        /** @var list<array<string, string>>|null */
+        public ?array $connectorBindings = null,
     ) {
     }
 
@@ -143,6 +145,7 @@ final readonly class CreateSessionRequest
             memory: array_key_exists('memory', $data) && $data['memory'] !== null ? SessionMemory::fromArray(Json::object($data, 'memory')) : null,
             phone: array_key_exists('phone', $data) && $data['phone'] !== null ? SessionPhone::fromArray(Json::object($data, 'phone')) : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
+            connectorBindings: array_key_exists('connector_bindings', $data) && $data['connector_bindings'] !== null ? Json::objects($data, 'connector_bindings') : null,
         );
     }
 
@@ -279,6 +282,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->video !== null) {
             $out['video'] = $this->video->toArray();
+        }
+        if ($this->connectorBindings !== null) {
+            $out['connector_bindings'] = $this->connectorBindings;
         }
         return $out;
     }

@@ -12,6 +12,7 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
     from ..models.session_video import SessionVideo
@@ -51,7 +52,8 @@ class SyncAgentRequest:
             subagent (str | Unset):
             search (str | Unset):
             greeting (str | Unset):
-            plugins (list[str] | Unset):
+            connectors (list[AgentConnectorBinding] | Unset): The directory's declarative connector bindings. Full sync
+                replaces these bindings; connected accounts remain separate resources.
             keyterms (list[str] | Unset):
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
@@ -76,7 +78,7 @@ class SyncAgentRequest:
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
     greeting: str | Unset = UNSET
-    plugins: list[str] | Unset = UNSET
+    connectors: list[AgentConnectorBinding] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     tags: SyncAgentRequestTags | Unset = UNSET
@@ -136,9 +138,12 @@ class SyncAgentRequest:
 
         greeting = self.greeting
 
-        plugins: list[str] | Unset = UNSET
-        if not isinstance(self.plugins, Unset):
-            plugins = self.plugins
+        connectors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connectors, Unset):
+            connectors = []
+            for connectors_item_data in self.connectors:
+                connectors_item = connectors_item_data.to_dict()
+                connectors.append(connectors_item)
 
         keyterms: list[str] | Unset = UNSET
         if not isinstance(self.keyterms, Unset):
@@ -190,8 +195,8 @@ class SyncAgentRequest:
             field_dict["search"] = search
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
-        if plugins is not UNSET:
-            field_dict["plugins"] = plugins
+        if connectors is not UNSET:
+            field_dict["connectors"] = connectors
         if keyterms is not UNSET:
             field_dict["keyterms"] = keyterms
         if sandbox is not UNSET:
@@ -203,6 +208,9 @@ class SyncAgentRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.agent_connector_binding import (
+            AgentConnectorBinding,
+        )
         from ..models.knowledge_document import KnowledgeDocument
         from ..models.knowledge_url_declaration import (
             KnowledgeUrlDeclaration,
@@ -281,7 +289,14 @@ class SyncAgentRequest:
 
         greeting = d.pop("greeting", UNSET)
 
-        plugins = cast(list[str], d.pop("plugins", UNSET))
+        _connectors = d.pop("connectors", UNSET)
+        connectors: list[AgentConnectorBinding] | Unset = UNSET
+        if _connectors is not UNSET:
+            connectors = []
+            for connectors_item_data in _connectors:
+                connectors_item = AgentConnectorBinding.from_dict(connectors_item_data)
+
+                connectors.append(connectors_item)
 
         keyterms = cast(list[str], d.pop("keyterms", UNSET))
 
@@ -317,7 +332,7 @@ class SyncAgentRequest:
             subagent=subagent,
             search=search,
             greeting=greeting,
-            plugins=plugins,
+            connectors=connectors,
             keyterms=keyterms,
             sandbox=sandbox,
             tags=tags,

@@ -381,13 +381,6 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? Skills { get; set; } = default!;
 
         /// <summary>
-        /// Hosted MCP servers this agent may reach, named from the built-in catalog.
-        /// <br/>
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("plugins")]
-        public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
-
-        /// <summary>
         /// Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
         /// <br/>
         /// </summary>
@@ -473,9 +466,6 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("skills")]
         public System.Collections.Generic.List<string>? Skills { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("plugins")]
-        public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("keyterms")]
         public System.Collections.Generic.List<string>? Keyterms { get; set; } = default!;
@@ -1810,130 +1800,6 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// One hosted MCP server from the built-in catalog.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class Plugin
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("id")]
-        public string Id { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("category")]
-        public string Category { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string Description { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_required")]
-        public bool? InstanceRequired { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_hint")]
-        public string? InstanceHint { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// A catalog plugin as this agent has it, including whether it is logged in.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginConnection
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("plugin_id")]
-        public string PluginId { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("category")]
-        public string? Category { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string? Description { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_required")]
-        public bool? InstanceRequired { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_hint")]
-        public string? InstanceHint { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_url")]
-        public string? InstanceUrl { get; set; } = default!;
-
-        /// <summary>
-        /// One of `pending`, `connected`, `failed`.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("status")]
-        public string Status { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class AuthorizePluginRequest
-    {
-
-        /// <summary>
-        /// The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL.
-        /// <br/>
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("instance_url")]
-        public string? InstanceUrl { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginAuthorization
-    {
-
-        /// <summary>
-        /// The URL the browser should open to finish the login.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("authorize_url")]
-        public string AuthorizeUrl { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
     /// An agent directory as it is on disk. Everything after the knowledge is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
     /// <br/>
     /// </summary>
@@ -2010,9 +1876,6 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
         public string? Greeting { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("plugins")]
-        public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("keyterms")]
         public System.Collections.Generic.List<string>? Keyterms { get; set; } = default!;

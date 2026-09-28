@@ -436,15 +436,100 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/agents/configs/{id}/plugins": {
+    readonly "/v1/agents/connections": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** The plugin logins this agent holds */
-        readonly get: operations["listConfigPlugins"];
+        /**
+         * List reusable account connections
+         * @description Returns metadata only. OAuth tokens and imported credentials are never returned. Connections belong to the app or to one verified application user.
+         */
+        readonly get: operations["listConnectorConnections"];
+        readonly put?: never;
+        /**
+         * Create an account connection
+         * @description Creates an app-owned shared account or a user-owned personal account. OAuth credentials are added only by the following authorization operation.
+         */
+        readonly post: operations["createConnectorConnection"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Read one connection's metadata */
+        readonly get: operations["getConnectorConnection"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Disconnect an account everywhere it is bound
+         * @description Immediately denies future tool dispatches and deletes the local encrypted credentials. This does not claim the provider revoked already-issued tokens.
+         */
+        readonly delete: operations["deleteConnectorConnection"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/authorizations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start provider consent for an account connection
+         * @description Starts an OAuth authorization attempt. Customer-created integrations such as Gong may use approved dynamic registration or submit both their client ID and secret; supplied credentials are write-only and stored encrypted for token exchange and refresh. Open the returned launch URL in a popup and deliver the handoff token to that popup with postMessage; the router then sets a short-lived, HttpOnly callback cookie on its own origin before redirecting the browser to the provider. Never put the handoff token in a URL.
+         */
+        readonly post: operations["authorizeConnectorConnection"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/credentials": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Write a connection credential or import an OAuth grant
+         * @description Writes a bearer token or API key encrypted at rest, imports a provider-issued OAuth grant, or activates a no-auth connection. OAuth endpoints, resource identity, and client authentication are resolved from the connector definition or trusted provider metadata. Credential material is write-only and updates require the current connection revision.
+         */
+        readonly put: operations["putConnectorCredentials"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/tools": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Read the tools discovered for a connection */
+        readonly get: operations["listConnectorTools"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -453,7 +538,7 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/agents/configs/{id}/plugins/{plugin_id}": {
+    readonly "/v1/agents/connections/{id}/validate": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -462,32 +547,69 @@ export type paths = {
         };
         readonly get?: never;
         readonly put?: never;
-        readonly post?: never;
-        /**
-         * Drop a plugin login
-         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-         */
-        readonly delete: operations["disconnectPlugin"];
+        /** Check connectivity and refresh the cached tool list */
+        readonly post: operations["validateConnectorConnection"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize": {
+    readonly "/v1/agents/connectors": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * Search built-in and app-defined MCP connectors
+         * @description Returns provider endpoints and supported auth modes, never provider credentials. Built-in providers and tenant-owned custom definitions are listed together.
+         */
+        readonly get: operations["listConnectors"];
         readonly put?: never;
         /**
-         * Start a plugin login
-         * @description Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
-         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         * Register a custom remote MCP connector
+         * @description Registers an immutable public HTTPS endpoint and its fixed authentication policy for this app. Private network endpoints, executable definitions, and arbitrary credential headers are not accepted.
          */
-        readonly post: operations["authorizePlugin"];
+        readonly post: operations["createConnectorDefinition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Read a built-in or app-defined connector */
+        readonly get: operations["getConnectorDefinition"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/oauth/callback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Complete provider consent
+         * @description Unauthenticated OAuth redirect endpoint. It requires the browser-binding cookie issued when authorization started, then consumes expiring state once and redirects to the configured dashboard. Provider tokens are never put in the URL.
+         */
+        readonly get: operations["connectorOAuthCallback"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -797,46 +919,6 @@ export type paths = {
          * @description logs events carry AgentLog arrays in ingestion order; checkpoint events advance the resume cursor; reset requires reloading history. Last-Event-ID resumes on reconnect. No agent controls are accepted.
          */
         readonly get: operations["streamAgentLogs"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/agents/plugins": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * The hosted MCP servers an agent may attach
-         * @description A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
-         */
-        readonly get: operations["listPlugins"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/agents/plugins/callback": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Finish a plugin login
-         * @description The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
-         */
-        readonly get: operations["pluginOAuthCallback"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2033,6 +2115,7 @@ export type components = {
          */
         readonly ActivityGranularity: "daily" | "monthly";
         readonly AgentConfig: {
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             /** Format: date-time */
             readonly created_at: string;
             readonly greeting?: string;
@@ -2044,7 +2127,6 @@ export type components = {
             readonly llm?: string;
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
-            readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly search?: string;
             readonly skills?: readonly string[];
@@ -2064,6 +2146,8 @@ export type components = {
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
+            /** @description Reusable connections and exact tools the agent may use. Session-selected user connections must belong to the verified session caller. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
@@ -2077,8 +2161,6 @@ export type components = {
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name: string;
-            /** @description Hosted MCP servers this agent may reach, named from the built-in catalog. */
-            readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
             readonly search?: string;
@@ -2098,6 +2180,22 @@ export type components = {
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Provider-specific voice id. */
             readonly voice?: string;
+        };
+        readonly AgentConnectorBinding: {
+            readonly connection: components["schemas"]["AgentConnectorSelection"];
+            readonly connector_id: string;
+            readonly name: string;
+            /** @default false */
+            readonly required?: boolean;
+            readonly timeout_ms?: number;
+            /** @description Exact MCP tools allowed, each pinned to its reviewed schema digest. An empty list grants no tools. */
+            readonly tools: readonly components["schemas"]["ConnectorToolGrant"][];
+        };
+        readonly AgentConnectorSelection: {
+            /** @description Required for fixed; session selection is supplied in the session request. */
+            readonly connection_id?: string;
+            /** @enum {string} */
+            readonly type: "fixed" | "session";
         };
         readonly AgentLog: {
             readonly agent_id: string;
@@ -2181,9 +2279,13 @@ export type components = {
             /** @description The Stream call type. Omit for "agent". */
             readonly call_type?: string;
         };
-        readonly AuthorizePluginRequest: {
-            /** @description The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL. */
-            readonly instance_url?: string;
+        readonly AuthorizeConnectorRequest: {
+            /** @description Supply with oauth_client_secret for a manually registered integration. Some providers also support dynamic registration when both are omitted. */
+            readonly oauth_client_id?: string;
+            /** @description Supply with oauth_client_id for a manually registered integration. Write-only; encrypted at rest and used only for OAuth exchange and refresh. */
+            readonly oauth_client_secret?: string;
+            /** @description Minimum provider permissions to request. For Slack, choose only scopes needed by this connection; values must be in the connector definition. */
+            readonly scopes?: readonly string[];
         };
         readonly AvailableNumber: {
             readonly capabilities: readonly components["schemas"]["PhoneCapability"][];
@@ -2423,6 +2525,95 @@ export type components = {
             readonly state: string;
             readonly user_message_id: string;
         };
+        readonly ConnectorAuthorization: {
+            readonly authorization_id: string;
+            /** Format: uri */
+            readonly authorization_url: string;
+            /** Format: date-time */
+            readonly expires_at: string;
+            /** @description Short-lived secret delivered only to the router launch popup through postMessage. Never place it in a URL or persist it in application storage. */
+            readonly handoff_token: string;
+        };
+        /** @description Connection metadata. Credential material is never returned. */
+        readonly ConnectorConnection: {
+            readonly account_id?: string;
+            /** @enum {string} */
+            readonly auth_type: "oauth2" | "none" | "bearer" | "api_key";
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at?: string;
+            /** Format: uri */
+            readonly endpoint: string;
+            /** Format: date-time */
+            readonly expires_at?: string;
+            readonly granted_scopes: readonly string[];
+            readonly id: string;
+            readonly instance?: string;
+            readonly label?: string;
+            /** @description Sanitized diagnostic; never includes provider response bodies or secrets. */
+            readonly last_error?: string;
+            readonly owner_id?: string;
+            /** @enum {string} */
+            readonly owner_type: "app" | "user";
+            readonly revision: number;
+            /** @enum {string} */
+            readonly status: "pending" | "connected" | "needs_reauthorization" | "disconnected" | "failed";
+            /** Format: date-time */
+            readonly tools_checked_at?: string;
+            readonly tools_digest?: string;
+            /** Format: date-time */
+            readonly updated_at?: string;
+        };
+        /** @description A built-in or app-defined remote MCP connector definition. */
+        readonly ConnectorDefinition: {
+            /** @description Fixed header name for api_key auth; never supplied by the model. */
+            readonly api_key_header?: string;
+            /** @enum {string} */
+            readonly auth_mode: "oauth_dcr" | "oauth_preconfigured" | "oauth_customer_credentials" | "none" | "bearer" | "api_key";
+            readonly category: string;
+            readonly description: string;
+            /** Format: uri */
+            readonly endpoint: string;
+            readonly id: string;
+            readonly instance_hint?: string;
+            readonly instance_required?: boolean;
+            readonly name: string;
+            readonly scopes?: readonly string[];
+        };
+        readonly ConnectorOwner: {
+            /** @enum {string} */
+            readonly type: "app" | "user";
+            /** @description Required only for a user-owned connection; backend supplied. */
+            readonly user_id?: string;
+        };
+        readonly ConnectorTool: {
+            readonly description: string;
+            readonly input_schema: {
+                readonly [key: string]: unknown;
+            };
+            readonly name: string;
+            readonly schema_digest: string;
+        };
+        readonly ConnectorToolGrant: {
+            readonly name: string;
+            readonly schema_digest: string;
+        };
+        readonly ConnectorTools: {
+            /** Format: date-time */
+            readonly checked_at?: string;
+            readonly connection_id: string;
+            readonly digest: string;
+            readonly tools: readonly components["schemas"]["ConnectorTool"][];
+        };
+        readonly ConnectorValidation: {
+            /** Format: date-time */
+            readonly checked_at?: string;
+            readonly connection_id: string;
+            readonly error?: string;
+            /** @enum {string} */
+            readonly status: "connected" | "needs_reauthorization" | "failed";
+            readonly tools_digest: string;
+        };
         readonly Contact: {
             readonly attempts: number;
             /** @description The call this contact became, which is what the call paths take. */
@@ -2444,6 +2635,28 @@ export type components = {
             }[];
         };
         readonly ContentPart: components["schemas"]["TextContentPart"] | components["schemas"]["ImageContentPart"];
+        readonly CreateConnectorConnectionRequest: {
+            readonly connector_id: string;
+            /** @description Provider environment, such as Salesforce production or sandbox. */
+            readonly instance?: string;
+            readonly label?: string;
+            readonly owner: components["schemas"]["ConnectorOwner"];
+        };
+        readonly CreateConnectorDefinitionRequest: {
+            /** @description Required only for api_key; fixed to this definition. */
+            readonly api_key_header?: string;
+            /** @enum {string} */
+            readonly auth_mode: "oauth_dcr" | "none" | "bearer" | "api_key";
+            readonly category?: string;
+            readonly description?: string;
+            /**
+             * Format: uri
+             * @description Public HTTPS Streamable HTTP MCP endpoint; query strings are not allowed.
+             */
+            readonly endpoint: string;
+            readonly id: string;
+            readonly name: string;
+        };
         readonly CreateResponseRequest: {
             readonly images?: readonly components["schemas"]["ImageSource"][];
             /** @description What to answer, as though it had been said. */
@@ -2465,6 +2678,8 @@ export type components = {
             readonly call_type?: string;
             /** @description An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call. */
             readonly config_id?: string;
+            /** @description Explicit account selection for config bindings whose connection type is session. Each selected connection is checked against the verified caller. */
+            readonly connector_bindings?: readonly components["schemas"]["SessionConnectorBinding"][];
             /** @description Older history was omitted from the model context. */
             readonly context_truncated?: boolean;
             /** @description Stream Chat CID to resume; returned for persistent text sessions. */
@@ -3056,31 +3271,6 @@ export type components = {
             readonly vendor?: string;
             readonly vendor_call_id: string;
         };
-        /** @description One hosted MCP server from the built-in catalog. */
-        readonly Plugin: {
-            readonly category: string;
-            readonly description: string;
-            readonly id: string;
-            readonly instance_hint?: string;
-            readonly instance_required?: boolean;
-            readonly name: string;
-        };
-        readonly PluginAuthorization: {
-            /** @description The URL the browser should open to finish the login. */
-            readonly authorize_url: string;
-        };
-        /** @description A catalog plugin as this agent has it, including whether it is logged in. */
-        readonly PluginConnection: {
-            readonly category?: string;
-            readonly description?: string;
-            readonly instance_hint?: string;
-            readonly instance_required?: boolean;
-            readonly instance_url?: string;
-            readonly name: string;
-            readonly plugin_id: string;
-            /** @enum {string} */
-            readonly status: "pending" | "connected" | "failed";
-        };
         readonly PrepareVoiceRequest: {
             /** @description Which providers to teach the voice to. Empty means every provider this deployment can clone with. */
             readonly providers?: readonly string[];
@@ -3159,6 +3349,28 @@ export type components = {
              * @description Requests seen in the current health window.
              */
             readonly requests: number;
+        };
+        readonly PutConnectorCredentialsRequest: {
+            /** @description For OAuth connections, imports an existing provider-issued access token. The token endpoint, resource, and client authentication are resolved from the fixed connector definition or discovered provider metadata; callers cannot supply an endpoint that receives the token or refresh token. */
+            readonly access_token?: string;
+            /** @description Required for api_key auth; stored encrypted and never returned. */
+            readonly api_key?: string;
+            /** @description Required for bearer auth; stored encrypted and never returned. */
+            readonly bearer_token?: string;
+            readonly expected_revision: number;
+            /**
+             * Format: date-time
+             * @description Required with an imported OAuth access token.
+             */
+            readonly expires_at?: string;
+            /** @description Provider-granted OAuth scopes, validated against the connector catalog where known. */
+            readonly granted_scopes?: readonly string[];
+            /** @description Required when importing a grant for a customer-registered or dynamically registered OAuth client. Operator-managed providers use their configured client. */
+            readonly oauth_client_id?: string;
+            /** @description Optional confidential client secret for an imported grant; encrypted at rest. */
+            readonly oauth_client_secret?: string;
+            /** @description Optional OAuth refresh token; stored encrypted with the access token. */
+            readonly refresh_token?: string;
         };
         /** @description Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first. */
         readonly RecordingSource: {
@@ -3367,6 +3579,11 @@ export type components = {
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none. */
             readonly voice?: string;
+        };
+        readonly SessionConnectorBinding: {
+            readonly connection_id: string;
+            /** @description The alias of a config binding whose selection type is session. */
+            readonly name: string;
         };
         /** @description Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it. */
         readonly SessionMemory: {
@@ -3873,6 +4090,8 @@ export type components = {
         };
         /** @description An agent directory as it is on disk. Everything after the knowledge is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
+            /** @description The directory's declarative connector bindings. Full sync replaces these bindings; connected accounts remain separate resources. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly greeting?: string;
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
             readonly guardrail?: string;
@@ -3887,7 +4106,6 @@ export type components = {
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is also the directory's name. */
             readonly name: string;
-            readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly search?: string;
             readonly skills?: readonly components["schemas"]["SkillRequest"][];
@@ -4331,6 +4549,15 @@ export type components = {
                 readonly "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description The request conflicts with the existing agent config or connector state */
+        readonly Conflict: {
+            headers: {
+                readonly [name: string]: unknown;
+            };
+            content: {
+                readonly "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device. */
         readonly Forbidden: {
             headers: {
@@ -4368,8 +4595,6 @@ export type components = {
         readonly ItemLimit: number;
         /** @description Which kind of model to route. */
         readonly Modality: components["schemas"]["Modality"];
-        /** @description A built-in catalog id such as slack or calendly. */
-        readonly PluginID: string;
         /** @description The resource, as returned when it was created. */
         readonly ResourceID: string;
         /** @description Narrow to one turn's items. Omitted is every turn in the session. */
@@ -5128,6 +5353,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 409: components["responses"]["Conflict"];
         };
     };
     readonly deleteAgentConfig: {
@@ -5155,7 +5381,61 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
-    readonly listConfigPlugins: {
+    readonly listConnectorConnections: {
+        readonly parameters: {
+            readonly query?: {
+                readonly connector_id?: string;
+                readonly owner_id?: string;
+                readonly owner_type?: "app" | "user";
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Connections visible to this app */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ConnectorConnection"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly createConnectorConnection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateConnectorConnectionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Pending connection */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorConnection"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly getConnectorConnection: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -5167,13 +5447,13 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The config's connections */
+            /** @description Connection metadata */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["PluginConnection"][];
+                    readonly "application/json": components["schemas"]["ConnectorConnection"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -5182,21 +5462,19 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
-    readonly disconnectPlugin: {
+    readonly deleteConnectorConnection: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
                 readonly id: components["parameters"]["ResourceID"];
-                /** @description A built-in catalog id such as slack or calendly. */
-                readonly plugin_id: components["parameters"]["PluginID"];
             };
             readonly cookie?: never;
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The login is gone */
+            /** @description The local connection and credentials are gone */
             readonly 204: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5209,37 +5487,221 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
-    readonly authorizePlugin: {
+    readonly authorizeConnectorConnection: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
                 readonly id: components["parameters"]["ResourceID"];
-                /** @description A built-in catalog id such as slack or calendly. */
-                readonly plugin_id: components["parameters"]["PluginID"];
             };
             readonly cookie?: never;
         };
         readonly requestBody?: {
             readonly content: {
-                readonly "application/json": components["schemas"]["AuthorizePluginRequest"];
+                readonly "application/json": components["schemas"]["AuthorizeConnectorRequest"];
             };
         };
         readonly responses: {
-            /** @description The URL the browser should open */
+            /** @description Launch URL and browser handoff for provider authorization. */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["PluginAuthorization"];
+                    readonly "application/json": components["schemas"]["ConnectorAuthorization"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly putConnectorCredentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: components["parameters"]["ResourceID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PutConnectorCredentialsRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Updated connection metadata */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorConnection"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 409: components["responses"]["Conflict"];
+        };
+    };
+    readonly listConnectorTools: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: components["parameters"]["ResourceID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Cached tool schemas and their digest */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorTools"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly validateConnectorConnection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: components["parameters"]["ResourceID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Connection status and tool-list digest */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorValidation"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly listConnectors: {
+        readonly parameters: {
+            readonly query?: {
+                readonly q?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Connectors in catalog order */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ConnectorDefinition"][];
+                };
+            };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly createConnectorDefinition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateConnectorDefinitionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Custom connector definition */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorDefinition"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly getConnectorDefinition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: components["parameters"]["ResourceID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Connector metadata */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorDefinition"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly connectorOAuthCallback: {
+        readonly parameters: {
+            readonly query?: {
+                readonly code?: string;
+                readonly error?: string;
+                readonly state?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Redirect to the dashboard connection page */
+            readonly 302: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     readonly getConversationCommand: {
@@ -5781,53 +6243,6 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["Error"];
                 };
-            };
-        };
-    };
-    readonly listPlugins: {
-        readonly parameters: {
-            readonly query?: {
-                /** @description Filter by name, category or description. */
-                readonly q?: string;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description Matching plugins, in catalog order */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["Plugin"][];
-                };
-            };
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 403: components["responses"]["Forbidden"];
-        };
-    };
-    readonly pluginOAuthCallback: {
-        readonly parameters: {
-            readonly query?: {
-                readonly code?: string;
-                readonly error?: string;
-                readonly state?: string;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The browser is sent back to the agent editor */
-            readonly 302: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
@@ -6799,6 +7214,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 409: components["responses"]["Conflict"];
         };
     };
     readonly listVoices: {

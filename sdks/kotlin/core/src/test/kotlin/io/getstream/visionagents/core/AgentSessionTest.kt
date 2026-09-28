@@ -94,6 +94,22 @@ class AgentSessionTest {
     }
 
     @Test
+    fun `session connector selections use the router wire names`() = runBlocking {
+        val chat = agents.agent("crm").chat(
+            SessionOptions(
+                connectorBindings = listOf(SessionConnectorSelection("sales", "conn_user")),
+            ),
+        )
+
+        val bindings = Json.parseToJsonElement(router.requests.single().body).jsonObject["connector_bindings"]
+        assertEquals(
+            """[{"name":"sales","connection_id":"conn_user"}]""",
+            bindings.toString(),
+        )
+        chat.close()
+    }
+
+    @Test
     fun `a tool that throws tells the model it did not work, since it is mid-sentence waiting`() = runBlocking {
         val broken = AgentTool("lookup_order", "Look up an order.") { error("the orders database is down") }
         val chat = agents.chat(SessionOptions(tools = listOf(broken)))

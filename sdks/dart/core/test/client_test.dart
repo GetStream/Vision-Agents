@@ -138,6 +138,25 @@ void main() {
       ]);
     });
 
+    test('selects caller-owned accounts for session connector bindings', () async {
+      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+
+      await agents.sessions.create(
+        const SessionOptions(
+          connectorBindings: [
+            SessionConnectorSelection(name: 'sales', connectionId: 'conn_user'),
+          ],
+        ),
+      );
+
+      expect(router.last('POST /v1/agents/sessions').json, {
+        'text': true,
+        'connector_bindings': [
+          {'name': 'sales', 'connection_id': 'conn_user'},
+        ],
+      });
+    });
+
     test("an agent's sessions are opened against it and listed by it", () async {
       router
         ..answer('POST /v1/agents/sessions', Answer(201, sessionJson()))

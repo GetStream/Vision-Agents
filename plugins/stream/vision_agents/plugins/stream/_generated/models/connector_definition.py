@@ -1,114 +1,131 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..models.plugin_connection_status import PluginConnectionStatus
+from ..models.connector_definition_auth_mode import ConnectorDefinitionAuthMode
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="PluginConnection")
+T = TypeVar("T", bound="ConnectorDefinition")
 
 
 @_attrs_define
-class PluginConnection:
-    """A catalog plugin as this agent has it, including whether it is logged in.
+class ConnectorDefinition:
+    """A built-in or app-defined remote MCP connector definition.
 
     Attributes:
-        plugin_id (str):
+        id (str):
         name (str):
-        status (PluginConnectionStatus):
-        category (str | Unset):
-        description (str | Unset):
+        category (str):
+        description (str):
+        endpoint (str):
+        auth_mode (ConnectorDefinitionAuthMode):
+        api_key_header (str | Unset): Fixed header name for api_key auth; never supplied by the model.
+        scopes (list[str] | Unset):
         instance_required (bool | Unset):
         instance_hint (str | Unset):
-        instance_url (str | Unset):
     """
 
-    plugin_id: str
+    id: str
     name: str
-    status: PluginConnectionStatus
-    category: str | Unset = UNSET
-    description: str | Unset = UNSET
+    category: str
+    description: str
+    endpoint: str
+    auth_mode: ConnectorDefinitionAuthMode
+    api_key_header: str | Unset = UNSET
+    scopes: list[str] | Unset = UNSET
     instance_required: bool | Unset = UNSET
     instance_hint: str | Unset = UNSET
-    instance_url: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        plugin_id = self.plugin_id
+        id = self.id
 
         name = self.name
-
-        status = self.status.value
 
         category = self.category
 
         description = self.description
 
+        endpoint = self.endpoint
+
+        auth_mode = self.auth_mode.value
+
+        api_key_header = self.api_key_header
+
+        scopes: list[str] | Unset = UNSET
+        if not isinstance(self.scopes, Unset):
+            scopes = self.scopes
+
         instance_required = self.instance_required
 
         instance_hint = self.instance_hint
-
-        instance_url = self.instance_url
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "plugin_id": plugin_id,
+                "id": id,
                 "name": name,
-                "status": status,
+                "category": category,
+                "description": description,
+                "endpoint": endpoint,
+                "auth_mode": auth_mode,
             }
         )
-        if category is not UNSET:
-            field_dict["category"] = category
-        if description is not UNSET:
-            field_dict["description"] = description
+        if api_key_header is not UNSET:
+            field_dict["api_key_header"] = api_key_header
+        if scopes is not UNSET:
+            field_dict["scopes"] = scopes
         if instance_required is not UNSET:
             field_dict["instance_required"] = instance_required
         if instance_hint is not UNSET:
             field_dict["instance_hint"] = instance_hint
-        if instance_url is not UNSET:
-            field_dict["instance_url"] = instance_url
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        plugin_id = d.pop("plugin_id")
+        id = d.pop("id")
 
         name = d.pop("name")
 
-        status = PluginConnectionStatus(d.pop("status"))
+        category = d.pop("category")
 
-        category = d.pop("category", UNSET)
+        description = d.pop("description")
 
-        description = d.pop("description", UNSET)
+        endpoint = d.pop("endpoint")
+
+        auth_mode = ConnectorDefinitionAuthMode(d.pop("auth_mode"))
+
+        api_key_header = d.pop("api_key_header", UNSET)
+
+        scopes = cast(list[str], d.pop("scopes", UNSET))
 
         instance_required = d.pop("instance_required", UNSET)
 
         instance_hint = d.pop("instance_hint", UNSET)
 
-        instance_url = d.pop("instance_url", UNSET)
-
-        plugin_connection = cls(
-            plugin_id=plugin_id,
+        connector_definition = cls(
+            id=id,
             name=name,
-            status=status,
             category=category,
             description=description,
+            endpoint=endpoint,
+            auth_mode=auth_mode,
+            api_key_header=api_key_header,
+            scopes=scopes,
             instance_required=instance_required,
             instance_hint=instance_hint,
-            instance_url=instance_url,
         )
 
-        plugin_connection.additional_properties = d
-        return plugin_connection
+        connector_definition.additional_properties = d
+        return connector_definition
 
     @property
     def additional_keys(self) -> list[str]:

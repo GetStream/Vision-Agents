@@ -7,6 +7,7 @@ from ._generated.models import (
     ModelOverwrites,
     ModelOverwritesThinking,
     ModelOverwritesVerbosity,
+    SessionConnectorBinding,
 )
 from .accelerated import Accelerated
 from .client import Agent, Client, GuestOptions
@@ -58,6 +59,7 @@ __all__ = [
     "Responses",
     "Router",
     "RouterError",
+    "SessionConnectorBinding",
     "STS",
     "STT",
     "Session",

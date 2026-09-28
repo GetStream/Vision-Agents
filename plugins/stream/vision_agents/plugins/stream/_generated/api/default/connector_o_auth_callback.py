@@ -27,7 +27,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/agents/plugins/callback",
+        "url": "/v1/agents/connectors/oauth/callback",
         "params": params,
     }
 
@@ -64,10 +64,11 @@ def sync_detailed(
     state: str | Unset = UNSET,
     error: str | Unset = UNSET,
 ) -> Response[Any]:
-    """Finish a plugin login
+    """Complete provider consent
 
-     The provider redirects here with a code. The path is unauthenticated because the browser arrives
-    from the identity provider, and the state is the secret.
+     Unauthenticated OAuth redirect endpoint. It requires the browser-binding cookie issued when
+    authorization started, then consumes expiring state once and redirects to the configured dashboard.
+    Provider tokens are never put in the URL.
 
     Args:
         code (str | Unset):
@@ -102,10 +103,11 @@ async def asyncio_detailed(
     state: str | Unset = UNSET,
     error: str | Unset = UNSET,
 ) -> Response[Any]:
-    """Finish a plugin login
+    """Complete provider consent
 
-     The provider redirects here with a code. The path is unauthenticated because the browser arrives
-    from the identity provider, and the state is the secret.
+     Unauthenticated OAuth redirect endpoint. It requires the browser-binding cookie issued when
+    authorization started, then consumes expiring state once and redirects to the configured dashboard.
+    Provider tokens are never put in the URL.
 
     Args:
         code (str | Unset):

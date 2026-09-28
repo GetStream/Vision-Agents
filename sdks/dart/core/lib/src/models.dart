@@ -323,6 +323,7 @@ final class SessionOptions {
     this.conversationId,
     this.modelOverwrites,
     this.tools = const [],
+    this.connectorBindings = const [],
     this.tags = const {},
   });
 
@@ -369,8 +370,19 @@ final class SessionOptions {
   /// Functions of yours the agent may call, answered on this device.
   final List<AgentTool> tools;
 
+  /// Accounts selected for the agent's session-scoped connector bindings.
+  final List<SessionConnectorSelection> connectorBindings;
+
   /// Cost labels, carried onto every request the session makes.
   final Map<String, String> tags;
+}
+
+/// A caller-owned account selected for one configured connector alias.
+final class SessionConnectorSelection {
+  const SessionConnectorSelection({required this.name, required this.connectionId});
+
+  final String name;
+  final String connectionId;
 }
 
 /// What to change about a conversation while continuing it as a new one.
