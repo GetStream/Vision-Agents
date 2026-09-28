@@ -3,11 +3,14 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -104,6 +107,9 @@ type judgement struct {
 	// Unreadable says the model's answer could not be parsed, so what Got holds is the
 	// fallback the controller takes rather than anything the model chose.
 	Unreadable bool `json:"unreadable,omitempty"`
+	// Raw is what the model wrote when it could not be read, so a failure can be looked at
+	// rather than guessed at.
+	Raw string `json:"raw,omitempty"`
 	// Confidence is how peaked the distribution behind the answer was, and is zero for an
 	// arm whose model does not report one.
 	Confidence float64       `json:"confidence,omitempty"`
@@ -145,7 +151,7 @@ func (s *FlowBenchmarkSuite) SetupSuite() {
 func (s *FlowBenchmarkSuite) TestFlowControllerBenchmark() {
 	arms := s.modelArms()
 	if local := s.localArm(); local != nil {
-		arms = append(arms, *local)
+		arms = append(arms, *local, s.localChoiceArm())
 	}
 	arms = append(arms, s.jevArms()...)
 	s.Require().NotEmpty(arms, "no arm can be reached: name a target in "+modelsEnvVar+
@@ -277,6 +283,137 @@ func (s *FlowBenchmarkSuite) localArm() *arm {
 	return &local
 }
 
+// localChoiceArm asks the local model the same policy as a multiple-choice question, through
+// gophonic's /v1/classifications. The model scores one answer letter rather than writing JSON,
+// so it cannot answer with something the conversation cannot read, and the question is
+// evaluated once and kept prepared: each case costs only its own words and one token.
+func (s *FlowBenchmarkSuite) localChoiceArm() arm {
+	endpoint := strings.TrimSuffix(os.Getenv(localEnvVar), "/") + "/classifications"
+	model := envOr(localModelEnvVar, "Qwen3-8B")
+	return arm{
+		name:    "local-choice",
+		model:   "local/" + model,
+		repeats: 1,
+		price:   func(routing.Usage) int64 { return 0 },
+		judge: func(ctx context.Context, set flowSet, one flowCase, attempt int) (judgement, error) {
+			asked := localChoices(one)
+			turn := one.turn(one.ID, set.Contracts)
+			input := "The agent has been told: " + turn.Instructions + "\n\n" +
+				strings.TrimSuffix(strings.TrimSuffix(flowQuestion(turn), "Return the JSON object."),
+					"Decide only the floor. ")
+			labels := make([]string, len(asked))
+			for i, option := range asked {
+				labels[i] = option.label
+			}
+			body, err := json.Marshal(map[string]any{
+				"model": model, "input": strings.TrimSpace(input),
+				"question": localQuestion(one), "labels": labels,
+			})
+			if err != nil {
+				return judgement{}, err
+			}
+
+			askedAt := time.Now()
+			request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+			if err != nil {
+				return judgement{}, err
+			}
+			request.Header.Set("Content-Type", "application/json")
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				return judgement{}, err
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				raw, _ := io.ReadAll(response.Body)
+				return judgement{}, fmt.Errorf("local classification: %s: %s", response.Status, raw)
+			}
+			var answered struct {
+				Results []struct {
+					Classes []struct {
+						Label       string  `json:"label"`
+						Probability float64 `json:"probability"`
+					} `json:"classes"`
+				} `json:"results"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&answered); err != nil {
+				return judgement{}, err
+			}
+			if len(answered.Results) != 1 || len(answered.Results[0].Classes) != len(asked) {
+				return judgement{}, fmt.Errorf("local classification: unexpected answer %+v", answered)
+			}
+			best := 0
+			for i, class := range answered.Results[0].Classes {
+				if class.Probability > answered.Results[0].Classes[best].Probability {
+					best = i
+				}
+			}
+			return judgement{
+				CaseID:     one.ID,
+				State:      one.State,
+				Attempt:    attempt,
+				Expect:     one.Expect,
+				TookMs:     float64(time.Since(askedAt).Microseconds()) / 1000,
+				Got:        asked[best].outcome,
+				Confidence: answered.Results[0].Classes[best].Probability,
+			}, nil
+		},
+	}
+}
+
+// localChoice is one option the local model may pick, and what the agent then does.
+type localChoice struct {
+	label   string
+	outcome flowOutcome
+}
+
+// localChoices are the outcomes the conversation can reach from where the case stands, which
+// is what keeps a small model from answering with one it cannot.
+func localChoices(one flowCase) []localChoice {
+	switch {
+	case !one.AgentSpeaking:
+		return []localChoice{
+			{"respond: a complete thought addressed to the agent", outcomeAnswer},
+			{"wait: probably unfinished, or a recorded menu still reading its options", outcomeWait},
+			{"clarify: addressed to the agent, but what it wants is ambiguous", outcomeClarify},
+			{"ignore: background speech, or addressed to somebody else", outcomeIgnore},
+		}
+	case one.Unfinished:
+		return []localChoice{
+			{"stop: a correction, a new request, a question, or a direct interruption", outcomeInterrupt},
+			{"shorten: a related addition that makes the current answer too long", outcomeShorten},
+			{"continue: an acknowledgement, a noise, an echo of the agent, unrelated background speech, or too short to tell", outcomeContinue},
+		}
+	default:
+		return []localChoice{
+			{"stop: a correction, a new request, a question, or a direct interruption", outcomeInterrupt},
+			{"shorten: a related addition that makes the current answer too long", outcomeShorten},
+			{"continue: a brief acknowledgement, a noise, or an echo of the agent's own words", outcomeContinue},
+			{"ignore: background speech, or addressed to somebody else", outcomeIgnore},
+		}
+	}
+}
+
+// localQuestion is the production policy for the situation the case is in, in the production
+// prompt's own words, less the output format the letters replace.
+func localQuestion(one flowCase) string {
+	const role = "You control the floor of a live voice conversation between an agent and a caller. " +
+		"You never talk to the caller; another model answers them. "
+	if !one.AgentSpeaking {
+		return role + "The agent is not speaking and the words below have just been said. " +
+			"Choose wait when the words are probably incomplete, especially when they end on a " +
+			"PIN, member ID, phone number, or clock time that may still be growing. A recorded " +
+			"menu reading out its options is one thought however long its pauses: wait until it " +
+			"has asked for a choice. Words in a different voice usually come from somebody else " +
+			"in the room, so lean towards ignore unless they plainly address the agent. What " +
+			"should happen with the words?"
+	}
+	return role + "The agent is speaking when the words below arrive. Stop as soon as they are a " +
+		"correction, a new request, a question, or a direct interruption such as \"wait\", " +
+		"\"no\", or \"hang on\". Words that only repeat what the agent is saying are the " +
+		"caller's line echoing it back. Never talk over a recorded menu. What should the agent do?"
+}
+
 // modelArm asks one model the production question.
 func modelArm(target string, session llm.LLM, price func(routing.Usage) int64) arm {
 	return arm{
@@ -321,6 +458,7 @@ func modelArm(target string, session llm.LLM, price func(routing.Usage) int64) a
 				// The fallbacks the controller itself takes, so the row says what a call
 				// would have done rather than leaving a hole in the table.
 				decided.Unreadable = true
+				decided.Raw = response.OutputText
 				answer = flowAnswer{Disposition: Respond, Floor: Continue}
 				if turn.Unfinished {
 					answer = flowAnswer{Disposition: Wait, Floor: Stop}
