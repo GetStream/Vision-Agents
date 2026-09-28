@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -205,6 +206,32 @@ func (s flowSet) expected(state flowState) flowOutcome {
 	}
 }
 
+// sample keeps a fraction of each state, spread evenly through it and never less than one
+// case, so a small sample still asks about every state. It depends on nothing but the set,
+// which is what makes models run on the same sample comparable.
+func (s flowSet) sample(fraction float64) flowSet {
+	if fraction <= 0 || fraction >= 1 {
+		return s
+	}
+	byState := map[flowState][]flowCase{}
+	for _, one := range s.Cases {
+		byState[one.State] = append(byState[one.State], one)
+	}
+	kept := s
+	kept.Cases = nil
+	for _, state := range flowStates {
+		cases := byState[state]
+		if len(cases) == 0 {
+			continue
+		}
+		want := max(1, int(math.Round(fraction*float64(len(cases)))))
+		for i := range want {
+			kept.Cases = append(kept.Cases, cases[i*len(cases)/want])
+		}
+	}
+	return kept
+}
+
 // counts says how many cases each state has, so a report can say what a percentage is of.
 func (s flowSet) counts() map[flowState]int {
 	counts := map[flowState]int{}
@@ -386,6 +413,29 @@ func (s *FlowSetSuite) TestNoCorpusBackchannelIsCaughtBeforeTheModel() {
 			s.False(caughtBeforeTheModel(one.Heard), "%q never reaches a model", one.ID)
 		}
 	}
+}
+
+func (s *FlowSetSuite) TestASampleIsTheSameCasesEveryTime() {
+	ids := func(set flowSet) []string {
+		var named []string
+		for _, one := range set.Cases {
+			named = append(named, one.ID)
+		}
+		return named
+	}
+	s.Equal(ids(s.ami.sample(0.05)), ids(s.ami.sample(0.05)))
+	s.Equal(ids(s.set.sample(0.05)), ids(s.set.sample(0.05)))
+}
+
+func (s *FlowSetSuite) TestASmallSampleStillAsksAboutEveryState() {
+	small := s.set.sample(0.05)
+
+	s.Len(small.Cases, len(flowStates), "one case per state")
+	s.Len(small.counts(), len(flowStates))
+	s.Equal(map[flowState]int{
+		stateRespond: 2, stateWait: 2, stateStop: 2, stateContinueAck: 2,
+	}, s.ami.sample(0.05).counts())
+	s.Equal(s.set.Cases, s.set.sample(1).Cases, "a whole sample is the set")
 }
 
 func (s *FlowSetSuite) TestTheNoiseCasesAreOnesTheModelActuallyDecides() {

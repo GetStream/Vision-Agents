@@ -31,13 +31,18 @@ import (
 const benchmarkEnvVar = "FLOW_BENCHMARK"
 
 // modelsEnvVar names the router targets to compare, comma separated: an alias such as
-// llm-flow, or a provider and model such as cerebras/gemma-4-31b. Each is asked the production
-// prompt and read with the production parser.
+// llm-flow, a provider and model such as cerebras/gemma-4-31b, or all for every LLM the
+// router is configured with. Each is asked the production prompt and read with the
+// production parser.
 const modelsEnvVar = "FLOW_BENCHMARK_MODELS"
 
 // defaultModels are the controller as deployed and the Gemma 4 deployment of our own, behind
 // GEMMA_BASE_URL. A target that cannot be reached is skipped rather than failing the run.
 const defaultModels = "llm-flow,gemma/gemma-4-26B-A4B-it"
+
+// sampleEnvVar runs a fraction of each set, such as 0.05, for a sweep across many models that
+// would cost too much in full. Every model and every run is asked the same cases.
+const sampleEnvVar = "BENCHMARK_SAMPLE"
 
 // setsEnvVar picks the labelled sets, comma separated, from written and ami.
 const setsEnvVar = "FLOW_BENCHMARK_SETS"
@@ -130,6 +135,7 @@ func (s *FlowBenchmarkSuite) TestFlowControllerBenchmark() {
 	for _, name := range s.sets {
 		set, err := loadFlowSet(name)
 		s.Require().NoError(err)
+		set = set.sample(sampleFraction())
 		tallies := make([]tally, 0, len(arms))
 		for _, one := range arms {
 			s.T().Logf("running %s over the %s set, %d cases, %d times each",
@@ -218,7 +224,7 @@ func (s *FlowBenchmarkSuite) modelArms() []arm {
 	s.T().Cleanup(router.Close)
 
 	var arms []arm
-	for _, target := range strings.Split(envOr(modelsEnvVar, defaultModels), ",") {
+	for _, target := range targets(config, envOr(modelsEnvVar, defaultModels)) {
 		session, err := router.Start(s.ctx, llmrouter.Request{
 			CustomerID: "flow-benchmark", Target: target,
 		})
@@ -748,4 +754,25 @@ func envOr(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// targets reads a list of router targets, where all means every configured LLM.
+func targets(config routing.Config, listed string) []string {
+	if listed != "all" {
+		return strings.Split(listed, ",")
+	}
+	var every []string
+	for _, one := range config[routing.LLM].Providers {
+		every = append(every, one.Provider+"/"+one.Model)
+	}
+	return every
+}
+
+// sampleFraction is what sampleEnvVar asks for, or all of every set when it is unset.
+func sampleFraction() float64 {
+	fraction, err := strconv.ParseFloat(os.Getenv(sampleEnvVar), 64)
+	if err != nil {
+		return 1
+	}
+	return fraction
 }

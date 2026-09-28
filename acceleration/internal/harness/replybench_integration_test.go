@@ -24,7 +24,8 @@ import (
 // replyBenchmarkEnvVar has to be set for the reply benchmark to run.
 const replyBenchmarkEnvVar = "REPLY_BENCHMARK"
 
-// replyModelsEnvVar names the reply models to compare, comma separated, as router targets.
+// replyModelsEnvVar names the reply models to compare, comma separated, as router targets, or
+// all for every configured LLM.
 const replyModelsEnvVar = "REPLY_BENCHMARK_MODELS"
 
 // defaultReplyModels is the voice model as deployed.
@@ -78,6 +79,7 @@ func (g graded) passed() bool { return g.Failed == "" && g.Relevant && g.Grounde
 type ReplyBenchmarkSuite struct {
 	suite.Suite
 	ctx    context.Context
+	config routing.Config
 	router *llmrouter.Router
 	judge  *llmrouter.Session
 }
@@ -92,10 +94,11 @@ func (s *ReplyBenchmarkSuite) SetupSuite() {
 	}
 	s.ctx = context.Background()
 
-	config, err := routing.DefaultConfig()
+	var err error
+	s.config, err = routing.DefaultConfig()
 	s.Require().NoError(err)
 	s.router, err = llmrouter.New(llmrouter.Options{
-		Config:   config[routing.LLM],
+		Config:   s.config[routing.LLM],
 		Registry: llmrouter.DefaultRegistry(),
 		Logger:   slog.New(slog.DiscardHandler),
 	})
@@ -117,11 +120,12 @@ func (s *ReplyBenchmarkSuite) TestReplyBenchmark() {
 	for _, name := range strings.Split(envOr(setsEnvVar, writtenSet+","+amiSet), ",") {
 		set, err := loadFlowSet(name)
 		s.Require().NoError(err)
+		set = set.sample(sampleFraction())
 		cases := replyCases(set)
 
 		results[name] = map[string][]graded{}
 		var models []string
-		for _, target := range strings.Split(envOr(replyModelsEnvVar, defaultReplyModels), ",") {
+		for _, target := range targets(s.config, envOr(replyModelsEnvVar, defaultReplyModels)) {
 			session, err := s.router.Start(s.ctx, llmrouter.Request{
 				CustomerID: "reply-benchmark", Target: target,
 			})
