@@ -50,6 +50,18 @@ func (s *StoreSuite) TestASessionIsOnlyItsOwnCustomers() {
 	s.Empty(theirs)
 }
 
+func (s *StoreSuite) TestSessionKeepsAccountSelectionsForForkRevalidation() {
+	want := []SessionConnectorSelection{{Name: "crm", ConnectionID: "connection-alice"}}
+	s.opened("selected", "app", s.base, func(session *AgentSession) {
+		session.ConnectorSelections = want
+	})
+
+	found, err := s.store.StoredSession(s.ctx, "app", "selected")
+	s.Require().NoError(err)
+	s.Equal(want, found.ConnectorSelections,
+		"a stored fork needs the selected connection ID so it can recheck the current owner and config")
+}
+
 func (s *StoreSuite) TestQueryNarrowsToOnePerson() {
 	s.opened("mine", "app", s.base, func(session *AgentSession) { session.UserID = "jlahey" })
 	s.opened("theirs", "app", s.base.Add(time.Minute), func(session *AgentSession) { session.UserID = "randy" })

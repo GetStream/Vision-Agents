@@ -41,7 +41,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 var configColumns = []string{
 	"name", "mode", "stt", "tts", "sts", "voice", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "guardrail",
-	"skills", "plugins", "keyterms", "knowledge_namespace", "sandbox", "tags",
+	"skills", "connectors", "keyterms", "knowledge_namespace", "sandbox", "tags",
 	"sync_hash", "updated_at",
 }
 
@@ -350,8 +350,8 @@ func normalizeConfig(config *AgentConfig) {
 	if config.Skills == nil {
 		config.Skills = []string{}
 	}
-	if config.Plugins == nil {
-		config.Plugins = []string{}
+	if config.Connectors == nil {
+		config.Connectors = []ConnectorBinding{}
 	}
 	if config.Keyterms == nil {
 		config.Keyterms = []string{}

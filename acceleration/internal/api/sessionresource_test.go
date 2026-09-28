@@ -339,6 +339,30 @@ func TestForkingAStoredTextSessionCarriesItsHistoryAndItsLabels(t *testing.T) {
 		"the parent's channel is readable only as the agent it belongs to")
 }
 
+func TestForkingToAnotherConfigUsesItsGrantsWithoutTransferringAccountSelections(t *testing.T) {
+	parent := store.AgentSession{
+		ID: "session-1",
+		ConnectorSelections: []store.SessionConnectorSelection{{
+			Name: "crm", ConnectionID: "old-account",
+		}},
+	}
+	config := &store.AgentConfig{
+		ID: "new-config",
+		Connectors: []store.ConnectorBinding{{
+			Name: "calendar", ConnectorID: "calendly",
+			Connection: store.ConnectionBinding{Type: "fixed", ConnectionID: "new-account"},
+			Tools:      []store.ToolGrant{{Name: "list_events", SchemaDigest: "current-schema"}},
+		}},
+	}
+
+	spec, err := forkSpec(session.Found{Stored: &parent}, ForkSessionRequest{}, config)
+
+	require.NoError(t, err)
+	require.Equal(t, config.Connectors, spec.ConnectorBindings)
+	require.Empty(t, spec.ConnectorSelections,
+		"a different agent gets current grants and cannot inherit the parent's account choice")
+}
+
 func TestForkingWithoutTheMessagesStartsFromNothing(t *testing.T) {
 	parent := store.AgentSession{ID: "session-1", ConversationID: "agent:support-7"}
 	no := false

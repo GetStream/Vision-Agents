@@ -100,6 +100,25 @@ func (s *StoreSuite) TestAnAppKeepsSeveralLiveKeysSoRotationIsNotAnOutage() {
 	}
 }
 
+func (s *StoreSuite) TestAPIKeyRewrapUsesThePersistedKeyVersionAsACompareAndSwap() {
+	app := s.app()
+	const id = "vak_live_4444444444444444a5b9781c"
+	s.key(app.ID, id, nil)
+
+	s.Require().NoError(s.store.RewrapAPIKeySecret(s.ctx, id, 1, []byte("version-2-ciphertext"), 2))
+	owner, err := s.store.LiveAPIKey(s.ctx, id)
+	s.Require().NoError(err)
+	s.Equal(2, owner.KEKVersion)
+	s.Equal([]byte("version-2-ciphertext"), owner.Sealed)
+
+	// A second router that opened version 1 before the first rewrap must not replace it.
+	s.Require().NoError(s.store.RewrapAPIKeySecret(s.ctx, id, 1, []byte("stale-ciphertext"), 2))
+	owner, err = s.store.LiveAPIKey(s.ctx, id)
+	s.Require().NoError(err)
+	s.Equal(2, owner.KEKVersion)
+	s.Equal([]byte("version-2-ciphertext"), owner.Sealed)
+}
+
 func (s *StoreSuite) TestKeyUseIsRecordedOncePerIntervalRatherThanPerRequest() {
 	app := s.app()
 	s.key(app.ID, "vak_live_3333333333333333e00d6c93", nil)

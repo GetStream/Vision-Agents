@@ -249,6 +249,9 @@ func (s *RecordSuite) TestTheRowSaysWhoseSessionItIsRatherThanWhoTheAgentJoinedA
 			Project:    "Health",
 			Title:      "A refund",
 			Custom:     map[string]any{"tenant": "acme"},
+			ConnectorSelections: []ConnectorSelection{
+				{Name: "crm", ConnectionID: "connection-alice"},
+			},
 		},
 	}
 
@@ -260,6 +263,8 @@ func (s *RecordSuite) TestTheRowSaysWhoseSessionItIsRatherThanWhoTheAgentJoinedA
 	s.Equal("Health", row.Project)
 	s.Equal("A refund", row.Title)
 	s.Equal(store.SessionRunning, row.State)
+	s.Equal([]store.SessionConnectorSelection{{Name: "crm", ConnectionID: "connection-alice"}},
+		row.ConnectorSelections, "stored sessions keep references needed to reauthorize a fork")
 }
 
 func (s *RecordSuite) TestMatchesLiveAnswersTheSameFiltersAsTheStore() {

@@ -49,7 +49,7 @@ func (s *Store) CreateApp(ctx context.Context, app *App) error {
 // CreateAPIKey stores a credential. The id is minted by the caller rather than here,
 // because the key is what the caller is handed and it has to be well formed.
 func (s *Store) CreateAPIKey(ctx context.Context, key *APIKey) error {
-	if key.ID == "" || key.AppID == "" {
+	if key.ID == "" || key.AppID == "" || key.KEKVersion < 1 {
 		return errors.New("store: a key needs an id and an app")
 	}
 	if len(key.Sealed) == 0 {
@@ -136,6 +136,25 @@ func (s *Store) TouchAPIKey(ctx context.Context, id string, interval time.Durati
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: touch api key: %w", err)
+	}
+	return nil
+}
+
+// RewrapAPIKeySecret replaces a key's encrypted secret after successful decryption. The
+// persisted version check avoids overwriting a newer rewrap from another router.
+func (s *Store) RewrapAPIKeySecret(ctx context.Context, id string, expectedVersion int, sealed []byte, nextVersion int) error {
+	if id == "" || expectedVersion < 1 || nextVersion < 1 || len(sealed) == 0 {
+		return errors.New("store: api key rewrap values are required")
+	}
+	_, err := s.db.NewUpdate().Model((*APIKey)(nil)).
+		Set("secret_sealed = ?", sealed).
+		Set("kek_version = ?", nextVersion).
+		Where("id = ?", id).
+		Where("kek_version = ?", expectedVersion).
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: rewrap api key secret: %w", err)
 	}
 	return nil
 }

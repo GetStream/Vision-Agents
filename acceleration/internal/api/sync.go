@@ -38,14 +38,22 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 	if s.store == nil {
 		return SyncAgent400JSONResponse{badRequest(noConfigs)}, nil
 	}
-	if message, ok := syncComplaint(body); !ok {
-		return SyncAgent400JSONResponse{badRequest(message)}, nil
-	}
-
 	existing, found, err := s.store.AgentConfigByName(ctx, customerID, name)
 	if err != nil {
 		return nil, err
 	}
+	if found && body.Connectors == nil && len(existing.Connectors) > 0 {
+		return SyncAgent409JSONResponse{ConflictJSONResponse{Error: "this config uses connector bindings; include connectors when syncing it"}}, nil
+	}
+	if message, ok := syncComplaint(body); !ok {
+		return SyncAgent400JSONResponse{badRequest(message)}, nil
+	}
+	if message, err := s.connectorDefinitionComplaint(ctx, customerID, body.Connectors); err != nil {
+		return nil, err
+	} else if message != "" {
+		return SyncAgent400JSONResponse{badRequest(message)}, nil
+	}
+
 	if found && existing.SyncHash == hash {
 		return SyncAgent200JSONResponse{Unchanged: true, Config: agentConfigOf(existing)}, nil
 	}
@@ -136,6 +144,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	if _, ok := sandboxOf(body.Sandbox); !ok {
 		return fmt.Sprintf("there is no sandbox provider called %q", *body.Sandbox), false
 	}
+	if complaint, ok := connectorBindingsComplaint(body.Connectors); !ok {
+		return complaint, false
+	}
 	return "", true
 }
 
@@ -175,8 +186,8 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Greeting != nil {
 		config.Greeting = *body.Greeting
 	}
-	if body.Plugins != nil {
-		config.Plugins = *body.Plugins
+	if body.Connectors != nil {
+		config.Connectors = connectorBindingsFromAPI(*body.Connectors)
 	}
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)

@@ -95,9 +95,10 @@ type ManagerOptions struct {
 	// Without one the manager opens its own over the configured outbox directory.
 	Conversations *persistent.Service
 
-	Store  *store.Store
-	Live   *live.Client
-	Logger *slog.Logger
+	Store            *store.Store
+	CredentialSealer *auth.Sealer
+	Live             *live.Client
+	Logger           *slog.Logger
 }
 
 // Manager owns the sessions this process is running.
@@ -260,6 +261,19 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, err
 	}
 
+	connectorMCP, connectorTools, connectorUnavailable, err := attachConnectors(ctx, spec, m.options.Store, m.options.CredentialSealer, m.logger, nil)
+	if err != nil {
+		return nil, err
+	}
+	connectorMCPOwned := false
+	if connectorMCP != nil {
+		defer func() {
+			if !connectorMCPOwned {
+				connectorMCP.Close()
+			}
+		}()
+	}
+
 	// A text session joins nothing, so no edge is opened for it. Everything downstream
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	var edge agent.Edge
@@ -280,15 +294,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	created := &Session{
-		logs:      m.logs,
-		persisted: conv,
-		id:        newID(),
-		spec:      spec,
-		created:   time.Now(),
-		logger:    m.logger,
-		watchers:  map[uint64]*watcher{},
-		state:     Live,
-		skills:    skills,
+		logs:                 m.logs,
+		persisted:            conv,
+		id:                   newID(),
+		spec:                 spec,
+		created:              time.Now(),
+		logger:               m.logger,
+		watchers:             map[uint64]*watcher{},
+		state:                Live,
+		connectorUnavailable: connectorUnavailable,
+		skills:               skills,
 	}
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
@@ -299,22 +314,25 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// after the caller's so a caller cannot quietly replace a transfer, and the agent
 	// drops whichever of them nothing on this call can carry out.
 	tools := append([]harness.Tool(nil), spec.Tools...)
+	tools = append(tools, connectorTools...)
+	otherTools := append([]harness.Tool(nil), spec.Tools...)
 	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()
 		if err != nil {
 			return nil, err
 		}
 		tools = append(tools, builtin.Tools...)
+		otherTools = append(otherTools, builtin.Tools...)
+	}
+	if err := validateConnectorToolNames(connectorTools, otherTools); err != nil {
+		return nil, err
 	}
 
-	mcp, pluginTools := attachPlugins(ctx, spec, m.options.Store, m.logger)
-	tools = append(tools, pluginTools...)
 	runner := agent.ToolRunner(created.tools)
-	if mcp != nil {
-		runner = &pluginRunner{mcp: mcp, next: created.tools}
-		created.closers = append(created.closers, mcp.Close)
+	if connectorMCP != nil {
+		runner = &connectorToolRunner{mcp: connectorMCP, next: runner}
+		created.closers = append(created.closers, connectorMCP.Close)
 	}
-
 	var toolStarted func(agent.ToolStarted)
 	if conv != nil {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
@@ -489,8 +507,27 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
+	connectorMCPOwned = true
 	opened = true
 	return created, nil
+}
+
+func validateConnectorToolNames(connectorTools, otherTools []harness.Tool) error {
+	otherNames := make(map[string]struct{}, len(otherTools))
+	for _, tool := range otherTools {
+		otherNames[tool.Name] = struct{}{}
+	}
+	connectorNames := make(map[string]struct{}, len(connectorTools))
+	for _, tool := range connectorTools {
+		if _, exists := otherNames[tool.Name]; exists {
+			return fmt.Errorf("session: connector tool name %q collides with another session tool", tool.Name)
+		}
+		if _, exists := connectorNames[tool.Name]; exists {
+			return fmt.Errorf("session: connector tool name %q is duplicated", tool.Name)
+		}
+		connectorNames[tool.Name] = struct{}{}
+	}
+	return nil
 }
 
 // supersede ends whatever this agent was already doing in this call, before the new one

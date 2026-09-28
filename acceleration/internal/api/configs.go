@@ -65,6 +65,11 @@ func (s *Server) CreateAgentConfig(ctx context.Context, request CreateAgentConfi
 	if message, ok := configComplaint(*request.Body); !ok {
 		return CreateAgentConfig400JSONResponse{badRequest(message)}, nil
 	}
+	if message, err := s.connectorDefinitionComplaint(ctx, customerID, request.Body.Connectors); err != nil {
+		return nil, err
+	} else if message != "" {
+		return CreateAgentConfig400JSONResponse{badRequest(message)}, nil
+	}
 
 	config := storedConfig(*request.Body, customerID)
 	if err := s.store.CreateAgentConfig(ctx, &config); err != nil {
@@ -102,18 +107,28 @@ func (s *Server) UpdateAgentConfig(ctx context.Context, request UpdateAgentConfi
 	if request.Body == nil {
 		return UpdateAgentConfig400JSONResponse{badRequest("a request body is required")}, nil
 	}
-	if message, ok := configComplaint(*request.Body); !ok {
-		return UpdateAgentConfig400JSONResponse{badRequest(message)}, nil
-	}
-
 	existing, err := s.store.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
 		return UpdateAgentConfig404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
+	}
+	if request.Body.Connectors == nil && len(existing.Connectors) > 0 {
+		return UpdateAgentConfig409JSONResponse{ConflictJSONResponse{Error: "this config uses connector bindings; include connectors when updating it"}}, nil
+	}
+	if message, ok := configComplaint(*request.Body); !ok {
+		return UpdateAgentConfig400JSONResponse{badRequest(message)}, nil
+	}
+	if message, err := s.connectorDefinitionComplaint(ctx, customerID, request.Body.Connectors); err != nil {
+		return nil, err
+	} else if message != "" {
+		return UpdateAgentConfig400JSONResponse{badRequest(message)}, nil
 	}
 
 	config := storedConfig(*request.Body, customerID)
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
+	if request.Body.Connectors == nil {
+		config.Connectors = existing.Connectors
+	}
 	if err := s.store.UpdateAgentConfig(ctx, &config); err != nil {
 		return UpdateAgentConfig400JSONResponse{badRequest(err.Error())}, nil
 	}
@@ -277,6 +292,9 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if complaint, ok := guardrailComplaint(request.Guardrail); !ok {
 		return complaint, false
 	}
+	if complaint, ok := connectorBindingsComplaint(request.Connectors); !ok {
+		return complaint, false
+	}
 	return "", true
 }
 
@@ -373,8 +391,8 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Skills != nil {
 		config.Skills = *request.Skills
 	}
-	if request.Plugins != nil {
-		config.Plugins = *request.Plugins
+	if request.Connectors != nil {
+		config.Connectors = connectorBindingsFromAPI(*request.Connectors)
 	}
 	config.Keyterms = keytermsOf(request.Keyterms)
 	if request.Tags != nil {
@@ -434,10 +452,8 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		skills := config.Skills
 		rendered.Skills = &skills
 	}
-	if len(config.Plugins) > 0 {
-		named := config.Plugins
-		rendered.Plugins = &named
-	}
+	bindings := connectorBindingsToAPI(config.Connectors)
+	rendered.Connectors = &bindings
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms
 		rendered.Keyterms = &keyterms

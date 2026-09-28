@@ -53,12 +53,16 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 	if session.Custom == nil {
 		session.Custom = map[string]any{}
 	}
+	if session.ConnectorSelections == nil {
+		session.ConnectorSelections = []SessionConnectorSelection{}
+	}
 
 	_, err := s.db.NewInsert().Model(session).
 		On("CONFLICT (id) DO UPDATE").
 		Set("title = EXCLUDED.title").
 		Set("description = EXCLUDED.description").
 		Set("custom = EXCLUDED.custom").
+		Set("connector_selections = EXCLUDED.connector_selections").
 		Set("conversation_id = EXCLUDED.conversation_id").
 		Set("state = EXCLUDED.state").
 		Set("updated_at = EXCLUDED.updated_at").

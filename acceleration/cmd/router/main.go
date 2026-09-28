@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectorimport"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/environment"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
@@ -90,7 +92,8 @@ const (
 	authModeEnvVar = "ROUTER_AUTH_MODE"
 	// authKEKEnvVar unseals the stored key secrets. It lives outside the database on
 	// purpose: it is what makes a leaked backup ciphertext rather than credentials.
-	authKEKEnvVar = "ROUTER_AUTH_KEK"
+	authKEKEnvVar        = "ROUTER_AUTH_KEK"
+	authKEKVersionEnvVar = "ROUTER_AUTH_KEK_VERSION"
 	// messageLimitEnvVar and tokenLimitEnvVar cap what one of a customer's end users may
 	// spend in a day. They apply to callers holding a token minted for a user, not to a
 	// backend the customer runs for itself, which is trusted with its own spend. Either at
@@ -137,7 +140,6 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("loaded environment", "env", env)
-
 	// Dsn is deliberately not set. The SDK reads SENTRY_DSN and
 	// SENTRY_ENVIRONMENT itself, so the DSN stays out of this repository and an
 	// unset one disables reporting -- which is what a local run and the tests
@@ -255,7 +257,7 @@ func newAuthenticator(pgStore *store.Store, logger *slog.Logger) (auth.Authentic
 		return nil, fmt.Errorf("%s=%s needs %s, because that is where the keys are",
 			authModeEnvVar, auth.APIKey, postgresEnvVar)
 	}
-	sealer, err := auth.NewSealer(os.Getenv(authKEKEnvVar))
+	sealer, err := newCredentialSealer()
 	if err != nil {
 		return nil, fmt.Errorf("%s=%s needs %s: %w", authModeEnvVar, auth.APIKey, authKEKEnvVar, err)
 	}
@@ -270,9 +272,18 @@ func newAuthenticator(pgStore *store.Store, logger *slog.Logger) (auth.Authentic
 		if err != nil {
 			return auth.App{}, auth.ErrUnauthenticated
 		}
-		secret, err := sealer.Open(owner.Sealed)
+		secret, err := sealer.OpenWithAADVersion(owner.Sealed, nil, owner.KEKVersion)
 		if err != nil {
 			return auth.App{}, fmt.Errorf("unseal key %s: %w", key, err)
+		}
+		if owner.KEKVersion != sealer.CurrentVersion() {
+			rewrapped, err := sealer.Seal(secret)
+			if err != nil {
+				return auth.App{}, fmt.Errorf("rewrap key %s: %w", key, err)
+			}
+			if err := pgStore.RewrapAPIKeySecret(ctx, key, owner.KEKVersion, rewrapped, sealer.CurrentVersion()); err != nil {
+				logger.Debug("could not rewrap api key secret", "key", key, "error", err)
+			}
 		}
 		if err := pgStore.TouchAPIKey(ctx, key, lastUsedInterval); err != nil {
 			logger.Debug("could not record key use", "key", key, "error", err)
@@ -313,6 +324,32 @@ func run(logger *slog.Logger) error {
 		}
 		defer pgStore.Close()
 
+		if err := pgStore.MigrateUpTo(ctx, 20260925140000); err != nil {
+			return err
+		}
+		var legacyTable sql.NullString
+		if err := pgStore.DB().QueryRowContext(ctx, "SELECT to_regclass('agent_plugin_connections')").Scan(&legacyTable); err != nil {
+			return fmt.Errorf("check previous connector storage: %w", err)
+		}
+		if legacyTable.Valid {
+			var connectorSealer *auth.Sealer
+			if credentialKeyringConfigured() {
+				connectorSealer, err = newCredentialSealer()
+				if err != nil {
+					return err
+				}
+			}
+			report, err := connectorimport.ImportSupportedAccounts(ctx, pgStore.DB(), connectorSealer)
+			if err != nil {
+				return err
+			}
+			logger.Info("transferred supported connector accounts before removing old storage",
+				"imported", report.ImportedConnections,
+				"already_imported", report.ExistingConnections,
+				"bindings_added", report.BindingsAdded,
+				"unsupported_skipped", report.Unsupported,
+				"inactive_skipped", report.Inactive)
+		}
 		if err := pgStore.Migrate(ctx); err != nil {
 			return err
 		}
@@ -554,7 +591,14 @@ func run(logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, judging, logger)
+	var credentialSealer *auth.Sealer
+	if credentialKeyringConfigured() {
+		credentialSealer, err = newCredentialSealer()
+		if err != nil {
+			return err
+		}
+	}
+	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, judging, credentialSealer, logger)
 	if err != nil {
 		return err
 	}
@@ -647,28 +691,29 @@ func run(logger *slog.Logger) error {
 	}
 
 	options := api.Options{
-		Routers:        routers,
-		Voices:         voiceService,
-		VoiceLibrary:   buildLibrary(logger),
-		KnowledgeURLs:  pages,
-		Store:          pgStore,
-		Live:           liveClient,
-		Phone:          telephony,
-		Sessions:       sessions,
-		Streams:        streams,
-		Transcripts:    transcripts,
-		Campaigns:      campaigns,
-		Simulations:    simulations,
-		Dispatch:       workers,
-		Quota:          limiter,
-		TrustedProxies: trustedProxies,
-		StreamSecret:   os.Getenv(streamSecretEnvVar),
-		StreamKey:      os.Getenv(streamKeyEnvVar),
-		CORSOrigins:    splitList(os.Getenv(corsOriginsEnvVar)),
-		PublicURL:      os.Getenv(publicURLEnvVar),
-		DashboardURL:   dashboardBaseURL(),
-		Auth:           authenticator,
-		Logger:         logger,
+		Routers:          routers,
+		Voices:           voiceService,
+		VoiceLibrary:     buildLibrary(logger),
+		KnowledgeURLs:    pages,
+		Store:            pgStore,
+		Live:             liveClient,
+		Phone:            telephony,
+		Sessions:         sessions,
+		Streams:          streams,
+		Transcripts:      transcripts,
+		Campaigns:        campaigns,
+		Simulations:      simulations,
+		Dispatch:         workers,
+		Quota:            limiter,
+		TrustedProxies:   trustedProxies,
+		StreamSecret:     os.Getenv(streamSecretEnvVar),
+		StreamKey:        os.Getenv(streamKeyEnvVar),
+		CORSOrigins:      splitList(os.Getenv(corsOriginsEnvVar)),
+		PublicURL:        os.Getenv(publicURLEnvVar),
+		DashboardURL:     dashboardBaseURL(),
+		CredentialSealer: credentialSealer,
+		Auth:             authenticator,
+		Logger:           logger,
 	}
 	if options.StreamSecret == "" {
 		logger.Warn("no "+streamSecretEnvVar+" set, so inbound calls cannot be dispatched: "+
@@ -722,6 +767,43 @@ func run(logger *slog.Logger) error {
 	}
 }
 
+func newCredentialSealer() (*auth.Sealer, error) {
+	currentVersion := auth.KEKVersion
+	if configured := os.Getenv(authKEKVersionEnvVar); configured != "" {
+		version, err := strconv.Atoi(configured)
+		if err != nil || version < 1 {
+			return nil, fmt.Errorf("%s must be a positive integer", authKEKVersionEnvVar)
+		}
+		currentVersion = version
+	}
+	keys := make(map[int]string, currentVersion)
+	if legacy := os.Getenv(authKEKEnvVar); legacy != "" {
+		keys[1] = legacy
+	}
+	for version := 1; version <= currentVersion; version++ {
+		if key := os.Getenv(fmt.Sprintf("%s_V%d", authKEKEnvVar, version)); key != "" {
+			keys[version] = key
+		}
+	}
+	return auth.NewSealerWithKeyring(currentVersion, keys)
+}
+
+func credentialKeyringConfigured() bool {
+	if os.Getenv(authKEKEnvVar) != "" || os.Getenv(authKEKVersionEnvVar) != "" {
+		return true
+	}
+	for _, variable := range os.Environ() {
+		name, _, _ := strings.Cut(variable, "=")
+		if !strings.HasPrefix(name, authKEKEnvVar+"_V") {
+			continue
+		}
+		if _, err := strconv.Atoi(strings.TrimPrefix(name, authKEKEnvVar+"_V")); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // splitList reads a comma-separated environment variable, dropping the empty entries a
 // trailing comma leaves behind.
 func splitList(raw string) []string {
@@ -748,6 +830,7 @@ func buildSessions(
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
 	judging *lcmrouter.Router,
+	credentialSealer *auth.Sealer,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -782,10 +865,11 @@ func buildSessions(
 		// The same app secret that verifies Stream's inbound hooks, now signing one going
 		// the other way. A customer who wants to decide for themselves whether a turn may
 		// be answered already holds it, so there is no second secret to hand out.
-		WebhookSecret: os.Getenv(streamSecretEnvVar),
-		Store:         pgStore,
-		Live:          liveClient,
-		Logger:        logger,
+		WebhookSecret:    os.Getenv(streamSecretEnvVar),
+		Store:            pgStore,
+		CredentialSealer: credentialSealer,
+		Live:             liveClient,
+		Logger:           logger,
 		Edge: func(spec session.Spec, logger *slog.Logger) (agent.Edge, error) {
 			return streamedge.New(streamedge.Options{
 				CallID:   spec.CallID,

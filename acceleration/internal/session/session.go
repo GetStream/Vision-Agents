@@ -75,6 +75,14 @@ const (
 // types declared in this package are the session's own.
 type Event any
 
+// ConnectorUnavailable reports an optional connector capability that could not be made
+// available when the session opened. Reason is a stable, nonsecret status code.
+type ConnectorUnavailable struct {
+	Name        string
+	ConnectorID string
+	Reason      string
+}
+
 // CommandStopped is how one named command ended after somebody asked for it to stop. It
 // is separate from the receipt a submission returns, because a watcher has to tell a
 // command it asked to stop from a command that was just accepted.
@@ -122,9 +130,10 @@ type Session struct {
 	mu        sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
-	watchers    map[uint64]*watcher
-	nextWatcher uint64
-	state       State
+	watchers             map[uint64]*watcher
+	nextWatcher          uint64
+	state                State
+	connectorUnavailable []ConnectorUnavailable
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so
@@ -295,9 +304,9 @@ func (w *watcher) send(event Event) bool {
 
 // Watch attaches a consumer and returns it along with the way to detach.
 //
-// Every watcher sees everything from the moment it attached. Nothing is replayed: a caller
-// that connects late has missed the conversation, and a control channel that opened with a
-// backlog would have it answering tool calls that timed out before it arrived.
+// Every watcher sees events from the moment it attached. Startup connector availability is
+// replayed because it describes the session's current capabilities; conversation events and
+// expired tool calls are not replayed.
 func (s *Session) Watch() (<-chan Event, func()) {
 	return s.watch(false)
 }
@@ -320,6 +329,9 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	id := s.nextWatcher
 	s.nextWatcher++
 	s.watchers[id] = attached
+	for _, unavailable := range s.connectorUnavailable {
+		attached.send(unavailable)
+	}
 	if replayVoiceTools && !s.spec.Text && s.persisted == nil && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
 			attached.send(pending)

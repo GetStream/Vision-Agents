@@ -273,22 +273,23 @@ func (r *sessionRecorder) writeItems(items []store.AgentResponseItem) {
 func sessionRow(created *Session) store.AgentSession {
 	spec := created.spec
 	row := store.AgentSession{
-		ID:              created.id,
-		CustomerID:      spec.CustomerID,
-		ConfigID:        spec.ConfigID,
-		AgentName:       spec.AgentName,
-		AgentID:         spec.AgentID,
-		ConversationID:  spec.ConversationID,
-		CallID:          spec.CallID,
-		CallType:        spec.CallType,
-		Title:           spec.Title,
-		Description:     spec.Description,
-		Project:         spec.Project,
-		Custom:          spec.Custom,
-		ModelOverwrites: spec.ModelOverwrites,
-		ForkedFrom:      spec.ForkedFrom,
-		State:           store.SessionRunning,
-		CreatedAt:       created.created.UTC(),
+		ID:                  created.id,
+		CustomerID:          spec.CustomerID,
+		ConfigID:            spec.ConfigID,
+		AgentName:           spec.AgentName,
+		AgentID:             spec.AgentID,
+		ConversationID:      spec.ConversationID,
+		CallID:              spec.CallID,
+		CallType:            spec.CallType,
+		Title:               spec.Title,
+		Description:         spec.Description,
+		Project:             spec.Project,
+		Custom:              spec.Custom,
+		ModelOverwrites:     spec.ModelOverwrites,
+		ConnectorSelections: connectorSelectionsOf(spec.ConnectorSelections),
+		ForkedFrom:          spec.ForkedFrom,
+		State:               store.SessionRunning,
+		CreatedAt:           created.created.UTC(),
 	}
 	// Whose the session is comes from the credential rather than from the spec's UserID,
 	// which is who the agent joined the call as. Recording the agent's own id as the owner
@@ -296,4 +297,14 @@ func sessionRow(created *Session) store.AgentSession {
 	row.UserID = spec.Caller.UserID
 	row.CallerKind = string(spec.CallerKind)
 	return row
+}
+
+func connectorSelectionsOf(selections []ConnectorSelection) []store.SessionConnectorSelection {
+	stored := make([]store.SessionConnectorSelection, 0, len(selections))
+	for _, selection := range selections {
+		stored = append(stored, store.SessionConnectorSelection{
+			Name: selection.Name, ConnectionID: selection.ConnectionID,
+		})
+	}
+	return stored
 }

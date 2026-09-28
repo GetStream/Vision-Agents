@@ -17,7 +17,7 @@ output-options:
     - watchSession
     - streamModality
     - dispatchCalls
-    - pluginOAuthCallback
+    - connectorOAuthCallback
 
     - listAgentLogs
     - getAgentLog

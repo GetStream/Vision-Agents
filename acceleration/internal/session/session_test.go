@@ -1061,6 +1061,20 @@ func (s *SessionSuite) TestAWatcherSeesTheConversationAndStopsWhenItDetaches() {
 	}
 }
 
+func (s *SessionSuite) TestAWatcherReceivesOptionalConnectorAvailabilityFromStartup() {
+	issue := ConnectorUnavailable{
+		Name: "linear", ConnectorID: "linear", Reason: connectorNeedsReauthorization,
+	}
+	created := &Session{
+		state:                Live,
+		watchers:             map[uint64]*watcher{},
+		connectorUnavailable: []ConnectorUnavailable{issue},
+	}
+	events, detach := created.Watch()
+	defer detach()
+	s.Equal(issue, <-events)
+}
+
 func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {
 	s.manages()
 	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}
@@ -1564,4 +1578,20 @@ func (s *SessionSuite) TestTextSessionDoesNotAcquireAnImplicitSubagent() {
 	created := s.writes(Spec{})
 	s.Empty(created.Spec().SubagentTarget)
 	s.Empty(row(created).Subagent)
+}
+
+func (s *SessionSuite) TestConnectorToolNamesCannotCollideWithSessionTools() {
+	connectorTool := harness.Tool{Name: "github__search_issues"}
+
+	s.ErrorContains(
+		validateConnectorToolNames([]harness.Tool{connectorTool}, []harness.Tool{{Name: connectorTool.Name}}),
+		"collides with another session tool",
+	)
+	s.ErrorContains(
+		validateConnectorToolNames([]harness.Tool{connectorTool, connectorTool}, nil),
+		"is duplicated",
+	)
+	s.NoError(
+		validateConnectorToolNames([]harness.Tool{connectorTool}, []harness.Tool{{Name: "lookup_order"}}),
+	)
 }

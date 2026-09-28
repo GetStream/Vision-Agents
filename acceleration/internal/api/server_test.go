@@ -21,6 +21,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcp"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -109,6 +110,23 @@ func (s *ServerSuite) TestNewServerRequiresARouter() {
 	s.ErrorContains(err, "at least one router is required")
 }
 
+func (s *ServerSuite) TestConnectorLoginReturnsToConfiguredDashboardPage() {
+	server := &Server{dashboardURL: "https://dashboard.example/organization/123/connections/?config_id=agent&status=old&connection_id=old"}
+	for _, status := range []string{"connected", "failed"} {
+		recorder := httptest.NewRecorder()
+		server.redirectAfterConnectorLogin(recorder, "connection&value", status)
+		s.Equal(http.StatusFound, recorder.Code)
+		s.Equal("https://dashboard.example/organization/123/connections/?config_id=agent&connection_id=connection%26value&status="+status, recorder.Header().Get("Location"))
+	}
+}
+
+func (s *ServerSuite) TestNewServerRejectsInvalidDashboardURL() {
+	for _, destination := range []string{"/connections", "javascript:alert(1)", "https://user:password@dashboard.example"} {
+		_, err := NewServer(Options{DashboardURL: destination})
+		s.ErrorContains(err, "invalid dashboard URL")
+	}
+}
+
 func (s *ServerSuite) TestASocketMayNameItsCustomerInTheQuery() {
 	// The browser WebSocket API cannot set a header, and a dashboard watching a live call
 	// is exactly the caller that has to open one.
@@ -141,7 +159,20 @@ func (s *ServerSuite) TestANamedOriginMayReadTheApiAndSendTheCustomerHeader() {
 
 	s.Equal(http.StatusOK, recorder.Code)
 	s.Equal("https://dash.example", recorder.Header().Get("Access-Control-Allow-Origin"))
+	s.Equal("true", recorder.Header().Get("Access-Control-Allow-Credentials"))
 	s.Contains(recorder.Header().Get("Access-Control-Allow-Headers"), CustomerHeader)
+}
+
+func (s *ServerSuite) TestWildcardCORSDoesNotAllowCredentialedBrowserRequests() {
+	allowed := s.origins("*")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	request.Header.Set("Origin", "https://dash.example")
+	allowed.ServeHTTP(recorder, request)
+
+	s.Equal("https://dash.example", recorder.Header().Get("Access-Control-Allow-Origin"))
+	s.Empty(recorder.Header().Get("Access-Control-Allow-Credentials"))
 }
 
 // A browser reaching a proxied deployment proves itself with a token rather than by naming
@@ -649,51 +680,82 @@ func (s *ServerSuite) TestRollupRejectsAnInvertedWindow() {
 	s.Contains(failure.Error, "to must be after from")
 }
 
-func (s *ServerSuite) TestPluginsAreListedFromTheCatalog() {
-	recorder := s.get("/v1/agents/plugins", "acme")
+func (s *ServerSuite) TestConnectorsAreListedFromTheCatalog() {
+	recorder := s.get("/v1/agents/connectors", "acme")
 
 	s.Equal(http.StatusOK, recorder.Code)
 
-	var listed []Plugin
+	var listed []ConnectorDefinition
 	s.decode(recorder, &listed)
-	s.Len(listed, 5)
+	s.Len(listed, 7)
 	s.Equal("slack", listed[0].Id)
 }
 
-func (s *ServerSuite) TestPluginSearchFiltersTheCatalog() {
-	recorder := s.get("/v1/agents/plugins?q=cal", "acme")
+func (s *ServerSuite) TestConnectorSearchFiltersTheCatalog() {
+	recorder := s.get("/v1/agents/connectors?q=cal", "acme")
 
 	s.Equal(http.StatusOK, recorder.Code)
 
-	var listed []Plugin
+	var listed []ConnectorDefinition
 	s.decode(recorder, &listed)
 	s.Len(listed, 2)
 	s.Equal("calendly", listed[0].Id)
 	s.Equal("calcom", listed[1].Id)
 }
 
-func (s *ServerSuite) TestShopifyAuthorizeWithoutAnInstanceIsRefused() {
-	request := httptest.NewRequest(http.MethodPost, "/v1/agents/configs/cfg/plugins/shopify/authorize", strings.NewReader(`{}`))
-	request.Header.Set(CustomerHeader, "acme")
-	request.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	s.handler.ServeHTTP(recorder, request)
+func (s *ServerSuite) TestConnectorBindingAliasCannotBreakToolNamespacing() {
+	connectionID := "connection-1"
+	bindings := []AgentConnectorBinding{{
+		Name:        "slack__workspace",
+		ConnectorId: "slack",
+		Connection: AgentConnectorSelection{
+			Type:         AgentConnectorSelectionTypeFixed,
+			ConnectionId: &connectionID,
+		},
+		Tools: []ConnectorToolGrant{{Name: "search_messages", SchemaDigest: strings.Repeat("a", 64)}},
+	}}
+	complaint, ok := connectorBindingsComplaint(&bindings)
 
-	s.Equal(http.StatusBadRequest, recorder.Code)
-
-	var failure Error
-	s.decode(recorder, &failure)
-	s.Contains(failure.Error, "needs")
+	s.False(ok)
+	s.Contains(complaint, "connector binding names")
 }
 
-func (s *ServerSuite) TestAnUnknownPluginIsRefused() {
-	request := httptest.NewRequest(http.MethodPost, "/v1/agents/configs/cfg/plugins/notion/authorize", strings.NewReader(`{}`))
-	request.Header.Set(CustomerHeader, "acme")
-	request.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	s.handler.ServeHTTP(recorder, request)
+func (s *ServerSuite) TestConnectorBindingRequiresAValidToolSchemaDigest() {
+	connectionID := "connection-1"
+	bindings := []AgentConnectorBinding{{
+		Name:        "crm",
+		ConnectorId: "salesforce",
+		Connection: AgentConnectorSelection{
+			Type:         AgentConnectorSelectionTypeFixed,
+			ConnectionId: &connectionID,
+		},
+		Tools: []ConnectorToolGrant{{Name: "lookup_contact"}},
+	}}
+	complaint, ok := connectorBindingsComplaint(&bindings)
 
-	s.Equal(http.StatusBadRequest, recorder.Code)
+	s.False(ok)
+	s.Contains(complaint, "schema_digest")
+}
+
+func (s *ServerSuite) TestConnectorBindingConversionPreservesToolSchemaDigest() {
+	connectionID := "connection-1"
+	digest := strings.Repeat("b", 64)
+	apiBinding := AgentConnectorBinding{
+		Name:        "crm",
+		ConnectorId: "salesforce",
+		Connection: AgentConnectorSelection{
+			Type:         AgentConnectorSelectionTypeFixed,
+			ConnectionId: &connectionID,
+		},
+		Tools: []ConnectorToolGrant{{Name: "lookup_contact", SchemaDigest: digest}},
+	}
+
+	stored := connectorBindingsFromAPI([]AgentConnectorBinding{apiBinding})
+	s.Require().Len(stored, 1)
+	s.Equal(digest, stored[0].Tools[0].SchemaDigest)
+	rendered := connectorBindingsToAPI(stored)
+	s.Require().Len(rendered, 1)
+	s.Equal(digest, rendered[0].Tools[0].SchemaDigest)
 }
 
 // speech is a speech-to-text router over the default configuration.
@@ -1135,6 +1197,86 @@ func (s *ServerSuite) TestTheRoutesLeftOutOfTheSpecAreStillDecidedOneWayOrTheOth
 		} else {
 			s.Equal(http.StatusForbidden, recorder.Code, route)
 		}
+	}
+}
+
+func (s *ServerSuite) TestConnectorOAuthLaunchPageIsIsolatedAndTargetsTheConfiguredDashboard() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+	authenticator := s.proxyAuth()
+	server, err := NewServer(Options{
+		Routers:      map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Auth:         authenticator,
+		PublicURL:    "https://router.example",
+		DashboardURL: "https://dashboard.example/",
+	})
+	s.Require().NoError(err)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/agents/connectors/oauth/launch/attempt-id", nil)
+	server.Handler().ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusOK, recorder.Code)
+	s.Contains(recorder.Header().Get("Content-Security-Policy"), "script-src 'nonce-")
+	s.Equal("no-store", recorder.Header().Get("Cache-Control"))
+	s.Contains(recorder.Body.String(), `"https://dashboard.example"`)
+	s.Contains(recorder.Body.String(), "va.connector.oauth.ready")
+}
+
+func (s *ServerSuite) TestConnectorOAuthClientMetadataIsPublicAndMatchesTheCallback() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+	server, err := NewServer(Options{
+		Routers:   map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Auth:      s.proxyAuth(),
+		PublicURL: "https://router.example/",
+	})
+	s.Require().NoError(err)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, mcp.ClientMetadataPath, nil)
+	server.Handler().ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusOK, recorder.Code)
+	s.Equal("application/json", recorder.Header().Get("Content-Type"))
+	s.Equal("public, max-age=300", recorder.Header().Get("Cache-Control"))
+	s.Equal("nosniff", recorder.Header().Get("X-Content-Type-Options"))
+	var metadata struct {
+		ClientID                string   `json:"client_id"`
+		RedirectURIs            []string `json:"redirect_uris"`
+		TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	}
+	s.Require().NoError(json.Unmarshal(recorder.Body.Bytes(), &metadata))
+	s.Equal("https://router.example"+mcp.ClientMetadataPath, metadata.ClientID)
+	s.Equal([]string{"https://router.example" + mcp.CallbackPath}, metadata.RedirectURIs)
+	s.Equal("none", metadata.TokenEndpointAuthMethod)
+}
+
+func (s *ServerSuite) TestConnectorOriginUsesBrowserOriginSerialization() {
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: "https://ROUTER.example:443/base", want: "https://router.example"},
+		{input: "http://router.example:80", want: "http://router.example"},
+		{input: "https://router.example:8443", want: "https://router.example:8443"},
+		{input: "https://[2001:db8::1]:443", want: "https://[2001:db8::1]"},
+	} {
+		got, err := connectorOrigin(test.input)
+		s.Require().NoError(err)
+		s.Equal(test.want, got)
 	}
 }
 

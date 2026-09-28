@@ -4,13 +4,17 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,10 +22,13 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
@@ -37,8 +44,10 @@ type APIIntegrationSuite struct {
 	suite.Suite
 	ctx        context.Context
 	store      *store.Store
+	api        *Server
 	live       *live.Client
 	server     *httptest.Server
+	sealer     *auth.Sealer
 	customerID string
 	base       time.Time
 	knowledge  *base
@@ -61,6 +70,9 @@ func (s *APIIntegrationSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.Require().NoError(pgStore.Migrate(s.ctx))
 	s.store = pgStore
+	sealer, err := auth.NewSealer("connector-integration-test-key")
+	s.Require().NoError(err)
+	s.sealer = sealer
 
 	liveClient, err := live.New(live.Options{Address: address})
 	s.Require().NoError(err)
@@ -136,17 +148,21 @@ func (s *APIIntegrationSuite) SetupSuite() {
 			Transcriptions: transcriptions,
 			Speech:         recordings,
 		},
-		Store:         pgStore,
-		Live:          liveClient,
-		Voices:        s.voiceService(pgStore),
-		Knowledge:     s.knowledge,
-		KnowledgeURLs: s.knowledgeURLs(pgStore, address),
+		Store:            pgStore,
+		CredentialSealer: sealer,
+		Live:             liveClient,
+		PublicURL:        "https://router.test",
+		DashboardURL:     "https://dashboard.test",
+		Voices:           s.voiceService(pgStore),
+		Knowledge:        s.knowledge,
+		KnowledgeURLs:    s.knowledgeURLs(pgStore, address),
 		// Minting a token signs one rather than fetching it, so a made-up app is enough
 		// to exercise the join path without a real Stream account behind it.
 		StreamKey:    testStreamKey,
 		StreamSecret: testStreamSecret,
 	})
 	s.Require().NoError(err)
+	s.api = server
 	s.server = httptest.NewServer(server.Handler())
 
 	s.base = time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
@@ -286,6 +302,1096 @@ func (s *APIIntegrationSuite) SetupTest() {
 	s.knowledge.mu.Lock()
 	s.knowledge.passages = map[string]knowledge.Document{}
 	s.knowledge.mu.Unlock()
+}
+
+func (s *APIIntegrationSuite) TestAnonymousConnectorCanBeActivatedWithoutAKeyring() {
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: "custom_public_catalog",
+		OwnerType:   "app",
+		Endpoint:    "https://example.com/mcp",
+		AuthType:    "none",
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+	s.T().Cleanup(func() {
+		s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, connection.ID))
+	})
+
+	configuredSealer := s.api.credentialSealer
+	s.api.credentialSealer = nil
+	defer func() { s.api.credentialSealer = configuredSealer }()
+	response, payload := s.do(http.MethodPut,
+		"/v1/agents/connections/"+connection.ID+"/credentials", `{"expected_revision":1}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectorConnected, stored.Status)
+	s.Equal("none", stored.AuthType)
+	s.Empty(stored.CredentialSealed)
+}
+
+func (s *APIIntegrationSuite) TestCustomAPIKeyConnectorKeepsCredentialWriteOnlyAndUsesItAtRuntime() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/connectors", `{
+		"id":"custom_crm","name":"Custom CRM","endpoint":"https://8.8.8.8/mcp",
+		"auth_mode":"api_key","api_key_header":"X-Api-Key"
+	}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	response, payload = s.do(http.MethodPost, "/v1/agents/connections", `{
+		"connector_id":"custom_crm","owner":{"type":"app"},"label":"Sales CRM"
+	}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+	var connection ConnectorConnection
+	s.Require().NoError(json.Unmarshal(payload, &connection))
+	s.Equal(ConnectorConnectionAuthTypeApiKey, connection.AuthType)
+	s.Equal(ConnectorConnectionStatusPending, connection.Status)
+	s.Equal(1, connection.Revision)
+
+	const secret = "customer-api-key-742"
+	response, payload = s.do(http.MethodPut, "/v1/agents/connections/"+connection.Id+"/credentials", `{
+		"expected_revision":1,"api_key":"`+secret+`"
+	}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	s.NotContains(string(payload), secret)
+	var connected ConnectorConnection
+	s.Require().NoError(json.Unmarshal(payload, &connected))
+	s.Equal(ConnectorConnectionStatusConnected, connected.Status)
+	s.Equal(2, connected.Revision)
+
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.Id)
+	s.Require().NoError(err)
+	s.NotContains(string(stored.CredentialSealed), secret)
+	request := httptest.NewRequest(http.MethodPost, stored.Endpoint, nil)
+	s.Require().NoError(connectors.AuthorizeRequest(s.ctx, s.store, s.sealer, s.customerID, connection.Id, nil, request))
+	s.Equal(secret, request.Header.Get("X-Api-Key"))
+}
+
+func (s *APIIntegrationSuite) TestConnectorCredentialIsRewrappedToTheCurrentKeyOnUse() {
+	oldSealer, err := auth.NewSealer("old-connector-kek")
+	s.Require().NoError(err)
+	rotatedSealer, err := auth.NewSealerWithKeyring(2, map[int]string{
+		1: "old-connector-kek",
+		2: "current-connector-kek",
+	})
+	s.Require().NoError(err)
+
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: "github",
+		OwnerType:   "app",
+		Endpoint:    "https://api.githubcopilot.com/mcp/",
+		AuthType:    connectors.AuthOAuth2,
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+	connection, err = s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	connection.Revision = 2
+	connection.CredentialKEKVersion = 1
+	connection.Status = store.ConnectorConnected
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	connection.ExpiresAt = &expiresAt
+	connection.CredentialSealed, err = connectors.SealCredentials(oldSealer, s.customerID, connection.ID, connection.Revision,
+		connectors.Credentials{AuthType: connectors.AuthOAuth2, AccessToken: "pre-rotation-access-token"})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1))
+
+	resolved, err := connectors.ResolveCredentials(s.ctx, s.store, rotatedSealer, s.customerID, connection.ID, nil)
+	s.Require().NoError(err)
+	s.Equal("pre-rotation-access-token", resolved.AccessToken)
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(2, stored.Revision, "wrapping-key rotation does not change the grant revision")
+	s.Equal(2, stored.CredentialKEKVersion)
+	opened, err := connectors.OpenCredentials(rotatedSealer, s.customerID, connection.ID, stored.Revision,
+		stored.CredentialKEKVersion, stored.CredentialSealed)
+	s.Require().NoError(err)
+	s.Equal("pre-rotation-access-token", opened.AccessToken)
+}
+
+func (s *APIIntegrationSuite) TestAUserCannotReadValidateOrDisconnectAnotherUsersConnector() {
+	connection := store.ConnectorConnection{
+		CustomerID:       s.customerID,
+		ConnectorID:      "gong",
+		OwnerType:        "user",
+		OwnerID:          "alice",
+		Endpoint:         "https://mcp.gong.io/mcp",
+		AuthType:         connectors.AuthOAuth2,
+		Status:           store.ConnectorConnected,
+		CredentialSealed: []byte("sealed-user-grant"),
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+	connection, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	connection.Status = store.ConnectorConnected
+	connection.CredentialSealed = []byte("sealed-user-grant")
+	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, connection.Revision))
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/connections", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	var listed []ConnectorConnection
+	s.Require().NoError(json.Unmarshal(payload, &listed))
+	s.Empty(listed)
+
+	for _, request := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/v1/agents/connections/" + connection.ID},
+		{method: http.MethodGet, path: "/v1/agents/connections/" + connection.ID + "/tools"},
+		{method: http.MethodPost, path: "/v1/agents/connections/" + connection.ID + "/validate"},
+		{method: http.MethodDelete, path: "/v1/agents/connections/" + connection.ID},
+	} {
+		response, payload = s.do(request.method, request.path, "")
+		s.Equal(http.StatusNotFound, response.StatusCode, string(payload))
+	}
+
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectorConnected, stored.Status)
+	s.Equal([]byte("sealed-user-grant"), stored.CredentialSealed)
+}
+
+func (s *APIIntegrationSuite) TestOnlyABackendMayCreateAConnectionForItsVerifiedUser() {
+	definition := store.ConnectorDefinition{
+		CustomerID: s.customerID,
+		ID:         "custom_identity",
+		Name:       "Identity test connector",
+		Endpoint:   "https://8.8.8.8/mcp",
+		AuthType:   connectors.AuthNone,
+	}
+	s.Require().NoError(s.store.CreateConnectorDefinition(s.ctx, &definition))
+
+	ctxFor := func(serverSide bool, userID string) context.Context {
+		ctx := context.WithValue(s.ctx, customerContextKey{}, s.customerID)
+		ctx = context.WithValue(ctx, serverSideContextKey{}, serverSide)
+		ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{UserID: userID})
+		return context.WithValue(ctx, kindContextKey{}, auth.KindServer)
+	}
+	create := func(ctx context.Context, ownerID string) CreateConnectorConnectionResponseObject {
+		response, err := s.api.CreateConnectorConnection(ctx, CreateConnectorConnectionRequestObject{
+			Body: &CreateConnectorConnectionJSONRequestBody{
+				ConnectorId: definition.ID,
+				Owner: ConnectorOwner{
+					Type:   ConnectorOwnerTypeUser,
+					UserId: &ownerID,
+				},
+			},
+		})
+		s.Require().NoError(err)
+		return response
+	}
+
+	response := create(ctxFor(true, "alice"), "alice")
+	created, ok := response.(CreateConnectorConnection201JSONResponse)
+	s.Require().True(ok, "the backend may create a connection for its verified user")
+	s.Equal(ConnectorConnectionOwnerTypeUser, created.OwnerType)
+	s.Equal("alice", value(created.OwnerId))
+	s.T().Cleanup(func() {
+		s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, created.Id))
+	})
+
+	response = create(ctxFor(true, "alice"), "bob")
+	denied, ok := response.(CreateConnectorConnection400JSONResponse)
+	s.Require().True(ok, "a backend cannot choose another user as the connection owner")
+	s.Contains(denied.BadRequestJSONResponse.Error, "must match the verified user")
+
+	response = create(ctxFor(false, "alice"), "alice")
+	denied, ok = response.(CreateConnectorConnection400JSONResponse)
+	s.Require().True(ok, "a client request cannot create a user-owned connection")
+	s.Contains(denied.BadRequestJSONResponse.Error, "authenticated backend")
+}
+
+func (s *APIIntegrationSuite) TestOAuthGrantImportStoresOnlyAnEncryptedProviderBoundGrant() {
+	var provider *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource": provider.URL + "/resource", "authorization_servers": []string{provider.URL},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                                provider.URL,
+			"authorization_endpoint":                provider.URL + "/authorize",
+			"token_endpoint":                        provider.URL + "/token",
+			"jwks_uri":                              provider.URL + "/jwks",
+			"response_types_supported":              []string{"code"},
+			"code_challenge_methods_supported":      []string{"S256"},
+			"token_endpoint_auth_methods_supported": []string{"client_secret_basic"},
+		})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		clientID, clientSecret, ok := r.BasicAuth()
+		if !ok || clientID != "imported-public-client" || clientSecret != "imported-client-secret" ||
+			r.FormValue("grant_type") != "refresh_token" || r.FormValue("refresh_token") != "imported-refresh-token" ||
+			r.FormValue("resource") != provider.URL+"/resource" {
+			http.Error(w, "unexpected token refresh request", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "rotated-access-token", "refresh_token": "rotated-refresh-token", "expires_in": 3600,
+		})
+	})
+	provider = httptest.NewServer(mux)
+	defer provider.Close()
+
+	previousHTTP := s.api.oauth.HTTP
+	s.api.oauth.HTTP = provider.Client()
+	s.T().Cleanup(func() { s.api.oauth.HTTP = previousHTTP })
+
+	definition := store.ConnectorDefinition{
+		CustomerID: s.customerID,
+		ID:         "custom_import",
+		Name:       "Import Test",
+		Endpoint:   provider.URL + "/mcp",
+		AuthType:   connectors.AuthOAuth2,
+	}
+	s.Require().NoError(s.store.CreateConnectorDefinition(s.ctx, &definition))
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: definition.ID,
+		OwnerType:   "app",
+		Endpoint:    definition.Endpoint,
+		AuthType:    connectors.AuthOAuth2,
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+
+	const accessToken = "imported-access-token"
+	const refreshToken = "imported-refresh-token"
+	const clientSecret = "imported-client-secret"
+	body, err := json.Marshal(map[string]any{
+		"expected_revision":   1,
+		"access_token":        accessToken,
+		"refresh_token":       refreshToken,
+		"expires_at":          time.Now().UTC().Add(-time.Minute),
+		"granted_scopes":      []string{},
+		"oauth_client_id":     "imported-public-client",
+		"oauth_client_secret": clientSecret,
+	})
+	s.Require().NoError(err)
+	response, payload := s.do(http.MethodPut, "/v1/agents/connections/"+connection.ID+"/credentials", string(body))
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	s.NotContains(string(payload), accessToken)
+	s.NotContains(string(payload), refreshToken)
+	s.NotContains(string(payload), clientSecret)
+
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectorConnected, stored.Status)
+	s.Equal(2, stored.Revision)
+	s.NotContains(string(stored.CredentialSealed), accessToken)
+	s.NotContains(string(stored.CredentialSealed), refreshToken)
+	s.NotContains(string(stored.CredentialSealed), clientSecret)
+	credentials, err := connectors.OpenCredentials(s.sealer, s.customerID, connection.ID, stored.Revision,
+		stored.CredentialKEKVersion, stored.CredentialSealed)
+	s.Require().NoError(err)
+	s.Equal(accessToken, credentials.AccessToken)
+	s.Equal(refreshToken, credentials.RefreshToken)
+	s.Equal("imported-public-client", credentials.OAuthClientID)
+	s.Equal(clientSecret, credentials.OAuthClientSecret)
+	s.Equal("client_secret_basic", credentials.ClientAuthMethod)
+	s.Equal(provider.URL, credentials.OAuthIssuer)
+	s.Equal(provider.URL+"/resource", credentials.Resource)
+	s.Equal(provider.URL+"/token", credentials.TokenEndpoint)
+
+	request := httptest.NewRequest(http.MethodPost, stored.Endpoint, nil)
+	s.Require().NoError(connectors.AuthorizeRequest(s.ctx, s.store, s.sealer, s.customerID, connection.ID, s.api.oauth, request))
+	s.Equal("Bearer rotated-access-token", request.Header.Get("Authorization"))
+	stored, err = s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(3, stored.Revision)
+	credentials, err = connectors.OpenCredentials(s.sealer, s.customerID, connection.ID, stored.Revision,
+		stored.CredentialKEKVersion, stored.CredentialSealed)
+	s.Require().NoError(err)
+	s.Equal("rotated-access-token", credentials.AccessToken)
+	s.Equal("rotated-refresh-token", credentials.RefreshToken)
+}
+
+func (s *APIIntegrationSuite) TestOAuthCallbackExchangesPKCEAndStoresTheGrantAfterBrowserHandoff() {
+	var provider *httptest.Server
+	var validRegistration atomic.Bool
+	var validTokenRequest atomic.Bool
+	var tokenRequests atomic.Int32
+	expectedPKCEChallenge := ""
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource": provider.URL + "/resource", "authorization_servers": []string{provider.URL},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                                         provider.URL,
+			"authorization_endpoint":                         provider.URL + "/authorize",
+			"token_endpoint":                                 provider.URL + "/token",
+			"registration_endpoint":                          provider.URL + "/register",
+			"response_types_supported":                       []string{"code"},
+			"code_challenge_methods_supported":               []string{"S256"},
+			"token_endpoint_auth_methods_supported":          []string{"none"},
+			"authorization_response_iss_parameter_supported": true,
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid registration request", http.StatusBadRequest)
+			return
+		}
+		validRegistration.Store(r.Method == http.MethodPost && request["token_endpoint_auth_method"] == "none")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"client_id": "connector-e2e-client", "token_endpoint_auth_method": "none",
+		})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		tokenRequests.Add(1)
+		_ = r.ParseForm()
+		verifier := r.FormValue("code_verifier")
+		digest := sha256.Sum256([]byte(verifier))
+		challenge := base64.RawURLEncoding.EncodeToString(digest[:])
+		validTokenRequest.Store(r.Method == http.MethodPost && r.FormValue("grant_type") == "authorization_code" &&
+			r.FormValue("code") == "accepted-code" && r.FormValue("client_id") == "connector-e2e-client" &&
+			r.FormValue("redirect_uri") == s.server.URL+mcp.CallbackPath &&
+			challenge == expectedPKCEChallenge && r.FormValue("resource") == provider.URL+"/resource")
+		if !validTokenRequest.Load() {
+			http.Error(w, "invalid token request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "callback-access-token", "refresh_token": "callback-refresh-token",
+			"expires_in": 3600, "scope": "read:workspace",
+		})
+	})
+	provider = httptest.NewServer(mux)
+	defer provider.Close()
+
+	definition := store.ConnectorDefinition{
+		CustomerID: s.customerID,
+		ID:         "custom_oauth_callback",
+		Name:       "OAuth callback test",
+		Endpoint:   provider.URL + "/mcp",
+		AuthType:   connectors.AuthOAuth2,
+	}
+	s.Require().NoError(s.store.CreateConnectorDefinition(s.ctx, &definition))
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: definition.ID,
+		OwnerType:   "app",
+		Endpoint:    definition.Endpoint,
+		AuthType:    connectors.AuthOAuth2,
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+	connection, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+
+	previousOAuth := s.api.oauth
+	previousPublicURL := s.api.publicURL
+	s.api.publicURL = s.server.URL
+	s.api.oauth = &mcp.OAuthClient{HTTP: provider.Client(), PublicURL: s.server.URL}
+	s.T().Cleanup(func() {
+		s.api.oauth = previousOAuth
+		s.api.publicURL = previousPublicURL
+	})
+	response, payload := s.do(http.MethodPost, "/v1/agents/connections/"+connection.ID+"/authorizations", `{}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	var authorization ConnectorAuthorization
+	s.Require().NoError(json.Unmarshal(payload, &authorization))
+	parsedLaunch, err := url.Parse(authorization.AuthorizationUrl)
+	s.Require().NoError(err)
+	s.Equal(s.server.URL, parsedLaunch.Scheme+"://"+parsedLaunch.Host)
+
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodPost, authorization.AuthorizationUrl,
+		strings.NewReader(`{"handoff_token":"`+authorization.HandoffToken+`"}`))
+	s.Require().NoError(err)
+	request.Header.Set("Origin", s.server.URL)
+	request.Header.Set("Content-Type", "application/json")
+	handoffClient := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err = handoffClient.Do(request)
+	s.Require().NoError(err)
+	var handoff struct {
+		AuthorizationURL string `json:"authorization_url"`
+	}
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&handoff))
+	response.Body.Close()
+	s.Equal(http.StatusOK, response.StatusCode)
+	cookies := response.Cookies()
+	s.Require().Len(cookies, 1)
+
+	authorizeURL, err := url.Parse(handoff.AuthorizationURL)
+	s.Require().NoError(err)
+	state := authorizeURL.Query().Get("state")
+	s.NotEmpty(state)
+	s.Equal("S256", authorizeURL.Query().Get("code_challenge_method"))
+	s.Equal("connector-e2e-client", authorizeURL.Query().Get("client_id"))
+	expectedPKCEChallenge = authorizeURL.Query().Get("code_challenge")
+	s.NotEmpty(expectedPKCEChallenge)
+
+	callbackQuery := url.Values{
+		"state": {state}, "code": {"accepted-code"}, "iss": {provider.URL},
+	}
+	callback, err := http.NewRequestWithContext(s.ctx, http.MethodGet,
+		s.server.URL+mcp.CallbackPath+"?"+callbackQuery.Encode(), nil)
+	s.Require().NoError(err)
+	callback.AddCookie(cookies[0])
+	response, err = handoffClient.Do(callback)
+	s.Require().NoError(err)
+	response.Body.Close()
+	s.Equal(http.StatusFound, response.StatusCode)
+	s.Contains(response.Header.Get("Location"), "connection_id="+connection.ID)
+	s.Contains(response.Header.Get("Location"), "status=connected")
+	s.True(validRegistration.Load())
+	s.True(validTokenRequest.Load(), "the authorization code must be exchanged with the PKCE verifier and expected resource")
+	s.Equal(int32(1), tokenRequests.Load())
+
+	replayedCallback, err := http.NewRequestWithContext(s.ctx, http.MethodGet,
+		s.server.URL+mcp.CallbackPath+"?"+callbackQuery.Encode(), nil)
+	s.Require().NoError(err)
+	replayedCallback.AddCookie(cookies[0])
+	replayedResponse, err := handoffClient.Do(replayedCallback)
+	s.Require().NoError(err)
+	replayedResponse.Body.Close()
+	s.Equal(http.StatusBadRequest, replayedResponse.StatusCode, "a successful authorization state cannot be consumed twice")
+	s.Equal(int32(1), tokenRequests.Load(), "replay must not redeem the provider code again")
+
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectorConnected, stored.Status)
+	s.Equal(2, stored.Revision)
+	s.NotContains(string(stored.CredentialSealed), "callback-access-token")
+	credentials, err := connectors.OpenCredentials(s.sealer, s.customerID, stored.ID, stored.Revision,
+		stored.CredentialKEKVersion, stored.CredentialSealed)
+	s.Require().NoError(err)
+	s.Equal("callback-access-token", credentials.AccessToken)
+	s.Equal("callback-refresh-token", credentials.RefreshToken)
+	s.Equal("connector-e2e-client", credentials.OAuthClientID)
+	s.Equal(provider.URL, credentials.OAuthIssuer)
+}
+
+func (s *APIIntegrationSuite) TestConcurrentCredentialResolutionCommitsOneRotatedRefreshToken() {
+	var refreshRequests atomic.Int32
+	refreshServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil || r.Method != http.MethodPost ||
+			r.FormValue("grant_type") != "refresh_token" || r.FormValue("refresh_token") != "old-refresh-token" {
+			http.Error(w, "unexpected refresh request", http.StatusBadRequest)
+			return
+		}
+		refreshRequests.Add(1)
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "rotated-access-token", "refresh_token": "rotated-refresh-token", "expires_in": 3600,
+		})
+	}))
+	defer refreshServer.Close()
+
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: "github",
+		OwnerType:   "app",
+		Endpoint:    "https://api.githubcopilot.com/mcp/",
+		AuthType:    connectors.AuthOAuth2,
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+	s.T().Cleanup(func() {
+		s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, connection.ID))
+	})
+	connection, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	connection.Revision++
+	connection.Status = store.ConnectorConnected
+	expiredAt := time.Now().UTC().Add(-time.Minute)
+	connection.ExpiresAt = &expiredAt
+	connection.CredentialKEKVersion = s.sealer.CurrentVersion()
+	connection.CredentialSealed, err = connectors.SealCredentials(s.sealer, s.customerID, connection.ID, connection.Revision,
+		connectors.Credentials{
+			AuthType:        connectors.AuthOAuth2,
+			AccessToken:     "expired-access-token",
+			RefreshToken:    "old-refresh-token",
+			OAuthClientID:   "github-test-client",
+			TokenEndpoint:   refreshServer.URL + "/token",
+			RefreshEndpoint: refreshServer.URL + "/token",
+		})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, connection.Revision-1))
+
+	const callers = 8
+	type result struct {
+		credentials connectors.Credentials
+		err         error
+	}
+	start := make(chan struct{})
+	results := make(chan result, callers)
+	var wait sync.WaitGroup
+	wait.Add(callers)
+	authenticator := &mcp.OAuthClient{HTTP: refreshServer.Client()}
+	for range callers {
+		go func() {
+			defer wait.Done()
+			<-start
+			credentials, err := connectors.ResolveCredentials(s.ctx, s.store, s.sealer, s.customerID, connection.ID, authenticator)
+			results <- result{credentials: credentials, err: err}
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	for got := range results {
+		s.Require().NoError(got.err)
+		s.Equal("rotated-access-token", got.credentials.AccessToken)
+		s.Equal("rotated-refresh-token", got.credentials.RefreshToken)
+	}
+	s.Equal(int32(1), refreshRequests.Load(), "the rotating refresh token must be redeemed once")
+
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(connection.Revision+1, stored.Revision)
+	s.Equal(store.ConnectorConnected, stored.Status)
+	storedCredentials, err := connectors.OpenCredentials(s.sealer, s.customerID, stored.ID, stored.Revision,
+		stored.CredentialKEKVersion, stored.CredentialSealed)
+	s.Require().NoError(err)
+	s.Equal("rotated-access-token", storedCredentials.AccessToken)
+	s.Equal("rotated-refresh-token", storedCredentials.RefreshToken)
+}
+
+func (s *APIIntegrationSuite) TestRefreshOutcomeSurvivesLostResponsesAndCanceledWorkers() {
+	for _, outcome := range []string{"lost response", "canceled worker", "temporary failure before expiry", "temporary failure after expiry"} {
+		s.Run(outcome, func() {
+			ctx, cancel := context.WithCancel(s.ctx)
+			defer cancel()
+			var requests atomic.Int32
+			connection := store.ConnectorConnection{
+				CustomerID: s.customerID, ConnectorID: "github", OwnerType: "app",
+				Endpoint: "https://api.githubcopilot.com/mcp/", AuthType: connectors.AuthOAuth2,
+			}
+			s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+			s.T().Cleanup(func() {
+				s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, connection.ID))
+			})
+			checkpointed := make(chan bool, 2)
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+				checkpointed <- err == nil && stored.Status == store.ConnectorNeedsReauth
+				if outcome == "canceled worker" {
+					cancel()
+					return
+				}
+				if outcome == "lost response" {
+					_, _ = w.Write([]byte(`{"access_token":`))
+					return
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":"temporarily_unavailable"}`))
+			}))
+			defer provider.Close()
+
+			connection.Status = store.ConnectorConnected
+			expires := time.Now().Add(30 * time.Second)
+			if outcome == "temporary failure after expiry" {
+				expires = time.Now().Add(-time.Minute)
+			}
+			connection.ExpiresAt = &expires
+			credentials := connectors.Credentials{
+				AuthType: connectors.AuthOAuth2, AccessToken: "old-access", RefreshToken: "old-refresh",
+				OAuthClientID: "test-client", TokenEndpoint: provider.URL,
+			}
+			var err error
+			connection.CredentialSealed, err = connectors.SealCredentials(s.sealer, s.customerID, connection.ID, connection.Revision, credentials)
+			s.Require().NoError(err)
+			s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, connection.Revision))
+			authenticator := &mcp.OAuthClient{HTTP: provider.Client()}
+			got, err := connectors.ResolveCredentials(ctx, s.store, s.sealer, s.customerID, connection.ID, authenticator)
+			s.True(<-checkpointed, "the refresh checkpoint must be durable before the provider receives the token")
+			stored, readErr := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+			s.Require().NoError(readErr)
+			if strings.HasPrefix(outcome, "temporary") {
+				if outcome == "temporary failure before expiry" {
+					s.NoError(err)
+					s.Equal("old-access", got.AccessToken)
+				} else {
+					s.ErrorIs(err, connectors.ErrCredentialTemporarilyUnavailable)
+				}
+				s.Equal(store.ConnectorConnected, stored.Status)
+				s.Contains(stored.LastError, "temporarily unavailable")
+				return
+			}
+			s.ErrorIs(err, connectors.ErrReauthorizationRequired)
+			s.Empty(got.AccessToken)
+			s.Equal(store.ConnectorNeedsReauth, stored.Status)
+			s.Contains(stored.LastError, "did not finish durably")
+			_, err = connectors.ResolveCredentials(s.ctx, s.store, s.sealer, s.customerID, connection.ID, authenticator)
+			s.ErrorIs(err, connectors.ErrReauthorizationRequired)
+			s.Equal(int32(1), requests.Load(), "an uncertain rotating token must not be retried")
+		})
+	}
+}
+
+func (s *APIIntegrationSuite) TestOAuthDenialPreservesTheExistingGrant() {
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: "slack",
+		OwnerType:   "app",
+		Endpoint:    "https://mcp.slack.com/mcp",
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+	s.T().Cleanup(func() {
+		s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, connection.ID))
+	})
+	connection.Revision++
+	connection.Status = store.ConnectorConnected
+	connection.CredentialKEKVersion = s.sealer.CurrentVersion()
+	sealedCredentials, err := connectors.SealCredentials(s.sealer, s.customerID, connection.ID, connection.Revision,
+		connectors.Credentials{
+			AuthType:     connectors.AuthOAuth2,
+			AccessToken:  "existing-slack-access-token",
+			RefreshToken: "existing-slack-refresh-token",
+		})
+	s.Require().NoError(err)
+	connection.CredentialSealed = sealedCredentials
+	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, connection.Revision-1))
+
+	const state = "oauth-state-for-denial"
+	const attemptID = "oauth-denial-attempt"
+	const browserBinding = "oauth-denial-browser-binding"
+	sealed, err := connectors.SealAuthorizationAttempt(s.sealer, attemptID, connectors.AuthorizationAttempt{
+		ConnectionID:   connection.ID,
+		Revision:       connection.Revision,
+		ConnectorID:    connection.ConnectorID,
+		BrowserBinding: browserBinding,
+		Pending:        mcp.PendingAuthorization{State: state},
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.CreateConnectorAuthorizationAttempt(s.ctx, &store.ConnectorAuthorizationAttempt{
+		ID:            attemptID,
+		CustomerID:    s.customerID,
+		ConnectionID:  connection.ID,
+		StateHash:     store.OAuthStateHash(state),
+		AttemptSealed: sealed,
+		KEKVersion:    s.sealer.CurrentVersion(),
+		ExpiresAt:     time.Now().Add(time.Minute),
+	}))
+
+	request := httptest.NewRequest(http.MethodGet,
+		mcp.CallbackPath+"?state="+state+"&error=access_denied", nil)
+	request.AddCookie(&http.Cookie{Name: connectorAuthorizationCookieName(attemptID), Value: browserBinding})
+	recorder := httptest.NewRecorder()
+	s.api.Handler().ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusFound, recorder.Code)
+	s.Contains(recorder.Header().Get("Location"), "status=failed")
+	_, err = s.store.ConnectorAuthorizationAttemptByState(s.ctx, state)
+	s.Error(err, "a provider denial consumes the authorization attempt")
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectorConnected, stored.Status)
+	s.Equal(connection.Revision, stored.Revision)
+	s.Equal(connection.CredentialSealed, stored.CredentialSealed)
+	credentials, err := connectors.OpenCredentials(s.sealer, s.customerID, stored.ID, stored.Revision,
+		stored.CredentialKEKVersion, stored.CredentialSealed)
+	s.Require().NoError(err)
+	s.Equal("existing-slack-access-token", credentials.AccessToken)
+	s.Equal("existing-slack-refresh-token", credentials.RefreshToken)
+}
+
+func (s *APIIntegrationSuite) TestOAuthCallbackPreservesTheConnectionWhenAuthorizationSelectsAnotherAccount() {
+	suffix := time.Now().UTC().Format("150405.000000000")
+	teamID, userID := "T-old", "U-old"
+	var tokenRequests atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tokenRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "new-account-access-token",
+			"refresh_token": "new-account-refresh-token",
+			"team":          map[string]string{"id": teamID},
+			"authed_user":   map[string]string{"id": userID},
+		})
+	}))
+	defer provider.Close()
+
+	previousHTTP := s.api.oauth.HTTP
+	s.api.oauth.HTTP = provider.Client()
+	s.T().Cleanup(func() { s.api.oauth.HTTP = previousHTTP })
+
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: "slack",
+		OwnerType:   "app",
+		Endpoint:    "https://mcp.slack.com/mcp",
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+	s.T().Cleanup(func() {
+		s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, s.customerID, connection.ID))
+	})
+	createAttempt := func(state, attemptID, browserBinding string, revision int) {
+		sealedAttempt, err := connectors.SealAuthorizationAttempt(s.sealer, attemptID, connectors.AuthorizationAttempt{
+			ConnectionID:   connection.ID,
+			Revision:       revision,
+			ConnectorID:    connection.ConnectorID,
+			BrowserBinding: browserBinding,
+			Pending: mcp.PendingAuthorization{
+				ConnectorID:      connection.ConnectorID,
+				State:            state,
+				ClientID:         "slack-test-client",
+				ClientAuthMethod: "none",
+				TokenEndpoint:    provider.URL,
+			},
+		})
+		s.Require().NoError(err)
+		s.Require().NoError(s.store.CreateConnectorAuthorizationAttempt(s.ctx, &store.ConnectorAuthorizationAttempt{
+			ID:            attemptID,
+			CustomerID:    s.customerID,
+			ConnectionID:  connection.ID,
+			StateHash:     store.OAuthStateHash(state),
+			AttemptSealed: sealedAttempt,
+			KEKVersion:    s.sealer.CurrentVersion(),
+			ExpiresAt:     time.Now().Add(time.Minute),
+		}))
+	}
+	finishAttempt := func(state, attemptID, browserBinding string) *httptest.ResponseRecorder {
+		query := url.Values{"state": {state}, "code": {"provider-code"}}
+		request := httptest.NewRequest(http.MethodGet, mcp.CallbackPath+"?"+query.Encode(), nil)
+		request.AddCookie(&http.Cookie{Name: connectorAuthorizationCookieName(attemptID), Value: browserBinding})
+		recorder := httptest.NewRecorder()
+		s.api.Handler().ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	state := "oauth-state-for-first-account-" + suffix
+	attemptID := "first-account-attempt-" + suffix
+	browserBinding := "first-account-browser-" + suffix
+	createAttempt(state, attemptID, browserBinding, connection.Revision)
+	firstResponse := finishAttempt(state, attemptID, browserBinding)
+	s.Equal(http.StatusFound, firstResponse.Code)
+	s.Contains(firstResponse.Header().Get("Location"), "status=connected")
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectorConnected, stored.Status)
+	s.Equal("slack:T-old:U-old", stored.AccountID, "the callback must persist stable provider identity")
+	connection = stored
+
+	teamID, userID = "T-new", "U-new"
+	state = "oauth-state-for-account-switch-" + suffix
+	attemptID = "account-switch-attempt-" + suffix
+	browserBinding = "account-switch-browser-" + suffix
+	createAttempt(state, attemptID, browserBinding, connection.Revision)
+	secondResponse := finishAttempt(state, attemptID, browserBinding)
+	s.Equal(http.StatusFound, secondResponse.Code)
+	s.Contains(secondResponse.Header().Get("Location"), "status=failed")
+	s.Equal(int32(2), tokenRequests.Load())
+	stored, err = s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectorConnected, stored.Status)
+	s.Equal(connection.Revision, stored.Revision)
+	s.Equal("slack:T-old:U-old", stored.AccountID)
+	s.Contains(stored.LastError, "different or unverified provider account")
+	credentials, err := connectors.OpenCredentials(s.sealer, s.customerID, stored.ID, stored.Revision,
+		stored.CredentialKEKVersion, stored.CredentialSealed)
+	s.Require().NoError(err)
+	s.Equal("new-account-access-token", credentials.AccessToken)
+	s.Equal("new-account-refresh-token", credentials.RefreshToken)
+}
+
+func (s *APIIntegrationSuite) TestOAuthCallbackRequiresTheInitiatingBrowserBeforeConsumingState() {
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: "slack",
+		OwnerType:   "app",
+		Endpoint:    "https://mcp.slack.com/mcp",
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+
+	const state = "oauth-state-for-browser-binding"
+	const browserBinding = "browser-session-secret"
+	const attemptID = "browser-binding-attempt"
+	sealed, err := connectors.SealAuthorizationAttempt(s.sealer, attemptID, connectors.AuthorizationAttempt{
+		ConnectionID:   connection.ID,
+		Revision:       connection.Revision,
+		ConnectorID:    connection.ConnectorID,
+		BrowserBinding: browserBinding,
+		Pending: mcp.PendingAuthorization{
+			State:        state,
+			CodeVerifier: "pkce-verifier",
+		},
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.CreateConnectorAuthorizationAttempt(s.ctx, &store.ConnectorAuthorizationAttempt{
+		ID:            attemptID,
+		CustomerID:    s.customerID,
+		ConnectionID:  connection.ID,
+		StateHash:     store.OAuthStateHash(state),
+		AttemptSealed: sealed,
+		KEKVersion:    s.sealer.CurrentVersion(),
+		ExpiresAt:     time.Now().Add(time.Minute),
+	}))
+
+	callbackURL := s.server.URL + mcp.CallbackPath + "?state=" + state
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet, callbackURL, nil)
+	s.Require().NoError(err)
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	response.Body.Close()
+	s.Equal(http.StatusForbidden, response.StatusCode)
+
+	request, err = http.NewRequestWithContext(s.ctx, http.MethodGet, callbackURL, nil)
+	s.Require().NoError(err)
+	request.AddCookie(&http.Cookie{Name: connectorAuthorizationCookieName(attemptID), Value: "wrong-browser"})
+	response, err = http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	response.Body.Close()
+	s.Equal(http.StatusForbidden, response.StatusCode)
+
+	_, err = s.store.ConnectorAuthorizationAttemptByState(s.ctx, state)
+	s.Require().NoError(err, "a rejected browser must not consume the real user's one-time state")
+
+	request, err = http.NewRequestWithContext(s.ctx, http.MethodGet, callbackURL, nil)
+	s.Require().NoError(err)
+	request.AddCookie(&http.Cookie{Name: connectorAuthorizationCookieName(attemptID), Value: browserBinding})
+	response, err = http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	response.Body.Close()
+	s.Equal(http.StatusBadRequest, response.StatusCode, "the valid browser reaches code validation")
+	_, err = s.store.ConnectorAuthorizationAttemptByState(s.ctx, state)
+	s.Error(err, "the valid browser claims the state exactly once")
+}
+
+func (s *APIIntegrationSuite) TestOAuthCallbackRejectsAnUnexpectedAuthorizationServerIssuer() {
+	suffix := time.Now().Format("150405.000000000")
+	state := "oauth-state-for-issuer-check-" + suffix
+	attemptID := "issuer-check-attempt-" + suffix
+	browserBinding := "issuer-check-browser-" + suffix
+	tokenRequests := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tokenRequests++
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "unexpected"})
+	}))
+	defer provider.Close()
+
+	previousHTTP := s.api.oauth.HTTP
+	s.api.oauth.HTTP = provider.Client()
+	s.T().Cleanup(func() { s.api.oauth.HTTP = previousHTTP })
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: "slack",
+		OwnerType:   "app",
+		Endpoint:    "https://mcp.slack.com/mcp",
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+	sealed, err := connectors.SealAuthorizationAttempt(s.sealer, attemptID, connectors.AuthorizationAttempt{
+		ConnectionID:   connection.ID,
+		Revision:       connection.Revision,
+		ConnectorID:    connection.ConnectorID,
+		BrowserBinding: browserBinding,
+		Pending: mcp.PendingAuthorization{
+			State:         state,
+			CodeVerifier:  "pkce-verifier",
+			ClientID:      "oauth-client",
+			Issuer:        "https://expected.example",
+			RequireIssuer: true,
+			TokenEndpoint: provider.URL,
+		},
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.CreateConnectorAuthorizationAttempt(s.ctx, &store.ConnectorAuthorizationAttempt{
+		ID:            attemptID,
+		CustomerID:    s.customerID,
+		ConnectionID:  connection.ID,
+		StateHash:     store.OAuthStateHash(state),
+		AttemptSealed: sealed,
+		KEKVersion:    s.sealer.CurrentVersion(),
+		ExpiresAt:     time.Now().Add(time.Minute),
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, mcp.CallbackPath+"?state="+state+"&code=provider-code&iss=https%3A%2F%2Fattacker.example", nil)
+	request.AddCookie(&http.Cookie{Name: connectorAuthorizationCookieName(attemptID), Value: browserBinding})
+	recorder := httptest.NewRecorder()
+	s.api.Handler().ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusFound, recorder.Code)
+	s.Contains(recorder.Header().Get("Location"), "status=failed")
+	s.Zero(tokenRequests, "the router must reject a mismatched issuer before redeeming the code")
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectorFailed, stored.Status)
+	s.Equal("authorization server identity could not be verified", stored.LastError)
+	s.Empty(stored.CredentialSealed)
+}
+
+func (s *APIIntegrationSuite) TestOAuthCallbackRejectsAnAttemptForAReplacedConnectionRevision() {
+	suffix := time.Now().Format("150405.000000000")
+	state := "oauth-state-for-replaced-connection-" + suffix
+	attemptID := "replaced-connection-attempt-" + suffix
+	browserBinding := "replaced-connection-browser-" + suffix
+	tokenRequests := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tokenRequests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "stale-authorization-token",
+			"refresh_token": "stale-refresh-token",
+		})
+	}))
+	defer provider.Close()
+
+	previousHTTP := s.api.oauth.HTTP
+	s.api.oauth.HTTP = provider.Client()
+	s.T().Cleanup(func() { s.api.oauth.HTTP = previousHTTP })
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: "slack",
+		OwnerType:   "app",
+		Endpoint:    "https://mcp.slack.com/mcp",
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+	sealed, err := connectors.SealAuthorizationAttempt(s.sealer, attemptID, connectors.AuthorizationAttempt{
+		ConnectionID:   connection.ID,
+		Revision:       connection.Revision,
+		ConnectorID:    connection.ConnectorID,
+		BrowserBinding: browserBinding,
+		Pending: mcp.PendingAuthorization{
+			State:            state,
+			CodeVerifier:     "stale-pkce-verifier",
+			ClientID:         "oauth-client",
+			ClientAuthMethod: "none",
+			TokenEndpoint:    provider.URL,
+		},
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.CreateConnectorAuthorizationAttempt(s.ctx, &store.ConnectorAuthorizationAttempt{
+		ID:            attemptID,
+		CustomerID:    s.customerID,
+		ConnectionID:  connection.ID,
+		StateHash:     store.OAuthStateHash(state),
+		AttemptSealed: sealed,
+		KEKVersion:    s.sealer.CurrentVersion(),
+		ExpiresAt:     time.Now().Add(time.Minute),
+	}))
+
+	replacement := connection
+	replacement.Status = store.ConnectorConnected
+	replacement.Revision++
+	replacement.CredentialKEKVersion = s.sealer.CurrentVersion()
+	replacement.CredentialSealed, err = connectors.SealCredentials(s.sealer, s.customerID, connection.ID,
+		replacement.Revision, connectors.Credentials{
+			AuthType:    connectors.AuthOAuth2,
+			AccessToken: "replacement-account-token",
+		})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(s.ctx, &replacement, connection.Revision))
+
+	request := httptest.NewRequest(http.MethodGet,
+		mcp.CallbackPath+"?state="+state+"&code=provider-code", nil)
+	request.AddCookie(&http.Cookie{Name: connectorAuthorizationCookieName(attemptID), Value: browserBinding})
+	recorder := httptest.NewRecorder()
+	s.api.Handler().ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusConflict, recorder.Code)
+	s.Zero(tokenRequests, "a callback for the replaced revision must not redeem its code")
+	_, err = s.store.ConnectorAuthorizationAttemptByState(s.ctx, state)
+	s.Error(err, "the rejected callback consumes its one-time state")
+	stored, err := s.store.ConnectorConnection(s.ctx, s.customerID, connection.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ConnectorConnected, stored.Status)
+	s.Equal(replacement.Revision, stored.Revision)
+	credentials, err := connectors.OpenCredentials(s.sealer, s.customerID, connection.ID, stored.Revision,
+		stored.CredentialKEKVersion, stored.CredentialSealed)
+	s.Require().NoError(err)
+	s.Equal("replacement-account-token", credentials.AccessToken)
+}
+
+func (s *APIIntegrationSuite) TestOAuthBrowserHandoffSetsTheRouterOriginCookie() {
+	connection := store.ConnectorConnection{
+		CustomerID:  s.customerID,
+		ConnectorID: "slack",
+		OwnerType:   "app",
+		Endpoint:    "https://mcp.slack.com/mcp",
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, &connection))
+
+	suffix := time.Now().Format("150405.000000000")
+	state := "oauth-state-for-router-origin-handoff-" + suffix
+	browserBinding := "handoff-secret-only-in-the-initiating-tab-" + suffix
+	attemptID := "router-origin-handoff-" + suffix
+	sealed, err := connectors.SealAuthorizationAttempt(s.sealer, attemptID, connectors.AuthorizationAttempt{
+		ConnectionID:   connection.ID,
+		Revision:       connection.Revision,
+		ConnectorID:    connection.ConnectorID,
+		BrowserBinding: browserBinding,
+		Pending: mcp.PendingAuthorization{
+			State:        state,
+			CodeVerifier: "pkce-verifier",
+			AuthorizeURL: "https://slack.example/authorize?state=" + state,
+		},
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.CreateConnectorAuthorizationAttempt(s.ctx, &store.ConnectorAuthorizationAttempt{
+		ID:            attemptID,
+		CustomerID:    s.customerID,
+		ConnectionID:  connection.ID,
+		StateHash:     store.OAuthStateHash(state),
+		AttemptSealed: sealed,
+		KEKVersion:    s.sealer.CurrentVersion(),
+		ExpiresAt:     time.Now().Add(time.Minute),
+	}))
+
+	url := s.server.URL + connectorOAuthLaunchPath + attemptID
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodPost, url, strings.NewReader(`{"handoff_token":"wrong"}`))
+	s.Require().NoError(err)
+	request.Header.Set("Origin", "https://attacker.example")
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	response.Body.Close()
+	s.Equal(http.StatusForbidden, response.StatusCode, "a different origin cannot plant the callback cookie")
+
+	request, err = http.NewRequestWithContext(s.ctx, http.MethodPost, url, strings.NewReader(`{"handoff_token":"`+browserBinding+`"}`))
+	s.Require().NoError(err)
+	request.Header.Set("Origin", "https://router.test")
+	request.Header.Set("Content-Type", "application/json")
+	response, err = http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	s.Equal(http.StatusOK, response.StatusCode)
+	var launchResponse struct {
+		AuthorizationURL string `json:"authorization_url"`
+	}
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&launchResponse))
+	s.Equal("https://slack.example/authorize?state="+state, launchResponse.AuthorizationURL)
+	cookie := response.Cookies()
+	s.Require().Len(cookie, 1)
+	s.Equal(connectorAuthorizationCookieName(attemptID), cookie[0].Name)
+	s.Equal(browserBinding, cookie[0].Value)
+	s.Equal(mcp.CallbackPath, cookie[0].Path)
+}
+
+func (s *APIIntegrationSuite) TestOldConfigWritesCannotOverwriteConnectorBindings() {
+	config := store.AgentConfig{
+		CustomerID: s.customerID,
+		Name:       "connector-config-" + time.Now().Format("150405.000000000"),
+		Connectors: []store.ConnectorBinding{{
+			Name:        "slack",
+			ConnectorID: "slack",
+			Connection:  store.ConnectionBinding{Type: "fixed", ConnectionID: "conn-retained"},
+			Tools:       []store.ToolGrant{},
+		}},
+	}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, &config))
+
+	response, payload := s.do(http.MethodPut, "/v1/agents/configs/"+config.ID, `{"name":"connector-config"}`)
+	s.Equal(http.StatusConflict, response.StatusCode, string(payload))
+	s.Contains(string(payload), "include connectors when updating it")
+
+	response, payload = s.do(http.MethodPost, "/v1/agents/sync", `{"name":"`+config.Name+`","hash":"legacy-sync-hash"}`)
+	s.Equal(http.StatusConflict, response.StatusCode, string(payload))
+	s.Contains(string(payload), "include connectors when syncing it")
+
+	stored, err := s.store.AgentConfig(s.ctx, s.customerID, config.ID)
+	s.Require().NoError(err)
+	s.Equal(config.Connectors, stored.Connectors, "a legacy-shaped update must preserve the binding")
 }
 
 // do issues a request against the live test server with the customer header set.
