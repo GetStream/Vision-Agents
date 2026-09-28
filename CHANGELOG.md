@@ -567,6 +567,7 @@ The router now speaks with `elevenlabs/eleven_v4`, first on the Artificial Analy
 arena, and `elevenlabs/eleven_v4_turbo`, its real-time variant, in the high-quality and
 low-latency tiers. Both act audio tags such as `[laughs]` and are served on the
 text-to-dialogue socket like `eleven_v3_conversational`, with the same `ELEVENLABS_API_KEY`.
+The `tts-quality` group now prefers `eleven_v4` over Sonic 3.6.
 
 ### Three more realtime transcription models: Ink 2, Inworld STT 1 and Scribe v2 Realtime
 

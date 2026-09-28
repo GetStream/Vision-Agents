@@ -1622,16 +1622,18 @@ tts:
       prefer: cartesia/sonic-preview
 
     # Quality: the live voices that win the Artificial Analysis speech arena, in the order
-    # they placed - Sonic 3.6, Inworld TTS-2, Inworld TTS-2 Flash, Breeze TTS 2, ElevenLabs
-    # v3 Conversational. Like the STT groups this names its members, so it is only as current
-    # as the leaderboard it was read from. No tier requirement: the arena ranks how a voice
-    # sounds, and two of the five are low-latency anyway. Last reviewed 2026-09.
+    # they placed - ElevenLabs v4, Sonic 3.6, Inworld TTS-2, Inworld TTS-2 Flash, Breeze
+    # TTS 2, ElevenLabs v3 Conversational. Like the STT groups this names its members, so it
+    # is only as current as the leaderboard it was read from. No tier requirement: the arena
+    # ranks how a voice sounds, and two of the six are low-latency anyway. Last reviewed
+    # 2026-09.
     tts-quality:
       title: Quality
-      description: "The live voices listeners rate best in the Artificial Analysis arena. Prefers Cartesia Sonic 3.6, then Inworld, Breeze and ElevenLabs v3."
+      description: "The live voices listeners rate best in the Artificial Analysis arena. Prefers ElevenLabs v4, then Cartesia Sonic 3.6, Inworld, Breeze and ElevenLabs v3."
       require_realtime: true
-      prefer: cartesia/sonic-preview
+      prefer: elevenlabs/eleven_v4
       only:
+        - elevenlabs/eleven_v4
         - cartesia/sonic-preview
         - inworld/inworld-tts-2
         - inworld/inworld-tts-2-flash
