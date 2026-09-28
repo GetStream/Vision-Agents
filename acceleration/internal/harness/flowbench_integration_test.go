@@ -24,7 +24,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm/typesafe"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -150,8 +149,8 @@ func (s *FlowBenchmarkSuite) SetupSuite() {
 // reports what each would have made the agent do.
 func (s *FlowBenchmarkSuite) TestFlowControllerBenchmark() {
 	arms := s.modelArms()
-	if local := s.localArm(); local != nil {
-		arms = append(arms, *local, s.localChoiceArm())
+	if os.Getenv(localEnvVar) != "" {
+		arms = append(arms, s.localChoiceArm())
 	}
 	arms = append(arms, s.jevArms()...)
 	s.Require().NotEmpty(arms, "no arm can be reached: name a target in "+modelsEnvVar+
@@ -265,26 +264,9 @@ func (s *FlowBenchmarkSuite) modelArms() []arm {
 	return arms
 }
 
-// localArm is the model behind localEnvVar, or nil when none is named.
-func (s *FlowBenchmarkSuite) localArm() *arm {
-	baseURL := os.Getenv(localEnvVar)
-	if baseURL == "" {
-		return nil
-	}
-	model, err := openaicompat.New(openaicompat.Options{
-		Provider: "local",
-		Model:    envOr(localModelEnvVar, "Qwen3-8B"),
-		APIKey:   "local",
-		BaseURL:  baseURL,
-		Logger:   slog.New(slog.DiscardHandler),
-	})
-	s.Require().NoError(err)
-	local := modelArm("local", model, func(routing.Usage) int64 { return 0 })
-	return &local
-}
-
-// localChoiceArm asks the local model the same policy as a multiple-choice question, through
-// gophonic's /v1/classifications. The model scores one answer letter rather than writing JSON,
+// localChoiceArm asks the local model the production policy as a multiple-choice question,
+// through gophonic's /v1/classifications. Asked for JSON instead, Qwen3-8B wrote values the
+// parser refuses or nothing at all. The model scores one answer letter rather than writing JSON,
 // so it cannot answer with something the conversation cannot read, and the question is
 // evaluated once and kept prepared: each case costs only its own words and one token.
 func (s *FlowBenchmarkSuite) localChoiceArm() arm {
