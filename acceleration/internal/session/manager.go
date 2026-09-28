@@ -118,6 +118,8 @@ type Manager struct {
 	reviews *reviewer
 	// titles names persistent conversations nobody named, on the session row and the channel.
 	titles *titler
+	// hosts runs the tools workers host for an agent config. Nil offers none.
+	hosts ToolHosts
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -316,6 +318,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	tools := append([]harness.Tool(nil), spec.Tools...)
 	tools = append(tools, connectorTools...)
 	otherTools := append([]harness.Tool(nil), spec.Tools...)
+	var callers agent.ToolRunner = created.tools
+	tools, callers = m.hostedTools(spec, created.id, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()
 		if err != nil {
@@ -328,7 +332,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, err
 	}
 
-	runner := agent.ToolRunner(created.tools)
+	runner := callers
 	if connectorMCP != nil {
 		runner = &connectorToolRunner{mcp: connectorMCP, next: runner}
 		created.closers = append(created.closers, connectorMCP.Close)

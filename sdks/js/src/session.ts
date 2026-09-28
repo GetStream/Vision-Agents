@@ -178,7 +178,7 @@ export class Session {
     this.created = created;
     this.socket = socket;
     this.tools = tools;
-    this.responses = new Responses(client, created.id);
+    this.responses = new Responses(client, created.id, Boolean(created.conversation_id));
     this.finished = socket ? this.watch() : Promise.resolve();
   }
 

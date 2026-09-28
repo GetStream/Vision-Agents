@@ -314,6 +314,57 @@ tools whose schemas still match their saved grants. The browser OAuth flow uses 
 router-hosted launch popup so its callback cookie is set on the router origin even when
 the dashboard and router have different origins.
 
+### A dispatch worker can run tools for every session under an agent id
+
+A worker on `/v1/dispatch` can send `host_tools` naming an `agent_id` and the tools it runs
+for it. Every session opened under that agent id, whoever opened it, is then offered those
+tools, and each call reaches the worker as a `tool_call` frame and is answered with
+`tool_result`, within the worker's own `timeout_ms` (two minutes by default). This is how a
+session a browser opens gets a tool only a backend can run, such as reading source on a VM:
+the agent id is what a plain session already names, so nothing has to be stored first. The
+agent id is scoped to the worker's own customer, a tool the session's own caller declares
+under the same name wins, hosting no tools or naming no agent is refused with
+`hosting_refused`, and a call waiting on a worker that disconnects fails at once. The Go SDK
+exposes it as `Dispatch.Host(agentID, functions, timeout)`.
+
+A Go `Dispatch` whose socket drops -- a router redeployed, a load balancer ending the
+connection -- now reconnects with a fresh token, backing off from one second to thirty, and
+declares what it hosts again. `Run` still returns on cancellation, on a deliberate close,
+on refused tools, and when the first connection fails.
+
+`agent.yaml` may carry an `app:` mapping, the application's own settings. Both SDKs leave
+it unread and never send it, and it is the one top-level key they do not refuse.
+
+### The router is configured by a YAML file, and can hand a customer to another deployment
+
+`router --config /etc/router.yaml` (or `ROUTER_CONFIG_FILE`) is now where a deployment's
+settings live: `postgres.dsn`, `redis.addr`, `auth.mode`, `cors_origins` and the rest.
+Naming no file loads one of `local`, `testing` or `staging` embedded in the binary, by
+`ROUTER_ENV`, which replaces `internal/environment` and renames `development` to `local`.
+Every `ROUTER_` variable still wins over the file, so nothing in an existing chart, compose
+file or `.env` has to change.
+
+`router keys create` mints the first credential of an `api_key` deployment, which has no
+way to issue one over HTTP, and prints the secret once. `--app-id` reuses the app id a
+customer already has.
+
+Three new server-side endpoints move a customer between two deployments:
+`GET /v1/data/export` streams everything the calling app has and ends with a cursor,
+`POST /v1/data/import` writes it back, and `GET /v1/data/changes` replays what has happened
+since that cursor. `router replicate --from <url>` does the copy and then follows the
+source, so pointing the SDKs at the new deployment loses no writes. The customer is always
+the authenticated caller, key secrets and OAuth tokens are never exported, and all three
+are refused outright in `noauth` mode, where the tenant is only a header.
+
+### Budgets, data policies and prompt injection screening per organization and app
+
+`/v1/policies/app` and `/v1/policies/organization` set a spend cap reset hourly, daily,
+weekly or monthly, a training and retention floor applied to every routed request, and
+prompt injection screening. Screening runs the lcm router (Jev by default) beside each LLM
+call rather than in front of it, so it adds nothing to time to first token; a response whose
+input reads as an injection fails with `prompt_injection`. An organization's settings are a
+floor its apps can tighten but not loosen.
+
 ### Meta's Muse Spark 1.3 in the built-in LLM config
 
 `meta/muse-spark-1.3` is now in the default `router.yaml`, in the high-quality tier with
@@ -531,6 +582,14 @@ asks for it, and the accurate group then narrows to Muse.
 The point of them is that the list is reviewed here instead of in every config that wanted
 today's answer. The cost is that it is an opinion with a date on it rather than something that
 follows from what the models declare, which is why the date is in the config beside them.
+
+### ElevenLabs v4 and v4 Turbo voices
+
+The router now speaks with `elevenlabs/eleven_v4`, first on the Artificial Analysis voice
+arena, and `elevenlabs/eleven_v4_turbo`, its real-time variant, in the high-quality and
+low-latency tiers. Both act audio tags such as `[laughs]` and are served on the
+text-to-dialogue socket like `eleven_v3_conversational`, with the same `ELEVENLABS_API_KEY`.
+The `tts-quality` group now prefers `eleven_v4` over Sonic 3.6.
 
 ### Three more realtime transcription models: Ink 2, Inworld STT 1 and Scribe v2 Realtime
 
@@ -1109,6 +1168,11 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- `POST /v1/agents/sessions/{id}/responses` takes an optional `command_id`, so a page can ask
+  a user's kept conversation over HTTP and still get the turn's id back; it was refused with
+  "personal conversations require a command ID". The JavaScript SDK's `responses.create`
+  sends a fresh one on a session with a `conversationId`, or the `commandId` option you pass.
+
 - Chat readers are explicitly added to existing agent channels before their token is
   issued, so opening a members-only transcript no longer fails with `ReadChannel`.
 
@@ -1155,6 +1219,14 @@ Two tools in one reply each started a generate, and the second stole the floor s
 ### `gemini` plugin: crash on duplicate follow-up tool calls (#588)
 
 `GeminiLLM.simple_response` crashed with `ValueError('content parts are required.')` when the model echoed an already-executed function call in a follow-up turn. `_dedup_and_execute` filtered it out, leaving the follow-up `chat.send_message_stream(parts=[], ...)` with an empty list, which google-genai rejects. The multi-hop loop now exits cleanly when every requested call is a duplicate.
+
+### Router: sentences from a per-sentence voice were heard spliced together (#675)
+
+A voice that takes each sentence as its own request (Gemini TTS, Fish, Speechify) synthesised a reply's sentences side by side, and the agent played their audio in the order it arrived, so a two-sentence reply sounded like two voices talking over each other. The router now holds each sentence's audio until the ones before it have finished, while still synthesising them in parallel. A barge-in drops everything held, and every sentence is still settled and billed.
+
+### Router: Gemini TTS changed voice from one sentence to the next (#677)
+
+Asked for no voice, Gemini picks one on every request, and the router sends it one request per sentence, so an agent without a configured voice could sound like a different person on each reply. Gemini TTS now defaults to the prebuilt voice Kore. A voice named on the agent or the request still wins.
 
 # v0.6.2
 

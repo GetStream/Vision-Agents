@@ -451,6 +451,11 @@ class Agent:
         return self._id
 
     @property
+    def call_type(self) -> str:
+        """The Stream call type the agent is (or will be) joined to."""
+        return self._call_type
+
+    @property
     def knowledge(self) -> KnowledgeBase:
         """What the agent looks things up in, as somewhere to put more of it.
 
@@ -656,6 +661,7 @@ class Agent:
         Returns:
 
         """
+        join_started = time.perf_counter()
         if isinstance(call, str):
             # One name is a call of the default `agent` type; two are the type and the id,
             # which is how a call of some other type is joined.
@@ -684,7 +690,7 @@ class Agent:
             self.conversation = None
 
             if isinstance(self.llm, RemotePipeline):
-                await self._join_remote(self.llm, call)
+                await self._join_remote(self.llm, call, join_started)
                 if participant_wait_timeout != 0:
                     await self.wait_for_participant(timeout=participant_wait_timeout)
                 yield
@@ -709,7 +715,10 @@ class Agent:
             with self.span("edge.join"):
                 self._connection = await self.edge.join(self, call)
             self.logger.info(f"🤖 Agent joined call: {call.id}")
-            self.events.send(events.AgentJoinedCallEvent(call=call))
+            join_ms = (time.perf_counter() - join_started) * 1000
+            self._collector.on_call_join(join_ms)
+            self.logger.info("call join timing call=%s join_ms=%.1f", call.id, join_ms)
+            self.events.send(events.AgentJoinedCallEvent(call=call, join_ms=join_ms))
 
             # Set up audio and video tracks together to avoid SDP issues
             audio_track = self._audio_track if self.publish_audio else None
@@ -1070,7 +1079,9 @@ class Agent:
         with self.tracer.start_as_current_span(name, context=self._root_ctx) as span:
             yield span
 
-    async def _join_remote(self, pipeline: RemotePipeline, call: Call) -> None:
+    async def _join_remote(
+        self, pipeline: RemotePipeline, call: Call, join_started: float
+    ) -> None:
         """Hand the call to an LLM that is really a pipeline running elsewhere.
 
         Voice stays on the remote pipeline: no local audio is consumed and the
@@ -1095,7 +1106,10 @@ class Agent:
         if self.video_processors or self.llm.uses_video_observations:
             await self._join_video_worker(call)
         self.logger.info(f"🤖 Agent joined call remotely: {call.id}")
-        self.events.send(events.AgentJoinedCallEvent(call=call))
+        join_ms = (time.perf_counter() - join_started) * 1000
+        self._collector.on_call_join(join_ms)
+        self.logger.info("call join timing call=%s join_ms=%.1f", call.id, join_ms)
+        self.events.send(events.AgentJoinedCallEvent(call=call, join_ms=join_ms))
 
         self._call_ended_event = asyncio.Event()
         self._joined_at = time.time()

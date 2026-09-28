@@ -23,6 +23,7 @@ final readonly class Provider
         // This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1....
         public ?float $usageShare = null,
         public ?ProviderBenchmark $benchmark = null,
+        public ?ProviderPrice $price = null,
     ) {
     }
 
@@ -41,6 +42,7 @@ final readonly class Provider
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             usageShare: array_key_exists('usage_share', $data) && $data['usage_share'] !== null ? Json::float($data, 'usage_share') : null,
             benchmark: array_key_exists('benchmark', $data) && $data['benchmark'] !== null ? ProviderBenchmark::fromArray(Json::object($data, 'benchmark')) : null,
+            price: array_key_exists('price', $data) && $data['price'] !== null ? ProviderPrice::fromArray(Json::object($data, 'price')) : null,
         );
     }
 
@@ -66,6 +68,9 @@ final readonly class Provider
         }
         if ($this->benchmark !== null) {
             $out['benchmark'] = $this->benchmark->toArray();
+        }
+        if ($this->price !== null) {
+            $out['price'] = $this->price->toArray();
         }
         return $out;
     }

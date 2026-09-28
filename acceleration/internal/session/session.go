@@ -395,31 +395,35 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 }
 
 // RespondCommand accepts one durable text submission. The receipt may be replayed,
-// but only the first successful acceptance is allowed to invoke the model.
-func (s *Session) RespondCommand(ctx context.Context, id, text string) (persistent.CommandReceipt, error) {
+// but only the first successful acceptance is allowed to invoke the model, and only
+// that one returns the id of the response it recorded.
+func (s *Session) RespondCommand(ctx context.Context, id, text string) (persistent.CommandReceipt, string, error) {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
-		return persistent.CommandReceipt{}, errors.New("command IDs require a persistent text conversation")
+		return persistent.CommandReceipt{}, "", errors.New("command IDs require a persistent text conversation")
 	}
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
-		return persistent.CommandReceipt{}, err
+		return persistent.CommandReceipt{}, "", err
 	}
 	receipt, err := s.persisted.BeginCommand(id, text)
 	if err != nil {
-		return receipt, err
+		return receipt, "", err
 	}
 	s.broadcast(receipt)
 	if receipt.Duplicate {
-		return receipt, nil
+		return receipt, "", nil
 	}
 	turnID, err := s.voiceAgent.RespondTo(ctx, text, nil)
 	if err != nil {
 		s.persisted.Cancel()
-		return receipt, err
+		return receipt, "", err
 	}
 	s.persisted.BindTurn(receipt.CommandID, turnID)
-	return receipt, nil
+	if turnID == "" {
+		return receipt, "", nil
+	}
+	return receipt, s.openTurn(turnID, text), nil
 }
 
 // Report publishes a failure the watcher should see, without ending the session.

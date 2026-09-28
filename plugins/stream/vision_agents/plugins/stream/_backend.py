@@ -122,7 +122,7 @@ class Backend:
         conversations that belong to them. Sharing one and switching the user on it would make
         which user a request was for depend on when it happened to run.
         """
-        named = {"id": user} if isinstance(user, str) else dict(user)
+        named: dict[str, object] = {"id": user} if isinstance(user, str) else dict(user)
         if not named.get("id"):
             raise ValueError("a user needs an id")
         if not token:

@@ -35,6 +35,7 @@ type Options struct {
 	Store     *store.Store
 	Live      *live.Client
 	Voices    routing.VoiceResolver
+	Gate      routing.Gate
 	Logger    *slog.Logger
 }
 
@@ -75,6 +76,7 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Voices:   options.Voices,
+		Gate:     options.Gate,
 		Logger:   options.Logger,
 	})
 	if err != nil {

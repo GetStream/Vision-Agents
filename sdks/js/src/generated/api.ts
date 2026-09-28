@@ -1625,6 +1625,72 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/data/changes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What has happened to this app's rows since a cursor
+         * @description Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
+         *     Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
+         *     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+         */
+        readonly get: operations["listDataChanges"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/data/export": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Everything this app has, as newline-delimited JSON
+         * @description One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
+         *     Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
+         *     Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
+         */
+        readonly get: operations["exportData"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/data/import": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Write an export, or a batch of changes, into this deployment
+         * @description Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
+         *     Importing is idempotent: the same export applied twice leaves what applying it once would.
+         *     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+         */
+        readonly post: operations["importData"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/dispatch": {
         readonly parameters: {
             readonly query?: never;
@@ -1817,6 +1883,55 @@ export type paths = {
          */
         readonly get: operations["listPhoneVendors"];
         readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/policies/app": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The calling app's budget, data policy and prompt injection setting
+         * @description What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+         */
+        readonly get: operations["getAppPolicy"];
+        /**
+         * Replace the calling app's policy
+         * @description A field left out is no opinion, so the organization's setting shows through.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["updateAppPolicy"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/policies/organization": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The calling app's organization's policy
+         * @description Applies to every app the router has seen the organization name. A request that names no organization is a 400.
+         */
+        readonly get: operations["getOrganizationPolicy"];
+        /**
+         * Replace the calling app's organization's policy
+         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["updateOrganizationPolicy"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -2306,6 +2421,31 @@ export type components = {
              */
             readonly vendor: string;
         };
+        /** @description A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time. */
+        readonly Budget: {
+            readonly interval: components["schemas"]["BudgetInterval"];
+            /**
+             * Format: int64
+             * @description The cap, in millionths of a dollar.
+             * @example 100000000
+             */
+            readonly limit_micros: number;
+            /**
+             * Format: date-time
+             * @description When the current interval ends.
+             */
+            readonly resets_at?: string;
+            /**
+             * Format: int64
+             * @description What has been spent in the current interval.
+             */
+            readonly spent_micros?: number;
+        };
+        /**
+         * @description How often a budget resets. A week starts on Monday.
+         * @enum {string}
+         */
+        readonly BudgetInterval: "hourly" | "daily" | "weekly" | "monthly";
         readonly BuyNumberRequest: {
             /**
              * @description The country the number was offered from, as the search reported it. Most vendors buy by number alone; the few that buy out of a country's inventory need this, and it cannot be guessed back out of the number.
@@ -2658,6 +2798,8 @@ export type components = {
             readonly name: string;
         };
         readonly CreateResponseRequest: {
+            /** @description Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id. */
+            readonly command_id?: string;
             readonly images?: readonly components["schemas"]["ImageSource"][];
             /** @description What to answer, as though it had been said. */
             readonly text: string;
@@ -2763,6 +2905,57 @@ export type components = {
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Provider-specific voice id. */
             readonly voice?: string;
+        };
+        /** @description One thing that happened to one row of the calling app's data. */
+        readonly DataChange: {
+            /** Format: date-time */
+            readonly at: string;
+            /** @description What identifies the row, which is all a delete has. */
+            readonly key: {
+                readonly [key: string]: unknown;
+            };
+            /** @enum {string} */
+            readonly op: "insert" | "update" | "delete";
+            /** @description The row as it now reads, absent for a delete and never carrying a credential. */
+            readonly row?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Format: int64
+             * @description Where this sits in the order changes happened, and the cursor to resume from.
+             */
+            readonly seq: number;
+            /**
+             * @description Which table the row is in.
+             * @example agent_configs
+             */
+            readonly table: string;
+        };
+        readonly DataChangePage: {
+            /** @description Nothing else has happened yet, which is when a switchover is safe: point your SDKs at the new deployment, wait for this to be true once more, and stop. */
+            readonly caught_up?: boolean;
+            readonly changes: readonly components["schemas"]["DataChange"][];
+            /**
+             * Format: int64
+             * @description What to pass as `after` next time.
+             */
+            readonly cursor: number;
+        };
+        readonly DataImport: {
+            /**
+             * Format: int64
+             * @description The cursor the export named, to ask the other deployment for changes from.
+             */
+            readonly cursor?: number;
+            /**
+             * Format: int64
+             * @description How many rows were written.
+             */
+            readonly rows: number;
+            /** @description How many of them went into each table. */
+            readonly tables?: {
+                readonly [key: string]: number;
+            };
         };
         /** @description What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not. */
         readonly DataPolicy: {
@@ -3156,6 +3349,31 @@ export type components = {
          * @enum {string}
          */
         readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "lcm" | "image" | "memory" | "knowledge" | "phone";
+        readonly ModelCallTiming: {
+            /**
+             * Format: double
+             * @description Request to completed response or failed create.
+             */
+            readonly duration_ms?: number;
+            /** Format: int64 */
+            readonly input_tokens?: number;
+            readonly model: string;
+            /** @description Response ID for this operation; retries can share an ID. */
+            readonly operation_id?: string;
+            /** Format: int64 */
+            readonly output_tokens?: number;
+            readonly provider: string;
+            /** @description reply, flow or subagent. */
+            readonly purpose?: string;
+            /** Format: date-time */
+            readonly started_at: string;
+            readonly success: boolean;
+            /**
+             * Format: double
+             * @description Request to first token.
+             */
+            readonly ttft_ms?: number;
+        };
         /**
          * @description What to change about the models for one session, over whatever its agent config decided.
          *     It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
@@ -3271,6 +3489,13 @@ export type components = {
             readonly vendor?: string;
             readonly vendor_call_id: string;
         };
+        /** @description What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and a field left out is no opinion rather than off. */
+        readonly Policy: {
+            readonly budget?: components["schemas"]["Budget"];
+            readonly data_policy?: components["schemas"]["DataPolicy"];
+            /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
+            readonly prompt_injection?: boolean;
+        };
         readonly PrepareVoiceRequest: {
             /** @description Which providers to teach the voice to. Empty means every provider this deployment can clone with. */
             readonly providers?: readonly string[];
@@ -3289,6 +3514,7 @@ export type components = {
             readonly languages: readonly string[];
             /** @example eleven_flash_v2_5 */
             readonly model: string;
+            readonly price?: components["schemas"]["ProviderPrice"];
             /** @example elevenlabs */
             readonly provider: string;
             readonly realtime: boolean;
@@ -3319,10 +3545,21 @@ export type components = {
              */
             readonly elo?: number;
             /**
+             * @description Artificial Analysis Intelligence Index of a text model at the reasoning effort the router asks for.
+             * @example 33
+             */
+            readonly intelligence_index?: number;
+            /**
              * @description Milliseconds a speech-to-text model takes to its final transcript after speech ends.
              * @example 490
              */
             readonly latency_ms?: number;
+            /**
+             * Format: double
+             * @description Tokens a text model writes per second on the host the router calls.
+             * @example 330
+             */
+            readonly output_tokens_per_second?: number;
             /**
              * @description Artificial Analysis Search Index of a search provider, from 0 to 100.
              * @example 74
@@ -3349,6 +3586,19 @@ export type components = {
              * @description Requests seen in the current health window.
              */
             readonly requests: number;
+        };
+        /** @description What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit. */
+        readonly ProviderPrice: {
+            /**
+             * Format: double
+             * @example 0.75
+             */
+            readonly per_million_input_tokens?: number;
+            /**
+             * Format: double
+             * @example 3.75
+             */
+            readonly per_million_output_tokens?: number;
         };
         readonly PutConnectorCredentialsRequest: {
             /** @description For OAuth connections, imports an existing provider-issued access token. The token endpoint, resource, and client authentication are resolved from the fixed connector definition or discovered provider metadata; callers cannot supply an endpoint that receives the token or refresh token. */
@@ -4209,6 +4459,16 @@ export type components = {
              * @description How much the agent spoke.
              */
             readonly audio_out_ms?: number;
+            /**
+             * Format: double
+             * @description Last transcript revision to a stable turn ready for the flow controller.
+             */
+            readonly cadence_ms?: number;
+            /**
+             * Format: double
+             * @description Stable turn to the main model request, including flow and queueing.
+             */
+            readonly decision_ms?: number;
             /** @description What the caller said, when it can be matched to this exchange. */
             readonly heard?: string;
             /** @description Whether the caller talked over the answer. */
@@ -4218,16 +4478,23 @@ export type components = {
              * @description The wait between asking the model and its first token.
              */
             readonly llm_ttft_ms?: number | null;
+            /** @description Individual model requests for this turn, including flow and delegated work. */
+            readonly model_calls?: readonly components["schemas"]["ModelCallTiming"][];
             /**
              * Format: double
-             * @description How long the caller waited between finishing and being answered.
+             * @description Main model request to the first text delta admitted to the voice pipeline.
+             */
+            readonly model_to_first_text_ms?: number;
+            /**
+             * Format: double
+             * @description Last transcript revision to first audio published; includes cadence settling.
              */
             readonly roundtrip_ms?: number;
             /** @description What the agent answered. */
             readonly said?: string;
             /**
              * Format: double
-             * @description Voice in to voice out, which is the whole of what the caller felt.
+             * @description Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
              */
             readonly speech_end_to_audio_ms?: number | null;
             /** Format: date-time */
@@ -4237,6 +4504,16 @@ export type components = {
              * @description The provider's decode time for the transcript that settled the turn.
              */
             readonly stt_latency_ms?: number | null;
+            /**
+             * Format: double
+             * @description First text delta to the first TTS request.
+             */
+            readonly text_to_tts_ms?: number;
+            /**
+             * Format: double
+             * @description First TTS request to the first audio chunk published to the edge.
+             */
+            readonly tts_to_audio_ms?: number;
             /**
              * Format: double
              * @description The wait between sending the first sentence and the first audio.
@@ -6646,6 +6923,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description The command ID was already accepted with different content */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly listResponseItems: {
@@ -7520,6 +7806,119 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
         };
     };
+    readonly listDataChanges: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The cursor the last page ended at. */
+                readonly after?: number;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The changes since the cursor */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DataChangePage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description The changes since that cursor are no longer kept, so export again. */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description This deployment has no database to read changes from. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    readonly exportData: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The export, streamed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description This deployment has no database to export from. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    readonly importData: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/octet-stream": string;
+            };
+        };
+        readonly responses: {
+            /** @description What was written */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DataImport"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description This deployment has no database to import into. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     readonly dispatchCalls: {
         readonly parameters: {
             readonly query?: {
@@ -7845,6 +8244,106 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["PhoneVendor"][];
                 };
             };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly getAppPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The app's policy, with what its budget has spent so far */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Policy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly updateAppPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["Policy"];
+            };
+        };
+        readonly responses: {
+            /** @description The policy was stored */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Policy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly getOrganizationPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The organization's policy, with what its budget has spent so far */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Policy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly updateOrganizationPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["Policy"];
+            };
+        };
+        readonly responses: {
+            /** @description The policy was stored */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Policy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
         };

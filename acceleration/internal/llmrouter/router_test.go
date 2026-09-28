@@ -257,6 +257,27 @@ func (s *LLMRouterSuite) TestSessionForwardsEveryProviderEvent() {
 	s.IsType(llm.ResponseCompleted{}, events[2])
 }
 
+func (s *LLMRouterSuite) TestEachProviderResponseReportsItsOwnTiming() {
+	session, provider := s.newSession()
+	var timings []llm.CallTiming
+	stream, err := session.Create(s.ctx, llm.ResponseParams{
+		ID: "flow-1", Purpose: "flow", TurnID: "turn-1", Input: prompt(),
+		OnTiming: func(timing llm.CallTiming) { timings = append(timings, timing) },
+	})
+	s.Require().NoError(err)
+	provider.script(0).OutputText("continue")
+	provider.script(0).Done()
+	_ = drain(stream)
+
+	s.Require().Len(timings, 1)
+	s.Equal("flow-1", timings[0].OperationID)
+	s.Equal("turn-1", timings[0].TurnID)
+	s.Equal("flow", timings[0].Purpose)
+	s.Equal("stub-model", timings[0].Model)
+	s.True(timings[0].Success)
+	s.Positive(timings[0].DurationMs)
+}
+
 func (s *LLMRouterSuite) TestSessionIdentityComesFromTheRoutingConfig() {
 	// A provider registered under a different name still aggregates under the config's
 	// name, so stats and health stay coherent.

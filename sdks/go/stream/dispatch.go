@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // DispatchPath is where a worker waits for work on the router.
@@ -26,7 +28,19 @@ const (
 	// pongWait is how long a round trip is given before the last measurement is kept
 	// instead. A figure that is out of date is more use than a zero.
 	pongWait = 5 * time.Second
+	// firstRetry and lastRetry bound the wait between attempts to reach a router that
+	// dropped this worker, doubling from one to the other. A router being redeployed is
+	// back within seconds; one that is down for longer is not worth asking twice a second.
+	firstRetry = time.Second
+	lastRetry  = 30 * time.Second
+	// steadyAfter is how long a connection has to have lasted for its loss to be a fresh
+	// drop rather than another failed attempt, so the wait starts again from firstRetry.
+	steadyAfter = time.Minute
 )
+
+// errRefused is the router declining the tools this worker hosts, which reconnecting
+// would only be told again.
+var errRefused = errors.New("stream: the router refused to host tools")
 
 // InboundCall is a call the router could not answer itself.
 //
@@ -128,6 +142,7 @@ type Dispatch struct {
 
 	call    CallHandler
 	message MessageHandler
+	hosted  []hosting
 
 	mu        sync.Mutex
 	socket    *Socket
@@ -140,6 +155,8 @@ type Dispatch struct {
 	active  atomic.Int64
 
 	pong chan struct{}
+
+	firstRetry time.Duration
 }
 
 // NewDispatch describes a worker without connecting it.
@@ -162,6 +179,7 @@ func NewDispatch(options DispatchOptions) (*Dispatch, error) {
 		reportEvery: options.ReportEvery,
 		logger:      options.Logger,
 		pong:        make(chan struct{}, 1),
+		firstRetry:  firstRetry,
 	}, nil
 }
 
@@ -171,6 +189,73 @@ func (d *Dispatch) OnCall(handler CallHandler) { d.call = handler }
 
 // OnMessage registers what to do with a message written to an agent that is not running.
 func (d *Dispatch) OnMessage(handler MessageHandler) { d.message = handler }
+
+// hosting is one set of functions this worker runs for every session under an agent id.
+type hosting struct {
+	agentID   string
+	functions *tools.Registry
+	timeout   time.Duration
+}
+
+// Host runs these functions for every session opened under an agent id, whoever opened it.
+//
+// A session's own functions run in the process that opened it, which is no use to a
+// conversation opened from a browser that wants to read a source tree. Hosting is the other
+// direction: the router offers these functions to each session naming the agent and sends
+// every call to one of them here. timeout is how long the router gives one call; zero takes
+// its default. Call before Run.
+func (d *Dispatch) Host(agentID string, functions *tools.Registry, timeout time.Duration) {
+	d.hosted = append(d.hosted, hosting{agentID: agentID, functions: functions, timeout: timeout})
+}
+
+// host tells the router what this worker runs, once it is listening.
+func (d *Dispatch) host() {
+	for _, offer := range d.hosted {
+		declared := []Frame{}
+		for _, function := range offer.functions.List() {
+			declared = append(declared, Frame{"name": function.Name, "description": function.Description, "parameters": function.Parameters})
+		}
+		d.tell(Frame{"type": "host_tools", "agent_id": offer.agentID, "tools": declared, "timeout_ms": offer.timeout.Milliseconds()})
+	}
+}
+
+// runHosted answers one hosted call, on its own goroutine: an investigation takes a minute,
+// and the socket it arrived on is also what delivers the next.
+func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
+	id, name := frame.String("id"), frame.String("name")
+	var functions *tools.Registry
+	for _, offer := range d.hosted {
+		for _, function := range offer.functions.List() {
+			if function.Name == name {
+				functions = offer.functions
+			}
+		}
+	}
+	if functions == nil {
+		d.tell(Frame{"type": "tool_result", "id": id, "error": "this worker does not run " + name})
+		return
+	}
+
+	d.logger.Info("running a hosted tool", "tool", name, "session", frame.String("session_id"))
+	d.running.Add(1)
+	d.active.Add(1)
+	go func() {
+		defer d.running.Done()
+		defer d.active.Add(-1)
+
+		result := Frame{"type": "tool_result", "id": id}
+		output, err := functions.Call(ctx, name, frame.String("arguments"))
+		if err != nil {
+			d.logger.Error("a hosted tool failed", "tool", name, "error", err)
+			result["error"] = err.Error()
+		} else {
+			result["output"] = output
+		}
+		if !d.tell(result) {
+			d.logger.Error("a hosted tool's result never reached the router", "tool", name)
+		}
+	}()
+}
 
 // WorkerID is what the router calls this connection, for matching a log line here against
 // one there. Empty until the router has said.
@@ -193,33 +278,90 @@ func (d *Dispatch) LatencyMS() float64 {
 	return d.latencyMS
 }
 
-// Run waits for work until the context is cancelled or the router closes the connection.
+// Run waits for work until the context is cancelled, the router closes the connection on
+// purpose, or it refuses the tools this worker hosts.
+//
+// A connection that drops any other way -- a router being redeployed, a load balancer
+// ending an idle socket -- is opened again, with a fresh token, and the router is told
+// again what this worker hosts, so a worker left running stays reachable. Only the first
+// connection failing is returned, since that is a worker that was never going to work:
+// the wrong address or a credential the router does not accept.
 //
 // Work already being handled is waited for on the way out, because dropping a call would
 // hang up on whoever is talking.
 func (d *Dispatch) Run(ctx context.Context) error {
-	if d.call == nil && d.message == nil {
-		return errors.New("stream: register a handler with OnCall or OnMessage before waiting for work")
+	if d.call == nil && d.message == nil && len(d.hosted) == 0 {
+		return errors.New("stream: register a handler with OnCall or OnMessage, or Host functions, before waiting for work")
 	}
 
 	backend, err := d.backend.Resolve()
 	if err != nil {
 		return err
 	}
-	credentials, err := backend.Credentials()
+	address := backend.SocketURL(DispatchPath) + "?capacity=" + strconv.Itoa(d.capacity)
+	socket, err := d.connect(ctx, backend, address)
 	if err != nil {
 		return err
 	}
+	d.logger.Info("waiting for work", "router", backend.URL, "capacity", d.capacity)
 
-	address := backend.SocketURL(DispatchPath) + "?capacity=" + strconv.Itoa(d.capacity)
+	reporting, done := context.WithCancel(ctx)
+	go d.report(reporting)
+	defer func() {
+		done()
+		d.running.Wait()
+	}()
+
+	retry := d.firstRetry
+	for {
+		opened := time.Now()
+		failure := d.serve(ctx, socket)
+		if ctx.Err() != nil || failure == nil || errors.Is(failure, errRefused) {
+			return failure
+		}
+		if time.Since(opened) >= steadyAfter {
+			retry = d.firstRetry
+		}
+
+		d.logger.Warn("lost the router, reconnecting", "error", failure, "in", retry)
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retry):
+			}
+			retry = min(retry*2, lastRetry)
+			socket, err = d.connect(ctx, backend, address)
+			if err == nil {
+				break
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			d.logger.Warn("could not reach the router", "error", err, "retrying in", retry)
+		}
+	}
+}
+
+// connect opens one dispatch socket, with credentials minted for it: a token signed when
+// the worker started would have expired by the time a long-running one reconnects.
+func (d *Dispatch) connect(ctx context.Context, backend Backend, address string) (*Socket, error) {
+	credentials, err := backend.Credentials()
+	if err != nil {
+		return nil, err
+	}
 	socket := NewSocket(address, credentials, backend.HTTPClient, d.logger)
 	if err := socket.Open(ctx); err != nil {
-		return err
+		return nil, err
 	}
+	return socket, nil
+}
+
+// serve waits for work on one connection until it ends.
+func (d *Dispatch) serve(ctx context.Context, socket *Socket) error {
 	d.mu.Lock()
 	d.socket = socket
 	d.mu.Unlock()
-	d.logger.Info("waiting for work", "router", backend.URL, "capacity", d.capacity)
 
 	// A read blocks in the socket rather than on a channel, so cancellation has to reach
 	// it by closing the connection underneath it.
@@ -232,14 +374,8 @@ func (d *Dispatch) Run(ctx context.Context) error {
 		}
 	}()
 
-	reporting, done := context.WithCancel(ctx)
-	go d.report(reporting)
-
 	failure := d.read(ctx, socket)
-
 	close(stopped)
-	done()
-	d.running.Wait()
 
 	d.mu.Lock()
 	d.socket = nil
@@ -257,8 +393,9 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if errors.Is(err, ErrSocketClosed) ||
-				websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+			// Going away is a router shutting down, which is when a worker should find the
+			// one replacing it rather than stop.
+			if errors.Is(err, ErrSocketClosed) || websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 				return nil
 			}
 			return fmt.Errorf("stream: the dispatch socket ended: %w", err)
@@ -277,6 +414,16 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 			d.workerID = frame.String("worker_id")
 			d.mu.Unlock()
 			d.logger.Info("the router calls this worker", "worker", frame.String("worker_id"))
+			d.host()
+		case "tool_call":
+			d.runHosted(ctx, frame)
+		case "hosting":
+			d.logger.Info("the router sends this worker's tools here", "agent", frame.String("agent_id"))
+		case "hosting_refused":
+			// Not worth waiting on: a worker whose tools were refused is one nobody will
+			// call, and saying so is better than sitting connected looking healthy.
+			return fmt.Errorf("%w for agent %s: %s", errRefused,
+				frame.String("agent_id"), frame.String("reason"))
 		case "pong":
 			select {
 			case d.pong <- struct{}{}:

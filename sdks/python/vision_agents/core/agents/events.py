@@ -19,6 +19,7 @@ class AgentJoinedCallEvent(BaseEvent):
 
     type: str = field(default="agent.joined_call", init=False)
     call: Call = field(kw_only=True)
+    join_ms: Optional[float] = field(default=None, kw_only=True)
 
 
 @dataclass

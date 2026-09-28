@@ -874,6 +874,17 @@ class TestAgent:
             wait_for_end=False,
         ):
             assert agent._call_type == "support"
+            assert agent.call_type == "support"
+
+    def test_call_type_defaults_to_agent(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        assert agent.call_type == "agent"
 
     async def test_answering_a_call_that_names_no_call_is_refused(self):
         agent = Agent(

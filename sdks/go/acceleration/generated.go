@@ -170,6 +170,30 @@ func (e AgentResponseItemKind) Valid() bool {
 	}
 }
 
+// Defines values for BudgetInterval.
+const (
+	BudgetIntervalDaily   BudgetInterval = "daily"
+	BudgetIntervalHourly  BudgetInterval = "hourly"
+	BudgetIntervalMonthly BudgetInterval = "monthly"
+	BudgetIntervalWeekly  BudgetInterval = "weekly"
+)
+
+// Valid indicates whether the value is a known member of the BudgetInterval enum.
+func (e BudgetInterval) Valid() bool {
+	switch e {
+	case BudgetIntervalDaily:
+		return true
+	case BudgetIntervalHourly:
+		return true
+	case BudgetIntervalMonthly:
+		return true
+	case BudgetIntervalWeekly:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CallDirection.
 const (
 	Inbound  CallDirection = "inbound"
@@ -392,6 +416,27 @@ func (e CreateConnectorDefinitionRequestAuthMode) Valid() bool {
 	case CreateConnectorDefinitionRequestAuthModeNone:
 		return true
 	case CreateConnectorDefinitionRequestAuthModeOauthDcr:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DataChangeOp.
+const (
+	Delete DataChangeOp = "delete"
+	Insert DataChangeOp = "insert"
+	Update DataChangeOp = "update"
+)
+
+// Valid indicates whether the value is a known member of the DataChangeOp enum.
+func (e DataChangeOp) Valid() bool {
+	switch e {
+	case Delete:
+		return true
+	case Insert:
+		return true
+	case Update:
 		return true
 	default:
 		return false
@@ -1725,6 +1770,26 @@ type AvailableNumber struct {
 	Vendor string `json:"vendor"`
 }
 
+// Budget A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
+type Budget struct {
+	// Interval How often a budget resets. A week starts on Monday.
+	Interval BudgetInterval `json:"interval"`
+
+	// LimitMicros The cap, in millionths of a dollar.
+	//
+	// Example: 100000000
+	LimitMicros int64 `json:"limit_micros"`
+
+	// ResetsAt When the current interval ends.
+	ResetsAt *time.Time `json:"resets_at,omitempty"`
+
+	// SpentMicros What has been spent in the current interval.
+	SpentMicros *int64 `json:"spent_micros,omitempty"`
+}
+
+// BudgetInterval How often a budget resets. A week starts on Monday.
+type BudgetInterval string
+
 // BuyNumberRequest defines model for BuyNumberRequest.
 type BuyNumberRequest struct {
 	// Country The country the number was offered from, as the search reported it. Most vendors buy by number alone; the few that buy out of a country's inventory need this, and it cannot be guessed back out of the number.
@@ -2153,7 +2218,9 @@ type CreateConnectorDefinitionRequestAuthMode string
 
 // CreateResponseRequest defines model for CreateResponseRequest.
 type CreateResponseRequest struct {
-	Images *[]ImageSource `json:"images,omitempty"`
+	// CommandId Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
+	CommandId *string        `json:"command_id,omitempty"`
+	Images    *[]ImageSource `json:"images,omitempty"`
 
 	// Text What to answer, as though it had been said.
 	Text string `json:"text"`
@@ -2278,6 +2345,51 @@ type CreateSessionRequest struct {
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// DataChange One thing that happened to one row of the calling app's data.
+type DataChange struct {
+	At time.Time `json:"at"`
+
+	// Key What identifies the row, which is all a delete has.
+	Key map[string]interface{} `json:"key"`
+	Op  DataChangeOp           `json:"op"`
+
+	// Row The row as it now reads, absent for a delete and never carrying a credential.
+	Row *map[string]interface{} `json:"row,omitempty"`
+
+	// Seq Where this sits in the order changes happened, and the cursor to resume from.
+	Seq int64 `json:"seq"`
+
+	// Table Which table the row is in.
+	//
+	// Example: agent_configs
+	Table string `json:"table"`
+}
+
+// DataChangeOp defines model for DataChange.Op.
+type DataChangeOp string
+
+// DataChangePage defines model for DataChangePage.
+type DataChangePage struct {
+	// CaughtUp Nothing else has happened yet, which is when a switchover is safe: point your SDKs at the new deployment, wait for this to be true once more, and stop.
+	CaughtUp *bool        `json:"caught_up,omitempty"`
+	Changes  []DataChange `json:"changes"`
+
+	// Cursor What to pass as `after` next time.
+	Cursor int64 `json:"cursor"`
+}
+
+// DataImport defines model for DataImport.
+type DataImport struct {
+	// Cursor The cursor the export named, to ask the other deployment for changes from.
+	Cursor *int64 `json:"cursor,omitempty"`
+
+	// Rows How many rows were written.
+	Rows int64 `json:"rows"`
+
+	// Tables How many of them went into each table.
+	Tables *map[string]int64 `json:"tables,omitempty"`
 }
 
 // DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
@@ -2722,6 +2834,27 @@ type MessageContent1 = []ContentPart
 // Example: tts
 type Modality string
 
+// ModelCallTiming defines model for ModelCallTiming.
+type ModelCallTiming struct {
+	// DurationMs Request to completed response or failed create.
+	DurationMs  *float64 `json:"duration_ms,omitempty"`
+	InputTokens *int64   `json:"input_tokens,omitempty"`
+	Model       string   `json:"model"`
+
+	// OperationId Response ID for this operation; retries can share an ID.
+	OperationId  *string `json:"operation_id,omitempty"`
+	OutputTokens *int64  `json:"output_tokens,omitempty"`
+	Provider     string  `json:"provider"`
+
+	// Purpose reply, flow or subagent.
+	Purpose   *string   `json:"purpose,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+	Success   bool      `json:"success"`
+
+	// TtftMs Request to first token.
+	TtftMs *float64 `json:"ttft_ms,omitempty"`
+}
+
 // ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
 // It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
 type ModelOverwrites struct {
@@ -2851,6 +2984,18 @@ type PlacedCall struct {
 	VendorCallId string  `json:"vendor_call_id"`
 }
 
+// Policy What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and a field left out is no opinion rather than off.
+type Policy struct {
+	// Budget A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
+	Budget *Budget `json:"budget,omitempty"`
+
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+
+	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
+	PromptInjection *bool `json:"prompt_injection,omitempty"`
+}
+
 // PrepareVoiceRequest defines model for PrepareVoiceRequest.
 type PrepareVoiceRequest struct {
 	// Providers Which providers to teach the voice to. Empty means every provider this deployment can clone with.
@@ -2878,6 +3023,9 @@ type Provider struct {
 
 	// Model Example: eleven_flash_v2_5
 	Model string `json:"model"`
+
+	// Price What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit.
+	Price *ProviderPrice `json:"price,omitempty"`
 
 	// Provider Example: elevenlabs
 	Provider string `json:"provider"`
@@ -2907,10 +3055,20 @@ type ProviderBenchmark struct {
 	// Example: 1273
 	Elo *int `json:"elo,omitempty"`
 
+	// IntelligenceIndex Artificial Analysis Intelligence Index of a text model at the reasoning effort the router asks for.
+	//
+	// Example: 33
+	IntelligenceIndex *int `json:"intelligence_index,omitempty"`
+
 	// LatencyMs Milliseconds a speech-to-text model takes to its final transcript after speech ends.
 	//
 	// Example: 490
 	LatencyMs *int `json:"latency_ms,omitempty"`
+
+	// OutputTokensPerSecond Tokens a text model writes per second on the host the router calls.
+	//
+	// Example: 330
+	OutputTokensPerSecond *float64 `json:"output_tokens_per_second,omitempty"`
 
 	// SearchIndex Artificial Analysis Search Index of a search provider, from 0 to 100.
 	//
@@ -2933,6 +3091,15 @@ type ProviderHealth struct {
 
 	// Requests Requests seen in the current health window.
 	Requests int64 `json:"requests"`
+}
+
+// ProviderPrice What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit.
+type ProviderPrice struct {
+	// PerMillionInputTokens Example: 0.75
+	PerMillionInputTokens *float64 `json:"per_million_input_tokens,omitempty"`
+
+	// PerMillionOutputTokens Example: 3.75
+	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
 }
 
 // PutConnectorCredentialsRequest defines model for PutConnectorCredentialsRequest.
@@ -3898,6 +4065,12 @@ type TimelineEntry struct {
 	// AudioOutMs How much the agent spoke.
 	AudioOutMs *float64 `json:"audio_out_ms,omitempty"`
 
+	// CadenceMs Last transcript revision to a stable turn ready for the flow controller.
+	CadenceMs *float64 `json:"cadence_ms,omitempty"`
+
+	// DecisionMs Stable turn to the main model request, including flow and queueing.
+	DecisionMs *float64 `json:"decision_ms,omitempty"`
+
 	// Heard What the caller said, when it can be matched to this exchange.
 	Heard *string `json:"heard,omitempty"`
 
@@ -3907,18 +4080,30 @@ type TimelineEntry struct {
 	// LlmTtftMs The wait between asking the model and its first token.
 	LlmTtftMs *float64 `json:"llm_ttft_ms,omitempty"`
 
-	// RoundtripMs How long the caller waited between finishing and being answered.
+	// ModelCalls Individual model requests for this turn, including flow and delegated work.
+	ModelCalls *[]ModelCallTiming `json:"model_calls,omitempty"`
+
+	// ModelToFirstTextMs Main model request to the first text delta admitted to the voice pipeline.
+	ModelToFirstTextMs *float64 `json:"model_to_first_text_ms,omitempty"`
+
+	// RoundtripMs Last transcript revision to first audio published; includes cadence settling.
 	RoundtripMs *float64 `json:"roundtrip_ms,omitempty"`
 
 	// Said What the agent answered.
 	Said *string `json:"said,omitempty"`
 
-	// SpeechEndToAudioMs Voice in to voice out, which is the whole of what the caller felt.
+	// SpeechEndToAudioMs Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
 	SpeechEndToAudioMs *float64  `json:"speech_end_to_audio_ms,omitempty"`
 	StartedAt          time.Time `json:"started_at"`
 
 	// SttLatencyMs The provider's decode time for the transcript that settled the turn.
 	SttLatencyMs *float64 `json:"stt_latency_ms,omitempty"`
+
+	// TextToTtsMs First text delta to the first TTS request.
+	TextToTtsMs *float64 `json:"text_to_tts_ms,omitempty"`
+
+	// TtsToAudioMs First TTS request to the first audio chunk published to the edge.
+	TtsToAudioMs *float64 `json:"tts_to_audio_ms,omitempty"`
 
 	// TtsTtfbMs The wait between sending the first sentence and the first audio.
 	TtsTtfbMs *float64 `json:"tts_ttfb_ms,omitempty"`
@@ -4497,6 +4682,13 @@ type ListLibraryVoicesParams struct {
 	Provider *string `form:"provider,omitempty" json:"provider,omitempty"`
 }
 
+// ListDataChangesParams defines parameters for ListDataChanges.
+type ListDataChangesParams struct {
+	// After The cursor the last page ended at.
+	After *int64 `form:"after,omitempty" json:"after,omitempty"`
+	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListPhoneNumbersParams defines parameters for ListPhoneNumbers.
 type ListPhoneNumbersParams struct {
 	// IncludeReleased Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill.
@@ -4731,6 +4923,12 @@ type BuyPhoneNumberJSONRequestBody = BuyNumberRequest
 
 // AttachPhoneNumberJSONRequestBody defines body for AttachPhoneNumber for application/json ContentType.
 type AttachPhoneNumberJSONRequestBody = AttachNumberRequest
+
+// UpdateAppPolicyJSONRequestBody defines body for UpdateAppPolicy for application/json ContentType.
+type UpdateAppPolicyJSONRequestBody = Policy
+
+// UpdateOrganizationPolicyJSONRequestBody defines body for UpdateOrganizationPolicy for application/json ContentType.
+type UpdateOrganizationPolicyJSONRequestBody = Policy
 
 // CreateRouterConfigJSONRequestBody defines body for CreateRouterConfig for application/json ContentType.
 type CreateRouterConfigJSONRequestBody = RouterConfigRequest
@@ -5980,6 +6178,35 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListDataChanges What has happened to this app's rows since a cursor
+	//
+	// Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
+	// Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
+	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+	//
+	// Corresponds with GET /v1/data/changes (the `ListDataChanges` operationId).
+	ListDataChanges(ctx context.Context, params *ListDataChangesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExportData Everything this app has, as newline-delimited JSON
+	//
+	// One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
+	// Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
+	// Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
+	//
+	// Corresponds with GET /v1/data/export (the `ExportData` operationId).
+	ExportData(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ImportDataWithBody Write an export, or a batch of changes, into this deployment
+	//
+	// Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
+	// Importing is idempotent: the same export applied twice leaves what applying it once would.
+	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/data/import (the `ImportData` operationId).
+	ImportDataWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GenerateImageWithBody Draw pictures from a prompt, and return them
 	//
 	// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
@@ -6111,6 +6338,58 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/phone/vendors (the `ListPhoneVendors` operationId).
 	ListPhoneVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAppPolicy The calling app's budget, data policy and prompt injection setting
+	//
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+	//
+	// Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
+	GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAppPolicyWithBody Replace the calling app's policy
+	//
+	// A field left out is no opinion, so the organization's setting shows through.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/policies/app (the `UpdateAppPolicy` operationId).
+	UpdateAppPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAppPolicy Replace the calling app's policy
+	//
+	// A field left out is no opinion, so the organization's setting shows through.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/policies/app (the `UpdateAppPolicy` operationId).
+	UpdateAppPolicy(ctx context.Context, body UpdateAppPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOrganizationPolicy The calling app's organization's policy
+	//
+	// Applies to every app the router has seen the organization name. A request that names no organization is a 400.
+	//
+	// Corresponds with GET /v1/policies/organization (the `GetOrganizationPolicy` operationId).
+	GetOrganizationPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateOrganizationPolicyWithBody Replace the calling app's organization's policy
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
+	UpdateOrganizationPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateOrganizationPolicy Replace the calling app's organization's policy
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
+	UpdateOrganizationPolicy(ctx context.Context, body UpdateOrganizationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListRouterConfigs The router configs the calling customer holds
 	//
@@ -8600,6 +8879,65 @@ func (c *Client) AddVoiceSample(ctx context.Context, id ResourceID, body AddVoic
 	return c.Client.Do(req)
 }
 
+// ListDataChanges What has happened to this app's rows since a cursor
+//
+// Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
+// Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
+// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+//
+// Corresponds with GET /v1/data/changes (the `ListDataChanges` operationId).
+func (c *Client) ListDataChanges(ctx context.Context, params *ListDataChangesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDataChangesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExportData Everything this app has, as newline-delimited JSON
+//
+// One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
+// Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
+// Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
+//
+// Corresponds with GET /v1/data/export (the `ExportData` operationId).
+func (c *Client) ExportData(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportDataRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ImportDataWithBody Write an export, or a batch of changes, into this deployment
+//
+// Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
+// Importing is idempotent: the same export applied twice leaves what applying it once would.
+// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/data/import (the `ImportData` operationId).
+func (c *Client) ImportDataWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImportDataRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GenerateImageWithBody Draw pictures from a prompt, and return them
 //
 // Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
@@ -8882,6 +9220,118 @@ func (c *Client) AttachPhoneNumber(ctx context.Context, e164 string, body Attach
 // Corresponds with GET /v1/phone/vendors (the `ListPhoneVendors` operationId).
 func (c *Client) ListPhoneVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListPhoneVendorsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAppPolicy The calling app's budget, data policy and prompt injection setting
+//
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+//
+// Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
+func (c *Client) GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAppPolicyRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAppPolicyWithBody Replace the calling app's policy
+//
+// A field left out is no opinion, so the organization's setting shows through.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/policies/app (the `UpdateAppPolicy` operationId).
+func (c *Client) UpdateAppPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAppPolicyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAppPolicy Replace the calling app's policy
+//
+// A field left out is no opinion, so the organization's setting shows through.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/policies/app (the `UpdateAppPolicy` operationId).
+func (c *Client) UpdateAppPolicy(ctx context.Context, body UpdateAppPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAppPolicyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetOrganizationPolicy The calling app's organization's policy
+//
+// Applies to every app the router has seen the organization name. A request that names no organization is a 400.
+//
+// Corresponds with GET /v1/policies/organization (the `GetOrganizationPolicy` operationId).
+func (c *Client) GetOrganizationPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOrganizationPolicyRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateOrganizationPolicyWithBody Replace the calling app's organization's policy
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
+func (c *Client) UpdateOrganizationPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateOrganizationPolicyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateOrganizationPolicy Replace the calling app's organization's policy
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
+func (c *Client) UpdateOrganizationPolicy(ctx context.Context, body UpdateOrganizationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateOrganizationPolicyRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13864,6 +14314,128 @@ func NewAddVoiceSampleRequestWithBody(server string, id ResourceID, contentType 
 	return req, nil
 }
 
+// NewListDataChangesRequest constructs an http.Request for the ListDataChanges method
+func NewListDataChangesRequest(server string, params *ListDataChangesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/data/changes")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewExportDataRequest constructs an http.Request for the ExportData method
+func NewExportDataRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/data/export")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewImportDataRequestWithBody constructs an http.Request for the ImportData method, with any body, and a specified content type
+func NewImportDataRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/data/import")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGenerateImageRequest calls the generic GenerateImage builder with application/json body
 func NewGenerateImageRequest(server string, body GenerateImageJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -14387,6 +14959,140 @@ func NewListPhoneVendorsRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewGetAppPolicyRequest constructs an http.Request for the GetAppPolicy method
+func NewGetAppPolicyRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/policies/app")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateAppPolicyRequest calls the generic UpdateAppPolicy builder with application/json body
+func NewUpdateAppPolicyRequest(server string, body UpdateAppPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateAppPolicyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewUpdateAppPolicyRequestWithBody constructs an http.Request for the UpdateAppPolicy method, with any body, and a specified content type
+func NewUpdateAppPolicyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/policies/app")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetOrganizationPolicyRequest constructs an http.Request for the GetOrganizationPolicy method
+func NewGetOrganizationPolicyRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/policies/organization")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateOrganizationPolicyRequest calls the generic UpdateOrganizationPolicy builder with application/json body
+func NewUpdateOrganizationPolicyRequest(server string, body UpdateOrganizationPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateOrganizationPolicyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewUpdateOrganizationPolicyRequestWithBody constructs an http.Request for the UpdateOrganizationPolicy method, with any body, and a specified content type
+func NewUpdateOrganizationPolicyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/policies/organization")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -16637,6 +17343,39 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSampleWithResponse(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
 
+	// ListDataChangesWithResponse What has happened to this app's rows since a cursor
+	//
+	// Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
+	// Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
+	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/data/changes (the `ListDataChanges` operationId).
+	ListDataChangesWithResponse(ctx context.Context, params *ListDataChangesParams, reqEditors ...RequestEditorFn) (*ListDataChangesResponse, error)
+
+	// ExportDataWithResponse Everything this app has, as newline-delimited JSON
+	//
+	// One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
+	// Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
+	// Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/data/export (the `ExportData` operationId).
+	ExportDataWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ExportDataResponse, error)
+
+	// ImportDataWithBodyWithResponse Write an export, or a batch of changes, into this deployment
+	//
+	// Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
+	// Importing is idempotent: the same export applied twice leaves what applying it once would.
+	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/data/import (the `ImportData` operationId).
+	ImportDataWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error)
+
 	// GenerateImageWithBodyWithResponse Draw pictures from a prompt, and return them
 	//
 	// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
@@ -16776,6 +17515,62 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/phone/vendors (the `ListPhoneVendors` operationId).
 	ListPhoneVendorsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPhoneVendorsResponse, error)
+
+	// GetAppPolicyWithResponse The calling app's budget, data policy and prompt injection setting
+	//
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
+	GetAppPolicyWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAppPolicyResponse, error)
+
+	// UpdateAppPolicyWithBodyWithResponse Replace the calling app's policy
+	//
+	// A field left out is no opinion, so the organization's setting shows through.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/policies/app (the `UpdateAppPolicy` operationId).
+	UpdateAppPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAppPolicyResponse, error)
+
+	// UpdateAppPolicyWithResponse Replace the calling app's policy
+	//
+	// A field left out is no opinion, so the organization's setting shows through.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/policies/app (the `UpdateAppPolicy` operationId).
+	UpdateAppPolicyWithResponse(ctx context.Context, body UpdateAppPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAppPolicyResponse, error)
+
+	// GetOrganizationPolicyWithResponse The calling app's organization's policy
+	//
+	// Applies to every app the router has seen the organization name. A request that names no organization is a 400.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/policies/organization (the `GetOrganizationPolicy` operationId).
+	GetOrganizationPolicyWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOrganizationPolicyResponse, error)
+
+	// UpdateOrganizationPolicyWithBodyWithResponse Replace the calling app's organization's policy
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
+	UpdateOrganizationPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateOrganizationPolicyResponse, error)
+
+	// UpdateOrganizationPolicyWithResponse Replace the calling app's organization's policy
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
+	UpdateOrganizationPolicyWithResponse(ctx context.Context, body UpdateOrganizationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateOrganizationPolicyResponse, error)
 
 	// ListRouterConfigsWithResponse The router configs the calling customer holds
 	//
@@ -20987,6 +21782,8 @@ type CreateResponseResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -21012,6 +21809,11 @@ func (r CreateResponseResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r CreateResponseResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateResponseResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -23008,6 +23810,213 @@ func (r AddVoiceSampleResponse) ContentType() string {
 	return ""
 }
 
+type ListDataChangesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DataChangePage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListDataChangesResponse) GetJSON200() *DataChangePage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListDataChangesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListDataChangesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListDataChangesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r ListDataChangesResponse) GetJSON410() *Error {
+	return r.JSON410
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListDataChangesResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListDataChangesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDataChangesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDataChangesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListDataChangesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExportDataResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExportDataResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ExportDataResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ExportDataResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ExportDataResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ExportDataResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportDataResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportDataResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExportDataResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ImportDataResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DataImport
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ImportDataResponse) GetJSON200() *DataImport {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ImportDataResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ImportDataResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ImportDataResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ImportDataResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ImportDataResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ImportDataResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ImportDataResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ImportDataResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GenerateImageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -23657,6 +24666,254 @@ func (r ListPhoneVendorsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListPhoneVendorsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAppPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Policy
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAppPolicyResponse) GetJSON200() *Policy {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetAppPolicyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAppPolicyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAppPolicyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAppPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAppPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAppPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAppPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateAppPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Policy
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateAppPolicyResponse) GetJSON200() *Policy {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateAppPolicyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateAppPolicyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateAppPolicyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateAppPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateAppPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateAppPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateAppPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetOrganizationPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Policy
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOrganizationPolicyResponse) GetJSON200() *Policy {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetOrganizationPolicyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetOrganizationPolicyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetOrganizationPolicyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOrganizationPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOrganizationPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOrganizationPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOrganizationPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateOrganizationPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Policy
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateOrganizationPolicyResponse) GetJSON200() *Policy {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateOrganizationPolicyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateOrganizationPolicyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateOrganizationPolicyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateOrganizationPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateOrganizationPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateOrganizationPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateOrganizationPolicyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26863,6 +28120,57 @@ func (c *ClientWithResponses) AddVoiceSampleWithResponse(ctx context.Context, id
 	return ParseAddVoiceSampleResponse(rsp)
 }
 
+// ListDataChangesWithResponse What has happened to this app's rows since a cursor
+//
+// Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
+// Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
+// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/data/changes (the `ListDataChanges` operationId).
+func (c *ClientWithResponses) ListDataChangesWithResponse(ctx context.Context, params *ListDataChangesParams, reqEditors ...RequestEditorFn) (*ListDataChangesResponse, error) {
+	rsp, err := c.ListDataChanges(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDataChangesResponse(rsp)
+}
+
+// ExportDataWithResponse Everything this app has, as newline-delimited JSON
+//
+// One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
+// Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
+// Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/data/export (the `ExportData` operationId).
+func (c *ClientWithResponses) ExportDataWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ExportDataResponse, error) {
+	rsp, err := c.ExportData(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportDataResponse(rsp)
+}
+
+// ImportDataWithBodyWithResponse Write an export, or a batch of changes, into this deployment
+//
+// Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
+// Importing is idempotent: the same export applied twice leaves what applying it once would.
+// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/data/import (the `ImportData` operationId).
+func (c *ClientWithResponses) ImportDataWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error) {
+	rsp, err := c.ImportDataWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseImportDataResponse(rsp)
+}
+
 // GenerateImageWithBodyWithResponse Draw pictures from a prompt, and return them
 //
 // Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
@@ -27097,6 +28405,98 @@ func (c *ClientWithResponses) ListPhoneVendorsWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseListPhoneVendorsResponse(rsp)
+}
+
+// GetAppPolicyWithResponse The calling app's budget, data policy and prompt injection setting
+//
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
+func (c *ClientWithResponses) GetAppPolicyWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAppPolicyResponse, error) {
+	rsp, err := c.GetAppPolicy(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAppPolicyResponse(rsp)
+}
+
+// UpdateAppPolicyWithBodyWithResponse Replace the calling app's policy
+//
+// A field left out is no opinion, so the organization's setting shows through.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/policies/app (the `UpdateAppPolicy` operationId).
+func (c *ClientWithResponses) UpdateAppPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAppPolicyResponse, error) {
+	rsp, err := c.UpdateAppPolicyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAppPolicyResponse(rsp)
+}
+
+// UpdateAppPolicyWithResponse Replace the calling app's policy
+//
+// A field left out is no opinion, so the organization's setting shows through.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/policies/app (the `UpdateAppPolicy` operationId).
+func (c *ClientWithResponses) UpdateAppPolicyWithResponse(ctx context.Context, body UpdateAppPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAppPolicyResponse, error) {
+	rsp, err := c.UpdateAppPolicy(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAppPolicyResponse(rsp)
+}
+
+// GetOrganizationPolicyWithResponse The calling app's organization's policy
+//
+// Applies to every app the router has seen the organization name. A request that names no organization is a 400.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/policies/organization (the `GetOrganizationPolicy` operationId).
+func (c *ClientWithResponses) GetOrganizationPolicyWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOrganizationPolicyResponse, error) {
+	rsp, err := c.GetOrganizationPolicy(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOrganizationPolicyResponse(rsp)
+}
+
+// UpdateOrganizationPolicyWithBodyWithResponse Replace the calling app's organization's policy
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
+func (c *ClientWithResponses) UpdateOrganizationPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateOrganizationPolicyResponse, error) {
+	rsp, err := c.UpdateOrganizationPolicyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateOrganizationPolicyResponse(rsp)
+}
+
+// UpdateOrganizationPolicyWithResponse Replace the calling app's organization's policy
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/policies/organization (the `UpdateOrganizationPolicy` operationId).
+func (c *ClientWithResponses) UpdateOrganizationPolicyWithResponse(ctx context.Context, body UpdateOrganizationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateOrganizationPolicyResponse, error) {
+	rsp, err := c.UpdateOrganizationPolicy(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateOrganizationPolicyResponse(rsp)
 }
 
 // ListRouterConfigsWithResponse The router configs the calling customer holds
@@ -30594,6 +31994,13 @@ func ParseCreateResponseResponse(rsp *http.Response) (*CreateResponseResponse, e
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	}
 
 	return response, nil
@@ -32129,6 +33536,168 @@ func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, e
 	return response, nil
 }
 
+// ParseListDataChangesResponse parses an HTTP response from a ListDataChangesWithResponse call
+func ParseListDataChangesResponse(rsp *http.Response) (*ListDataChangesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDataChangesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DataChangePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExportDataResponse parses an HTTP response from a ExportDataWithResponse call
+func ParseExportDataResponse(rsp *http.Response) (*ExportDataResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportDataResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseImportDataResponse parses an HTTP response from a ImportDataWithResponse call
+func ParseImportDataResponse(rsp *http.Response) (*ImportDataResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ImportDataResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DataImport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGenerateImageResponse parses an HTTP response from a GenerateImageWithResponse call
 func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -32620,6 +34189,194 @@ func ParseListPhoneVendorsResponse(rsp *http.Response) (*ListPhoneVendorsRespons
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAppPolicyResponse parses an HTTP response from a GetAppPolicyWithResponse call
+func ParseGetAppPolicyResponse(rsp *http.Response) (*GetAppPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAppPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Policy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateAppPolicyResponse parses an HTTP response from a UpdateAppPolicyWithResponse call
+func ParseUpdateAppPolicyResponse(rsp *http.Response) (*UpdateAppPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateAppPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Policy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetOrganizationPolicyResponse parses an HTTP response from a GetOrganizationPolicyWithResponse call
+func ParseGetOrganizationPolicyResponse(rsp *http.Response) (*GetOrganizationPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOrganizationPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Policy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateOrganizationPolicyResponse parses an HTTP response from a UpdateOrganizationPolicyWithResponse call
+func ParseUpdateOrganizationPolicyResponse(rsp *http.Response) (*UpdateOrganizationPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateOrganizationPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Policy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized

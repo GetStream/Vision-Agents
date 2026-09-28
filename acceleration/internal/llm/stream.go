@@ -48,6 +48,11 @@ type Stream struct {
 	closed    atomic.Bool
 	closeOnce sync.Once
 	closeErr  error
+
+	// screened is closed once a screen's verdict has arrived, and refused holds it when
+	// the verdict was an objection. Nil screened means nothing is screening this stream.
+	screened chan struct{}
+	refused  atomic.Pointer[error]
 }
 
 // StreamOptions identifies the response a Stream carries.
@@ -104,6 +109,13 @@ func (s *Stream) Next() bool {
 		}
 		if !s.puller.Advance(s.writer) {
 			s.ended = true
+			if s.screened != nil {
+				<-s.screened
+			}
+			if refused := s.refused.Load(); refused != nil {
+				s.writer.settle(*refused)
+				continue
+			}
 			// A stream the caller closed was abandoned rather than finished, however the
 			// provider happened to notice.
 			if s.closed.Load() {
@@ -138,6 +150,26 @@ func (s *Stream) Close() error {
 		}
 	})
 	return s.closeErr
+}
+
+// Screen has a judgement of what the response was asked run beside it. The verdict channel
+// yields exactly once: nil to let the response stand, or the reason to refuse it.
+//
+// The deltas are not held, so the screen costs a caller no time to first token. What is held
+// is the ResponseCompleted, until the verdict arrives, because that is where the tool calls a
+// caller acts on are settled. A refusal that arrives while the model is still answering
+// closes the upstream at once, and either way the response settles as failed with the
+// refusal as its error. It is for a stream a provider produced, not one from Replay.
+func (s *Stream) Screen(verdict <-chan error) *Stream {
+	s.screened = make(chan struct{})
+	go func() {
+		defer close(s.screened)
+		if err := <-verdict; err != nil {
+			s.Close()
+			s.refused.Store(&err)
+		}
+	}()
+	return s
 }
 
 // Observe adds a function that sees every event as the stream is drained, for a caller

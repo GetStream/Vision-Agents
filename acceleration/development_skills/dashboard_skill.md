@@ -29,14 +29,13 @@ pair.
 
 ## Prerequisites
 
-Docker running. `ssh-add -l` must show a key with access to
-`GetStream/getstream-go-webrtc`. Node 22+ (honor Volt's pin if newer). Bun for
+Docker running. Node 22+ (honor Volt's pin if newer). Bun for
 all Volt commands, not npm/yarn/pnpm:
 
 ```bash
 test -f "$VOLT_CHECKOUT/package.json"
 test -f "$VOLT_CHECKOUT/scripts/agents-dev-proxy.ts"
-docker info && docker compose version && ssh-add -l && node --version
+docker info && docker compose version && node --version
 command -v bun >/dev/null || { curl -fsSL https://bun.com/install | bash; export PATH="$HOME/.bun/bin:$PATH"; }
 ```
 
@@ -181,6 +180,5 @@ in Volt unless their acceleration provider and this org/app are configured.
 
 - Router: `docker compose -f compose.yaml -f "$VOLT_COMPOSE_OVERRIDE" logs --tail=100 router`
 - Empty agents/logs: wrong customer ID, config, or time range
-- SSH build failure: forwarded agent / `getstream-go-webrtc` access
 - Login: prompt for the 1Password dashboard env; keep remote Ampere
 - Browser: `/etc/hosts`, cert trust, Vite port, matching CORS origin

@@ -3,11 +3,14 @@ package llmrouter
 import (
 	"context"
 	"errors"
-	"github.com/openai/openai-go/v3"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/openai/openai-go/v3"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -27,6 +30,11 @@ type Session struct {
 	recorder *routing.Recorder
 	// quota caps what the owner's end user may spend in a day. Nil caps nothing.
 	quota *quota.Limiter
+	// admit asks the owner's policies before each response, and screen judges what each
+	// response is asked. Both are nil on a fallback child, which serves a response its
+	// parent already admitted and screened.
+	admit  func(context.Context, string) (options.DataPolicy, error)
+	screen Screen
 }
 
 func newSession(
@@ -53,16 +61,30 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 
 	stream, err := s.provider.Create(ctx, params)
 	if err != nil {
+		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
 		s.recorder.Record(s.config, routing.Stat{
 			Owner:        s.owner,
 			StartedAt:    startedAt,
+			OperationID:  params.ID,
+			Purpose:      params.Purpose,
+			TurnID:       params.TurnID,
+			DurationMs:   durationMs,
 			Success:      false,
 			ErrorCode:    "create_failed",
 			ErrorMessage: err.Error(),
 		})
+		slog.Info("model call timing", "call", s.owner.CallID, "operation", params.ID,
+			"purpose", params.Purpose, "turn", params.TurnID,
+			"provider", s.config.Provider, "model", s.config.Model,
+			"duration_ms", durationMs, "success", false)
+		if params.OnTiming != nil {
+			params.OnTiming(llm.CallTiming{OperationID: params.ID, Purpose: params.Purpose,
+				TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
+				DurationMs: durationMs, Success: false})
+		}
 		return nil, err
 	}
-	return stream.Observe(func(event llm.Event) { s.observe(startedAt, event) }), nil
+	return stream.Observe(func(event llm.Event) { s.observe(startedAt, params, event) }), nil
 }
 
 // Provider is the provider serving this session.
@@ -102,13 +124,24 @@ func (s *Session) Close() error {
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt time.Time, event llm.Event) {
+func (s *Session) observe(startedAt time.Time, params llm.ResponseParams, event llm.Event) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
 	}
 
 	response := completed.Response
+	slog.Info("model call timing", "call", s.owner.CallID, "operation", response.ID,
+		"purpose", params.Purpose, "turn", params.TurnID,
+		"provider", s.config.Provider, "model", s.config.Model,
+		"ttft_ms", response.TimeToFirstTokenMs, "duration_ms", response.DurationMs,
+		"success", response.Status != llm.StatusFailed)
+	if params.OnTiming != nil {
+		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
+			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
+			TTFTMs: response.TimeToFirstTokenMs, DurationMs: response.DurationMs,
+			Success: response.Status != llm.StatusFailed})
+	}
 
 	// The debit is taken here rather than where the response was asked for, because what a
 	// response costs is only known once it has settled. A caller who slipped in under the
@@ -122,8 +155,12 @@ func (s *Session) observe(startedAt time.Time, event llm.Event) {
 		response.Usage.InputTokens+response.Usage.OutputTokens)
 
 	s.recorder.Record(s.config, routing.Stat{
-		Owner:     s.owner,
-		StartedAt: startedAt,
+		Owner:       s.owner,
+		StartedAt:   startedAt,
+		OperationID: response.ID,
+		Purpose:     params.Purpose,
+		TurnID:      params.TurnID,
+		DurationMs:  response.DurationMs,
 		Usage: routing.Usage{
 			InputTokens:       response.Usage.InputTokens,
 			CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,
@@ -160,9 +197,20 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if err := s.quota.Allow(ctx, s.owner.CustomerID, s.owner.Caller); err != nil {
 		return nil, err
 	}
+	if s.admit != nil {
+		if _, err := s.admit(ctx, s.owner.CustomerID); err != nil {
+			return nil, err
+		}
+	}
+	// The screen is started before the model is asked so the two overlap from the first
+	// byte, rather than the screen waiting on however long the provider takes to accept.
+	var verdict <-chan error
+	if s.screen != nil {
+		verdict = s.screen(ctx, s.owner, params.Input)
+	}
 	stream, err := s.create(ctx, params)
 	if err == nil || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
-		return stream, err
+		return screened(stream, verdict), err
 	}
 	var apiError *openai.Error
 	if errors.As(err, &apiError) && apiError.StatusCode < 500 && apiError.StatusCode != 401 && apiError.StatusCode != 403 && apiError.StatusCode != 404 && apiError.StatusCode != 408 && apiError.StatusCode != 429 {
@@ -172,7 +220,15 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if fallbackErr != nil {
 		return nil, errors.Join(err, fallbackErr)
 	}
-	return alternate, nil
+	return screened(alternate, verdict), nil
+}
+
+// screened attaches a verdict to a stream, when there is both.
+func screened(stream *llm.Stream, verdict <-chan error) *llm.Stream {
+	if stream == nil || verdict == nil {
+		return stream
+	}
+	return stream.Screen(verdict)
 }
 
 func (s *Session) addChild(child *Session) bool {

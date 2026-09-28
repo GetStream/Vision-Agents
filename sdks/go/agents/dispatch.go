@@ -146,6 +146,12 @@ func (d *Dispatch) OnCall(handler func(context.Context, InboundCall) error) {
 	d.dispatch.OnCall(handler)
 }
 
+// Host runs these functions for every session opened under an agent id, whoever opened it,
+// giving the router timeout for each call. See stream.Dispatch.Host.
+func (d *Dispatch) Host(agentID string, functions Registrar, timeout time.Duration) {
+	d.dispatch.Host(agentID, functions.Functions(), timeout)
+}
+
 // WorkerID is what the router calls this connection.
 func (d *Dispatch) WorkerID() string { return d.dispatch.WorkerID() }
 
@@ -203,8 +209,9 @@ func (d *Dispatch) Conversation(ctx context.Context, message InboundMessage, bui
 	return started, nil
 }
 
-// Run waits for work until the context is cancelled or the router closes the connection,
-// then closes the conversations this worker was holding.
+// Run waits for work until the context is cancelled or the router closes the connection
+// on purpose, reconnecting when it drops, then closes the conversations this worker was
+// holding. See stream.Dispatch.Run.
 func (d *Dispatch) Run(ctx context.Context) error {
 	failure := d.dispatch.Run(ctx)
 

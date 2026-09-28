@@ -25,24 +25,23 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/uptrace/bun/driver/pgdriver"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/environment"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 )
 
 // init sets the testing environment over whatever the shell has, loads .env for the
 // credentials, and creates the test database if it is missing.
 func init() {
-	settings, err := environment.Settings(environment.Testing)
+	if err := os.Setenv(config.EnvVar, config.Testing); err != nil {
+		panic(err)
+	}
+	// Load writes the settings back into the environment, which is where the suites and
+	// the packages holding their own credentials read them.
+	settings, _, err := config.Load("")
 	if err != nil {
 		panic(err)
 	}
-	settings[environment.EnvVar] = environment.Testing
-	for key, value := range settings {
-		if err := os.Setenv(key, value); err != nil {
-			panic(err)
-		}
-	}
 	loadDotEnv()
-	createDatabase(settings["ROUTER_POSTGRES_DSN"])
+	createDatabase(settings.Postgres.DSN)
 }
 
 // loadDotEnv loads the nearest .env at or above the working directory. A test runs with

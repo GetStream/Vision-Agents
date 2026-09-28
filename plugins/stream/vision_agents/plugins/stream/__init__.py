@@ -3,11 +3,17 @@ from vision_agents.core.telephony import CallContext, InboundCall
 
 from ._backend import Backend
 from ._generated.models import (
+    AttachedNumber,
     GuestUser,
     ModelOverwrites,
     ModelOverwritesThinking,
     ModelOverwritesVerbosity,
+    NumberSearchResult,
+    PhoneCapability,
+    PhoneNumber,
+    PhoneNumberType,
     SessionConnectorBinding,
+    SkippedVendor,
 )
 from .accelerated import Accelerated
 from .client import Agent, Client, GuestOptions
@@ -36,6 +42,7 @@ __all__ = [
     "Accelerated",
     "Agent",
     "AgentResponse",
+    "AttachedNumber",
     "Backend",
     "CallContext",
     "Client",
@@ -53,8 +60,12 @@ __all__ = [
     "ModelOverwrites",
     "ModelOverwritesThinking",
     "ModelOverwritesVerbosity",
+    "NumberSearchResult",
     "Participant",
     "Phone",
+    "PhoneCapability",
+    "PhoneNumber",
+    "PhoneNumberType",
     "Query",
     "Responses",
     "Router",
@@ -66,6 +77,7 @@ __all__ = [
     "SessionEvent",
     "SessionOptions",
     "Sessions",
+    "SkippedVendor",
     "TTS",
     "define_agent",
     "define_router",

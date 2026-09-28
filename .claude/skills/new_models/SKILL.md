@@ -28,7 +28,7 @@ A call takes a minute or two. Run the batches in parallel, one per shell:
 - `AnthropicAI, claudeai`
 - `GoogleDeepMind, GoogleAI`
 - `xai, AIatMeta, nvidia, NVIDIAAIDev, MSFTResearch`
-- `elevenlabsio, DeepgramAI, inworld_ai, cartesia_ai, AssemblyAI`
+- `ElevenLabs, DeepgramAI, inworld_ai, cartesia_ai, AssemblyAI`
 - `ArtificialAnlys` on its own, which is where a launch gets ranked rather than announced
 
 Keep the batches small. The tool takes twenty handles, but Grok summarises what it read, and

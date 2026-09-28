@@ -75,9 +75,27 @@ to play audio, or `-out` to write a file instead.
 
 ## Configuration
 
+Everything that is not a provider credential is one YAML file, read by `internal/config`:
+
+```bash
+go run ./cmd/router --config /etc/router.yaml
+```
+
+Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`, `cors_origins`,
+`trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
+`postgres.dsn`, `redis.{addr,username,password}`, `auth.{mode,kek}`,
+`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention` and
+`stream.{api_key,api_secret}`. Naming no file loads one of the three embedded in the
+binary, by `ROUTER_ENV`.
+
+Every variable below still wins over the file, so a chart, compose and `.env` keep working
+with nothing changed, and the effective settings are written back into the environment for
+the other commands that read them there.
+
 | Variable                | Purpose                                                   |
 | ----------------------- | --------------------------------------------------------- |
-| `ROUTER_ENV`            | `development` (default), `staging` or `testing`. Loads `internal/environment/<env>.yaml`, whose values fill in any variable below that is unset. The integration suites always use `testing`, which has its own `model_router_test` database |
+| `ROUTER_CONFIG_FILE`    | Path to the deployment's own YAML, which is what `--config` sets |
+| `ROUTER_ENV`            | `local` (default), `staging` or `testing`. Loads `internal/config/<env>.yaml` when no file of your own is named. The integration suites always use `testing`, which has its own `model_router_test` database and is the one file that wins over the environment |
 | `ROUTER_ADDR`           | HTTP listen address, defaults to `:8080`                   |
 | `ROUTER_POSTGRES_DSN`   | Postgres DSN. Without it, nothing is recorded              |
 | `ROUTER_REDIS_ADDR`     | Redis `host:port`. Without it, routing ignores health      |
@@ -97,6 +115,7 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
+| `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
 | `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |
@@ -339,6 +358,27 @@ stepped past. Unset, the header is ignored entirely — correct with nothing in 
 and wrong behind a load balancer, where every caller would look like the balancer
 and share one allowance.
 
+### Organization and app policies
+
+`GET`/`PUT /v1/policies/app` and `/v1/policies/organization` hold three settings, all
+optional. The organization's are a floor its apps can tighten but not loosen.
+
+| Setting | What it does |
+| ------- | ------------ |
+| `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses are refused. Both the app's and the organization's caps apply |
+| `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
+| `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the lcm router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
+
+The screen asks one question per harm in OpenRouter's prompt injection list (instruction
+override, privileged modes, system override, prompt extraction, role manipulation, DAN-style
+jailbreaks, safety bypass, role spoofing, control tokens), and decodes base64, hex and
+letter-spaced text first so an encoded attack is judged on what it says.
+
+An organization's budget sums the apps the router has seen that organization name. Behind a
+proxy that is the `X-Stream-Organization-Id` header; with API keys it is the key's app. `noauth`
+reads no organization, so only app policies apply there. Decisions are cached per app for 10s,
+so a budget can overshoot by what is spent in that window, and every read fails open.
+
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.
 Adding a provider or model is a config edit.
@@ -375,7 +415,7 @@ pick rather than a list of their own to keep:
 | `stt-fast`           | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en`         |
 | `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
 | `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
-| `tts-quality`        | The top of the Artificial Analysis arena: Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
+| `tts-quality`        | The top of the Artificial Analysis arena: ElevenLabs v4, Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
 
 ```yaml
 stt:
@@ -670,7 +710,7 @@ answering candidate=turn-1787
 
 `Edge` is four methods (`Join`, `Audio`, `PublishAudio`, `Leave`), which is what lets the
 whole flow be tested in-process against a loopback rather than only against a real call.
-`streamedge` is the real one: it joins over the private `getstream-go-webrtc` SDK, subscribes
+`streamedge` is the real one: it joins over the `getstream-go-webrtc` SDK, subscribes
 to the audio of everyone else in the call (joining subscribes to nothing on its own), decodes
 inbound Opus to 16 kHz mono, and encodes the agent's speech back to 48 kHz Opus.
 
@@ -1045,6 +1085,19 @@ turn never reaches the legs that come after the interruption. A leg that never h
 left out of the percentiles rather than counted as instant. `GET /v1/turns/stats` reports
 them.
 
+For a single call, `GET /v1/agents/calls/{id}/timeline` shows cadence settling, the
+decision before the reply model, first reply text, TTS submission and first audio at the
+edge. Its `model_calls` list keeps flow, reply and subagent requests separate, with TTFT
+and full duration for each attempt. `speech_end_to_audio_ms` estimates the delay from the
+last input audio using provider STT processing time; it cannot include network transit
+or browser playback. The router logs call join and each ICE peer connection
+independently; the subscriber can stay idle until someone publishes a track. The Python
+accelerated agent records join duration. Set `log_latency=True` on `stream.Accelerated`
+(or `VOICE_LATENCY_DAG=1` for `simple_voice_ai`) to print per-model timing and a console
+DAG for each turn. The router records metrics regardless of this logging flag.
+Model-call durations annotate the stages they overlap and are not added to the
+speech-to-audio path.
+
 **Memory and phone are recorded but not routed.** There is one memory store and one vendor
 per number, so the provider and route paths do not serve those modalities while the
 statistics paths do.
@@ -1186,6 +1239,54 @@ agent can use them. Gong, Linear, and GitHub are in the new catalog but were not
 catalog. Shopify, inactive logins, and providers outside the supported catalog are omitted.
 Do not run the final Goose migration directly: the router must perform the encrypted
 transfer between schema migrations.
+
+## Moving a customer
+
+`api_key` mode cannot bootstrap itself over HTTP: every endpoint wants a key and there is
+nobody to issue the first one. `keys create` does it beside the database, printing the
+secret once and never logging it:
+
+```bash
+go run ./cmd/router keys create --org Acme --app-name "Acme production" --key-name default
+```
+
+`--app-id` keeps an id the customer already has, which is what makes an import land under
+something. Running it again for an existing app adds a second key rather than refusing.
+
+Three endpoints move a customer between two deployments, all server-side only:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /v1/data/export` | Everything the calling app has, one JSON object per line, ending with the cursor its changes carry on from |
+| `POST /v1/data/import` | Writes an export, or a batch of changes, into this deployment |
+| `GET /v1/data/changes?after=` | What has happened to the app's rows since that cursor, and whether that is all of it |
+
+`cmd/router replicate` is both halves at once: the copy, and everything that happens after
+the copy, which is what makes the switchover free of a window where writes are lost.
+
+```bash
+go run ./cmd/router replicate --from https://old.example.com \
+  --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
+```
+
+The customer is always the authenticated caller, never anything in the body or the query,
+so an export is the caller's own data and an import lands under the caller's own app
+however the file was edited on the way. An import upserts and refuses a row whose primary
+key belongs to another tenant, so replaying the same change twice lands where applying it
+once would and a guessed id overwrites nothing.
+
+Key rows, sealed secrets, OAuth access and refresh tokens, organizations and apps are not
+exported. A moved deployment mints its own keys and re-authorizes its plugin connections.
+Voice recordings live in the bucket rather than in Postgres, so their rows move and copying
+the bucket is the operator's.
+
+Changes are captured by a trigger per table writing into `data_changes`, gated on a row in
+`data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting
+starts the capture and reading a page refreshes it, so an abandoned move stops recording by
+itself after `ROUTER_DATA_MOVE_RETENTION`, and a cursor older than that is answered 410
+rather than silently missing writes. Each change records `pg_current_xact_id()`, and the
+cursor never passes `pg_snapshot_xmin(pg_current_snapshot())`, so a sequence number handed
+out by a transaction that has not committed yet cannot be stepped over.
 
 ## Test
 

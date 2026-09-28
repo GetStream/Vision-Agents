@@ -24,6 +24,8 @@ from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
 from .authorize_connector_request import AuthorizeConnectorRequest
 from .available_number import AvailableNumber
+from .budget import Budget
+from .budget_interval import BudgetInterval
 from .buy_number_request import BuyNumberRequest
 from .buy_number_request_tags import BuyNumberRequestTags
 from .call import Call
@@ -72,6 +74,13 @@ from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_tags import CreateSessionRequestTags
+from .data_change import DataChange
+from .data_change_key import DataChangeKey
+from .data_change_op import DataChangeOp
+from .data_change_page import DataChangePage
+from .data_change_row import DataChangeRow
+from .data_import import DataImport
+from .data_import_tables import DataImportTables
 from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
 from .endpointing import Endpointing
@@ -122,6 +131,7 @@ from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
 from .modality import Modality
+from .model_call_timing import ModelCallTiming
 from .model_overwrites import ModelOverwrites
 from .model_overwrites_thinking import ModelOverwritesThinking
 from .model_overwrites_verbosity import ModelOverwritesVerbosity
@@ -137,11 +147,13 @@ from .place_call_request_custom import PlaceCallRequestCustom
 from .place_call_request_headers import PlaceCallRequestHeaders
 from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
+from .policy import Policy
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
 from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
+from .provider_price import ProviderPrice
 from .put_connector_credentials_request import PutConnectorCredentialsRequest
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
@@ -267,6 +279,8 @@ __all__ = (
     "AttachedNumber",
     "AuthorizeConnectorRequest",
     "AvailableNumber",
+    "Budget",
+    "BudgetInterval",
     "BuyNumberRequest",
     "BuyNumberRequestTags",
     "Call",
@@ -313,6 +327,13 @@ __all__ = (
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
     "CreateSessionRequestTags",
+    "DataChange",
+    "DataChangeKey",
+    "DataChangeOp",
+    "DataChangePage",
+    "DataChangeRow",
+    "DataImport",
+    "DataImportTables",
     "DataPolicy",
     "DecisionKind",
     "Endpointing",
@@ -363,6 +384,7 @@ __all__ = (
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
     "Modality",
+    "ModelCallTiming",
     "ModelOverwrites",
     "ModelOverwritesThinking",
     "ModelOverwritesVerbosity",
@@ -378,11 +400,13 @@ __all__ = (
     "PlaceCallRequestHeaders",
     "PlaceCallRequestTags",
     "PlacedCall",
+    "Policy",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
     "Provider",
     "ProviderBenchmark",
     "ProviderHealth",
+    "ProviderPrice",
     "PutConnectorCredentialsRequest",
     "RecordingSource",
     "RecordingStatus",

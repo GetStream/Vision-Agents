@@ -261,6 +261,87 @@ class TestAccelerated:
         assert turn.type == "agent_turn_ended"
         assert turn.interrupted
 
+    async def test_timing_frames_appear_in_the_agent_log(
+        self,
+        router: Router,
+        joined: stream.Accelerated,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        joined.log_latency = True
+        events = joined.remote_events()
+        await router.send(
+            {
+                "type": "model_call",
+                "turn_id": "turn-1",
+                "purpose": "flow",
+                "provider": "stub",
+                "model": "fast",
+                "ttft_ms": 80,
+                "duration_ms": 110,
+                "success": True,
+            }
+        )
+        await router.send(
+            {
+                "type": "model_call",
+                "turn_id": "turn-1",
+                "purpose": "reply",
+                "provider": "stub",
+                "model": "answer",
+                "ttft_ms": 90,
+                "duration_ms": 600,
+                "success": True,
+            }
+        )
+        await router.send(
+            {
+                "type": "turn",
+                "turn_id": "turn-1",
+                "stt_latency_ms": 120,
+                "cadence_ms": 350,
+                "decision_ms": 180,
+                "model_to_first_text_ms": 220,
+                "text_to_tts_ms": 20,
+                "tts_to_audio_ms": 130,
+                "speech_end_to_audio_ms": 1020,
+            }
+        )
+        await asyncio.wait_for(anext(events), SETTLE)
+
+        assert "purpose=flow" in caplog.text
+        assert "duration_ms=110" in caplog.text
+        assert (
+            "voice latency DAG turn=turn-1 | speech end -> first audio ~1,020 ms"
+            in caplog.text
+        )
+        assert "[STT 120 ms]" in caplog.text
+        assert "[cadence 350 ms]" in caplog.text
+        assert "[decision 180 ms]" in caplog.text
+        assert "+-- flow stub/fast: TTFT 80 ms, full 110 ms" in caplog.text
+        assert "[first speakable text 220 ms]" in caplog.text
+        assert "+-- reply stub/answer: TTFT 90 ms, full 600 ms" in caplog.text
+        assert "[TTS handoff 20 ms]" in caplog.text
+        assert "[first audio 130 ms]" in caplog.text
+
+    async def test_latency_logging_is_quiet_by_default(
+        self,
+        router: Router,
+        joined: stream.Accelerated,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        assert joined.log_latency is False
+        events = joined.remote_events()
+        await router.send(
+            {"type": "model_call", "turn_id": "turn-1", "purpose": "flow"}
+        )
+        await router.send(
+            {"type": "turn", "turn_id": "turn-1", "speech_end_to_audio_ms": 1020}
+        )
+        await asyncio.wait_for(anext(events), SETTLE)
+
+        assert "model call timing" not in caplog.text
+        assert "voice latency DAG" not in caplog.text
+
     async def test_the_call_ending_ends_the_events(
         self, router: Router, joined: stream.Accelerated
     ):

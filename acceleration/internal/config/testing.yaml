@@ -1,5 +1,7 @@
 # The integration suites. Unlike the other files this one wins over .env and the shell:
 # the store suite drops the whole schema, so it must never be pointed at the database a
 # local router is using. The database is created on first use.
-ROUTER_POSTGRES_DSN: postgres://postgres:postgres@localhost:55432/model_router_test?sslmode=disable
-ROUTER_REDIS_ADDR: localhost:56379
+postgres:
+  dsn: postgres://postgres:postgres@localhost:55432/model_router_test?sslmode=disable
+redis:
+  addr: localhost:56379

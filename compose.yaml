@@ -27,9 +27,6 @@ services:
   router:
     build:
       context: ./acceleration
-      # Fetching the private getstream-go-webrtc module needs the host's SSH agent.
-      ssh:
-        - default
     # Provider credentials come from the repo-root .env; the three below are the
     # ones that differ inside the network and so are set here instead.
     env_file:

@@ -71,13 +71,14 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	// is calls handed to a socket nobody is on the other end of.
 	gone := make(chan struct{})
 	pongs := make(chan float64)
+	replies := make(chan frame)
 	writerDone := make(chan struct{})
 	defer close(writerDone)
 	go func() {
 		defer close(gone)
-		s.readWorker(connection, worker, pongs, writerDone)
+		s.readWorker(connection, worker, pongs, replies, writerDone)
 	}()
-	s.writeCalls(connection, worker, gone, pongs)
+	s.writeCalls(connection, worker, gone, pongs, replies)
 
 	s.logger.Info("a dispatch worker stopped waiting", "worker", worker.ID)
 }
@@ -85,7 +86,7 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 // writeCalls pushes calls and messages to the worker until it goes away, is released, or
 // the socket breaks. Both queues close together, so either arm reporting a closed channel
 // means the worker was released.
-func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan struct{}, pongs <-chan float64) {
+func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan struct{}, pongs <-chan float64, replies <-chan frame) {
 	connection.SetWriteDeadline(time.Now().Add(writeWait))
 	ready := frame{"type": "ready", "worker_id": worker.ID}
 	if err := connection.WriteJSON(ready); err != nil {
@@ -101,6 +102,28 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 		case at := <-pongs:
 			connection.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := connection.WriteJSON(frame{"type": "pong", "at": at}); err != nil {
+				return
+			}
+
+		case reply := <-replies:
+			connection.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := connection.WriteJSON(reply); err != nil {
+				return
+			}
+
+		case call, open := <-worker.ToolCalls():
+			if !open {
+				connection.SetWriteDeadline(time.Now().Add(writeWait))
+				connection.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "dispatch stopped"))
+				return
+			}
+			connection.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := connection.WriteJSON(toolCallFrame(call)); err != nil {
+				// The session waiting on it is failed when the worker is released, which
+				// returning here leads to.
+				s.logger.Error("could not hand a tool call to a worker",
+					"worker", worker.ID, "tool", call.Name, "error", err)
 				return
 			}
 
@@ -151,7 +174,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 //
 // A frame it cannot read is reported and skipped rather than closing the socket: dropping a
 // worker over one bad message would take the calls it is already in with it.
-func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker, pongs chan<- float64, writerDone <-chan struct{}) {
+func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker, pongs chan<- float64, replies chan<- frame, writerDone <-chan struct{}) {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
@@ -171,6 +194,15 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			Reason string `json:"reason"`
 			// At echoes back a ping, so the worker can measure the round trip itself.
 			At float64 `json:"at"`
+			// AgentID, Tools and TimeoutMs are what a worker offers to run for every
+			// session opened under one agent id.
+			AgentID   string       `json:"agent_id"`
+			Tools     []hostedTool `json:"tools"`
+			TimeoutMs int          `json:"timeout_ms"`
+			// ID, Output and Error answer one hosted tool call.
+			ID     string `json:"id"`
+			Output string `json:"output"`
+			Error  string `json:"error"`
 		}
 		if err := connection.ReadJSON(&report); err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
@@ -199,6 +231,20 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
+		case "host_tools":
+			reply := s.hostTools(worker, report.AgentID, report.Tools, report.TimeoutMs)
+			select {
+			case replies <- reply:
+			case <-writerDone:
+				return
+			}
+
+		case "tool_result":
+			if !worker.Resolve(report.ID, dispatch.ToolResult{Output: report.Output, Failure: report.Error}) {
+				s.logger.Debug("a hosted tool answered a call nobody is waiting on",
+					"worker", worker.ID, "id", report.ID)
+			}
+
 		case "accepted":
 			s.logger.Debug("a worker took a call", "worker", worker.ID, "call", report.CallID)
 
@@ -213,6 +259,52 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			s.logger.Debug("ignoring an unknown dispatch message",
 				"worker", worker.ID, "type", report.Type)
 		}
+	}
+}
+
+// hostedTool is one tool as a worker declares it.
+type hostedTool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+// hostTools records what a worker offers to run for sessions under an agent id, and says
+// whether it was taken.
+//
+// The offer is scoped to the worker's own customer, which is what makes it safe: a worker
+// is trusted with its customer's conversations already, and naming an agent is not a way
+// into anybody else's. The agent id need not be stored anywhere — the sessions this is for
+// are the ones a browser opens naming an agent and no config.
+func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []hostedTool, timeoutMs int) frame {
+	refuse := func(reason string) frame {
+		s.logger.Warn("refused a worker's hosted tools", "worker", worker.ID, "agent", agentID, "reason", reason)
+		return frame{"type": "hosting_refused", "agent_id": agentID, "reason": reason}
+	}
+	tools := make([]dispatch.Tool, 0, len(declared))
+	names := make([]string, 0, len(declared))
+	for _, tool := range declared {
+		if tool.Name == "" || tool.Description == "" {
+			return refuse("every hosted tool needs a name and a description")
+		}
+		tools = append(tools, dispatch.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+		names = append(names, tool.Name)
+	}
+	if err := s.dispatch.Host(worker, agentID, tools, time.Duration(timeoutMs)*time.Millisecond); err != nil {
+		return refuse(err.Error())
+	}
+	s.logger.Info("a worker hosts tools", "worker", worker.ID, "agent", agentID, "tools", names)
+	return frame{"type": "hosting", "agent_id": agentID, "tools": names}
+}
+
+// toolCallFrame renders one hosted call for the wire.
+func toolCallFrame(call dispatch.ToolCall) frame {
+	return frame{
+		"type":       "tool_call",
+		"id":         call.ID,
+		"session_id": call.SessionID,
+		"name":       call.Name,
+		"arguments":  call.Arguments,
 	}
 }
 

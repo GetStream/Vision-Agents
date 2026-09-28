@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -140,6 +141,14 @@ type Options struct {
 	// DashboardURL is the complete destination after connector login, including its path
 	// and any app/config selection query. Its origin is trusted for the popup handoff.
 	DashboardURL string
+	// AuthMode is how this deployment decided that, which a handler needs when the mode
+	// itself is the answer: moving a customer's data is refused outright in noauth,
+	// where the tenant is a header rather than something anybody proved. Empty means
+	// noauth, matching Auth being absent.
+	AuthMode auth.Mode
+	// DataRetention is how long a customer moving away has to finish, which is how long
+	// their changes are recorded for.
+	DataRetention time.Duration
 	// Auth decides who a request is from. Absent means noauth, which reads the customer
 	// header and takes every caller for that customer's own backend. That is the right
 	// default for a server built in code rather than from configuration — a test, or a
@@ -151,6 +160,9 @@ type Options struct {
 	// which is right for a deployment with no Redis to count in and for one whose callers
 	// are all backends the customer runs.
 	Quota *quota.Limiter
+	// Policies holds each organization's and app's budget, data policy and prompt
+	// injection setting. Absent without a database, in which case the policy paths say so.
+	Policies *policy.Enforcer
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
@@ -182,7 +194,10 @@ type Server struct {
 	dashboardURL     string
 	oauth            *mcp.OAuthClient
 	authenticator    auth.Authenticator
+	authMode         auth.Mode
+	dataRetention    time.Duration
 	quota            *quota.Limiter
+	policies         *policy.Enforcer
 	trusted          []netip.Prefix
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -237,6 +252,17 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 	}
 
+	authMode := options.AuthMode
+	if authMode == "" {
+		authMode = auth.NoAuth
+	}
+	// A deployment that names no window still records changes for somebody moving, for
+	// as long as the settings say by default.
+	retention := options.DataRetention
+	if retention <= 0 {
+		retention = 7 * 24 * time.Hour
+	}
+
 	serverSide, err := serverSideRoutes()
 	if err != nil {
 		return nil, err
@@ -268,7 +294,10 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		publicURL:        options.PublicURL,
 		dashboardURL:     options.DashboardURL,
 		authenticator:    authenticator,
+		authMode:         authMode,
+		dataRetention:    retention,
 		quota:            options.Quota,
+		policies:         options.Policies,
 		trusted:          options.TrustedProxies,
 		serverSide:       serverSide,
 		upgrader:         newUpgrader(options.CORSOrigins),
@@ -293,6 +322,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/agents/logs", s.listAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/stream", s.streamAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
+	mux.HandleFunc("GET /v1/data/export", s.exportData)
+	mux.HandleFunc("POST /v1/data/import", s.importData)
+	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
 	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)
@@ -430,6 +462,9 @@ var unspecifiedRoutes = map[string]bool{
 	"GET /v1/agents/logs":                 false,
 	"GET /v1/agents/logs/stream":          false,
 	"GET /v1/agents/logs/{id}":            false,
+	"GET /v1/data/export":                 false,
+	"POST /v1/data/import":                false,
+	"GET /v1/data/changes":                false,
 	// Reached before there is a caller to classify: the browser arrives from the identity
 	// provider and the state parameter is the secret.
 	"GET /v1/agents/connectors/oauth/callback":     true,
@@ -552,6 +587,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 				IP:     clientIP(r, s.trusted),
 			})
 			r = r.WithContext(ctx)
+			s.policies.Join(principal.AppID, principal.OrganizationID)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -728,6 +764,7 @@ func (s *Server) ListProviders(ctx context.Context, request ListProvidersRequest
 			Health:      providerHealth(candidate.Health),
 			UsageShare:  &share,
 			Benchmark:   providerBenchmark(candidate.Config.Benchmark),
+			Price:       providerPrice(candidate.Config.Price),
 		})
 	}
 	return ListProviders200JSONResponse(providers), nil
@@ -1168,12 +1205,26 @@ func providerBenchmark(benchmark routing.Benchmark) *ProviderBenchmark {
 		return &v
 	}
 	return &ProviderBenchmark{
-		Elo:                 counted(benchmark.Elo),
-		CharactersPerSecond: measured(benchmark.CharactersPerSecond),
-		WordErrorRate:       measured(benchmark.WordErrorRate),
-		LatencyMs:           counted(benchmark.LatencyMs),
-		SearchIndex:         counted(benchmark.SearchIndex),
-		CostPerTask:         measured(benchmark.CostPerTask),
+		Elo:                   counted(benchmark.Elo),
+		CharactersPerSecond:   measured(benchmark.CharactersPerSecond),
+		WordErrorRate:         measured(benchmark.WordErrorRate),
+		LatencyMs:             counted(benchmark.LatencyMs),
+		SearchIndex:           counted(benchmark.SearchIndex),
+		CostPerTask:           measured(benchmark.CostPerTask),
+		IntelligenceIndex:     counted(benchmark.IntelligenceIndex),
+		OutputTokensPerSecond: measured(benchmark.OutputTokensPerSecond),
+	}
+}
+
+// providerPrice is the token rates a model is billed at, and nil for a model not billed
+// by the token.
+func providerPrice(price routing.Price) *ProviderPrice {
+	if price.PerMillionInputTokens == 0 && price.PerMillionOutputTokens == 0 {
+		return nil
+	}
+	return &ProviderPrice{
+		PerMillionInputTokens:  &price.PerMillionInputTokens,
+		PerMillionOutputTokens: &price.PerMillionOutputTokens,
 	}
 }
 

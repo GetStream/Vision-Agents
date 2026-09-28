@@ -32,9 +32,6 @@ That serves the router on `:8080` and the dashboard on `:3000`, with Postgres on
 `:55432` and Redis on `:56379`. Those two ports are also what the standalone `va-pg`
 and `va-redis` containers use, so stop those first if they are running.
 
-The router build fetches the private `getstream-go-webrtc` module over the host's SSH
-agent, so `ssh-add -l` must show a key with access to it.
-
 Without Docker, against the same Postgres and Redis:
 
 ```bash

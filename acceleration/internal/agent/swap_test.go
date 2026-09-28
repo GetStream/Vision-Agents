@@ -312,6 +312,33 @@ func (s *AgentSuite) TestAMoveOntoAModelThatAnswersNothingIsRefusedRatherThanGoi
 	s.Zero(countOf[ModelsChanged](s.reported()))
 }
 
+func (s *AgentSuite) TestASessionCanMoveOffAModelThatFailsEveryTurn() {
+	w := s.joinSwappable()
+	alice := stt.Participant{ID: "alice"}
+	broken := w.model("stub")
+	broken.mu.Lock()
+	broken.refuses = errors.New("400 Bad Request: model version is deactivated")
+	broken.mu.Unlock()
+
+	s.speak(alice)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		_, listening := s.agent.listeners[alice.ID]
+		s.agent.mu.Unlock()
+		return listening && len(w.listener().transcribed()) > 0
+	}, "nobody listened")
+	w.listener().emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "hello", Language: "en", Confidence: 1})
+	s.eventually(func() bool { return countOf[Error](s.reported()) > 0 }, "the failure was never reported")
+
+	moving, cancel := context.WithTimeout(s.ctx, settleFor)
+	defer cancel()
+	s.Require().NoError(s.agent.SetSettings(moving, Settings{
+		LLMTarget: "other/other-model", STTTarget: "stub/stub-model", TTSTarget: "stub/stub-model",
+	}), "a failed turn is over, so the move does not wait for the caller to talk over it")
+	s.hears(w, alice, "are you there", 1)
+	s.Len(w.model("other").turns(), 1)
+}
+
 func (s *AgentSuite) TestASessionMovesOntoASpeechToSpeechModelAndBackWithoutLeavingTheCall() {
 	w := s.joinSwappable()
 	alice := stt.Participant{ID: "alice"}

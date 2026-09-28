@@ -97,9 +97,12 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 		s.dispatchArrivingCall(r, event)
 
 	case getstream.EventTypeCallSessionEnded:
-		// Nothing to do: the worker is in the call and finds out from the call itself,
-		// which is sooner and more reliable than a webhook round trip.
-		s.logger.Debug("a call session ended")
+		var event callEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			http.Error(w, "could not read that call event", http.StatusBadRequest)
+			return
+		}
+		s.releaseEndedCall(r, event)
 
 	default:
 		s.logger.Debug("ignoring a call event", "type", eventType)
@@ -148,6 +151,26 @@ func (s *Server) dispatchArrivingCall(r *http.Request, event callEvent) {
 	s.logger.Info("handed an arriving call to a worker",
 		"call", event.CallCid, "customer", number.CustomerID,
 		"number", number.E164, "caller", call.CallerNumber, "worker", worker.ID)
+}
+
+// releaseEndedCall tears down the per-call SIP trunks a placed call or transfer created,
+// now that the call is over. Everything short of a malformed event is a 200: Stream
+// retries a non-2xx, and nothing here is worth a redelivery: the caller is not waiting on
+// it, and cleanup is best-effort. ReleaseCall removes the record before deleting at Stream,
+// so a failed Stream delete is logged and the trunk leaks; a later delivery finds no record
+// to retry, and there is no sweeper.
+func (s *Server) releaseEndedCall(r *http.Request, event callEvent) {
+	if s.phone == nil {
+		return
+	}
+	callType, callID, split := strings.Cut(event.CallCid, ":")
+	if !split {
+		s.logger.Debug("a call event named no call", "cid", event.CallCid)
+		return
+	}
+	if err := s.phone.ReleaseCall(r.Context(), callType, callID); err != nil {
+		s.logger.Error("could not release an ended call's resources", "call", event.CallCid, "error", err)
+	}
 }
 
 // callerOf reads the calling number off the SIP participant the routing rule named.

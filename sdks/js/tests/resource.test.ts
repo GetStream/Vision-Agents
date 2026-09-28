@@ -222,10 +222,32 @@ describe("responses", () => {
 
     assert.equal(answering.id, "response-1");
     assert.equal(answering.status, "running");
-    assert.equal(
-      (router.last.body as Record<string, unknown>)["text"],
-      "Is Stream better than Sendbird?",
-    );
+    const body = router.last.body as Record<string, unknown>;
+    assert.equal(body["text"], "Is Stream better than Sendbird?");
+    assert.equal(body["command_id"], undefined, "a session keeping no conversation names no command");
+  });
+
+  it("names each question on a session that keeps its conversation", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: session({ id: "session-2", conversation_id: "agent:support-1" }),
+    });
+    const kept = await api.agent("docs").sessions.create({ persist_conversation: true, watch: false });
+    router.serve("POST", "/v1/agents/sessions/session-2/responses", {
+      status: 202,
+      body: { id: "response-1", session_id: "session-2", status: "running", created_at: new Date().toISOString() },
+    });
+
+    await kept.responses.create("First question");
+    const first = (router.last.body as Record<string, unknown>)["command_id"];
+    await kept.responses.create("Second question");
+    const second = (router.last.body as Record<string, unknown>)["command_id"];
+    await kept.responses.create("Retried question", { commandId: "request-7" });
+
+    assert.match(String(first), /^[0-9a-f-]{36}$/);
+    assert.notEqual(first, second, "two questions are two commands");
+    assert.equal((router.last.body as Record<string, unknown>)["command_id"], "request-7");
+    await kept.close();
   });
 
   it("reads one turn's items rather than the whole conversation's", async () => {

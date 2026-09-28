@@ -36,6 +36,12 @@ session, err := agent.Join(ctx, edge.Call{})
 four return a `Session` with the same events, so what a caller reads does not change with how
 the conversation arrived.
 
+`agents.Dispatch` is the other direction: it holds the [dispatch](dispatch.md) socket open,
+answers arriving calls and messages, and reconnects when the router goes away.
+`Host(agentID, functions, timeout)` offers its functions to every session opened under an
+agent id, which is how a conversation somebody else opened reaches a function that only runs
+here — see [architectures](architectures.md).
+
 ## An agent is a directory
 
 `agents/jean/` holds `instructions.md`, `skills/*.md` and `knowledge/`. A skill is a markdown
@@ -58,8 +64,6 @@ generated at install. The two WebSockets are excluded, as they are everywhere el
 
 ## Not done
 
-- **No dispatch client.** Inbound in Go is `WaitForCall`, which attaches a number and waits;
-  the [dispatch](dispatch.md) socket has no Go worker.
 - **No per-modality client.** `stream.STT`, `TTS` and `LLM` exist in Python only, so a Go
   pipeline is the whole pipeline or none of it.
 - **No wrappers for voices or campaigns.** Both are reachable through the generated client,

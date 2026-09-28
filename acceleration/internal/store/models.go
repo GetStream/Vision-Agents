@@ -28,6 +28,12 @@ type Request struct {
 	Provider  string            `bun:"provider,notnull"`
 	Model     string            `bun:"model,notnull"`
 	StartedAt time.Time         `bun:"started_at,notnull"`
+	// OperationID correlates a provider request with the turn or synthesis that caused it.
+	OperationID string `bun:"operation_id,nullzero"`
+	Purpose     string `bun:"purpose,nullzero"`
+	TurnID      string `bun:"turn_id,nullzero"`
+	// DurationMs is the full request; LatencyMs is the first useful output.
+	DurationMs *float64 `bun:"duration_ms"`
 	// AudioMs is billable audio, transcribed or produced.
 	AudioMs int64 `bun:"audio_ms,notnull"`
 	// Characters is billable text.
@@ -123,9 +129,14 @@ type Turn struct {
 	AgentID    string `bun:"agent_id,notnull"`
 	CallID     string `bun:"call_id,nullzero"`
 	// TurnID is the agent's own identifier for the exchange, unique per agent.
-	TurnID    string            `bun:"turn_id,notnull"`
-	Tags      map[string]string `bun:"tags,type:jsonb,nullzero"`
-	StartedAt time.Time         `bun:"started_at,notnull"`
+	TurnID             string            `bun:"turn_id,notnull"`
+	Tags               map[string]string `bun:"tags,type:jsonb,nullzero"`
+	StartedAt          time.Time         `bun:"started_at,notnull"`
+	CadenceMs          *float64          `bun:"cadence_ms"`
+	DecisionMs         *float64          `bun:"decision_ms"`
+	ModelToFirstTextMs *float64          `bun:"model_to_first_text_ms"`
+	TextToTTSMs        *float64          `bun:"text_to_tts_ms"`
+	TTSToAudioMs       *float64          `bun:"tts_to_audio_ms"`
 	// STTLatencyMs is the provider's decode time for the transcript that settled the turn.
 	STTLatencyMs *float64 `bun:"stt_latency_ms"`
 	// LLMTTFTMs is the wait between asking the model and its first token.
@@ -273,6 +284,21 @@ type CallBridge struct {
 	CallID    string    `bun:"call_id,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	ExpiresAt time.Time `bun:"expires_at,notnull"`
+}
+
+// CallResource is the Stream SIP trunk and routing rule one outbound leg was given, kept so
+// the call.session_ended hook knows what to delete once the call ends.
+type CallResource struct {
+	bun.BaseModel `bun:"table:call_resources,alias:cr"`
+
+	// TrunkID is the Stream SIP trunk this call leg was given, and the row's identity: a
+	// call may own several, its own plus one per transfer into it.
+	TrunkID    string    `bun:"trunk_id,pk"`
+	RouteID    string    `bun:"route_id,notnull"`
+	CallType   string    `bun:"call_type,notnull"`
+	CallID     string    `bun:"call_id,notnull"`
+	CustomerID string    `bun:"customer_id,notnull"`
+	CreatedAt  time.Time `bun:"created_at,notnull"`
 }
 
 // AgentConfig is a named set of the decisions a session is created with.

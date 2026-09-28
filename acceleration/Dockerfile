@@ -16,15 +16,8 @@ FROM golang:1.27-bookworm AS build
 
 WORKDIR /src
 
-# getstream-go-webrtc is private, so the fetch borrows the host's SSH agent the same
-# way a local `go mod download` does.
-ENV GOPRIVATE=github.com/GetStream/*
-
 COPY go.mod go.sum ./
-RUN --mount=type=ssh \
-    mkdir -p -m 0700 ~/.ssh && ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts \
-    && git config --global url."git@github.com:".insteadOf https://github.com/ \
-    && go mod download
+RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -o /out/router ./cmd/router

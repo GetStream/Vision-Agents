@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -67,4 +68,26 @@ func (s *TurnRecorderSuite) TestTurnsRecordedWhileClosingAreLetGo() {
 	}
 
 	s.NotPanics(wg.Wait)
+}
+
+func (s *TurnRecorderSuite) TestTurnTimingStartsAtLastTranscriptRevision() {
+	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	var finished Turn
+	tracker := newTurnTracker(func(turn Turn) { finished = turn })
+	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
+	tracker.modelStarted("turn-1", base.Add(400*time.Millisecond))
+	tracker.firstText("turn-1", base.Add(700*time.Millisecond))
+	tracker.ttsStarted("turn-1", base.Add(740*time.Millisecond))
+	tracker.firstAudio("turn-1", base.Add(900*time.Millisecond))
+	tracker.spoke("turn-1", 160, 500)
+	tracker.completed("turn-1", 280, 1)
+
+	s.Equal(base, finished.StartedAt)
+	s.InDelta(350, finished.CadenceMs, 0.001)
+	s.InDelta(50, finished.DecisionMs, 0.001)
+	s.InDelta(300, finished.ModelToFirstTextMs, 0.001)
+	s.InDelta(40, finished.TextToTTSMs, 0.001)
+	s.InDelta(160, finished.TTSToAudioMs, 0.001)
+	s.InDelta(900, finished.RoundtripMs, 0.001)
+	s.InDelta(1020, finished.SpeechEndToAudioMs, 0.001)
 }

@@ -3,6 +3,7 @@ package tts
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -26,10 +27,12 @@ type Synthesis struct {
 	chunks      int
 }
 
+var synthesisSequence atomic.Uint64
+
 // NewSynthesis starts tracking an utterance, generating an ID when the caller has none.
 func NewSynthesis(id string) *Synthesis {
 	if id == "" {
-		id = fmt.Sprintf("s-%d", time.Now().UnixNano())
+		id = fmt.Sprintf("s-%d-%d", time.Now().UnixNano(), synthesisSequence.Add(1))
 	}
 	return &Synthesis{ID: id, startedAt: time.Now()}
 }

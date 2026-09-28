@@ -45,6 +45,27 @@ func (s *SessionAPISuite) stops(id, commandID, customerID string) *http.Response
 		"/v1/agents/sessions/"+id+"/commands/"+url.PathEscape(commandID)+"/interrupt", customerID, nil)
 }
 
+func (s *SessionAPISuite) TestAResponseCanBeAskedForAsANamedCommand() {
+	created := s.writesCommandConversation()
+	path := "/v1/agents/sessions/" + created.Id + "/responses"
+	commandID := "command-a"
+
+	response := s.send(http.MethodPost, path, "acme", CreateResponseRequest{CommandId: &commandID, Text: "First question"})
+	s.Require().Equal(http.StatusAccepted, response.StatusCode)
+	s.Equal("thinking", s.reads(created.Id, commandID, "acme").State,
+		"the response is the command, so its receipt says it is being answered")
+
+	conflicting := s.send(http.MethodPost, path, "acme", CreateResponseRequest{CommandId: &commandID, Text: "Another question"})
+	s.Equal(http.StatusConflict, conflicting.StatusCode)
+
+	other := "command-b"
+	withImage := s.send(http.MethodPost, path, "acme", CreateResponseRequest{
+		CommandId: &other, Text: "What is this?", Images: &[]ImageSource{{Url: "https://example.com/a.png"}},
+	})
+	s.Equal(http.StatusBadRequest, withImage.StatusCode, "a command ID carries text only")
+	s.answers()
+}
+
 func (s *SessionAPISuite) TestStoppingOneCommandLeavesTheCommandAfterItRunning() {
 	created := s.writesCommandConversation()
 	first := s.submits(created.Id, "command-a", "First question")

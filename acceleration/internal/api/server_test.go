@@ -421,6 +421,8 @@ func (s *ServerSuite) TestProvidersCarryWhatWasBenchmarked() {
 	s.Require().NotNil(flux.LatencyMs)
 	s.Positive(*flux.LatencyMs)
 	s.Nil(flux.Elo, "a transcriber has no arena rating")
+	s.Nil(flux.IntelligenceIndex, "a transcriber has no intelligence index")
+	s.Nil(names["deepgram/flux-general-en"].Price, "a transcriber is not billed by the token")
 	s.Nil(names["parakeet/parakeet-tdt-0.6b-v3"].Benchmark, "our own deployment was not measured")
 }
 
