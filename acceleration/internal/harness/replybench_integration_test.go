@@ -120,8 +120,9 @@ func (s *ReplyBenchmarkSuite) TestReplyBenchmark() {
 	for _, name := range strings.Split(envOr(setsEnvVar, writtenSet+","+amiSet), ",") {
 		set, err := loadFlowSet(name)
 		s.Require().NoError(err)
-		set = set.sample(sampleFraction())
-		cases := replyCases(set)
+		// Sampled from the cases that want a reply, so a small sample still has some.
+		set.Cases = replyCases(set)
+		cases := set.sample(sampleFraction()).Cases
 
 		results[name] = map[string][]graded{}
 		var models []string
