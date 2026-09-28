@@ -477,7 +477,11 @@ func TestCredential(t *testing.T) {
 		require.NoError(t, err)
 
 		require.False(t, ValidKey(key[:len(key)-1]))
-		require.False(t, ValidKey(key[:len(key)-1]+"0"))
+		last := "0"
+		if key[len(key)-1] == '0' {
+			last = "1"
+		}
+		require.False(t, ValidKey(key[:len(key)-1]+last))
 		require.False(t, ValidKey("vak_live_zzzzzzzzzzzzzzzz00000000"))
 		require.False(t, ValidKey("nonsense"))
 	})

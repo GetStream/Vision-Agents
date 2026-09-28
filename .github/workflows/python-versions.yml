@@ -36,5 +36,7 @@ jobs:
         uses: actions/checkout@v6
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
+        with:
+          sync-flags: "--frozen --only-group dev"
       - name: Resolve every workspace member on Python ${{ matrix.python }}
         run: uv run --no-sync dev.py check-python-versions ${{ matrix.python }}
