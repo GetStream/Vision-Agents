@@ -601,6 +601,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         params = {
             "api_key": client.api_key,
             "token": token,
+            "type": call.call_type,
             "skip_lobby": "true",
             "user_name": name,
             "video_encoder": "h264",  # Use H.264 instead of VP8 for better compatibility
