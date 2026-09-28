@@ -158,14 +158,17 @@ func (e *Edge) Join(ctx context.Context) error {
 	}
 	e.client = client
 
-	e.call = client.Call(e.options.CallType, e.options.CallID)
+	// Kept off the edge until the join succeeds: leaving a call that never connected panics
+	// in the SDK, which has no signaling client yet to report its stats through.
+	call := client.Call(e.options.CallType, e.options.CallID)
 	signalingStarted := time.Now()
-	joined, err := e.call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
+	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		e.listen(remote)
 	})))
 	if err != nil {
 		return fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err)
 	}
+	e.call = call
 	signalingMs := float64(time.Since(signalingStarted).Microseconds()) / 1000
 
 	// Joining subscribes to nothing, so the SFU has to be told what to forward: whatever is
