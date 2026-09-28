@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,6 +58,14 @@ const localModelEnvVar = "FLOW_BENCHMARK_LOCAL_MODEL"
 // training data, which may think as long as it likes, rather than as the controller.
 const effortEnvVar = "FLOW_BENCHMARK_EFFORT"
 
+// repeatsEnvVar overrides how often each case is put to a model arm, such as 1 when a judge
+// checks training cases rather than a controller being measured.
+const repeatsEnvVar = "FLOW_BENCHMARK_REPEATS"
+
+// workersEnvVar puts that many cases to an arm at once. Latencies then include the contention,
+// so it is for judging a large set, not for timing a controller.
+const workersEnvVar = "FLOW_BENCHMARK_WORKERS"
+
 // teacherOutputTokens is the budget a labeller answers within, room for long thinking.
 const teacherOutputTokens = 32768
 
@@ -64,7 +73,8 @@ const teacherOutputTokens = 32768
 // would cost too much in full. Every model and every run is asked the same cases.
 const sampleEnvVar = "BENCHMARK_SAMPLE"
 
-// setsEnvVar picks the labelled sets, comma separated, from written and ami.
+// setsEnvVar picks the labelled sets, comma separated: written, ami, or the path of a set file
+// in the same format, such as generated training cases to have a judge check.
 const setsEnvVar = "FLOW_BENCHMARK_SETS"
 
 // modelRepeats is how often each case is put to a model. It samples, so one answer measures a
@@ -168,7 +178,7 @@ func (s *FlowBenchmarkSuite) TestFlowControllerBenchmark() {
 	var report strings.Builder
 	results := map[string][]tally{}
 	for _, name := range s.sets {
-		set, err := loadFlowSet(name)
+		set, err := loadNamedSet(name)
 		s.Require().NoError(err)
 		set = set.sample(sampleFraction())
 		tallies := make([]tally, 0, len(arms))
@@ -189,21 +199,38 @@ func (s *FlowBenchmarkSuite) TestFlowControllerBenchmark() {
 // latency cannot also be saturating the provider it is measuring.
 func (s *FlowBenchmarkSuite) run(one arm, set flowSet) tally {
 	counted := newTally(one)
-	for _, subject := range set.Cases {
-		for attempt := range one.repeats {
-			ctx, cancel := context.WithTimeout(s.ctx, benchDeadline)
-			decided, err := s.ask(ctx, one, set, subject, attempt)
-			cancel()
-			if err != nil {
-				// A vendor that will not answer is worth reporting as its own failure rather
-				// than as a wrong judgement, which is a claim about the model.
-				s.T().Logf("%s could not judge %q: %v", one.name, subject.ID, err)
-				counted.refused++
-				continue
+	workers, _ := strconv.Atoi(envOr(workersEnvVar, "1"))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	queue := make(chan flowCase)
+	for range max(workers, 1) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for subject := range queue {
+				for attempt := range one.repeats {
+					ctx, cancel := context.WithTimeout(s.ctx, benchDeadline)
+					decided, err := s.ask(ctx, one, set, subject, attempt)
+					cancel()
+					mu.Lock()
+					if err != nil {
+						// A vendor that will not answer is worth reporting as its own failure
+						// rather than as a wrong judgement, which is a claim about the model.
+						s.T().Logf("%s could not judge %q: %v", one.name, subject.ID, err)
+						counted.refused++
+					} else {
+						counted.add(decided)
+					}
+					mu.Unlock()
+				}
 			}
-			counted.add(decided)
-		}
+		}()
 	}
+	for _, subject := range set.Cases {
+		queue <- subject
+	}
+	close(queue)
+	wg.Wait()
 	return counted
 }
 
@@ -411,15 +438,7 @@ func TestFlowTrainExport(t *testing.T) {
 	defer file.Close()
 	encoder := json.NewEncoder(file)
 	for _, name := range strings.Split(envOr(trainSetsEnvVar, "written,ami"), ",") {
-		var set flowSet
-		if _, known := flowSetFiles[name]; known {
-			set, err = loadFlowSet(name)
-		} else {
-			var raw []byte
-			if raw, err = os.ReadFile(name); err == nil {
-				err = json.Unmarshal(raw, &set)
-			}
-		}
+		set, err := loadNamedSet(name)
 		require.NoError(t, err, name)
 		for _, one := range set.Cases {
 			choices := localChoices(one)
@@ -439,6 +458,22 @@ func TestFlowTrainExport(t *testing.T) {
 			}))
 		}
 	}
+}
+
+// loadNamedSet reads one of the embedded sets by name, or a set file by its path.
+func loadNamedSet(name string) (flowSet, error) {
+	if _, known := flowSetFiles[name]; known {
+		return loadFlowSet(name)
+	}
+	raw, err := os.ReadFile(name)
+	if err != nil {
+		return flowSet{}, err
+	}
+	var set flowSet
+	if err := json.Unmarshal(raw, &set); err != nil {
+		return flowSet{}, fmt.Errorf("harness: decode %s: %w", name, err)
+	}
+	return set, set.validate()
 }
 
 // localQuestion is the production policy for the situation the case is in, in the production
@@ -464,13 +499,17 @@ func localQuestion(one flowCase) string {
 // modelArm asks one model the production question.
 func modelArm(target, effort string, session llm.LLM, price func(routing.Usage) int64) arm {
 	name, budget := target, 512
+	repeats, err := strconv.Atoi(envOr(repeatsEnvVar, strconv.Itoa(modelRepeats)))
+	if err != nil || repeats < 1 {
+		repeats = modelRepeats
+	}
 	if effort != "" {
 		name, budget = target+"@"+effort, teacherOutputTokens
 	}
 	return arm{
 		name:    name,
 		model:   session.Provider() + "/" + session.Model(),
-		repeats: modelRepeats,
+		repeats: repeats,
 		price:   price,
 		judge: func(ctx context.Context, set flowSet, one flowCase, attempt int) (judgement, error) {
 			turn := one.turn(one.ID+"-"+strconv.Itoa(attempt), set.Contracts)
