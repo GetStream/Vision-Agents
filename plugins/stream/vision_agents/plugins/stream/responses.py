@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, List, Optional, Union
 
 from ._backend import Backend
 from ._generated.api.default import (
@@ -77,7 +77,7 @@ class Items:
         )
         return _unwrapped(listed, f"reading the items of {self._session_id}")
 
-    async def all(self) -> list[AgentResponseItem]:
+    async def all(self) -> List[AgentResponseItem]:
         """Everything in one list, for a conversation short enough to hold."""
         return [item async for item in self.unwind()]
 
