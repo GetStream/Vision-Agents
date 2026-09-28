@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm/typesafe"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -39,6 +40,14 @@ const modelsEnvVar = "FLOW_BENCHMARK_MODELS"
 // defaultModels are the controller as deployed and the Gemma 4 deployment of our own, behind
 // GEMMA_BASE_URL. A target that cannot be reached is skipped rather than failing the run.
 const defaultModels = "llm-flow,gemma/gemma-4-26B-A4B-it"
+
+// localEnvVar is an OpenAI-compatible endpoint on this machine, up to and including /v1, such
+// as gophonic-server serving Qwen3-8B. It is compared with the others as one more arm, free of
+// charge and of the network.
+const localEnvVar = "FLOW_BENCHMARK_LOCAL"
+
+// localModelEnvVar is the model the local endpoint is asked for.
+const localModelEnvVar = "FLOW_BENCHMARK_LOCAL_MODEL"
 
 // sampleEnvVar runs a fraction of each set, such as 0.05, for a sweep across many models that
 // would cost too much in full. Every model and every run is asked the same cases.
@@ -135,6 +144,9 @@ func (s *FlowBenchmarkSuite) SetupSuite() {
 // reports what each would have made the agent do.
 func (s *FlowBenchmarkSuite) TestFlowControllerBenchmark() {
 	arms := s.modelArms()
+	if local := s.localArm(); local != nil {
+		arms = append(arms, *local)
+	}
 	arms = append(arms, s.jevArms()...)
 	s.Require().NotEmpty(arms, "no arm can be reached: name a target in "+modelsEnvVar+
 		" whose provider has a key, or set TYPESAFE_API_KEY")
@@ -242,19 +254,36 @@ func (s *FlowBenchmarkSuite) modelArms() []arm {
 			continue
 		}
 		s.T().Cleanup(func() { _ = session.Close() })
-		arms = append(arms, modelArm(target, session))
+		arms = append(arms, modelArm(target, session, session.Price().CostMicros))
 	}
 	return arms
 }
 
-// modelArm asks one router session the production question.
-func modelArm(target string, session *llmrouter.Session) arm {
-	price := session.Price()
+// localArm is the model behind localEnvVar, or nil when none is named.
+func (s *FlowBenchmarkSuite) localArm() *arm {
+	baseURL := os.Getenv(localEnvVar)
+	if baseURL == "" {
+		return nil
+	}
+	model, err := openaicompat.New(openaicompat.Options{
+		Provider: "local",
+		Model:    envOr(localModelEnvVar, "Qwen3-8B"),
+		APIKey:   "local",
+		BaseURL:  baseURL,
+		Logger:   slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	local := modelArm("local", model, func(routing.Usage) int64 { return 0 })
+	return &local
+}
+
+// modelArm asks one model the production question.
+func modelArm(target string, session llm.LLM, price func(routing.Usage) int64) arm {
 	return arm{
 		name:    target,
 		model:   session.Provider() + "/" + session.Model(),
 		repeats: modelRepeats,
-		price:   price.CostMicros,
+		price:   price,
 		judge: func(ctx context.Context, set flowSet, one flowCase, attempt int) (judgement, error) {
 			turn := one.turn(one.ID+"-"+strconv.Itoa(attempt), set.Contracts)
 			askedAt := time.Now()
@@ -308,7 +337,7 @@ func modelArm(target string, session *llmrouter.Session) arm {
 // hard-codes asked for separately and applied in code. Empty when there is no key.
 func (s *FlowBenchmarkSuite) jevArms() []arm {
 	if os.Getenv("TYPESAFE_API_KEY") == "" {
-		s.T().Log("TYPESAFE_API_KEY not set, skipping both Jev arms")
+		s.T().Log("TYPESAFE_API_KEY not set, skipping the Jev arms")
 		return nil
 	}
 
