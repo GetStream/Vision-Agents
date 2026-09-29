@@ -286,6 +286,7 @@ func (s *TypeSafeSuite) TestARateLimitIsWorthAskingAgainAndABadQuestionIsNot() {
 	s.Require().ErrorAs(err, &refused)
 	s.Equal(http.StatusTooManyRequests, refused.StatusCode)
 	s.True(refused.Retryable())
+	s.ErrorIs(err, lcm.ErrRateLimited)
 	s.ErrorContains(err, "slow down")
 
 	// The outage seen in practice: the model is being moved and comes back on its own.
@@ -298,6 +299,7 @@ func (s *TypeSafeSuite) TestARateLimitIsWorthAskingAgainAndABadQuestionIsNot() {
 
 	s.Require().ErrorAs(err, &refused)
 	s.True(refused.Retryable())
+	s.ErrorIs(err, lcm.ErrUnavailable)
 
 	s.web.status = http.StatusUnprocessableEntity
 	_, err = s.ask("anything", map[string]lcm.Question{
@@ -306,6 +308,20 @@ func (s *TypeSafeSuite) TestARateLimitIsWorthAskingAgainAndABadQuestionIsNot() {
 
 	s.Require().ErrorAs(err, &refused)
 	s.False(refused.Retryable())
+	s.NotErrorIs(err, lcm.ErrRateLimited)
+	s.NotErrorIs(err, lcm.ErrUnavailable)
+}
+
+func (s *TypeSafeSuite) TestAnAPINobodyCanReachIsUnavailable() {
+	client, err := New(Options{APIKey: "k", BaseURL: "http://127.0.0.1:1"})
+	s.Require().NoError(err)
+
+	_, err = client.Classify(context.Background(), lcm.Request{
+		State:     "anything",
+		Questions: map[string]lcm.Question{"heard": lcm.Noul("Did anyone speak?", "", "")},
+	})
+
+	s.ErrorIs(err, lcm.ErrUnavailable)
 }
 
 func (s *TypeSafeSuite) TestTheModelThatAnsweredIsReportedRatherThanTheAliasThatWasAsked() {

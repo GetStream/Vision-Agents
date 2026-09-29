@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
@@ -268,6 +269,36 @@ func (s *ServerSuite) TestARefusedServerSideOperationIsLoggedAsForbidden() {
 
 	s.Contains(written.String(), "status=403",
 		"a refusal is a logged answer, not a request that never arrived")
+}
+
+func (s *ServerSuite) TestAPanickingRequestIsLoggedAndAnsweredWithA500() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+	written := &bytes.Buffer{}
+	server, err := NewServer(Options{
+		Routers: map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Logger:  slog.New(slog.NewTextHandler(written, nil)),
+	})
+	s.Require().NoError(err)
+
+	// Wrapped the way Handler wraps it, so the recovery that swallows the panic is Sentry's.
+	handler := sentryhttp.New(sentryhttp.Options{}).Handle(server.withRequestLog(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("the edge went away") })))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/agents/sessions", nil))
+
+	s.Equal(http.StatusInternalServerError, response.Code, "not the empty 200 net/http sends")
+	logged := written.String()
+	s.Contains(logged, `msg="a request panicked"`)
+	s.Contains(logged, "path=/v1/agents/sessions")
+	s.Contains(logged, `panic="the edge went away"`)
+	s.Contains(logged, "server_test.go", "the stack names where it panicked")
 }
 
 func (s *ServerSuite) TestAPreflightIsNotLogged() {

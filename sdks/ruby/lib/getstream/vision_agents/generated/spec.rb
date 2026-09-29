@@ -56,6 +56,12 @@ module GetStream
           body: "ClaimGuestRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "classify" => {
+          method: :post, path: "/v1/classify",
+          path_params: [].freeze, query: [].freeze,
+          body: "ClassifyRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "closeSession" => {
           method: :delete, path: "/v1/agents/sessions/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -866,6 +872,26 @@ module GetStream
         "ClaimGuestResult" => {
           properties: %w[guest_id user_id sessions_moved].freeze,
           required: %w[guest_id user_id sessions_moved].freeze, open: false
+        }.freeze,
+        "ClassifyAnswer" => {
+          properties: %w[type yes chosen level legend probabilities confidence].freeze,
+          required: %w[type].freeze, open: false
+        }.freeze,
+        "ClassifyQuestion" => {
+          properties: %w[type instructions options levels yes no].freeze,
+          required: %w[type instructions].freeze, open: false
+        }.freeze,
+        "ClassifyRequest" => {
+          properties: %w[target state questions tags].freeze,
+          required: %w[state questions].freeze, open: false
+        }.freeze,
+        "ClassifyResult" => {
+          properties: %w[provider model answers usage].freeze,
+          required: %w[provider model answers usage].freeze, open: false
+        }.freeze,
+        "ClassifyUsage" => {
+          properties: %w[input_tokens output_tokens].freeze,
+          required: %w[input_tokens output_tokens].freeze, open: false
         }.freeze,
         "CommandReceipt" => {
           properties: %w[command_id user_message_id assistant_message_id state duplicate].freeze,

@@ -8,7 +8,11 @@
 //
 //	err := tui.Run(ctx, tui.Options{
 //		Open: func(ctx context.Context, id string) (tui.Session, error) {
-//			return agent.Chat(ctx, agents.SessionOptions{Persist: true, ConversationID: id})
+//			session, err := agent.Chat(ctx, agents.SessionOptions{ConversationID: id})
+//			if err != nil {
+//				return nil, err
+//			}
+//			return tui.Agent(session), nil
 //		},
 //		History:  tui.BackendHistory(stream.Backend{}, "jean"),
 //		Branding: tui.Branding{Title: "Jean", Subtitle: "answers questions about weather"},

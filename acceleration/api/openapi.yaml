@@ -1021,6 +1021,136 @@ components:
         - user_id
         - sessions_moved
       type: object
+    ClassifyAnswer:
+      description: |
+        Which fields carry the answer depends on the type. A noul fills yes alone. A choice fills chosen, probabilities and confidence. A score fills level, legend, probabilities and confidence.
+      properties:
+        chosen:
+          description: The likeliest option of a choice.
+          type: string
+        confidence:
+          description: How peaked the distribution is, not whether acting on it is safe.
+          format: double
+          type: number
+        legend:
+          additionalProperties:
+            type: string
+          description: A score's levels by index, as decimal strings.
+          type: object
+        level:
+          description: Where a score landed, which may be between two of its levels.
+          format: double
+          type: number
+        probabilities:
+          additionalProperties:
+            format: double
+            type: number
+          description: |
+            The distribution the answer came from: options for a choice, level indices for a score. They sum to one.
+          type: object
+        type:
+          $ref: '#/components/schemas/ClassifyQuestionType'
+        "yes":
+          description: The probability a noul is true, from 0 to 1.
+          format: double
+          type: number
+      required:
+        - type
+      type: object
+    ClassifyQuestion:
+      properties:
+        instructions:
+          example: Is the customer asking for a refund?
+          type: string
+        levels:
+          description: A score's levels, in order, each describing a concrete situation.
+          items:
+            type: string
+          type: array
+        "no":
+          description: What no means for a noul, where the instructions do not say it.
+          type: string
+        options:
+          additionalProperties:
+            type: string
+          description: |
+            A choice's options, each with a description of what it covers or an empty string where the name says it. Include one for "none of these" whenever the options may not cover an input.
+          type: object
+        type:
+          $ref: '#/components/schemas/ClassifyQuestionType'
+        "yes":
+          description: What yes means for a noul, where the instructions do not say it.
+          type: string
+      required:
+        - type
+        - instructions
+      type: object
+    ClassifyQuestionType:
+      description: |
+        noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
+      enum:
+        - noul
+        - choice
+        - score
+      type: string
+    ClassifyRequest:
+      properties:
+        questions:
+          additionalProperties:
+            $ref: '#/components/schemas/ClassifyQuestion'
+          description: |
+            Keyed by ids of the caller's own choosing, which is how the answers come back. An id is not part of what is asked, so a question carries its whole meaning in its instructions.
+          type: object
+        state:
+          description: |
+            What the questions are about: a string for plain text, or a JSON object whose parts a question can name, such as `message`.
+          example: I was charged twice this month and nobody has answered my email.
+        tags:
+          additionalProperties:
+            type: string
+          type: object
+        target:
+          description: |
+            A provider/model or a capability shortcut. Empty takes classify-fast.
+          example: classify-fast
+          type: string
+      required:
+        - state
+        - questions
+      type: object
+    ClassifyResult:
+      properties:
+        answers:
+          additionalProperties:
+            $ref: '#/components/schemas/ClassifyAnswer'
+          type: object
+        model:
+          description: The version that answered, which is worth recording when the target was an alias.
+          type: string
+        provider:
+          type: string
+        usage:
+          $ref: '#/components/schemas/ClassifyUsage'
+      required:
+        - provider
+        - model
+        - answers
+        - usage
+      type: object
+    ClassifyUsage:
+      description: |
+        What the request read and wrote. The state's tokens are counted once however many questions shared them.
+      properties:
+        input_tokens:
+          format: int64
+          type: integer
+        output_tokens:
+          format: int64
+          type: integer
+      required:
+        - input_tokens
+        - output_tokens
+      type: object
     CommandReceipt:
       properties:
         assistant_message_id:
@@ -7165,6 +7295,45 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
       summary: The providers a voice can be prepared with
+  /v1/classify:
+    post:
+      description: |
+        The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+        Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+        A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+      operationId: classify
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClassifyRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassifyResult'
+          description: The answers, under the ids they were asked under
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The classifier is rate limiting. Ask again after a wait.
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The classifier is overloaded or could not be reached. Ask again after a wait.
+      summary: Ask a classifier typed questions about a piece of text
   /v1/data/changes:
     get:
       description: |

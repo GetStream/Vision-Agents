@@ -65,6 +65,17 @@ describe("Client", () => {
     assert.deepEqual(router.last.body, { call_id: "demo", text: false });
   });
 
+  it("names the end user in the query to a router reached by customer id", async () => {
+    const acting = new Client({ url: router.url, customerId: "local", userId: "ana" });
+    router.serve("GET", "/v1/agents/configs", { body: [] });
+
+    await acting.get("/v1/agents/configs");
+
+    assert.equal(router.last.query.get("user_id"), "ana");
+    assert.equal(router.last.headers["x-customer-id"], "local");
+    assert.equal(router.last.headers["x-stream-user-id"], undefined);
+  });
+
   it("writes a query parameter once per value, so a list arrives as a list", async () => {
     router.serve("GET", "/v1/agents/logs", { body: { logs: [], next: "" } });
 

@@ -257,8 +257,9 @@ for await (const message of socket.messages()) {
 ```
 
 Credentials go in the query string, because a browser WebSocket carries no headers of its
-own. `Stream-Auth-Type` has no query counterpart on purpose, which is why a socket opened
-from a browser cannot claim to be a backend.
+own. A socket never says it is a backend: `Stream-Auth-Type: server` has no query
+counterpart on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is how
+it reads a user's token.
 
 ## Working on this package
 

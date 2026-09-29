@@ -40,7 +40,7 @@ async def create_agent(**kwargs) -> Agent:
         llm=stream.Accelerated(
             model="gemini/gemini-3.8-flash",
             stt="deepgram/flux-general-en",
-            tts="elevenlabs/eleven_v3_conversational",
+            tts="elevenlabs/eleven_v4_turbo",
             subagent="openai/gpt-5.6-sol",
         ),
         harness=DefaultHarness(),

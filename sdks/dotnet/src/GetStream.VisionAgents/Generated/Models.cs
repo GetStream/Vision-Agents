@@ -1432,6 +1432,205 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyRequest
+    {
+
+        /// <summary>
+        /// A provider/model or a capability shortcut. Empty takes classify-fast.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("target")]
+        public string? Target { get; set; } = default!;
+
+        /// <summary>
+        /// What the questions are about: a string for plain text, or a JSON object whose parts a question can name, such as `message`.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public object State { get; set; } = default!;
+
+        /// <summary>
+        /// Keyed by ids of the caller's own choosing, which is how the answers come back. An id is not part of what is asked, so a question carries its whole meaning in its instructions.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("questions")]
+        public System.Collections.Generic.Dictionary<string, ClassifyQuestion> Questions { get; set; } = new System.Collections.Generic.Dictionary<string, ClassifyQuestion>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyQuestion
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
+        public string Instructions { get; set; } = default!;
+
+        /// <summary>
+        /// A choice's options, each with a description of what it covers or an empty string where the name says it. Include one for "none of these" whenever the options may not cover an input.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("options")]
+        public System.Collections.Generic.Dictionary<string, string>? Options { get; set; } = default!;
+
+        /// <summary>
+        /// A score's levels, in order, each describing a concrete situation.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("levels")]
+        public System.Collections.Generic.List<string>? Levels { get; set; } = default!;
+
+        /// <summary>
+        /// What yes means for a noul, where the instructions do not say it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("yes")]
+        public string? Yes { get; set; } = default!;
+
+        /// <summary>
+        /// What no means for a noul, where the instructions do not say it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("no")]
+        public string? No { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyResult
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// The version that answered, which is worth recording when the target was an alias.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("answers")]
+        public System.Collections.Generic.Dictionary<string, ClassifyAnswer> Answers { get; set; } = new System.Collections.Generic.Dictionary<string, ClassifyAnswer>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("usage")]
+        public ClassifyUsage Usage { get; set; } = new ClassifyUsage();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What the request read and wrote. The state's tokens are counted once however many questions shared them.
+    /// <br/>
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyUsage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("input_tokens")]
+        public long InputTokens { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("output_tokens")]
+        public long OutputTokens { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Which fields carry the answer depends on the type. A noul fills yes alone. A choice fills chosen, probabilities and confidence. A score fills level, legend, probabilities and confidence.
+    /// <br/>
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyAnswer
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = default!;
+
+        /// <summary>
+        /// The probability a noul is true, from 0 to 1.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("yes")]
+        public double? Yes { get; set; } = default!;
+
+        /// <summary>
+        /// The likeliest option of a choice.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chosen")]
+        public string? Chosen { get; set; } = default!;
+
+        /// <summary>
+        /// Where a score landed, which may be between two of its levels.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("level")]
+        public double? Level { get; set; } = default!;
+
+        /// <summary>
+        /// A score's levels by index, as decimal strings.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("legend")]
+        public System.Collections.Generic.Dictionary<string, string>? Legend { get; set; } = default!;
+
+        /// <summary>
+        /// The distribution the answer came from: options for a choice, level indices for a score. They sum to one.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("probabilities")]
+        public System.Collections.Generic.Dictionary<string, double>? Probabilities { get; set; } = default!;
+
+        /// <summary>
+        /// How peaked the distribution is, not whether acting on it is safe.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("confidence")]
+        public double? Confidence { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SearchResult
     {
 

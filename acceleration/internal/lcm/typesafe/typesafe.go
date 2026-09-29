@@ -57,6 +57,18 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("typesafe: the API returned %d: %s", e.StatusCode, e.Body)
 }
 
+// Unwrap says which of lcm's failures this is, so a caller can back off without knowing
+// TypeSafe's status codes. A status that is neither is the request's own fault.
+func (e *StatusError) Unwrap() error {
+	switch e.StatusCode {
+	case http.StatusTooManyRequests:
+		return lcm.ErrRateLimited
+	case http.StatusServiceUnavailable, 529:
+		return lcm.ErrUnavailable
+	}
+	return nil
+}
+
 // Retryable reports whether waiting and asking again is worth it, which is a rate limit or an
 // overloaded service and nothing else. A malformed question does not improve on a second try.
 func (e *StatusError) Retryable() bool {
@@ -220,7 +232,7 @@ func (c *Client) Classify(
 
 	httpResponse, err := c.client.Do(httpRequest)
 	if err != nil {
-		return lcm.Result{}, fmt.Errorf("typesafe: classify: %w", err)
+		return lcm.Result{}, fmt.Errorf("typesafe: classify: %w: %w", lcm.ErrUnavailable, err)
 	}
 	defer httpResponse.Body.Close()
 

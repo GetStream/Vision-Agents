@@ -27,7 +27,8 @@ type router struct {
 	*httptest.Server
 
 	mu sync.Mutex
-	// sent is every command the conversation put down the socket.
+	// sent is every command the conversation put down the socket, and every question it
+	// asked, as a respond command.
 	sent []map[string]any
 	// cursors is every history request, as the cursor it was made with.
 	cursors []string
@@ -84,6 +85,20 @@ func newRouter(t *testing.T) *router {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(page)
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/responses", func(w http.ResponseWriter, r *http.Request) {
+		var request acceleration.CreateResponseRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		backend.mu.Lock()
+		backend.sent = append(backend.sent, map[string]any{"type": "respond", "text": request.Text})
+		backend.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(acceleration.AgentResponse{})
 	})
 
 	mux.HandleFunc("DELETE /v1/agents/sessions/{id}", func(w http.ResponseWriter, _ *http.Request) {
@@ -171,12 +186,12 @@ func (r *router) session(t *testing.T, conversationID string) Session {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := agent.Chat(t.Context(), agents.SessionOptions{Persist: true, ConversationID: conversationID})
+	session, err := agent.Chat(t.Context(), agents.SessionOptions{ConversationID: conversationID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = session.Close(context.Background()) })
-	return session
+	return Agent(session)
 }
 
 // opener opens a session on the stand-in router, for a conversation to be built around.

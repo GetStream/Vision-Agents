@@ -401,7 +401,7 @@ pick rather than a list of their own to keep:
 | `stt-fast`           | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en`         |
 | `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
 | `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
-| `tts-quality`        | The top of the Artificial Analysis arena: Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
+| `tts-quality`        | The top of the Artificial Analysis arena: ElevenLabs v4, Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
 
 ```yaml
 stt:

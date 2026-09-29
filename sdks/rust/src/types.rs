@@ -1039,6 +1039,152 @@ pub struct ClaimGuestResult {
     pub sessions_moved: i64,
     pub user_id: ::std::string::String,
 }
+/**Which fields carry the answer depends on the type. A noul fills yes alone. A choice fills chosen, probabilities and confidence. A score fills level, legend, probabilities and confidence.
+*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ClassifyAnswer {
+    ///The likeliest option of a choice.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub chosen: ::std::option::Option<::std::string::String>,
+    ///How peaked the distribution is, not whether acting on it is safe.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub confidence: ::std::option::Option<f64>,
+    ///A score's levels by index, as decimal strings.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub legend: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Where a score landed, which may be between two of its levels.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub level: ::std::option::Option<f64>,
+    /**The distribution the answer came from: options for a choice, level indices for a score. They sum to one.
+    */
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub probabilities: ::std::collections::BTreeMap<::std::string::String, f64>,
+    #[serde(rename = "type")]
+    pub type_: ClassifyQuestionType,
+    ///The probability a noul is true, from 0 to 1.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub yes: ::std::option::Option<f64>,
+}
+///`ClassifyQuestion`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ClassifyQuestion {
+    pub instructions: ::std::string::String,
+    ///A score's levels, in order, each describing a concrete situation.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub levels: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///What no means for a noul, where the instructions do not say it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub no: ::std::option::Option<::std::string::String>,
+    /**A choice's options, each with a description of what it covers or an empty string where the name says it. Include one for "none of these" whenever the options may not cover an input.
+    */
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub options: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    #[serde(rename = "type")]
+    pub type_: ClassifyQuestionType,
+    ///What yes means for a noul, where the instructions do not say it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub yes: ::std::option::Option<::std::string::String>,
+}
+/**noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
+*/
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ClassifyQuestionType {
+    #[serde(rename = "noul")]
+    Noul,
+    #[serde(rename = "choice")]
+    Choice,
+    #[serde(rename = "score")]
+    Score,
+}
+impl ::std::fmt::Display for ClassifyQuestionType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Noul => f.write_str("noul"),
+            Self::Choice => f.write_str("choice"),
+            Self::Score => f.write_str("score"),
+        }
+    }
+}
+impl ::std::str::FromStr for ClassifyQuestionType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "noul" => Ok(Self::Noul),
+            "choice" => Ok(Self::Choice),
+            "score" => Ok(Self::Score),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ClassifyQuestionType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ClassifyQuestionType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ClassifyRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ClassifyRequest {
+    /**Keyed by ids of the caller's own choosing, which is how the answers come back. An id is not part of what is asked, so a question carries its whole meaning in its instructions.
+    */
+    pub questions: ::std::collections::BTreeMap<::std::string::String, ClassifyQuestion>,
+    /**What the questions are about: a string for plain text, or a JSON object whose parts a question can name, such as `message`.
+    */
+    pub state: ::serde_json::Value,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    /**A provider/model or a capability shortcut. Empty takes classify-fast.
+    */
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target: ::std::option::Option<::std::string::String>,
+}
+///`ClassifyResult`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ClassifyResult {
+    pub answers: ::std::collections::BTreeMap<::std::string::String, ClassifyAnswer>,
+    ///The version that answered, which is worth recording when the target was an alias.
+    pub model: ::std::string::String,
+    pub provider: ::std::string::String,
+    pub usage: ClassifyUsage,
+}
+/**What the request read and wrote. The state's tokens are counted once however many questions shared them.
+*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ClassifyUsage {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+}
 ///`CommandReceipt`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CommandReceipt {

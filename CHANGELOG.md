@@ -417,6 +417,12 @@ image now ships, and hands them to the vision subagent like attached images, eac
 with where in the clip it was taken. URLs are fetched only from public addresses. The Go
 SDK sends them with `client.Clip{URL, MaxFrames}` or `client.ClipFile(path)`.
 
+### The JavaScript SDK's session can use a chat client you already hold
+
+`session.chat({ client })` opens the conversation's channel on a connected `StreamChat` of
+yours instead of connecting a second one, and `interrupt({ commandId })` names the turn it
+stops.
+
 ### A dispatch worker can run tools for every session under an agent id
 
 A worker on `/v1/dispatch` can send `host_tools` naming an `agent_id` and the tools it runs
@@ -685,6 +691,14 @@ asks for it, and the accurate group then narrows to Muse.
 The point of them is that the list is reviewed here instead of in every config that wanted
 today's answer. The cost is that it is an opinion with a date on it rather than something that
 follows from what the models declare, which is why the date is in the config beside them.
+
+### ElevenLabs v4 and v4 Turbo voices
+
+The router now speaks with `elevenlabs/eleven_v4`, first on the Artificial Analysis voice
+arena, and `elevenlabs/eleven_v4_turbo`, its real-time variant, in the high-quality and
+low-latency tiers. Both act audio tags such as `[laughs]` and are served on the
+text-to-dialogue socket like `eleven_v3_conversational`, with the same `ELEVENLABS_API_KEY`.
+The `tts-quality` group now prefers `eleven_v4` over Sonic 3.6.
 
 ### Three more realtime transcription models: Ink 2, Inworld STT 1 and Scribe v2 Realtime
 
@@ -1275,6 +1289,23 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 - Chat readers are explicitly added to existing agent channels before their token is
   issued, so opening a members-only transcript no longer fails with `ReadChannel`.
+
+- The JavaScript SDK works in a browser without a `fetch` of your own: it called the global
+  `fetch` as its own method, which every browser refuses with "Illegal invocation".
+
+- The JavaScript SDK's session socket is admitted by the authenticating proxy: with
+  `authenticate` it now also carries the token as `authorization` with
+  `stream-auth-type=jwt`, which is how the proxy reads a socket's credential. It was refused
+  with a 401, so a page on a hosted deployment could only use `watch: false`.
+
+- The JavaScript SDK's `respond` names a command on a kept conversation, the way
+  `responses.create` does, so asking one over the socket is no longer refused with
+  "personal conversations require a command ID". It returns the command's id, and takes a
+  `commandId` of your own.
+
+- The JavaScript SDK tells a router reached by `customerId` who the end user is: `userId`
+  is sent as `user_id` in the query of every request and socket, which a router in `proxy`
+  mode reads. It was dropped, so the conversations such a caller opened belonged to nobody.
 
 - Managed research workspaces resume stopped Daytona VMs in place, refresh preview access and recover worker processes before research; pinned source revisions are preserved.
 

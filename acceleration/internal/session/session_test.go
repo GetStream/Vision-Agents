@@ -800,7 +800,7 @@ func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
 			AgentID:        "call-9",
 			LLMTarget:      "gemini/gemini-3.5-flash-lite",
 			STTTarget:      "gemini/gemini-3.5-transcribe-live",
-			TTSTarget:      "elevenlabs/eleven_v3_conversational",
+			TTSTarget:      "elevenlabs/eleven_v4_turbo",
 			SubagentTarget: "openai/gpt-5.6-sol",
 			Instructions:   "Keep it short.",
 		},
@@ -813,7 +813,7 @@ func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
 
 	s.Equal("gemini/gemini-3.5-flash-lite", recorded.LLM)
 	s.Equal("gemini/gemini-3.5-transcribe-live", recorded.STT)
-	s.Equal("elevenlabs/eleven_v3_conversational", recorded.TTS)
+	s.Equal("elevenlabs/eleven_v4_turbo", recorded.TTS)
 	s.Equal("openai/gpt-5.6-sol", recorded.Subagent)
 	s.Equal("Keep it short.", recorded.Instructions)
 	s.Equal([]string{"think"}, recorded.Skills,

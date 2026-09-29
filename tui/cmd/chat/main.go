@@ -20,6 +20,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/sdks/go/agents"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 	"github.com/GetStream/Vision-Agents/tui"
 )
 
@@ -51,17 +52,6 @@ func run(ctx context.Context) error {
 	slog.SetDefault(logger)
 
 	llm := stream.Accelerated(stream.Config{Agent: *name, LLM: *model, Logger: logger})
-	err = agents.RegisterFunction(llm, "get_weather",
-		"Get the current weather for a location",
-		func(_ context.Context, in struct {
-			Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
-		}) (any, error) {
-			return fmt.Sprintf("It is 20 degrees and sunny in %s.", in.Location), nil
-		})
-	if err != nil {
-		return err
-	}
-
 	agent, err := agents.New(agents.Options{
 		Name:    *name,
 		Dir:     *dir,
@@ -73,10 +63,24 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	err = tools.Register(agent.Tools(), "get_weather",
+		"Get the current weather for a location",
+		func(_ context.Context, in struct {
+			Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
+		}) (any, error) {
+			return fmt.Sprintf("It is 20 degrees and sunny in %s.", in.Location), nil
+		})
+	if err != nil {
+		return err
+	}
 
 	return tui.Run(ctx, tui.Options{
 		Open: func(ctx context.Context, conversationID string) (tui.Session, error) {
-			return agent.Chat(ctx, agents.SessionOptions{Persist: true, ConversationID: conversationID})
+			session, err := agent.Chat(ctx, agents.SessionOptions{ConversationID: conversationID})
+			if err != nil {
+				return nil, err
+			}
+			return tui.Agent(session), nil
 		},
 		History:        tui.BackendHistory(stream.Backend{}, *name),
 		ConversationID: *resume,
