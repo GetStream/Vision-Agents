@@ -383,9 +383,7 @@ def _custom_of(frame: dict[str, object]) -> dict[str, str]:
     custom = frame.get("custom")
     if not isinstance(custom, dict):
         return {}
-    return {
-        str(key): value for key, value in custom.items() if isinstance(value, str)
-    }
+    return {str(key): value for key, value in custom.items() if isinstance(value, str)}
 
 
 def _call_of(frame: dict[str, object]) -> InboundCall:
