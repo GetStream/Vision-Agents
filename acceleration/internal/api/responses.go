@@ -3,16 +3,22 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/video"
 )
 
 // noStore is what the response paths say where nothing was written down. A turn's items are
 // read back from Postgres, so a deployment without one can start a response but has nothing
 // to show afterwards.
 const noStore = "this deployment does not record what sessions said"
+
+// maxVideos bounds the clips on one response, so that at video.MaxFrames each a turn stays
+// inside the hundred images the strictest vision provider takes in one request.
+const maxVideos = 2
 
 // CreateResponse asks the agent something and names the turn it answers as.
 //
@@ -40,6 +46,23 @@ func (s *Server) CreateResponse(ctx context.Context, request CreateResponseReque
 	parts, err := imagesFromWire(images)
 	if err != nil {
 		return CreateResponse400JSONResponse{badRequest(err.Error())}, nil
+	}
+	videos := value(request.Body.Videos)
+	if len(videos) > maxVideos {
+		return CreateResponse400JSONResponse{badRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))}, nil
+	}
+	if len(videos) > 0 && value(request.Body.CommandId) != "" {
+		return CreateResponse400JSONResponse{badRequest("a command ID carries text only")}, nil
+	}
+	for index, sent := range videos {
+		frames, length, err := video.Frames(ctx, sent.Url, value(sent.MaxFrames))
+		if err != nil {
+			return CreateResponse400JSONResponse{badRequest(err.Error())}, nil
+		}
+		for _, frame := range frames {
+			frame.Image.Caption = fmt.Sprintf("video %d, %.1fs of %.1fs", index+1, frame.At.Seconds(), length.Seconds())
+			parts = append(parts, frame.Image)
+		}
 	}
 
 	var responseID string
@@ -88,15 +111,24 @@ func (s *Server) ListResponses(ctx context.Context, request ListResponsesRequest
 		return ListResponses404JSONResponse{NotFoundJSONResponse{Error: noStore}}, nil
 	}
 
-	rows, err := s.store.SessionResponses(ctx, OwnerFrom(ctx).CustomerID, found.ID(),
-		value(request.Params.Limit), value(request.Params.Offset))
+	after, err := decodeCursor[store.ResponsePosition](request.Params.Cursor)
+	if err != nil {
+		return ListResponses400JSONResponse{badRequest(err.Error())}, nil
+	}
+	limit := store.SessionLimit(value(request.Params.Limit))
+	rows, err := s.store.SessionResponses(ctx, OwnerFrom(ctx).CustomerID, found.ID(), limit, after)
 	if err != nil {
 		return nil, err
 	}
 
-	listed := make([]AgentResponse, 0, len(rows))
+	rows, more := page(rows, limit)
+	listed := AgentResponsePage{Items: make([]AgentResponse, 0, len(rows)), HasMore: more}
 	for _, row := range rows {
-		listed = append(listed, responseOf(row))
+		listed.Items = append(listed.Items, responseOf(row))
+	}
+	if more {
+		last := rows[len(rows)-1]
+		listed.NextCursor = encodeCursor(store.ResponsePosition{CreatedAt: last.CreatedAt, ID: last.ID})
 	}
 	return ListResponses200JSONResponse(listed), nil
 }
@@ -118,15 +150,27 @@ func (s *Server) ListResponseItems(ctx context.Context, request ListResponseItem
 		return ListResponseItems404JSONResponse{NotFoundJSONResponse{Error: noStore}}, nil
 	}
 
+	after, err := decodeCursor[store.ItemPosition](request.Params.Cursor)
+	if err != nil {
+		return ListResponseItems400JSONResponse{badRequest(err.Error())}, nil
+	}
+	limit := store.ItemLimit(value(request.Params.Limit))
 	rows, err := s.store.SessionItems(ctx, OwnerFrom(ctx).CustomerID, found.ID(),
-		value(request.Params.ResponseId), value(request.Params.Limit), value(request.Params.Offset))
+		value(request.Params.ResponseId), limit, after)
 	if err != nil {
 		return nil, err
 	}
 
-	listed := make([]AgentResponseItem, 0, len(rows))
+	rows, more := page(rows, limit)
+	listed := AgentResponseItemPage{Items: make([]AgentResponseItem, 0, len(rows)), HasMore: more}
 	for _, row := range rows {
-		listed = append(listed, itemOf(row))
+		listed.Items = append(listed.Items, itemOf(row))
+	}
+	if more {
+		last := rows[len(rows)-1]
+		listed.NextCursor = encodeCursor(store.ItemPosition{
+			At: last.At, ResponseID: last.ResponseID, Ordinal: last.Ordinal,
+		})
 	}
 	return ListResponseItems200JSONResponse(listed), nil
 }

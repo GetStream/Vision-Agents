@@ -1,6 +1,8 @@
-// Package api serves the router's HTTP surface. The types and routing in generated.go
-// come from api/openapi.yaml, which is the source of truth: change the spec and
-// regenerate rather than editing generated.go.
+// Package api serves the router's HTTP surface on a chi router. Operations are declared
+// in Go with Huma, and the Go structs are the source of truth: api/openapi.yaml is
+// rendered from them by cmd/openapi. The operations not yet moved to Go are still
+// generated into generated.go from api/legacy.yaml; change that file and regenerate
+// rather than editing generated.go.
 //
 // Every routing path is scoped by modality. The server holds one router per modality it
 // serves and looks the right one up per request, so adding a modality is a matter of
@@ -19,7 +21,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	sentryhttp "github.com/getsentry/sentry-go/http"
+	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -70,7 +74,7 @@ type kindContextKey struct{}
 
 // clientAccessibleExtension is what the spec marks the few operations an end user's device
 // may reach with. Everything else is server-side only, and the check reads the mark from
-// the embedded spec rather than from a list kept here, so what a generated SDK documents
+// the operations themselves rather than from a list kept here, so what a generated SDK documents
 // and what the server refuses cannot drift apart.
 //
 // The default is that way round because the two mistakes do not cost the same. An
@@ -255,16 +259,11 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		retention = 7 * 24 * time.Hour
 	}
 
-	serverSide, err := serverSideRoutes()
-	if err != nil {
-		return nil, err
-	}
-
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{
+	server := &Server{
 		routers:       options.Routers,
 		store:         options.Store,
 		live:          options.Live,
@@ -290,7 +289,6 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		quota:         options.Quota,
 		policies:      options.Policies,
 		trusted:       options.TrustedProxies,
-		serverSide:    serverSide,
 		upgrader:      newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
 			PublicURL:    options.PublicURL,
@@ -298,19 +296,25 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		},
 		popularity: newPopularity(options.Store, logger),
 		logger:     logger,
-	}, nil
+	}
+	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
+	if err != nil {
+		return nil, err
+	}
+	server.serverSide = serverSide
+	return server, nil
 }
 
 // Handler returns the HTTP handler for the whole API.
 //
-// The three sockets, the answer host and the call hook are registered first, on a mux the
-// generated routes are then added to. The sockets are excluded from generation because a
+// The three sockets, the answer host and the call hook are registered first, on a router
+// the Huma operations and then the generated routes are added to. The sockets are excluded from generation because a
 // strict server returns a response object and an upgrade returns a connection, so there is
 // nothing for it to hand back. The answer host is excluded because it serves a vendor's XML
 // rather than this API's JSON, and the call hook because both are reached by somebody other
 // than a customer: a telephony vendor and Stream.
 func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
+	mux := chi.NewRouter()
 	mux.HandleFunc("GET /v1/agents/logs", s.listAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/stream", s.streamAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
@@ -325,6 +329,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
+	s.newAPI(mux)
 	handler := HandlerFromMux(NewStrictHandler(s, nil), mux)
 	// Sentry is outermost so it sees panics from every middleware below it, not
 	// only from the route handlers.
@@ -470,24 +475,19 @@ var unspecifiedRoutes = map[string]bool{
 // An operation declaring no security at all is skipped in both directions. It is reached
 // before there is a caller to classify — the health check and the plugin redirect, where
 // the browser arrives from the identity provider — so there is nobody to refuse.
-func serverSideRoutes() (*http.ServeMux, error) {
-	spec, err := GetSpec()
+func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
+	operations, err := specifiedOperations(document)
 	if err != nil {
-		return nil, fmt.Errorf("api: could not read the embedded spec: %w", err)
+		return nil, err
 	}
 
 	routes := http.NewServeMux()
 	nothing := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
-	for path, item := range spec.Paths.Map() {
-		for method, operation := range item.Operations() {
-			if operation.Security != nil && len(*operation.Security) == 0 {
-				continue
-			}
-			if open, ok := operation.Extensions[clientAccessibleExtension].(bool); ok && open {
-				continue
-			}
-			routes.Handle(method+" "+path, nothing)
+	for _, operation := range operations {
+		if operation.public || operation.open {
+			continue
 		}
+		routes.Handle(operation.method+" "+operation.path, nothing)
 	}
 	for route, open := range unspecifiedRoutes {
 		if !open {
@@ -689,8 +689,46 @@ func (s *Server) routerFor(modality Modality) (routing.Inspector, bool) {
 	return router, ok
 }
 
-// GetHealth reports whether the router and its dependencies are usable.
-func (s *Server) GetHealth(ctx context.Context, _ GetHealthRequestObject) (GetHealthResponseObject, error) {
+// HealthStatus is whether the router is serving, and how each dependency answered.
+type HealthStatus struct {
+	Status       HealthStatusStatus `json:"status" enum:"ok,degraded"`
+	Dependencies map[string]string  `json:"dependencies" doc:"Dependency name to \"ok\" or a failure description." example:"{\"postgres\":\"ok\",\"redis\":\"ok\"}"`
+}
+
+// HealthStatusStatus is whether every dependency answered.
+type HealthStatusStatus string
+
+const (
+	Ok       HealthStatusStatus = "ok"
+	Degraded HealthStatusStatus = "degraded"
+)
+
+type healthResponse struct {
+	Status int
+	Body   HealthStatus
+}
+
+func (s *Server) registerHealth(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getHealth",
+		Method:      http.MethodGet,
+		Path:        "/health",
+		Summary:     "Liveness and dependency check",
+		Security:    []map[string][]string{},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The router is serving"},
+			"503": {
+				Description: "A dependency is unavailable",
+				Content: map[string]*huma.MediaType{
+					"application/json": {Schema: &huma.Schema{Ref: "#/components/schemas/HealthStatus"}},
+				},
+			},
+		},
+	}, s.getHealth)
+}
+
+// getHealth reports whether the router and its dependencies are usable.
+func (s *Server) getHealth(ctx context.Context, _ *struct{}) (*healthResponse, error) {
 	dependencies := map[string]string{}
 	healthy := true
 
@@ -717,9 +755,15 @@ func (s *Server) GetHealth(ctx context.Context, _ GetHealthRequestObject) (GetHe
 	}
 
 	if !healthy {
-		return GetHealth503JSONResponse{Status: Degraded, Dependencies: dependencies}, nil
+		return &healthResponse{
+			Status: http.StatusServiceUnavailable,
+			Body:   HealthStatus{Status: Degraded, Dependencies: dependencies},
+		}, nil
 	}
-	return GetHealth200JSONResponse{Status: Ok, Dependencies: dependencies}, nil
+	return &healthResponse{
+		Status: http.StatusOK,
+		Body:   HealthStatus{Status: Ok, Dependencies: dependencies},
+	}, nil
 }
 
 // ListProviders returns the providers configured for a modality and their live health.

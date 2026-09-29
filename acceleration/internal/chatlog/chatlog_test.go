@@ -276,6 +276,64 @@ func (s *ChatLogSuite) TestTheTranscriptSaysWhichLinesTheAgentSaid() {
 	s.True(said[1].Agent)
 }
 
+// channel is what the channel holds, oldest first.
+func (s *ChatLogSuite) channel() []getstream.MessageResponse {
+	state := true
+	response, err := s.log.client.Chat().GetOrCreateChannel(context.Background(), ChannelType, s.log.channel,
+		&getstream.GetOrCreateChannelRequest{State: &state})
+	s.Require().NoError(err)
+	return response.Data.Messages
+}
+
+func (s *ChatLogSuite) TestWhatAParticipantIsSayingIsOneMessageThatSettles() {
+	s.log.client = chattest.Client(s.T())
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+
+	writer.handle(message{author: alice, text: "where is", kind: hearing, source: SourceSpeech})
+	writer.show()
+	s.Require().Len(s.channel(), 1, "watchers see the words before the turn settles")
+	s.Equal(true, s.channel()[0].Custom[generatingField])
+
+	writer.handle(message{author: alice, text: "where is my order", kind: hearing, source: SourceSpeech})
+	writer.show()
+	writer.handle(message{author: alice, text: "Where is my order 1042?", kind: heard, source: SourceSpeech})
+
+	stored := s.channel()
+	s.Require().Len(stored, 1, "revisions update the message rather than adding one each")
+	s.Equal("Where is my order 1042?", stored[0].Text)
+	s.Equal(false, stored[0].Custom[generatingField])
+	s.Equal(SourceSpeech, stored[0].Custom[SourceField])
+	s.Empty(writer.listening)
+}
+
+func (s *ChatLogSuite) TestSpeechTheAgentIgnoredIsNotLeftInTheChannel() {
+	s.log.client = chattest.Client(s.T())
+	writer := newWriter(s.log)
+	writer.handle(message{author: User{ID: "alice"}, text: "hang on, the door", kind: hearing, source: SourceSpeech})
+	writer.show()
+
+	writer.handle(message{author: User{ID: "alice"}, kind: ignored, source: SourceSpeech})
+
+	stored := s.channel()
+	s.Require().Len(stored, 1)
+	s.Empty(stored[0].Text)
+	s.Equal(false, stored[0].Custom[generatingField])
+}
+
+func (s *ChatLogSuite) TestSpeechThatNeverSettledIsClosedWhenTheCallEnds() {
+	s.log.client = chattest.Client(s.T())
+	writer := newWriter(s.log)
+	writer.handle(message{author: User{ID: "alice"}, text: "and one more", kind: hearing, source: SourceSpeech})
+	writer.show()
+
+	writer.closeOut()
+
+	stored := s.channel()
+	s.Require().Len(stored, 1)
+	s.Equal(false, stored[0].Custom[generatingField], "otherwise it says it is still being said forever")
+}
+
 func (s *ChatLogSuite) TestAnEmptyWrittenReplyIsNotStored() {
 	s.log.Reply("")
 

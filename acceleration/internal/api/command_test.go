@@ -26,7 +26,7 @@ func (s *SessionAPISuite) writesCommandConversation() Session {
 	s.model.held = make(chan struct{}, 8)
 	s.model.mu.Unlock()
 	target := "en-low-latency"
-	return s.creates(CreateSessionRequest{Text: &yes, PersistConversation: &yes, Llm: &target, Stt: &target, Tts: &target})
+	return s.creates(CreateSessionRequest{Text: &yes, Llm: &target, Stt: &target, Tts: &target})
 }
 
 // submits accepts one durable command and returns its receipt.

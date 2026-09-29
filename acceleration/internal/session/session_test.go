@@ -717,6 +717,17 @@ func (s *SessionSuite) TestAWrittenAnswerIsStoredInTheConversation() {
 	s.Equal([]string{"Hello."}, s.records.replies())
 }
 
+func (s *SessionSuite) TestAnIncognitoCallWritesNothingIntoChat() {
+	s.records = &stubTranscript{}
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1", Incognito: true})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Empty(s.records.replies(), "a channel in Stream Chat is a record")
+}
+
 func (s *SessionSuite) TestWhatWasAskedInWritingIsRememberedForTheRestOfTheCall() {
 	// Otherwise the caller cannot refer to it out loud, and the agent answers as though it
 	// had never been asked.
@@ -950,6 +961,19 @@ func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
 		{Role: llm.Assistant, Content: "Yes."},
 	}, created.voiceAgent.History())
 	s.Len(recorded.exchanges, 1, "the later turn is no longer part of the conversation")
+}
+
+func (s *SessionSuite) TestARenamedSessionKeepsWhatItWasNotAskedToChange() {
+	s.manages()
+	created := s.writes(Spec{Title: "First ask", Description: "About pricing", Custom: map[string]any{"tab": "docs"}})
+	renamed := "Pricing, again"
+
+	created.Describe(s.ctx, Labels{Title: &renamed})
+
+	spec := created.Spec()
+	s.Equal("Pricing, again", spec.Title)
+	s.Equal("About pricing", spec.Description, "a field left out is left as it is")
+	s.Equal(map[string]any{"tab": "docs"}, spec.Custom)
 }
 
 func (s *SessionSuite) TestRewindingToAResponseTheSessionNeverHadIsUnknown() {

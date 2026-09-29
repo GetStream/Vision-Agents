@@ -609,7 +609,11 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			image.Data = append([]byte(nil), image.Data...)
-			metadata, _ := json.Marshal(map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()})
+			described := map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()}
+			if image.Caption != "" {
+				described["caption"] = image.Caption
+			}
+			metadata, _ := json.Marshal(described)
 			parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 		}
 		if _, err := current.Delegate("vision", text, id, parts, nil); err != nil {

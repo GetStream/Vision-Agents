@@ -140,15 +140,17 @@ func (s *Session) retitle(ctx context.Context, said []spoken) error {
 	}
 
 	s.labelMu.Lock()
-	unchanged := s.title == named.Title && s.description == named.Description
-	s.title, s.description = named.Title, named.Description
+	unchanged := s.renamed || s.title == named.Title && s.description == named.Description
+	if !unchanged {
+		s.title, s.description = named.Title, named.Description
+	}
 	s.labelMu.Unlock()
 	if unchanged {
 		return nil
 	}
 
 	if n.titles.records != nil {
-		n.titles.records.Described(s.spec.CustomerID, s.id, named.Title, named.Description)
+		n.titles.records.Described(s.spec.CustomerID, s.id, named.Title, named.Description, nil)
 	}
 	return n.service.Describe(ctx, s.spec.ConversationID, named.Title, named.Description)
 }

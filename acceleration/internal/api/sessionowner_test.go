@@ -241,9 +241,9 @@ func (s *SessionOwnershipSuite) listed(who caller) []Session {
 	response := s.send(http.MethodGet, "/v1/agents/sessions", who, nil)
 	s.Require().Equal(http.StatusOK, response.StatusCode)
 
-	var sessions []Session
+	var sessions SessionPage
 	s.Require().NoError(json.NewDecoder(response.Body).Decode(&sessions))
-	return sessions
+	return sessions.Items
 }
 
 // watch opens the events socket the way a browser does, with the credentials in the query

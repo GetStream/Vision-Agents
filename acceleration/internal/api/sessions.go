@@ -54,6 +54,9 @@ func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequest
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
 	created, err := s.sessions.Create(ctx, spec)
+	if errors.Is(err, session.ErrSessionExists) {
+		return CreateSession409JSONResponse{Error: err.Error()}, nil
+	}
 	if err != nil {
 		// Everything that can go wrong here is the caller's spec or a provider that would
 		// not start, and both are worth reading rather than a 500 with the detail in a
@@ -113,7 +116,7 @@ func (s *Server) ListSessions(ctx context.Context, request ListSessionsRequestOb
 		return ListSessions401JSONResponse{missingCustomer()}, nil
 	}
 	if s.sessions == nil {
-		return ListSessions200JSONResponse{}, nil
+		return ListSessions200JSONResponse{Items: []Session{}}, nil
 	}
 
 	filter, err := sessionFilter(ctx, sessionQuery{
@@ -121,7 +124,7 @@ func (s *Server) ListSessions(ctx context.Context, request ListSessionsRequestOb
 		UserID: request.Params.UserId, Project: request.Params.Project,
 		State: string(value(request.Params.State)), Custom: request.Params.Custom,
 		After: request.Params.CreatedAfter, Before: request.Params.CreatedBefore,
-		Limit: request.Params.Limit, Offset: request.Params.Offset,
+		Limit: request.Params.Limit, Cursor: request.Params.Cursor,
 	})
 	if err != nil {
 		return ListSessions400JSONResponse{badRequest(err.Error())}, nil
@@ -131,7 +134,7 @@ func (s *Server) ListSessions(ctx context.Context, request ListSessionsRequestOb
 	if err != nil {
 		return nil, err
 	}
-	return ListSessions200JSONResponse(sessionsOf(found)), nil
+	return ListSessions200JSONResponse(sessionPageOf(found, filter.Limit)), nil
 }
 
 // SearchSessions finds a conversation by what the caller named it.
@@ -140,7 +143,7 @@ func (s *Server) SearchSessions(ctx context.Context, request SearchSessionsReque
 		return SearchSessions401JSONResponse{missingCustomer()}, nil
 	}
 	if s.sessions == nil {
-		return SearchSessions200JSONResponse{}, nil
+		return SearchSessions200JSONResponse{Items: []Session{}}, nil
 	}
 
 	filter, err := sessionFilter(ctx, sessionQuery{
@@ -148,7 +151,7 @@ func (s *Server) SearchSessions(ctx context.Context, request SearchSessionsReque
 		UserID: request.Params.UserId, Project: request.Params.Project,
 		State: string(value(request.Params.State)), Custom: request.Params.Custom,
 		After: request.Params.CreatedAfter, Before: request.Params.CreatedBefore,
-		Limit: request.Params.Limit, Offset: request.Params.Offset,
+		Limit: request.Params.Limit, Cursor: request.Params.Cursor,
 	})
 	if err != nil {
 		return SearchSessions400JSONResponse{badRequest(err.Error())}, nil
@@ -158,7 +161,7 @@ func (s *Server) SearchSessions(ctx context.Context, request SearchSessionsReque
 	if err != nil {
 		return nil, err
 	}
-	return SearchSessions200JSONResponse(sessionsOf(found)), nil
+	return SearchSessions200JSONResponse(sessionPageOf(found, filter.Limit)), nil
 }
 
 // ForkSession continues a conversation as a new one.
@@ -448,6 +451,76 @@ func (s *Server) SetSessionSettings(ctx context.Context, request SetSessionSetti
 	return SetSessionSettings200JSONResponse(sessionOf(found)), nil
 }
 
+// UpdateSession renames, relabels, re-instructs or moves one session onto other models. A
+// session that ended can only be renamed and relabelled.
+func (s *Server) UpdateSession(ctx context.Context, request UpdateSessionRequestObject) (UpdateSessionResponseObject, error) {
+	found, failure := s.storedOrLiveSession(ctx, request.Id)
+	if failure == nil && found.Live != nil && !canReadSession(ctx, found.Live.Spec()) {
+		failure = &lookupFailure{status: notFound, message: unknownSession}
+	}
+	if failure != nil {
+		if failure.status == unauthorized {
+			return UpdateSession401JSONResponse{missingCustomer()}, nil
+		}
+		return UpdateSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+	}
+	if request.Body == nil {
+		return UpdateSession400JSONResponse{badRequest("a request body is required")}, nil
+	}
+
+	body := request.Body
+	settings, moving := settingsOf(*body)
+	labels := session.Labels{Title: body.Title, Description: body.Description, Custom: body.Custom}
+
+	if found.Live == nil {
+		if moving || body.Instructions != nil {
+			return UpdateSession400JSONResponse{badRequest(
+				"the session has ended, so only its title, description and custom can change")}, nil
+		}
+		row := *found.Stored
+		row.Title = override(row.Title, body.Title)
+		row.Description = override(row.Description, body.Description)
+		row.Custom = override(row.Custom, body.Custom)
+		if err := s.store.DescribeSession(ctx, row.CustomerID, row.ID, row.Title, row.Description,
+			value(body.Custom)); err != nil {
+			return nil, err
+		}
+		return UpdateSession200JSONResponse(storedSessionOf(row)), nil
+	}
+
+	live := found.Live
+	if moving {
+		if err := live.SetSettings(ctx, settings); err != nil {
+			return UpdateSession400JSONResponse{badRequest(err.Error())}, nil
+		}
+	}
+	if body.Instructions != nil {
+		live.SetInstructions(*body.Instructions)
+	}
+	if labels.Title != nil || labels.Description != nil || labels.Custom != nil {
+		live.Describe(ctx, labels)
+	}
+	return UpdateSession200JSONResponse(sessionOf(live)), nil
+}
+
+// settingsOf reads the models and voice an update asks for, and reports whether it asks
+// for any.
+func settingsOf(body UpdateSessionRequest) (session.Settings, bool) {
+	settings := session.Settings{
+		LLM: body.Llm, STT: body.Stt, TTS: body.Tts, STS: body.Sts, Subagent: body.Subagent,
+		Voice: body.Voice, Temperature: body.Temperature, MaxOutputTokens: body.MaxOutputTokens,
+	}
+	if body.Thinking != nil {
+		thinking := string(*body.Thinking)
+		settings.Thinking = &thinking
+	}
+	if body.Verbosity != nil {
+		verbosity := string(*body.Verbosity)
+		settings.Verbosity = &verbosity
+	}
+	return settings, settings != session.Settings{}
+}
+
 // lookupStatus says which way finding a session failed.
 type lookupStatus int
 
@@ -536,7 +609,8 @@ type sessionQuery struct {
 	State         string
 	Custom        *string
 	After, Before *time.Time
-	Limit, Offset *int
+	Limit         *int
+	Cursor        *string
 }
 
 // sessionFilter turns query parameters into a store filter, refusing what cannot be meant.
@@ -553,8 +627,12 @@ func sessionFilter(ctx context.Context, query sessionQuery) (store.SessionFilter
 		Project:   value(query.Project),
 		State:     query.State,
 		Limit:     value(query.Limit),
-		Offset:    value(query.Offset),
 	}
+	cursor, err := decodeCursor[store.SessionPosition](query.Cursor)
+	if err != nil {
+		return store.SessionFilter{}, err
+	}
+	filter.Cursor = cursor
 	if query.After != nil {
 		filter.After = *query.After
 	}
@@ -584,6 +662,16 @@ func sessionFilter(ctx context.Context, query sessionQuery) (store.SessionFilter
 		}
 	}
 	return filter, nil
+}
+
+// sessionPageOf renders a query's results as a page, with the cursor to the next one.
+func sessionPageOf(found []session.Found, limit int) SessionPage {
+	kept, more := page(found, store.SessionLimit(limit))
+	rendered := SessionPage{Items: sessionsOf(kept), HasMore: more}
+	if more {
+		rendered.NextCursor = encodeCursor(kept[len(kept)-1].Position())
+	}
+	return rendered
 }
 
 // sessionsOf renders a query's results, taking the live half where there is one: a session
@@ -619,10 +707,13 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if config != nil {
 		spec = session.FromConfig(*config)
 	}
+	spec.ID = value(request.Id)
 	spec.CallID = value(request.CallId)
 	spec.CustomerID = customerID
 	spec.Text = value(request.Text)
-	spec.PersistConversation = value(request.PersistConversation)
+	// A text conversation is kept in Stream Chat unless it is incognito, which Normalize
+	// turns off, so any Chat client can read it back.
+	spec.PersistConversation = spec.Text
 	spec.ConversationID = value(request.ConversationId)
 
 	spec.Incognito = value(request.Incognito)
@@ -987,6 +1078,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 
 	// The fork is its own conversation, so it gets its own channel and its own agent id:
 	// sharing the parent's would have two sessions writing into one transcript.
+	spec.ID = ""
 	spec.ConversationID = ""
 	spec.AgentID = ""
 	spec.CallID = value(request.CallId)
@@ -1002,6 +1094,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	// write -- so a fork that is carrying history persists, and a parent that kept none has
 	// none to hand over. Recall is cleared rather than inherited, because a fork of a fork
 	// reads its own parent and not its grandparent: the parent's channel already holds both.
+	spec.PersistConversation = spec.Text
 	spec.Recall = nil
 	if recall != nil && (request.Messages == nil || *request.Messages) {
 		spec.PersistConversation = true

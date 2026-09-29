@@ -48,6 +48,8 @@ func (r *heldRecorder) Item(item store.AgentResponseItem) {
 	r.items = append(r.items, item)
 }
 
+func (r *heldRecorder) Described(string, string, string, string, map[string]any) {}
+
 func (r *heldRecorder) Flush(context.Context) error { return nil }
 
 // kinds is the conversation as a reader would see it: what happened, in order.

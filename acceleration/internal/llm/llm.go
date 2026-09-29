@@ -42,6 +42,9 @@ type ImagePart struct {
 	MIME   string // image/jpeg, image/png, image/webp
 	Data   []byte
 	Detail string // "", "auto", "low", "high" — dropped where the provider prices no such choice
+	// Caption is told to the model beside an image attached to a turn, such as which moment
+	// of a video a frame is. It is never sent as part of the image.
+	Caption string
 }
 
 // Message is one turn of a conversation, and one item of a request's input.

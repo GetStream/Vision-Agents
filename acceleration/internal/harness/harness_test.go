@@ -536,6 +536,24 @@ func (s *HarnessSuite) TestARequestForHelpIsDelegatedAndNotSpoken() {
 	s.Equal("think", s.awaitDelegated(1)[0].Skill)
 }
 
+func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
+	s.build(true)
+	s.respond("turn-1", "what is in this picture")
+	picture := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}}
+	_, err := s.harness.Delegate("think", "what is in this picture", "turn-1",
+		[]llm.ContentPart{{Image: &picture}}, nil)
+	s.Require().NoError(err)
+
+	s.reply("turn-1", `Let me look. <ask skill="think">describe the picture</ask>`)
+
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
+	s.True(s.slow.requests()[0].HasImage(), "the task that ran is the one with the picture")
+	for _, settled := range settledIn(s.events.seen()) {
+		s.NotEqual(ReasonSuperseded, settled.Result.Reason, "the picture's task was replaced")
+	}
+	s.Len(delegatedIn(s.events.seen()), 1)
+}
+
 func (s *HarnessSuite) TestCompleteIdentifiersAreNotHandedToAColleague() {
 	s.build(true)
 	s.respond("turn-1", "Maya Chen, date of birth March 4 1987, member ID ABC123456")
