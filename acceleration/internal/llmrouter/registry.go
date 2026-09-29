@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/gmicloud"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/inceptron"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/ionet"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/locateanything"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/meta"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/nextbit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/novita"
@@ -64,6 +65,10 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(gemma.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(gemma.New(gemma.Options{Model: spec.Model, Logger: spec.Logger}))
+	})
+
+	registry.Register(locateanything.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(locateanything.New(locateanything.Options{Model: spec.Model, Logger: spec.Logger}))
 	})
 
 	registry.Register(cerebras.ProviderName, func(spec routing.Spec) (Provider, error) {

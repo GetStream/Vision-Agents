@@ -240,6 +240,11 @@ type ProviderConfig struct {
 	// InputModalities are extra input kinds this model accepts, e.g. "image". Empty
 	// means text only, and a request carrying anything else is not routed here.
 	InputModalities []string `yaml:"input_modalities"`
+	// Specialist is a model that answers one narrow kind of question in a format of its
+	// own, such as a detector that replies in boxes. No shortcut routes to it, since a
+	// conversation failed over onto it would get coordinates back instead of an answer; a
+	// caller reaches it only by naming it.
+	Specialist bool `yaml:"specialist"`
 }
 
 // Supports reports whether this model can express every term a request named.
@@ -328,6 +333,9 @@ type Alias struct {
 
 // matches reports whether a provider satisfies the alias.
 func (a Alias) matches(provider ProviderConfig) bool {
+	if provider.Specialist {
+		return false
+	}
 	if len(a.Only) > 0 && !slices.Contains(a.Only, provider.Name()) {
 		return false
 	}

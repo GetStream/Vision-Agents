@@ -1,0 +1,62 @@
+model_name: locate-anything-3b
+description: >
+  NVIDIA LocateAnything-3B, an open-vocabulary grounding model, behind an OpenAI-compatible
+  /v1/chat/completions so the LLM router's locateanything provider can reach it with the
+  same client it uses for everything else. Answers with boxes on a 0 to 1000 grid.
+python_version: py311
+model_metadata:
+  repo_id: nvidia/LocateAnything-3B
+  tags:
+    - openai-compatible
+  example_model_input:
+    model: LocateAnything-3B
+    messages:
+      - role: user
+        content:
+          - type: image_url
+            image_url:
+              url: https://upload.wikimedia.org/wikipedia/commons/d/df/Aerial_view_of_an_Abuja_parking_lot.jpg
+          - type: text
+            text: "Locate all the instances that matches the following description: car."
+    stream: false
+
+# The weights ship their own modeling code (trust_remote_code), which vLLM and TensorRT-LLM
+# do not run, so this is a model.py over plain Transformers rather than an engine.
+requirements:
+  - torch==2.7.1
+  - torchvision==0.22.1
+  - transformers==4.57.1
+  - accelerate
+  - opencv-python-headless==4.11.0.86
+  - Pillow==11.1.0
+  - peft
+  - decord==0.6.0
+  - lmdb==1.7.5
+  - numpy<2
+
+model_cache:
+  - repo_id: nvidia/LocateAnything-3B
+    revision: main
+    use_volume: true
+    volume_folder: locate-anything-3b
+    kind: hf
+
+secrets:
+  hf_access_token: null
+
+environment_variables:
+  # fast (parallel boxes only), slow (autoregressive) or hybrid (parallel, falling back to
+  # autoregressive on a box it is unsure of). NVIDIA recommend hybrid.
+  GENERATION_MODE: hybrid
+  MAX_NEW_TOKENS: "8192"
+
+resources:
+  # 3B in BF16 is ~8 GB, but a dense scene at native resolution spends far more than that
+  # on activations with SDPA: NVIDIA measured 35 GB on a 4K street image. An H100 is also
+  # where their boxes-per-second numbers come from.
+  accelerator: H100
+  use_gpu: true
+
+runtime:
+  # One GPU runs one generation at a time; the rest queue behind a lock in model.py.
+  predict_concurrency: 4

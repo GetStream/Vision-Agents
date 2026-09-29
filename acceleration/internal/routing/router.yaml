@@ -1991,6 +1991,29 @@ llm:
         per_million_input_tokens: 0.24
         per_million_output_tokens: 1.20
 
+    # NVIDIA's LocateAnything-3B on our own Baseten deployment. A grounding model, not a
+    # chat model: shown an image and a description, it answers with boxes on a 0 to 1000
+    # grid. It is a specialist, so no shortcut routes to it and a caller names it outright.
+    #
+    # Priced like gemma: an estimate of the H100 minute ($0.10833) spread over what one
+    # busy card reads and writes, not a published rate. A detection is mostly image
+    # tokens in and a few box tokens out, so input carries most of the cost. The weights
+    # are licensed for non-commercial research only - see deploy/locate-anything.
+    - provider: locateanything
+      model: LocateAnything-3B
+      description: "NVIDIA's open-vocabulary detector. Answers with boxes, not prose, so it is reached by name only."
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      specialist: true
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: none
+      price:
+        per_million_input_tokens: 0.60
+        per_million_output_tokens: 3.00
+
     # Gemma 4 31B on Cerebras' public inference API, around 1500 tokens a second. Reasoning
     # stays off: the live path wants the first word, not a think-then-speak turn.
     - provider: cerebras

@@ -511,6 +511,30 @@ func (s *RoutingSuite) TestConcreteTargetResolvesToItself() {
 	s.Equal([]string{"quick/en"}, names(candidates))
 }
 
+func (s *RoutingSuite) TestASpecialistIsReachedByNameAndNeverThroughAShortcut() {
+	config := s.config()
+	config.Providers = append(config.Providers, ProviderConfig{
+		Provider: "batchy", Model: "boxes", Languages: []string{"en"}, Specialist: true, DataPolicy: silent,
+	})
+	registry := NewRegistry[*stubProvider]()
+	for _, provider := range []string{"quick", "lush", "batchy"} {
+		registry.Register(provider, func(spec Spec) (*stubProvider, error) {
+			return &stubProvider{model: spec.Model}, nil
+		})
+	}
+	router, err := New(Options[*stubProvider]{Modality: STT, Config: config, Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	candidates, err := router.Resolve(s.ctx, "en-high-accuracy", nil)
+	s.Require().NoError(err)
+	s.NotContains(names(candidates), "batchy/boxes", "a shortcut that accepts every model still skips a specialist")
+
+	candidates, err = router.Resolve(s.ctx, "batchy/boxes", nil)
+	s.Require().NoError(err)
+	s.Equal([]string{"batchy/boxes"}, names(candidates))
+}
+
 func (s *RoutingSuite) TestUnknownTargetIsRejected() {
 	_, err := s.newRouter().Resolve(s.ctx, "quick/does-not-exist", nil)
 	s.ErrorContains(err, `unknown target "quick/does-not-exist"`)
@@ -1153,12 +1177,12 @@ func (s *RoutingSuite) TestSeeingDropsModelsThatCannotTakeAnImage() {
 	s.ErrorContains(err, "no provider accepts image input")
 }
 
-func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMetaAndXAI() {
+func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMetaXAIAndLocateAnything() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 
 	for _, provider := range config[LLM].Providers {
-		if provider.Provider == "openai" || provider.Provider == "gemini" || provider.Provider == "anthropic" || provider.Provider == "meta" || provider.Provider == "xai" {
+		if provider.Provider == "openai" || provider.Provider == "gemini" || provider.Provider == "anthropic" || provider.Provider == "meta" || provider.Provider == "xai" || provider.Provider == "locateanything" {
 			s.Containsf(provider.InputModalities, "image", "%s should accept images", provider.Name())
 			continue
 		}
