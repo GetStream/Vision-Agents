@@ -156,7 +156,9 @@ export class Backend {
     this.authenticate = options.authenticate ?? boolean(env(AUTHENTICATE_ENV));
     this.webSocketImpl = options.webSocket ?? globalWebSocket();
 
-    const chosen = options.fetch ?? globalThis.fetch;
+    // Bound, because a browser only lets fetch be called on the window: kept as a field and
+    // called as this object's method, it throws "Illegal invocation" on every request.
+    const chosen = options.fetch ?? globalThis.fetch?.bind(globalThis);
     if (!chosen) {
       throw new ConfigurationError(
         "there is no fetch here; pass one as the fetch option or run on Node 22 or newer",

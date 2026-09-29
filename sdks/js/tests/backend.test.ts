@@ -255,6 +255,26 @@ describe("Backend", () => {
     );
   });
 
+  it("calls the runtime's fetch on the global object, which a browser insists on", async () => {
+    // A browser's fetch throws "Illegal invocation" unless it is called on the window. Node's
+    // does not care, so the check is made here.
+    const real = globalThis.fetch;
+    globalThis.fetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+      if (this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return real(input, init);
+    } as typeof fetch;
+    try {
+      const backend = new Backend({ url: router.url, customerId: "local" });
+      router.serve("GET", "/v1/agents/configs", { body: [] });
+      const response = await backend.request(`${router.url}/v1/agents/configs`, { method: "GET" });
+      assert.equal(response.status, 200);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
   it("upgrades an https router to wss", async () => {
     const backend = new Backend({ url: "https://router.example.com", customerId: "local" });
     const url = await backend.socketURL("/v1/agents/sessions/x/events");
