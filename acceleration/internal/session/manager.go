@@ -87,6 +87,9 @@ type ManagerOptions struct {
 	Classifier *lcmrouter.Router
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
+	// SpeculativeReplies has every agent start its reply before the flow controller has
+	// ruled on the words, and hold it until the ruling says to answer.
+	SpeculativeReplies bool
 	// WebhookSecret signs a guardrail's outbound webhook. It is the app secret that
 	// already verifies Stream's inbound hooks, so a customer asking to decide for
 	// themselves has the key to check it with and there is no second secret to store.
@@ -378,6 +381,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Search:             m.options.Search,
 		SearchTarget:       spec.SearchTarget,
 		Guardrail:          screening,
+		SpeculativeReplies: m.options.SpeculativeReplies,
 		AppID:              spec.Memory.AppID,
 		MemoryUserID:       spec.Memory.UserID,
 		MemoryFilter:       spec.Memory.Filter,

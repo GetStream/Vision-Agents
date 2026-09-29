@@ -144,6 +144,17 @@ func (s *ConfigSuite) TestSettingsAreReadableFromTheEnvironmentAfterwards() {
 		"cmd/agent and the suites find the database the same way")
 }
 
+func (s *ConfigSuite) TestSpeculativeRepliesAreOffUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.False(config.Agent.SpeculativeReplies)
+
+	s.T().Setenv("ROUTER_SPECULATIVE_REPLIES", "true")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Agent.SpeculativeReplies)
+}
+
 func (s *ConfigSuite) TestANegativeLimitIsRefused() {
 	s.T().Setenv("ROUTER_RATE_LIMIT_MESSAGES_PER_DAY", "-1")
 	_, _, err := Load("")

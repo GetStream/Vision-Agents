@@ -107,6 +107,7 @@ the other commands that read them there.
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
+| `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |

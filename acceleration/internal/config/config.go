@@ -70,6 +70,7 @@ type Config struct {
 	RateLimit       RateLimit `koanf:"rate_limit"`
 	DataMove        DataMove  `koanf:"data_move"`
 	Stream          Stream    `koanf:"stream"`
+	Agent           Agent     `koanf:"agent"`
 }
 
 // Postgres is where everything worth keeping is written. An empty DSN is a router that
@@ -117,6 +118,15 @@ type Stream struct {
 	APISecret string `koanf:"api_secret"`
 }
 
+// Agent is how an agent holds a conversation, where that is the deployment's choice.
+type Agent struct {
+	// SpeculativeReplies starts a reply while the flow controller is still deciding
+	// whether the words were meant for the agent, and holds it until the ruling says to
+	// answer. It saves the ruling's round trip on every answered turn and pays for the
+	// replies a ruling throws away. Off by default.
+	SpeculativeReplies bool `koanf:"speculative_replies"`
+}
+
 // variables maps each setting to the environment variable that has always carried it.
 // Both directions are read from here: the variable wins over the file on the way in, and
 // the effective value is written back to it on the way out.
@@ -142,6 +152,8 @@ var variables = map[string]string{
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
+
+	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -289,6 +301,7 @@ func (c Config) export() error {
 		"data_move.retention":         c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day": fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":   fmt.Sprint(c.RateLimit.TokensPerDay),
+		"agent.speculative_replies":   fmt.Sprint(c.Agent.SpeculativeReplies),
 	}
 	for key, value := range values {
 		if value == "" {

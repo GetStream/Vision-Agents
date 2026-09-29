@@ -332,6 +332,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 		gate = policies
 	}
 
+	if settings.Agent.SpeculativeReplies {
+		logger.Info("starting replies before the flow controller rules on them",
+			"env", "ROUTER_SPECULATIVE_REPLIES")
+	}
+
 	trustedProxies, err := api.TrustedProxies(settings.TrustedProxies)
 	if err != nil {
 		return err
@@ -813,6 +818,9 @@ func buildSessions(
 		Search:     finding,
 		Classifier: judging,
 		Phone:      telephony,
+		// Off unless the deployment asks: a reply started before its ruling is paid for
+		// whether or not it is spoken.
+		SpeculativeReplies: settings.Agent.SpeculativeReplies,
 		// The same app secret that verifies Stream's inbound hooks, now signing one going
 		// the other way. A customer who wants to decide for themselves whether a turn may
 		// be answered already holds it, so there is no second secret to hand out.
