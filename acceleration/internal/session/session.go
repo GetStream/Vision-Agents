@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -124,6 +126,10 @@ type Session struct {
 	// disturbing the others.
 	watchers    map[uint64]*watcher
 	nextWatcher uint64
+	// connections holds the latest connection timing per media path. It is state rather
+	// than conversation, so unlike everything else it is replayed to a watcher that
+	// attaches late: the path usually connects before the caller's socket is open.
+	connections map[string]agent.Connection
 	state       State
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
@@ -324,6 +330,9 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 		for _, pending := range s.tools.Pending() {
 			attached.send(pending)
 		}
+	}
+	for _, peer := range slices.Sorted(maps.Keys(s.connections)) {
+		attached.send(s.connections[peer])
 	}
 	s.mu.Unlock()
 
@@ -726,6 +735,14 @@ func (s *Session) consume() {
 	defer s.running.Done()
 
 	for event := range s.voiceAgent.Events() {
+		if connected, ok := event.(agent.Connection); ok {
+			s.mu.Lock()
+			if s.connections == nil {
+				s.connections = map[string]agent.Connection{}
+			}
+			s.connections[connected.Peer] = connected
+			s.mu.Unlock()
+		}
 		if s.persisted != nil {
 			s.persisted.Observe(event)
 		}

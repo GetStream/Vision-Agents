@@ -124,6 +124,11 @@ type Responded struct {
 
 func (Responded) isAgentEvent() {}
 
+// Connection reports how long one of the call's media paths took to connect.
+type Connection struct{ ConnectionTiming }
+
+func (Connection) isAgentEvent() {}
+
 // ModelCall reports one provider attempt, including flow and delegated work.
 type ModelCall struct{ llm.CallTiming }
 
