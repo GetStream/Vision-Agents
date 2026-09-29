@@ -190,3 +190,85 @@ func TestAFunctionNothingIsRegisteredUnderIsAnError(t *testing.T) {
 		t.Fatal("calling a function that does not exist has to fail")
 	}
 }
+
+// lookupOrder is a tool whose argument is its exported field and whose orders are its own.
+type lookupOrder struct {
+	OrderID string `json:"order_id" schema:"the order number"`
+	orders  map[string]string
+}
+
+func (lookupOrder) Name() string        { return "lookup_order" }
+func (lookupOrder) Description() string { return "Look up an order by its number" }
+func (l lookupOrder) Run(context.Context) (any, error) {
+	status, ok := l.orders[l.OrderID]
+	if !ok {
+		return nil, errors.New("no such order")
+	}
+	return map[string]string{"order_id": l.OrderID, "status": status}, nil
+}
+
+func TestAToolIsDeclaredByItsFieldsAndRunsWithTheModelsArguments(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Add(lookupOrder{orders: map[string]string{"1042": "shipped"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	listed := registry.List()
+	if len(listed) != 1 || listed[0].Name != "lookup_order" || listed[0].Description != "Look up an order by its number" {
+		t.Fatalf("the registry offers %+v, want lookup_order", listed)
+	}
+	properties := listed[0].Parameters["properties"].(map[string]any)
+	if len(properties) != 1 || properties["order_id"] == nil {
+		t.Errorf("the model is offered %v, want only order_id", properties)
+	}
+
+	output, err := registry.Call(t.Context(), "lookup_order", `{"order_id":"1042"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != `{"order_id":"1042","status":"shipped"}` {
+		t.Errorf("the model was answered %s", output)
+	}
+}
+
+func TestOneToolCallsArgumentsDoNotLeakIntoTheNext(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Add(&lookupOrder{orders: map[string]string{"1042": "shipped"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := registry.Call(t.Context(), "lookup_order", `{"order_id":"1042"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Call(t.Context(), "lookup_order", `{}`); err == nil {
+		t.Error("a call without an order id found the previous call's order")
+	}
+}
+
+type unnamed struct{}
+
+func (unnamed) Name() string                     { return "" }
+func (unnamed) Description() string              { return "does nothing" }
+func (unnamed) Run(context.Context) (any, error) { return nil, nil }
+
+type notAStruct string
+
+func (notAStruct) Name() string                     { return "shout" }
+func (notAStruct) Description() string              { return "shouts" }
+func (notAStruct) Run(context.Context) (any, error) { return nil, nil }
+
+func TestAToolTheModelCouldNotBeOfferedIsRefused(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Add(unnamed{}); err == nil {
+		t.Error("a tool without a name was added")
+	}
+	if err := registry.Add(notAStruct("")); err == nil {
+		t.Error("a tool with no fields to hold arguments was added")
+	}
+	if err := registry.Add((*lookupOrder)(nil)); err == nil {
+		t.Error("a nil tool was added")
+	}
+	if len(registry.List()) != 0 {
+		t.Errorf("the registry offers %d tools after refusing all of them", len(registry.List()))
+	}
+}

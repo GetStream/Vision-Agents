@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -19,6 +20,9 @@ import (
 // Everything here is the caller's own decision about this one conversation: what to call it
 // so they can find it again, which models to overrule, and whether to keep it at all.
 type SessionOptions struct {
+	// ID is the UUID to hold the session by, for a caller that wants to know it before the
+	// session exists. Empty lets the router generate a UUIDv7.
+	ID string
 	// Title and Description are what a person finds the conversation by later. Both are
 	// searched.
 	Title       string
@@ -37,9 +41,6 @@ type SessionOptions struct {
 	CallID string
 	// CallType is the Stream call type. Empty leaves the backend's default.
 	CallType string
-	// Persist keeps what was said in Stream Chat, so it outlives the session. What a
-	// conversation somebody comes back to wants, which is most of them.
-	Persist bool
 	// ConversationID resumes the channel an earlier session was held in.
 	ConversationID string
 	// Instructions overrides the agent's own system prompt for this conversation.
@@ -48,9 +49,9 @@ type SessionOptions struct {
 	// behalf. A client acting for a user leaves it empty: the token already says who.
 	UserID string
 
-	// Functions are the caller's own, for this conversation only. Nil uses the agent's,
-	// which is the usual arrangement.
-	Functions *tools.Registry
+	// Tools are the caller's own, for this conversation only. Nil uses the agent's, which is
+	// the usual arrangement.
+	Tools *tools.Registry
 	// Logger is where the session reports what it could not do. Nil uses the default.
 	Logger *slog.Logger
 }
@@ -70,8 +71,10 @@ type Query struct {
 	After  time.Time
 	Before time.Time
 	// Limit is up to 200. Zero is 25.
-	Limit  int
-	Offset int
+	Limit int
+	// Cursor is the NextCursor of the page before, with the same filters. Empty is the
+	// first page.
+	Cursor string
 }
 
 // Sessions is one agent's conversations: the ones being held and the ones that were.
@@ -86,9 +89,9 @@ type Sessions struct {
 // one that is already listening. Without a CallID it is held in writing, which is what a
 // conversation somebody comes back to usually is.
 func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session, error) {
-	functions := options.Functions
+	functions := options.Tools
 	if functions == nil {
-		functions = s.agent.functions
+		functions = s.agent.tools
 	}
 
 	// The pipeline is what holds the socket and runs the caller's functions, so this builds
@@ -107,11 +110,12 @@ func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session
 	return newSession(s.client, s.agent, pipeline, created), nil
 }
 
-// Query returns the agent's conversations, newest first, the ones that ended included.
+// Query returns a page of the agent's conversations, newest first, the ones that ended
+// included. Pass the page's NextCursor as Query.Cursor for the next one.
 //
 // What comes back are the rows rather than live handles: reading a conversation back is not
 // the same as holding one, and most of these are over.
-func (s *Sessions) Query(ctx context.Context, query Query) ([]acceleration.Session, error) {
+func (s *Sessions) Query(ctx context.Context, query Query) (*acceleration.SessionPage, error) {
 	api, err := s.client.api()
 	if err != nil {
 		return nil, err
@@ -119,7 +123,7 @@ func (s *Sessions) Query(ctx context.Context, query Query) ([]acceleration.Sessi
 
 	params := acceleration.ListSessionsParams{Agent: pointer(s.agent.name)}
 	narrow(query, &params.UserId, &params.Project, &params.Custom,
-		&params.CreatedAfter, &params.CreatedBefore, &params.Limit, &params.Offset)
+		&params.CreatedAfter, &params.CreatedBefore, &params.Limit, &params.Cursor)
 	if query.State != "" {
 		state := acceleration.ListSessionsParamsState(query.State)
 		params.State = &state
@@ -133,15 +137,15 @@ func (s *Sessions) Query(ctx context.Context, query Query) ([]acceleration.Sessi
 		return nil, failure("listing the sessions of "+s.agent.name, listed.Status(),
 			listed.JSON400, listed.JSON401)
 	}
-	return *listed.JSON200, nil
+	return listed.JSON200, nil
 }
 
 // Search finds a conversation by what it was called.
 //
 // It reads the title, the description and the opening question, which is what a person
 // remembers a conversation by. An incognito conversation is never found: nothing about it was
-// written down to search.
-func (s *Sessions) Search(ctx context.Context, text string, query Query) ([]acceleration.Session, error) {
+// written down to search. It pages the same way Query does.
+func (s *Sessions) Search(ctx context.Context, text string, query Query) (*acceleration.SessionPage, error) {
 	api, err := s.client.api()
 	if err != nil {
 		return nil, err
@@ -149,7 +153,7 @@ func (s *Sessions) Search(ctx context.Context, text string, query Query) ([]acce
 
 	params := acceleration.SearchSessionsParams{Agent: pointer(s.agent.name), Q: pointer(text)}
 	narrow(query, &params.UserId, &params.Project, &params.Custom,
-		&params.CreatedAfter, &params.CreatedBefore, &params.Limit, &params.Offset)
+		&params.CreatedAfter, &params.CreatedBefore, &params.Limit, &params.Cursor)
 	if query.State != "" {
 		state := acceleration.SearchSessionsParamsState(query.State)
 		params.State = &state
@@ -163,7 +167,7 @@ func (s *Sessions) Search(ctx context.Context, text string, query Query) ([]acce
 		return nil, failure("searching the sessions of "+s.agent.name, found.Status(),
 			found.JSON400, found.JSON401)
 	}
-	return *found.JSON200, nil
+	return found.JSON200, nil
 }
 
 // Get is one conversation, whether or not it is still being held.
@@ -184,6 +188,29 @@ func (s *Sessions) Get(ctx context.Context, id string) (*acceleration.Session, e
 	return got.JSON200, nil
 }
 
+// Update changes one conversation, whether or not it is still being held.
+//
+// Only this session changes: the agent config it started from is untouched. One that ended
+// can still be renamed and relabelled; instructions, models and voice need it running, and
+// take over from its next turn. A target that does not route is refused and the session
+// carries on as it was. Only a backend may ask.
+func (s *Sessions) Update(ctx context.Context, id string, update SessionUpdate) (*acceleration.Session, error) {
+	api, err := s.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	updated, err := api.UpdateSessionWithResponse(ctx, id, update)
+	if err != nil {
+		return nil, fmt.Errorf("client: updating the session %s: %w", id, err)
+	}
+	if updated.JSON200 == nil {
+		return nil, failure("updating the session "+id, updated.Status(),
+			updated.JSON400, updated.JSON401, updated.JSON403, updated.JSON404)
+	}
+	return updated.JSON200, nil
+}
+
 // Responses is a session's turns, read back without holding the conversation.
 //
 // For a conversation that has ended, or one being held somewhere else: the rows are in the
@@ -195,6 +222,7 @@ func (s *Sessions) Responses(id string) *Responses {
 // requestOf renders the options as the session request, with the agent named by name.
 func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionRequest {
 	request := acceleration.CreateSessionRequest{
+		Id:              pointer(options.ID),
 		Agent:           pointer(s.agent.name),
 		Title:           pointer(options.Title),
 		Description:     pointer(options.Description),
@@ -216,12 +244,6 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 	if options.CallID == "" {
 		request.Text = pointer(true)
 	}
-	// An incognito conversation writes no transcript by definition, so asking for one is a
-	// contradiction the router refuses rather than quietly honours. Dropped here so a caller
-	// setting both gets the conversation they asked for instead of a 400.
-	if options.Persist && !options.Incognito {
-		request.PersistConversation = pointer(true)
-	}
 	return request
 }
 
@@ -234,7 +256,7 @@ func narrow(
 	query Query,
 	userID, project, custom **string,
 	after, before **time.Time,
-	limit, offset **int,
+	limit **int, cursor **string,
 ) {
 	*userID = pointer(query.UserID)
 	*project = pointer(query.Project)
@@ -255,7 +277,7 @@ func narrow(
 		*before = &at
 	}
 	*limit = pointer(query.Limit)
-	*offset = pointer(query.Offset)
+	*cursor = pointer(query.Cursor)
 }
 
 // Session is one conversation being held in the backend.
@@ -273,11 +295,23 @@ type Session struct {
 	created  *acceleration.Session
 }
 
+// Hold wraps the session a pipeline is already holding, for a caller that opened it its own
+// way: the agents package renders a whole configuration into the request rather than naming
+// a stored one, and hands what it opened over here so both end up as the same Session.
+func (c *Client) Hold(agent string, pipeline *stream.Pipeline) (*Session, error) {
+	created := pipeline.Session()
+	if created == nil {
+		return nil, errors.New("client: the pipeline is not holding a session")
+	}
+	return newSession(c, c.Agent(agent), pipeline, created), nil
+}
+
 func newSession(client *Client, agent *Agent, pipeline *stream.Pipeline, created *acceleration.Session) *Session {
 	return &Session{
 		Responses: &Responses{
 			client:    client,
 			sessionID: created.Id,
+			kept:      created.ConversationId != nil && *created.ConversationId != "",
 			Items:     newItems(client, created.Id, ""),
 		},
 		client:   client,
@@ -301,14 +335,34 @@ func (s *Session) ConversationID() string {
 	return *s.created.ConversationId
 }
 
-// Functions are the ones this conversation offers the model, to register into.
-func (s *Session) Functions() *tools.Registry { return s.pipeline.Functions() }
+// ContextTruncated says whether older history was left out of what the model was given.
+func (s *Session) ContextTruncated() bool {
+	return s.created.ContextTruncated != nil && *s.created.ContextTruncated
+}
+
+// Tools are the ones this conversation offers the model, to add to.
+func (s *Session) Tools() *tools.Registry { return s.pipeline.Functions() }
 
 // Events yields what the backend did until the conversation ends, when the channel closes.
 func (s *Session) Events() <-chan stream.Event { return s.pipeline.Events() }
 
 // Say speaks text without going through the model, for when the words were never in question.
 func (s *Session) Say(text string, interrupt bool) error { return s.pipeline.Say(text, interrupt) }
+
+// Wait blocks until the conversation ends or the context does.
+func (s *Session) Wait(ctx context.Context) error {
+	events := s.Events()
+	for {
+		select {
+		case _, open := <-events:
+			if !open {
+				return nil
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
 
 // Interrupt abandons the reply being spoken.
 func (s *Session) Interrupt() error { return s.pipeline.Interrupt() }
@@ -320,6 +374,17 @@ func (s *Session) SetInstructions(instructions string) error {
 
 // Close ends the conversation. Safe to call after it has already ended.
 func (s *Session) Close(ctx context.Context) error { return s.pipeline.Leave(ctx) }
+
+// SessionUpdate is what to change about a session. A nil field is left as it is; an empty
+// Sts makes the session a cascade again, and an empty Voice returns to the provider's
+// default. The id, the call and incognito cannot change.
+type SessionUpdate = acceleration.UpdateSessionRequest
+
+// Update changes this session: its title, description, custom labels, instructions, models
+// or voice. See Sessions.Update.
+func (s *Session) Update(ctx context.Context, update SessionUpdate) (*acceleration.Session, error) {
+	return s.agent.Sessions.Update(ctx, s.ID(), update)
+}
 
 // ForkOptions is what to change about a conversation while continuing it.
 type ForkOptions struct {
@@ -342,10 +407,10 @@ type ForkOptions struct {
 	// branches from that point rather than from where the parent is now.
 	ResponseID string
 
-	// Functions are the fork's own. Nil inherits this session's, since a conversation
-	// continued without them would offer the model tools nothing can run.
-	Functions *tools.Registry
-	Logger    *slog.Logger
+	// Tools are the fork's own. Nil inherits this session's, since a conversation continued
+	// without them would offer the model tools nothing can run.
+	Tools  *tools.Registry
+	Logger *slog.Logger
 }
 
 // Fork continues this conversation as a new one.
@@ -393,7 +458,7 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 			forked.JSON400, forked.JSON401, forked.JSON403, forked.JSON404)
 	}
 
-	functions := options.Functions
+	functions := options.Tools
 	if functions == nil {
 		functions = s.pipeline.Functions()
 	}
@@ -432,14 +497,13 @@ type Video struct {
 // Chat is the Stream Chat channel this conversation is written into.
 //
 // It needs a credential of its own: the channel is Stream Chat rather than this router, so a
-// client reached by customer id has nothing to connect with. A conversation that keeps no
-// transcript has no channel, and an incognito one never does.
+// client reached by customer id has nothing to connect with. An incognito conversation keeps
+// no transcript, so it never has a channel.
 func (s *Session) Chat() (*Chat, error) {
 	channel := s.ConversationID()
 	if channel == "" {
 		return nil, fmt.Errorf("client: the session %s keeps no transcript, so there is no "+
-			"channel to read: open it with Persist, and note that an incognito session never "+
-			"has one", s.ID())
+			"channel to read: an incognito session never has one", s.ID())
 	}
 
 	connected, err := s.client.stream()

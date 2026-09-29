@@ -76,7 +76,7 @@ func run(ctx context.Context) error {
 
 	return tui.Run(ctx, tui.Options{
 		Open: func(ctx context.Context, conversationID string) (tui.Session, error) {
-			return agent.Chat(ctx, agents.ChatOptions{Persist: true, ConversationID: conversationID})
+			return agent.Chat(ctx, agents.SessionOptions{Persist: true, ConversationID: conversationID})
 		},
 		History:        tui.BackendHistory(stream.Backend{}, *name),
 		ConversationID: *resume,

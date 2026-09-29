@@ -82,8 +82,7 @@ type Config struct {
 // created. The harness, cost and memory fields are rendered from an agent's configuration
 // before it joins.
 type Call struct {
-	PersistConversation bool
-	ConversationID      string
+	ConversationID string
 	// ID is the call to join. Empty holds the conversation in writing instead.
 	ID string
 	// Type is the Stream call type. Empty leaves the backend's default.
@@ -106,8 +105,7 @@ type Call struct {
 	// Custom is the caller's own labels, handed back untouched and queryable.
 	Custom map[string]any
 	// Incognito holds the conversation and keeps nothing: no session row, no turns, no
-	// transcript whatever PersistConversation says. It cannot be found afterwards, which is
-	// the point of it.
+	// transcript. It cannot be found afterwards, which is the point of it.
 	Incognito bool
 	// ModelOverwrites changes the models for this conversation alone, over whatever the
 	// agent config decided.
@@ -369,16 +367,6 @@ func (p *Pipeline) Say(text string, interrupt bool) error {
 	return p.command(Frame{"type": "say", "text": text})
 }
 
-// Respond answers text through the model, as though it had been said on the call.
-func (p *Pipeline) Respond(text string, interrupt bool) error {
-	if interrupt {
-		if err := p.command(Frame{"type": "interrupt"}); err != nil {
-			return err
-		}
-	}
-	return p.command(Frame{"type": "respond", "text": text})
-}
-
 // Interrupt abandons the reply being spoken.
 func (p *Pipeline) Interrupt() error {
 	return p.command(Frame{"type": "interrupt"})
@@ -427,13 +415,8 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 		request.CallId = &call.ID
 	}
 
-	// An incognito conversation writes no transcript by definition, so asking for one is a
-	// contradiction the router refuses rather than quietly honours. Dropped here so a caller
-	// that set both gets the conversation they asked for rather than a 400.
 	if call.Incognito {
 		request.Incognito = &call.Incognito
-	} else {
-		request.PersistConversation = &call.PersistConversation
 	}
 	if len(call.Custom) > 0 {
 		custom := call.Custom

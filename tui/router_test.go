@@ -171,7 +171,7 @@ func (r *router) session(t *testing.T, conversationID string) Session {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := agent.Chat(t.Context(), agents.ChatOptions{Persist: true, ConversationID: conversationID})
+	session, err := agent.Chat(t.Context(), agents.SessionOptions{Persist: true, ConversationID: conversationID})
 	if err != nil {
 		t.Fatal(err)
 	}

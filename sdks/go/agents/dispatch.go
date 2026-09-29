@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // InboundCall is a call the router could not answer itself.
@@ -148,8 +149,8 @@ func (d *Dispatch) OnCall(handler func(context.Context, InboundCall) error) {
 
 // Host runs these functions for every session opened under an agent id, whoever opened it,
 // giving the router timeout for each call. See stream.Dispatch.Host.
-func (d *Dispatch) Host(agentID string, functions Registrar, timeout time.Duration) {
-	d.dispatch.Host(agentID, functions.Functions(), timeout)
+func (d *Dispatch) Host(agentID string, functions *tools.Registry, timeout time.Duration) {
+	d.dispatch.Host(agentID, functions, timeout)
 }
 
 // WorkerID is what the router calls this connection.
@@ -185,7 +186,7 @@ func (d *Dispatch) Conversation(ctx context.Context, message InboundMessage, bui
 	if err != nil {
 		return nil, err
 	}
-	session, err := agent.Chat(ctx, ChatOptions{Persist: true, AgentID: message.AgentID})
+	session, err := agent.Chat(ctx, SessionOptions{AgentID: message.AgentID})
 	if err != nil {
 		return nil, err
 	}
@@ -270,10 +271,9 @@ func (c *Conversation) Ended() bool {
 // There is nothing to wait for: the answer is written into the channel by the backend as it
 // is generated, so the person who wrote is already reading it.
 //
-// Questions are answered one at a time. Session.Respond interrupts whatever is being said,
-// which is right on a call and wrong here: two messages written in quick succession would
-// throw the first answer away half-written. So the second waits for the first to settle
-// rather than cutting it off.
+// Questions are answered one at a time: two messages written in quick succession would
+// otherwise have the agent answering both at once. So the second waits for the first to
+// settle.
 func (c *Conversation) Respond(text string) error {
 	if c.Ended() {
 		return errors.New("agents: this conversation has ended")
@@ -310,7 +310,7 @@ func (c *Conversation) run(ctx context.Context) {
 			return
 
 		case text := <-c.turns:
-			if err := c.session.Respond(text); err != nil {
+			if _, err := c.session.Responses.Create(ctx, text); err != nil {
 				c.logger.Error("a question never reached the model", "error", err)
 				return
 			}

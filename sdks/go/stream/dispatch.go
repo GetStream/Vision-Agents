@@ -75,7 +75,7 @@ type InboundMessage struct {
 	ChannelType string
 	ChannelID   string
 	// AgentID is the agent the channel belongs to, and what a session started to answer
-	// this has to be given so its replies land back here. See ChatOptions.AgentID.
+	// this has to be given so its replies land back here. See SessionOptions.AgentID.
 	AgentID string
 	// ConfigID names the stored agent config the last conversation here ran under, so a
 	// worker serving several agents knows which one is being written to.

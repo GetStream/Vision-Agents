@@ -1196,6 +1196,54 @@ func (e TranscriptionMode) Valid() bool {
 	}
 }
 
+// Defines values for UpdateSessionRequestThinking.
+const (
+	UpdateSessionRequestThinkingHigh    UpdateSessionRequestThinking = "high"
+	UpdateSessionRequestThinkingLow     UpdateSessionRequestThinking = "low"
+	UpdateSessionRequestThinkingMedium  UpdateSessionRequestThinking = "medium"
+	UpdateSessionRequestThinkingMinimal UpdateSessionRequestThinking = "minimal"
+	UpdateSessionRequestThinkingNone    UpdateSessionRequestThinking = "none"
+)
+
+// Valid indicates whether the value is a known member of the UpdateSessionRequestThinking enum.
+func (e UpdateSessionRequestThinking) Valid() bool {
+	switch e {
+	case UpdateSessionRequestThinkingHigh:
+		return true
+	case UpdateSessionRequestThinkingLow:
+		return true
+	case UpdateSessionRequestThinkingMedium:
+		return true
+	case UpdateSessionRequestThinkingMinimal:
+		return true
+	case UpdateSessionRequestThinkingNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpdateSessionRequestVerbosity.
+const (
+	UpdateSessionRequestVerbosityHigh   UpdateSessionRequestVerbosity = "high"
+	UpdateSessionRequestVerbosityLow    UpdateSessionRequestVerbosity = "low"
+	UpdateSessionRequestVerbosityMedium UpdateSessionRequestVerbosity = "medium"
+)
+
+// Valid indicates whether the value is a known member of the UpdateSessionRequestVerbosity enum.
+func (e UpdateSessionRequestVerbosity) Valid() bool {
+	switch e {
+	case UpdateSessionRequestVerbosityHigh:
+		return true
+	case UpdateSessionRequestVerbosityLow:
+		return true
+	case UpdateSessionRequestVerbosityMedium:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VoiceBindingState.
 const (
 	VoiceBindingStateFailed  VoiceBindingState = "failed"
@@ -1516,6 +1564,24 @@ type AgentResponseItem struct {
 
 // AgentResponseItemKind defines model for AgentResponseItem.Kind.
 type AgentResponseItemKind string
+
+// AgentResponseItemPage defines model for AgentResponseItemPage.
+type AgentResponseItemPage struct {
+	HasMore bool                `json:"has_more"`
+	Items   []AgentResponseItem `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// AgentResponsePage defines model for AgentResponsePage.
+type AgentResponsePage struct {
+	HasMore bool            `json:"has_more"`
+	Items   []AgentResponse `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
 
 // AttachNumberRequest defines model for AttachNumberRequest.
 type AttachNumberRequest struct {
@@ -1887,6 +1953,9 @@ type CreateResponseRequest struct {
 
 	// Text What to answer, as though it had been said.
 	Text string `json:"text"`
+
+	// Videos Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
+	Videos *[]VideoSource `json:"videos,omitempty"`
 }
 
 // CreateSessionRequest defines model for CreateSessionRequest.
@@ -1922,7 +1991,10 @@ type CreateSessionRequest struct {
 	// Greeting Said on joining without going through the model. Empty means the agent waits to be spoken to.
 	Greeting *string `json:"greeting,omitempty"`
 
-	// Incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+	// Id The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
+	Id *string `json:"id,omitempty"`
+
+	// Incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
 	Incognito    *bool   `json:"incognito,omitempty"`
 	Instructions *string `json:"instructions,omitempty"`
 
@@ -1948,9 +2020,6 @@ type CreateSessionRequest struct {
 
 	// Navigating The agent placed this call, so let recordings finish and answer their menus.
 	Navigating *bool `json:"navigating,omitempty"`
-
-	// PersistConversation Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-	PersistConversation *bool `json:"persist_conversation,omitempty"`
 
 	// Phone The number the session acts from, which is what turns transferring on.
 	Phone *SessionPhone `json:"phone,omitempty"`
@@ -3025,10 +3094,7 @@ type Session struct {
 	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
 	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
-
-	// PersistConversation Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-	PersistConversation *bool   `json:"persist_conversation,omitempty"`
-	Project             *string `json:"project,omitempty"`
+	Project         *string          `json:"project,omitempty"`
 
 	// State Whether the agent is still in the call.
 	State SessionState `json:"state"`
@@ -3069,6 +3135,15 @@ type SessionMemory struct {
 
 // SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
 type SessionMode string
+
+// SessionPage defines model for SessionPage.
+type SessionPage struct {
+	HasMore bool      `json:"has_more"`
+	Items   []Session `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
 
 // SessionPhone The number the session acts from, which is what turns transferring on.
 type SessionPhone struct {
@@ -3977,6 +4052,48 @@ type TurnStatsBucket struct {
 	TurnCount       int64    `json:"turn_count"`
 }
 
+// UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended; everything else needs it running.
+type UpdateSessionRequest struct {
+	// Custom Replaces the caller's labels whole. An empty object clears them.
+	Custom      *map[string]interface{} `json:"custom,omitempty"`
+	Description *string                 `json:"description,omitempty"`
+
+	// Instructions What the agent is told to be, from the next turn.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Llm The conversation model, a provider/model or a capability shortcut.
+	Llm             *string `json:"llm,omitempty"`
+	MaxOutputTokens *int    `json:"max_output_tokens,omitempty"`
+
+	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
+	Sts         *string                        `json:"sts,omitempty"`
+	Stt         *string                        `json:"stt,omitempty"`
+	Subagent    *string                        `json:"subagent,omitempty"`
+	Temperature *float64                       `json:"temperature,omitempty"`
+	Thinking    *UpdateSessionRequestThinking  `json:"thinking,omitempty"`
+	Title       *string                        `json:"title,omitempty"`
+	Tts         *string                        `json:"tts,omitempty"`
+	Verbosity   *UpdateSessionRequestVerbosity `json:"verbosity,omitempty"`
+
+	// Voice The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+	Voice *string `json:"voice,omitempty"`
+}
+
+// UpdateSessionRequestThinking defines model for UpdateSessionRequest.Thinking.
+type UpdateSessionRequestThinking string
+
+// UpdateSessionRequestVerbosity defines model for UpdateSessionRequest.Verbosity.
+type UpdateSessionRequestVerbosity string
+
+// VideoSource defines model for VideoSource.
+type VideoSource struct {
+	// MaxFrames How many frames to sample, evenly spaced across the clip. Default 8.
+	MaxFrames *int `json:"max_frames,omitempty"`
+
+	// Url Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+	Url string `json:"url"`
+}
+
 // Voice defines model for Voice.
 type Voice struct {
 	Bindings    *[]VoiceBinding `json:"bindings,omitempty"`
@@ -4068,6 +4185,9 @@ type CommandID = string
 // ConfigName defines model for ConfigName.
 type ConfigName = string
 
+// Cursor defines model for Cursor.
+type Cursor = string
+
 // ItemLimit defines model for ItemLimit.
 type ItemLimit = int
 
@@ -4100,9 +4220,6 @@ type SessionID = string
 
 // SessionLimit defines model for SessionLimit.
 type SessionLimit = int
-
-// SessionOffset defines model for SessionOffset.
-type SessionOffset = int
 
 // SessionProject defines model for SessionProject.
 type SessionProject = string
@@ -4252,8 +4369,10 @@ type ListSessionsParams struct {
 	CreatedBefore *SessionCreatedBefore `form:"created_before,omitempty" json:"created_before,omitempty"`
 
 	// Limit Up to 200. Omitted is 25.
-	Limit  *SessionLimit  `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *SessionOffset `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit *SessionLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListSessionsParamsState defines parameters for ListSessions.
@@ -4281,8 +4400,10 @@ type SearchSessionsParams struct {
 	CreatedBefore *SessionCreatedBefore `form:"created_before,omitempty" json:"created_before,omitempty"`
 
 	// Limit Up to 200. Omitted is 25.
-	Limit  *SessionLimit  `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *SessionOffset `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit *SessionLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // SearchSessionsParamsState defines parameters for SearchSessions.
@@ -4291,8 +4412,10 @@ type SearchSessionsParamsState string
 // ListResponsesParams defines parameters for ListResponses.
 type ListResponsesParams struct {
 	// Limit Up to 200. Omitted is 25.
-	Limit  *SessionLimit  `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *SessionOffset `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit *SessionLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListResponseItemsParams defines parameters for ListResponseItems.
@@ -4301,8 +4424,10 @@ type ListResponseItemsParams struct {
 	ResponseId *ResponseIDFilter `form:"response_id,omitempty" json:"response_id,omitempty"`
 
 	// Limit Up to 1000. Omitted is 200.
-	Limit  *ItemLimit     `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *SessionOffset `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit *ItemLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListSimulationRunsParams defines parameters for ListSimulationRuns.
@@ -4491,10 +4616,15 @@ type AddKnowledgeUrlJSONRequestBody = KnowledgeUrlRequest
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
 
+// UpdateSessionJSONRequestBody defines body for UpdateSession for application/json ContentType.
+type UpdateSessionJSONRequestBody = UpdateSessionRequest
+
 // ForkSessionJSONRequestBody defines body for ForkSession for application/json ContentType.
 type ForkSessionJSONRequestBody = ForkSessionRequest
 
 // SetSessionInstructionsJSONRequestBody defines body for SetSessionInstructions for application/json ContentType.
+//
+// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type SetSessionInstructionsJSONRequestBody = InstructionsRequest
 
 // RespondSessionJSONRequestBody defines body for RespondSession for application/json ContentType.
@@ -4510,6 +4640,8 @@ type RewindSessionJSONRequestBody = RewindSessionRequest
 type SaySessionJSONRequestBody = SayRequest
 
 // SetSessionSettingsJSONRequestBody defines body for SetSessionSettings for application/json ContentType.
+//
+// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type SetSessionSettingsJSONRequestBody = SessionSettingsRequest
 
 // CreateSimulationJSONRequestBody defines body for CreateSimulation for application/json ContentType.
@@ -5267,6 +5399,28 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// UpdateSessionWithBody Change a session
+	//
+	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
+	UpdateSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSession Change a session
+	//
+	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
+	UpdateSession(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetSessionCommand What is known about one durable command
 	//
 	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
@@ -5305,20 +5459,24 @@ type ClientInterface interface {
 
 	// SetSessionInstructionsWithBody Change what the agent is told to be
 	//
-	// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionInstructionsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSessionInstructions Change what the agent is told to be
 	//
-	// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionInstructions(ctx context.Context, id SessionID, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InterruptSession Abandon the reply being spoken
@@ -5418,22 +5576,26 @@ type ClientInterface interface {
 
 	// SetSessionSettingsWithBody Change the models and voice of one running session
 	//
-	// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+	// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
 	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionSettingsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSessionSettings Change the models and voice of one running session
 	//
-	// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+	// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
 	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionSettings(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSimulationRuns What the simulations have come to, newest first
@@ -5911,6 +6073,7 @@ type ClientInterface interface {
 	// UpdateAppPolicyWithBody Replace the calling app's policy
 	//
 	// A field left out is no opinion, so the organization's setting shows through.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -5921,6 +6084,7 @@ type ClientInterface interface {
 	// UpdateAppPolicy Replace the calling app's policy
 	//
 	// A field left out is no opinion, so the organization's setting shows through.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
@@ -7244,6 +7408,48 @@ func (c *Client) GetSession(ctx context.Context, id SessionID, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
+// UpdateSessionWithBody Change a session
+//
+// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
+func (c *Client) UpdateSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSessionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSession Change a session
+//
+// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
+func (c *Client) UpdateSession(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSessionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetSessionCommand What is known about one durable command
 //
 // Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
@@ -7322,11 +7528,12 @@ func (c *Client) ForkSession(ctx context.Context, id SessionID, body ForkSession
 
 // SetSessionInstructionsWithBody Change what the agent is told to be
 //
-// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) SetSessionInstructionsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSessionInstructionsRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
@@ -7341,11 +7548,12 @@ func (c *Client) SetSessionInstructionsWithBody(ctx context.Context, id SessionI
 
 // SetSessionInstructions Change what the agent is told to be
 //
-// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) SetSessionInstructions(ctx context.Context, id SessionID, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSessionInstructionsRequest(c.Server, id, body)
 	if err != nil {
@@ -7565,12 +7773,13 @@ func (c *Client) SaySession(ctx context.Context, id SessionID, body SaySessionJS
 
 // SetSessionSettingsWithBody Change the models and voice of one running session
 //
-// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
 // Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) SetSessionSettingsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSessionSettingsRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
@@ -7585,12 +7794,13 @@ func (c *Client) SetSessionSettingsWithBody(ctx context.Context, id SessionID, c
 
 // SetSessionSettings Change the models and voice of one running session
 //
-// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
 // Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) SetSessionSettings(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSessionSettingsRequest(c.Server, id, body)
 	if err != nil {
@@ -8638,6 +8848,7 @@ func (c *Client) GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn
 // UpdateAppPolicyWithBody Replace the calling app's policy
 //
 // A field left out is no opinion, so the organization's setting shows through.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -8658,6 +8869,7 @@ func (c *Client) UpdateAppPolicyWithBody(ctx context.Context, contentType string
 // UpdateAppPolicy Replace the calling app's policy
 //
 // A field left out is no opinion, so the organization's setting shows through.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
@@ -11442,9 +11654,9 @@ func NewListSessionsRequest(server string, params *ListSessionsParams) (*http.Re
 
 		}
 
-		if params.Offset != nil {
+		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -11656,9 +11868,9 @@ func NewSearchSessionsRequest(server string, params *SearchSessionsParams) (*htt
 
 		}
 
-		if params.Offset != nil {
+		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -11746,6 +11958,53 @@ func NewGetSessionRequest(server string, id SessionID) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewUpdateSessionRequest calls the generic UpdateSession builder with application/json body
+func NewUpdateSessionRequest(server string, id SessionID, body UpdateSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateSessionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateSessionRequestWithBody constructs an http.Request for the UpdateSession method, with any body, and a specified content type
+func NewUpdateSessionRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -12054,9 +12313,9 @@ func NewListResponsesRequest(server string, id SessionID, params *ListResponsesP
 
 		}
 
-		if params.Offset != nil {
+		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -12186,9 +12445,9 @@ func NewListResponseItemsRequest(server string, id SessionID, params *ListRespon
 
 		}
 
-		if params.Offset != nil {
+		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -15841,6 +16100,28 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*GetSessionResponse, error)
 
+	// UpdateSessionWithBodyWithResponse Change a session
+	//
+	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
+	UpdateSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
+
+	// UpdateSessionWithResponse Change a session
+	//
+	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
+	UpdateSessionWithResponse(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
+
 	// GetSessionCommandWithResponse What is known about one durable command
 	//
 	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
@@ -15883,20 +16164,24 @@ type ClientWithResponsesInterface interface {
 
 	// SetSessionInstructionsWithBodyWithResponse Change what the agent is told to be
 	//
-	// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
 
 	// SetSessionInstructionsWithResponse Change what the agent is told to be
 	//
-	// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionInstructionsWithResponse(ctx context.Context, id SessionID, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
 
 	// InterruptSessionWithResponse Abandon the reply being spoken
@@ -16002,22 +16287,26 @@ type ClientWithResponsesInterface interface {
 
 	// SetSessionSettingsWithBodyWithResponse Change the models and voice of one running session
 	//
-	// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+	// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
 	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionSettingsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error)
 
 	// SetSessionSettingsWithResponse Change the models and voice of one running session
 	//
-	// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+	// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
 	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionSettingsWithResponse(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error)
 
 	// ListSimulationRunsWithResponse What the simulations have come to, newest first
@@ -16541,6 +16830,7 @@ type ClientWithResponsesInterface interface {
 	// UpdateAppPolicyWithBodyWithResponse Replace the calling app's policy
 	//
 	// A field left out is no opinion, so the organization's setting shows through.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -16551,6 +16841,7 @@ type ClientWithResponsesInterface interface {
 	// UpdateAppPolicyWithResponse Replace the calling app's policy
 	//
 	// A field left out is no opinion, so the organization's setting shows through.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -19587,7 +19878,7 @@ type ListSessionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]Session
+	JSON200 *SessionPage
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -19595,7 +19886,7 @@ type ListSessionsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListSessionsResponse) GetJSON200() *[]Session {
+func (r ListSessionsResponse) GetJSON200() *SessionPage {
 	return r.JSON200
 }
 
@@ -19649,6 +19940,8 @@ type CreateSessionResponse struct {
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -19669,6 +19962,11 @@ func (r CreateSessionResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r CreateSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateSessionResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -19704,7 +20002,7 @@ type SearchSessionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]Session
+	JSON200 *SessionPage
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -19712,7 +20010,7 @@ type SearchSessionsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r SearchSessionsResponse) GetJSON200() *[]Session {
+func (r SearchSessionsResponse) GetJSON200() *SessionPage {
 	return r.JSON200
 }
 
@@ -19859,6 +20157,75 @@ func (r GetSessionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateSessionResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateSessionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateSessionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateSessionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateSessionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -20248,7 +20615,9 @@ type ListResponsesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]AgentResponse
+	JSON200 *AgentResponsePage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
@@ -20258,8 +20627,13 @@ type ListResponsesResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListResponsesResponse) GetJSON200() *[]AgentResponse {
+func (r ListResponsesResponse) GetJSON200() *AgentResponsePage {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListResponsesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -20386,7 +20760,9 @@ type ListResponseItemsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]AgentResponseItem
+	JSON200 *AgentResponseItemPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
@@ -20396,8 +20772,13 @@ type ListResponseItemsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListResponseItemsResponse) GetJSON200() *[]AgentResponseItem {
+func (r ListResponseItemsResponse) GetJSON200() *AgentResponseItemPage {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListResponseItemsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -23213,6 +23594,8 @@ type GetAppPolicyResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23233,6 +23616,11 @@ func (r GetAppPolicyResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r GetAppPolicyResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAppPolicyResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23275,6 +23663,8 @@ type UpdateAppPolicyResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23295,6 +23685,11 @@ func (r UpdateAppPolicyResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r UpdateAppPolicyResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateAppPolicyResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23337,6 +23732,8 @@ type GetOrganizationPolicyResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23357,6 +23754,11 @@ func (r GetOrganizationPolicyResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r GetOrganizationPolicyResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetOrganizationPolicyResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23399,6 +23801,8 @@ type UpdateOrganizationPolicyResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23419,6 +23823,11 @@ func (r UpdateOrganizationPolicyResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r UpdateOrganizationPolicyResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateOrganizationPolicyResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25663,6 +26072,40 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id Ses
 	return ParseGetSessionResponse(rsp)
 }
 
+// UpdateSessionWithBodyWithResponse Change a session
+//
+// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
+func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
+	rsp, err := c.UpdateSessionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSessionResponse(rsp)
+}
+
+// UpdateSessionWithResponse Change a session
+//
+// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
+func (c *ClientWithResponses) UpdateSessionWithResponse(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
+	rsp, err := c.UpdateSession(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSessionResponse(rsp)
+}
+
 // GetSessionCommandWithResponse What is known about one durable command
 //
 // Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
@@ -25729,11 +26172,13 @@ func (c *ClientWithResponses) ForkSessionWithResponse(ctx context.Context, id Se
 
 // SetSessionInstructionsWithBodyWithResponse Change what the agent is told to be
 //
-// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
 	rsp, err := c.SetSessionInstructionsWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
@@ -25744,11 +26189,12 @@ func (c *ClientWithResponses) SetSessionInstructionsWithBodyWithResponse(ctx con
 
 // SetSessionInstructionsWithResponse Change what the agent is told to be
 //
-// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) SetSessionInstructionsWithResponse(ctx context.Context, id SessionID, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
 	rsp, err := c.SetSessionInstructions(ctx, id, body, reqEditors...)
 	if err != nil {
@@ -25926,12 +26372,14 @@ func (c *ClientWithResponses) SaySessionWithResponse(ctx context.Context, id Ses
 
 // SetSessionSettingsWithBodyWithResponse Change the models and voice of one running session
 //
-// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
 // Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) SetSessionSettingsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error) {
 	rsp, err := c.SetSessionSettingsWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
@@ -25942,12 +26390,13 @@ func (c *ClientWithResponses) SetSessionSettingsWithBodyWithResponse(ctx context
 
 // SetSessionSettingsWithResponse Change the models and voice of one running session
 //
-// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
 // Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) SetSessionSettingsWithResponse(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error) {
 	rsp, err := c.SetSessionSettings(ctx, id, body, reqEditors...)
 	if err != nil {
@@ -26813,6 +27262,7 @@ func (c *ClientWithResponses) GetAppPolicyWithResponse(ctx context.Context, reqE
 // UpdateAppPolicyWithBodyWithResponse Replace the calling app's policy
 //
 // A field left out is no opinion, so the organization's setting shows through.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -26829,6 +27279,7 @@ func (c *ClientWithResponses) UpdateAppPolicyWithBodyWithResponse(ctx context.Co
 // UpdateAppPolicyWithResponse Replace the calling app's policy
 //
 // A field left out is no opinion, so the organization's setting shows through.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -29422,7 +29873,7 @@ func ParseListSessionsResponse(rsp *http.Response) (*ListSessionsResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []Session
+		var dest SessionPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -29489,6 +29940,13 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	}
 
 	return response, nil
@@ -29509,7 +29967,7 @@ func ParseSearchSessionsResponse(rsp *http.Response) (*SearchSessionsResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []Session
+		var dest SessionPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -29590,6 +30048,60 @@ func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateSessionResponse parses an HTTP response from a UpdateSessionWithResponse call
+func ParseUpdateSessionResponse(rsp *http.Response) (*UpdateSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
@@ -29930,11 +30442,18 @@ func ParseListResponsesResponse(rsp *http.Response) (*ListResponsesResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []AgentResponse
+		var dest AgentResponsePage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
@@ -30038,11 +30557,18 @@ func ParseListResponseItemsResponse(rsp *http.Response) (*ListResponseItemsRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []AgentResponseItem
+		var dest AgentResponseItemPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
@@ -32261,6 +32787,13 @@ func ParseGetAppPolicyResponse(rsp *http.Response) (*GetAppPolicyResponse, error
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32307,6 +32840,13 @@ func ParseUpdateAppPolicyResponse(rsp *http.Response) (*UpdateAppPolicyResponse,
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -32355,6 +32895,13 @@ func ParseGetOrganizationPolicyResponse(rsp *http.Response) (*GetOrganizationPol
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32401,6 +32948,13 @@ func ParseUpdateOrganizationPolicyResponse(rsp *http.Response) (*UpdateOrganizat
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

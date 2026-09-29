@@ -29,6 +29,9 @@ type router struct {
 	configs []acceleration.AgentConfig
 	// asked counts how many times the configs were listed, which a session must not need.
 	asked int
+	// conversation is the conversation a created session reports it is kept in. Empty is a
+	// session nothing is kept for.
+	conversation string
 
 	// serve is what the socket does once a client is on it.
 	serve func(t *testing.T, connection *websocket.Conn)
@@ -49,15 +52,20 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 
 		backend.mu.Lock()
 		backend.requests = append(backend.requests, request)
+		conversation := backend.conversation
 		backend.mu.Unlock()
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(acceleration.Session{
+		created := acceleration.Session{
 			Id: "session-1", AgentId: "agent-1", CallId: "call-1",
 			CallType: "default", UserId: "jean", State: "running",
 			CreatedAt: time.Now(),
-		})
+		}
+		if conversation != "" {
+			created.ConversationId = &conversation
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(created)
 	})
 
 	mux.HandleFunc("GET /v1/agents/configs", func(w http.ResponseWriter, _ *http.Request) {
@@ -232,15 +240,11 @@ func TestAConversationCarriesTheLabelsAPersonFindsItBy(t *testing.T) {
 	}
 }
 
-func TestAnIncognitoConversationNeverAsksForATranscript(t *testing.T) {
+func TestAnIncognitoConversationAsksToKeepNothing(t *testing.T) {
 	backend := newRouter(t, hold)
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
 
-	// Asking for both is a contradiction, and the conversation the caller wanted is the
-	// incognito one: an off-the-record conversation writes nothing down by definition.
-	if _, err := pipeline.Join(t.Context(), Call{
-		Incognito: true, PersistConversation: true,
-	}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Incognito: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
@@ -248,9 +252,6 @@ func TestAnIncognitoConversationNeverAsksForATranscript(t *testing.T) {
 	request := backend.created(t)
 	if request.Incognito == nil || !*request.Incognito {
 		t.Error("incognito was not asked for")
-	}
-	if request.PersistConversation != nil {
-		t.Errorf("an incognito conversation asked for a transcript: %v", *request.PersistConversation)
 	}
 }
 
@@ -437,11 +438,11 @@ func TestSayingSomethingSendsItDownTheSocket(t *testing.T) {
 	if err := pipeline.Say("we are closing in five minutes", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := pipeline.Respond("answer them", true); err != nil {
+	if err := pipeline.Interrupt(); err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{"say", "interrupt", "respond"}
+	want := []string{"say", "interrupt"}
 	for _, kind := range want {
 		select {
 		case frame := <-sent:
