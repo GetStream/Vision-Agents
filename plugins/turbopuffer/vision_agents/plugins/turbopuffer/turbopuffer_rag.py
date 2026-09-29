@@ -28,7 +28,7 @@ Usage:
     results = await rag.search("chat API pricing", mode="bm25")
 
 Environment variables:
-    TURBO_PUFFER_KEY: TurboPuffer API key
+    TURBOPUFFER_API_KEY: TurboPuffer API key
     GOOGLE_API_KEY: Google API key (for Gemini embeddings)
 
 Note:
@@ -38,7 +38,6 @@ Note:
 
 import asyncio
 import logging
-import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Literal
@@ -124,7 +123,6 @@ class TurboPufferRAG(RAG):
 
         # Initialize async TurboPuffer client
         self._client = AsyncTurbopuffer(
-            api_key=os.environ.get("TURBO_PUFFER_KEY"),
             region=region,
         )
 
