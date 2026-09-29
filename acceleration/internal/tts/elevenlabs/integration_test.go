@@ -50,6 +50,33 @@ func TestDialogueIntegrationSuite(t *testing.T) {
 	}})
 }
 
+// TestV4IntegrationSuite and TestV4TurboIntegrationSuite hold the v4 family to the same
+// contract. They are served on the dialogue socket too: the text-to-speech socket refuses
+// them at the handshake.
+func TestV4IntegrationSuite(t *testing.T) {
+	suite.Run(t, &DialogueIntegrationSuite{Suite: ttssuite.Suite{
+		New: func() ttssuite.Provider {
+			provider, err := NewDialogue(Options{Model: "eleven_v4"})
+			require.NoError(t, err)
+			return provider
+		},
+		Requires:      []string{"ELEVENLABS_API_KEY"},
+		Interruptible: true,
+	}})
+}
+
+func TestV4TurboIntegrationSuite(t *testing.T) {
+	suite.Run(t, &DialogueIntegrationSuite{Suite: ttssuite.Suite{
+		New: func() ttssuite.Provider {
+			provider, err := NewDialogue(Options{Model: "eleven_v4_turbo"})
+			require.NoError(t, err)
+			return provider
+		},
+		Requires:      []string{"ELEVENLABS_API_KEY"},
+		Interruptible: true,
+	}})
+}
+
 // TestADirectionIsAccepted covers the point of the v3 model, and what the agent's
 // instructions ask a model writing for it to produce. A bracketed direction is not
 // rejected, and the words around it are still said.

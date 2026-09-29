@@ -35,6 +35,7 @@ impl Responses {
         self.create_with(&types::CreateResponseRequest {
             text: text.into(),
             images: None,
+            command_id: None,
         })
         .await
     }

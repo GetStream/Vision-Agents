@@ -19,6 +19,14 @@ import (
 	"strings"
 )
 
+// ErrRateLimited is a provider saying it is being asked too often. Waiting and asking again
+// is worth it, which is why it is told apart from a question that was wrong.
+var ErrRateLimited = errors.New("lcm: the provider is rate limiting")
+
+// ErrUnavailable is a provider that could not answer now but may shortly: overloaded,
+// moving a model, or not reached at all.
+var ErrUnavailable = errors.New("lcm: the provider is unavailable")
+
 // QuestionType is the shape of the answer a question asks for.
 type QuestionType string
 

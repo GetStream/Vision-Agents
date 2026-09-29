@@ -447,6 +447,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 		defer judging.Close()
 		routers[routing.LCM] = judging
+		streams.LCM = judging
 	}
 
 	if section, ok := capabilities[routing.LLM]; ok {

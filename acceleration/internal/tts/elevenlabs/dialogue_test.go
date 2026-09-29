@@ -121,8 +121,14 @@ func (s *DialogueSuite) TestOnlyADialogueModelIsServedHere() {
 	_, err := NewDialogue(Options{APIKey: "k", Model: DefaultModel})
 	s.ErrorContains(err, "not a dialogue model")
 
-	_, err = New(Options{APIKey: "k", Model: DefaultDialogueModel})
-	s.ErrorContains(err, "is a dialogue model")
+	for _, model := range []string{"eleven_v3_conversational", "eleven_v4", DefaultDialogueModel} {
+		_, err = New(Options{APIKey: "k", Model: model})
+		s.ErrorContains(err, "is a dialogue model", model)
+
+		provider, err := NewDialogue(Options{APIKey: "k", Model: model})
+		s.Require().NoError(err, model)
+		s.True(provider.Performs(), model)
+	}
 }
 
 func (s *DialogueSuite) TestNewDefaultsToTheConversationalModel() {

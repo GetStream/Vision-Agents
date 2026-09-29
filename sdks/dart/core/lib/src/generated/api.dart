@@ -303,7 +303,7 @@ final class AgentResponseItem {
 }
 
 final class CreateResponseRequest {
-  const CreateResponseRequest({required this.text, this.images});
+  const CreateResponseRequest({required this.text, this.images, this.commandId});
 
   factory CreateResponseRequest.fromJson(Object? value) {
     final json = _object(value, 'CreateResponseRequest');
@@ -316,15 +316,21 @@ final class CreateResponseRequest {
             ImageSource.fromJson(item),
         ],
       },
+      commandId: switch (json['command_id']) {
+        null => null,
+        final Object value => _string(value, 'CreateResponseRequest.command_id'),
+      },
     );
   }
 
   final String text;
   final List<ImageSource>? images;
+  final String? commandId;
 
   Map<String, Object?> toJson() => {
     'text': text,
     if (images case final value?) 'images': [for (final item in value) item.toJson()],
+    'command_id': ?commandId,
   };
 }
 
