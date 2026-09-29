@@ -92,6 +92,9 @@ var businesses = []business{
 type state struct {
 	name, expect, describe string
 	speaking, outbound     bool
+	// tag tells apart kinds of one state, such as the near misses below; it goes into file
+	// names and ids, and is empty for a state's own cases.
+	tag string
 }
 
 const (
@@ -101,18 +104,23 @@ const (
 )
 
 var states = []state{
-	{"respond", "answer", floorFree + "The caller has finished a complete, unambiguous request or question for the agent, one it can act on.", false, false},
-	{"wait", "wait", floorFree + "The caller has stopped part way through a sentence: the words end on something that needs more, such as a preposition, an article, a conjunction, \"um\", or a trailing clause. Vary how they trail off.", false, false},
-	{"wait-digits", "wait", floorFree + "The agent asked for a number, such as an account, card, policy, booking reference, phone number, date, or time, and the caller has said only the first part of it, spoken as words. The number is plainly not complete yet.", false, false},
-	{"wait-menu", "wait", "The agent is on a call it placed, and the other end is a recorded menu. The menu has read some of its options but has not yet asked the caller to choose. Set participant to \"The line\"; history may be empty or hold what the menu said before.", false, true},
-	{"clarify", "answer-clarify", floorFree + "The caller asks for something the agent cannot act on without asking which thing they mean: the history mentions two or more things the request could refer to (two bookings, two cards, two parcels), or the request leans on something the agent was never told, and the words do not say which. The history must set up the ambiguity, and the request itself must be a complete sentence.", false, false},
-	{"ignore", "ignore", floorFree + "The words are not for the agent: either a different person in the caller's room talking to somebody there (set participant to \"Someone at the caller's microphone\" and another_voice to true), or the caller turning away to talk to someone else in the room (participant \"The caller\"). Mix the two.", false, false},
-	{"stop", "interrupt", talking + "The caller cuts in with a correction, a new request, a question, or a direct interruption such as \"wait\", \"no\", or \"hang on\", so the agent must stop.", true, false},
-	{"shorten", "shorten", talking + "The caller adds one more item of the same kind to what the agent is already answering: another day, another person, another item, another address, for the same request. The agent should fold it in and wrap up briefly rather than stop. It keeps the original request; it neither corrects nor replaces it, and it is not a new topic.", true, false},
-	{"continue-ack", "continue", talking + "The caller only acknowledges, with a backchannel such as \"okay\", \"mm-hmm\", \"right\", \"yep\", or \"got it\". Vary them.", true, false},
-	{"continue-noise", "continue", talking + "What arrives is a noise from the caller's side, written in square brackets, such as [coughs], [baby crying], [keyboard typing], [door closes].", true, false},
-	{"continue-echo", "continue", talking + "What arrives repeats a few words the agent is saying, as a phone line's echo of its own voice would: heard must be words taken from agent_said.", true, false},
-	{"continue-elsewhere", "ignore", talking + elsewhere, true, false},
+	{"respond", "answer", floorFree + "The caller has finished a complete, unambiguous request or question for the agent, one it can act on.", false, false, ""},
+	{"wait", "wait", floorFree + "The caller has stopped part way through a sentence: the words end on something that needs more, such as a preposition, an article, a conjunction, \"um\", or a trailing clause. Vary how they trail off.", false, false, ""},
+	{"wait-digits", "wait", floorFree + "The agent asked for a number, such as an account, card, policy, booking reference, phone number, date, or time, and the caller has said only the first part of it, spoken as words. The number is plainly not complete yet.", false, false, ""},
+	{"wait-menu", "wait", "The agent is on a call it placed, and the other end is a recorded menu. The menu has read some of its options but has not yet asked the caller to choose. Set participant to \"The line\"; history may be empty or hold what the menu said before.", false, true, ""},
+	{"clarify", "answer-clarify", floorFree + "The caller asks for something the agent cannot act on without asking which thing they mean: the history mentions two or more things the request could refer to (two bookings, two cards, two parcels), or the request leans on something the agent was never told, and the words do not say which. The history must set up the ambiguity, and the request itself must be a complete sentence.", false, false, ""},
+	{"ignore", "ignore", floorFree + "The words are not for the agent: either a different person in the caller's room talking to somebody there (set participant to \"Someone at the caller's microphone\" and another_voice to true), or the caller turning away to talk to someone else in the room (participant \"The caller\"). Mix the two.", false, false, ""},
+	{"stop", "interrupt", talking + "The caller cuts in with a correction, a new request, a question, or a direct interruption such as \"wait\", \"no\", or \"hang on\", so the agent must stop.", true, false, ""},
+	{"shorten", "shorten", talking + "The caller adds one more item of the same kind to what the agent is already answering: another day, another person, another item, another address, for the same request. The agent should fold it in and wrap up briefly rather than stop. It keeps the original request; it neither corrects nor replaces it, and it is not a new topic.", true, false, ""},
+	{"continue-ack", "continue", talking + "The caller only acknowledges, with a backchannel such as \"okay\", \"mm-hmm\", \"right\", \"yep\", or \"got it\". Vary them.", true, false, ""},
+	{"continue-noise", "continue", talking + "What arrives is a noise from the caller's side, written in square brackets, such as [coughs], [baby crying], [keyboard typing], [door closes].", true, false, ""},
+	{"continue-echo", "continue", talking + "What arrives repeats a few words the agent is saying, as a phone line's echo of its own voice would: heard must be words taken from agent_said.", true, false, ""},
+	{"continue-elsewhere", "ignore", talking + elsewhere, true, false, ""},
+	// Near misses: cases that look like another state and are not, so that a model learns
+	// the distinction rather than a surface cue (digits, a pronoun, an extra wish).
+	{"respond", "answer", floorFree + "The agent asked for a number of a stated length or kind (an account or member number of a given number of digits, a PIN, a date, a time, a phone number), and the caller has now said all of it, spoken as words: nothing is missing, and the agent can act.", false, false, "number"},
+	{"respond", "answer", floorFree + "The caller's request refers to something with \"it\", \"that\", \"that one\" or a similar word, but the conversation leaves exactly one thing it can mean, so the agent can act without asking which.", false, false, "clear"},
+	{"respond", "answer", floorFree + "The agent has just asked the caller a question, and the caller answers it completely, sometimes adding a small preference or detail about the same thing. The agent can respond.", false, false, "answer"},
 }
 
 const schema = `Write %d varied cases as JSON, and nothing else:
@@ -187,7 +195,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for j := range queue {
-				path := filepath.Join(*work, fmt.Sprintf("%s-%s-%d.json", j.s.name, j.b.name, j.variant))
+				path := filepath.Join(*work, fmt.Sprintf("%s-%s-%s%d.json", j.s.name, j.b.name, j.s.tag, j.variant))
 				if _, err := os.Stat(path); err == nil {
 					continue
 				}
@@ -229,7 +237,7 @@ func main() {
 	var cases []flowCase
 	counts := map[string]int{}
 	for _, j := range jobs {
-		raw, err := os.ReadFile(filepath.Join(*work, fmt.Sprintf("%s-%s-%d.json", j.s.name, j.b.name, j.variant)))
+		raw, err := os.ReadFile(filepath.Join(*work, fmt.Sprintf("%s-%s-%s%d.json", j.s.name, j.b.name, j.s.tag, j.variant)))
 		if err != nil {
 			continue
 		}
@@ -249,7 +257,7 @@ func main() {
 				continue // an echo repeats the agent's own words
 			}
 			known[key] = true
-			c.ID = fmt.Sprintf("synthetic-%s-%s-%d-%d", j.s.name, j.b.name, j.variant, i)
+			c.ID = fmt.Sprintf("synthetic-%s-%s-%s%d-%d", j.s.name, j.b.name, j.s.tag, j.variant, i)
 			c.State, c.Expect, c.Contract = j.s.name, j.s.expect, j.b.name
 			c.Source = "synthetic, written by " + *model
 			c.AgentSpeaking = j.s.speaking
