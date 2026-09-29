@@ -358,6 +358,38 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("opens the channel on a chat client the caller already holds", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(api, { text: true, persist_conversation: true });
+    await router.socket();
+    const session = await opening;
+    let connects = 0;
+    const client = {
+      channel: (type: string, id: string) => ({ type, id }),
+      connectUser: async () => {
+        connects++;
+      },
+      disconnectUser: async () => undefined,
+    };
+
+    const chat = await session.chat({ client });
+
+    assert.equal(chat.client, client);
+    assert.deepEqual(chat.channel, { type: "agent", id: "support-1" });
+    assert.equal(connects, 0, "no second connection");
+    await session.close();
+  });
+
   it("ends the conversation over the socket it is being watched on", async () => {
     const [session, connection] = await opened();
 

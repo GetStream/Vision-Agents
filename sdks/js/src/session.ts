@@ -386,10 +386,12 @@ export class Session {
    * installed it gets told that rather than a module-not-found from inside this package.
    *
    * It needs a credential of its own: the channel is Stream Chat, not this router, so a
-   * client reached by customer id has nothing to connect with.
+   * client reached by customer id has nothing to connect with. A caller already holding a
+   * connected `StreamChat` passes it as `client`, and the channel is opened on that one
+   * rather than on a second connection.
    */
-  chat(): Promise<SessionChat> {
-    this.chatPeer ??= this.openChat();
+  chat(options: { client?: ChatClient } = {}): Promise<SessionChat> {
+    this.chatPeer ??= this.openChat(options.client);
     return this.chatPeer;
   }
 
@@ -493,13 +495,21 @@ export class Session {
     }
   }
 
-  private async openChat(): Promise<SessionChat> {
+  private async openChat(client?: ChatClient): Promise<SessionChat> {
     const channel = this.created.conversation_id ?? "";
     if (!channel) {
       throw new ConfigurationError(
         "this session keeps no transcript, so there is no channel to read; open it with " +
           "persist_conversation, and note that an incognito session never has one",
       );
+    }
+    // The wire writes the channel as type:id, which is what the backend calls a
+    // conversation. Splitting it here keeps that spelling out of the caller's way.
+    const [type, ...rest] = channel.split(":");
+
+    // A page that already holds a connected client has no second connection to make.
+    if (client) {
+      return { client, channel: client.channel(type ?? "agent", rest.join(":")) };
     }
 
     const credentials = await this.client.backend.streamCredentials();
@@ -513,9 +523,6 @@ export class Session {
     const chat = await peer<ChatModule>("stream-chat", "chat");
     const connected = new chat.StreamChat(credentials.apiKey);
     await connected.connectUser(credentials.user, credentials.token);
-    // The wire writes the channel as type:id, which is what the backend calls a
-    // conversation. Splitting it here keeps that spelling out of the caller's way.
-    const [type, ...rest] = channel.split(":");
     return { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
   }
 
