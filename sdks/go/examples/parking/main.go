@@ -1,9 +1,9 @@
 // Command parking counts the cars in a parking lot and says how full it is.
 //
 // The picture goes through the acceleration router to NVIDIA's LocateAnything-3B on
-// Baseten (see acceleration/deploy/locate-anything), which answers with a box around
-// every parked car and every empty space. The count and the percentage come from those
-// boxes, and the boxes are drawn onto a copy of the picture.
+// Baseten (see acceleration/deploy/locate-anything), which is asked for a box around
+// every parked car and then around every empty space. The count and the percentage come
+// from those boxes, and the boxes are drawn onto a copy of the picture.
 //
 //	STREAM_ACCELERATION_URL=http://localhost:8080 \
 //	STREAM_ACCELERATION_CUSTOMER_ID=acme \
@@ -88,13 +88,17 @@ func count(ctx context.Context, model *stream.Model, source string, spaces int, 
 	}
 
 	started := time.Now()
-	answer, err := ask(ctx, model, contents)
-	if err != nil {
-		return err
+	var detections []Detection
+	for _, label := range []string{carLabel, freeLabel} {
+		answer, err := ask(ctx, model, contents, query(label))
+		if err != nil {
+			return err
+		}
+		detections = append(detections, parse(answer, label, picture.Bounds())...)
 	}
 	took := time.Since(started)
 
-	detections := parse(answer, picture.Bounds())
+	detections = plausible(detections)
 	lot := occupancy(detections, spaces)
 	if err := save(out, annotate(picture, detections, lot)); err != nil {
 		return err
@@ -106,13 +110,13 @@ func count(ctx context.Context, model *stream.Model, source string, spaces int, 
 	return nil
 }
 
-// ask sends the picture and the query, and waits for the whole answer.
-func ask(ctx context.Context, model *stream.Model, picture []byte) (string, error) {
+// ask sends the picture and the question, and waits for the whole answer.
+func ask(ctx context.Context, model *stream.Model, picture []byte, question string) (string, error) {
 	err := model.Ask(stream.Question{Messages: []stream.Said{{
 		Role: "user",
 		Parts: []stream.ContentPart{
 			{Image: &stream.Image{Data: picture, MIME: http.DetectContentType(picture)}},
-			{Text: query},
+			{Text: question},
 		},
 	}}})
 	if err != nil {

@@ -5,26 +5,30 @@ import (
 	"image/color"
 	"image/draw"
 	"regexp"
+	"slices"
 	"strconv"
-	"strings"
 )
 
-// What the lot is asked for. LocateAnything answers every category it was given under a
-// <ref> naming it, so these are also the labels the boxes come back under.
+// What the lot is asked for.
+//
+// Each is asked on its own. Asked for both in one prompt, LocateAnything finds the cars
+// and then repeats one empty space until it runs out of tokens; asked separately, each
+// comes back in a few seconds.
 const (
 	carLabel  = "parked car"
 	freeLabel = "empty parking space"
 )
 
-// query asks for both at once, which is one pass over the image rather than two.
-const query = "Locate all the instances that matches the following description: " +
-	carLabel + "</c>" + freeLabel + "."
+// query is the prompt that asks for every instance of one thing.
+func query(label string) string {
+	return "Locate all the instances that matches the following description: " + label + "."
+}
 
 // grid is the scale LocateAnything writes coordinates on, whatever the image's size.
 const grid = 1000
 
-// token is one <ref> naming a category or one <box> belonging to the last one named.
-var token = regexp.MustCompile(`<ref>(.*?)</ref>|<box><(\d+)><(\d+)><(\d+)><(\d+)></box>`)
+// boxPattern is one box in the model's answer.
+var boxPattern = regexp.MustCompile(`<box><(\d+)><(\d+)><(\d+)><(\d+)></box>`)
 
 // Detection is one box the model drew, in the image's pixels.
 type Detection struct {
@@ -32,27 +36,20 @@ type Detection struct {
 	Box   image.Rectangle
 }
 
-// parse reads the model's answer into boxes over an image with those bounds.
-func parse(answer string, bounds image.Rectangle) []Detection {
+// parse reads the answer to the question about label into boxes over an image with
+// those bounds.
+func parse(answer, label string, bounds image.Rectangle) []Detection {
 	var detections []Detection
-	label := ""
-	for _, match := range token.FindAllStringSubmatch(answer, -1) {
-		if match[1] != "" {
-			label = strings.ToLower(strings.TrimSpace(match[1]))
-			continue
-		}
-		if match[2] == "" {
-			continue
-		}
+	for _, match := range boxPattern.FindAllStringSubmatch(answer, -1) {
 		scale := func(value string, size, offset int) int {
 			n, _ := strconv.Atoi(value)
 			return offset + n*size/grid
 		}
 		box := image.Rect(
-			scale(match[2], bounds.Dx(), bounds.Min.X),
-			scale(match[3], bounds.Dy(), bounds.Min.Y),
-			scale(match[4], bounds.Dx(), bounds.Min.X),
-			scale(match[5], bounds.Dy(), bounds.Min.Y),
+			scale(match[1], bounds.Dx(), bounds.Min.X),
+			scale(match[2], bounds.Dy(), bounds.Min.Y),
+			scale(match[3], bounds.Dx(), bounds.Min.X),
+			scale(match[4], bounds.Dy(), bounds.Min.Y),
 		).Intersect(bounds)
 		if box.Empty() {
 			continue
@@ -60,6 +57,52 @@ func parse(answer string, bounds image.Rectangle) []Detection {
 		detections = append(detections, Detection{Label: label, Box: box})
 	}
 	return detections
+}
+
+// oversized is how many times a typical car's area a box may be before it is taken for
+// a group of cars or a stretch of open tarmac rather than one car or one space.
+const oversized = 4
+
+// duplicate is how much two boxes of the same label may overlap, as intersection over
+// union, before the second is taken for the first one drawn again.
+const duplicate = 0.7
+
+// plausible drops what the model sometimes answers besides one box per thing: a box
+// around a whole row or road, and the same box twice.
+func plausible(detections []Detection) []Detection {
+	var areas []int
+	for _, detection := range detections {
+		if detection.Label == carLabel {
+			areas = append(areas, area(detection.Box))
+		}
+	}
+	limit := 0
+	if len(areas) > 0 {
+		slices.Sort(areas)
+		limit = oversized * areas[len(areas)/2]
+	}
+
+	kept := detections[:0:0]
+	for _, detection := range detections {
+		if limit > 0 && area(detection.Box) > limit {
+			continue
+		}
+		if slices.ContainsFunc(kept, func(other Detection) bool {
+			return other.Label == detection.Label && overlap(other.Box, detection.Box) > duplicate
+		}) {
+			continue
+		}
+		kept = append(kept, detection)
+	}
+	return kept
+}
+
+func area(box image.Rectangle) int { return box.Dx() * box.Dy() }
+
+// overlap is the intersection over union of two boxes.
+func overlap(a, b image.Rectangle) float64 {
+	shared := area(a.Intersect(b))
+	return float64(shared) / float64(area(a)+area(b)-shared)
 }
 
 // Occupancy is how full the lot is.
