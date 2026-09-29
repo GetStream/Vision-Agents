@@ -11,6 +11,13 @@ answers with boxes:
 
 Coordinates are on a 0 to 1000 grid over the image, whatever its size.
 
+Live on Baseten as `locate-anything-3b` (`q40g82yw`), one H100, scaling to zero after 15
+idle minutes:
+
+```bash
+LOCATE_ANYTHING_BASE_URL=https://model-q40g82yw.api.baseten.co/environments/production/sync/v1
+```
+
 ## Licence
 
 The weights are under the **NVIDIA License for non-commercial use**: academic and
@@ -52,6 +59,14 @@ before download, accept it on the model page and set the `hf_access_token` secre
 
 `GENERATION_MODE` picks `fast`, `slow` or `hybrid` (the default); a request may override it
 with a `generation_mode` field.
+
+Ask for one category per request when the scene is dense. Asked for `parked car</c>empty
+parking space` together on a full lot, the model found the cars and then repeated one
+empty space until it ran out of tokens; asked separately, each came back in two to five
+seconds. Hybrid mode at the default temperature of 0.7 found 41 or 42 cars on the same
+photo run after run. Greedy decoding (`temperature: 0`) is not steadier: hybrid mode
+occasionally ends an answer early either way. Slow mode is steady but takes about twice as
+long and finds fewer cars.
 
 ## Test it
 

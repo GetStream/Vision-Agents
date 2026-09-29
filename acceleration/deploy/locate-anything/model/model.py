@@ -22,6 +22,7 @@ import urllib.request
 import uuid
 from collections.abc import AsyncIterator
 
+import fastapi
 import torch
 from fastapi.responses import StreamingResponse
 from PIL import Image
@@ -42,6 +43,7 @@ class Model:
     """Loads LocateAnything once and answers chat completions with boxes."""
 
     def __init__(self, **kwargs) -> None:
+        self._lazy_data_resolver = kwargs["lazy_data_resolver"]
         self._generation_mode = os.environ.get("GENERATION_MODE", "hybrid")
         self._max_new_tokens = int(os.environ.get("MAX_NEW_TOKENS", "8192"))
         self._lock = asyncio.Lock()
@@ -50,6 +52,7 @@ class Model:
         self._model = None
 
     def load(self) -> None:
+        self._lazy_data_resolver.block_until_download_complete()
         self._tokenizer = AutoTokenizer.from_pretrained(
             MODEL_DIR, trust_remote_code=True
         )
@@ -69,11 +72,14 @@ class Model:
         logger.info("LocateAnything loaded, generation mode %s", self._generation_mode)
 
     async def predict(self, model_input: dict) -> dict | StreamingResponse:
-        return await self.chat_completions(model_input, None)
+        return await self._complete(model_input)
 
     async def chat_completions(
-        self, model_input: dict, request
+        self, model_input: dict, request: fastapi.Request
     ) -> dict | StreamingResponse:
+        return await self._complete(model_input)
+
+    async def _complete(self, model_input: dict) -> dict | StreamingResponse:
         image, query = _image_and_query(model_input.get("messages", []))
         temperature = float(model_input.get("temperature", 0.7))
         max_new_tokens = int(
