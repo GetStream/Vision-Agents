@@ -5,7 +5,19 @@ Function registry for managing available functions that can be called by LLMs.
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Type, Union, get_type_hints
+import types
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Type,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 from dataclasses import dataclass
 from enum import Enum
 
@@ -257,9 +269,10 @@ class FunctionRegistry:
             return {"type": "object"}
 
         # Handle Optional types
-        if hasattr(type_hint, "__origin__") and type_hint.__origin__ is Union:
+        # Covers both Union[X, None] and the PEP 604 form X | None.
+        if get_origin(type_hint) in (Union, types.UnionType):
             # Check if it's Optional (Union[SomeType, None])
-            args = type_hint.__args__
+            args = get_args(type_hint)
             if len(args) == 2 and type(None) in args:
                 non_none_type = args[0] if args[1] is type(None) else args[1]
                 return self._type_to_json_schema(non_none_type)
