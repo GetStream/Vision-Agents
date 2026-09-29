@@ -12,7 +12,12 @@ from PIL import Image
 from vision_agents.core import Agent, User
 from vision_agents.core.harness import Daytona, DefaultHarness
 from vision_agents.core.llm.llm import ImageContent
-from vision_agents.core.llm.remote import RemoteCall, RemoteEvent, RemotePipelineError
+from vision_agents.core.llm.remote import (
+    JoinStep,
+    RemoteCall,
+    RemoteEvent,
+    RemotePipelineError,
+)
 from vision_agents.plugins import stream, getstream
 
 SETTLE = 2.0
@@ -301,6 +306,80 @@ class TestAccelerated:
         assert "+-- reply stub/answer: TTFT 90 ms, full 600 ms" in caplog.text
         assert "[TTS handoff 20 ms]" in caplog.text
         assert "[first audio 130 ms]" in caplog.text
+
+    async def test_joining_prints_the_path_to_the_call(
+        self,
+        router: Router,
+        call: RemoteCall,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        pipeline = stream.Accelerated(
+            url=router.url, customer_id="acme", log_latency=True
+        )
+        call.join_steps = [JoinStep("create call (coordinator)", 412.0)]
+        caplog.set_level("INFO")
+
+        await pipeline.join_remote(call)
+        try:
+            assert "join DAG call=call-1 | join start -> in the call ~" in caplog.text
+            assert "[create call (coordinator) 412 ms]" in caplog.text
+            assert "[router session " in caplog.text
+            assert "[event socket " in caplog.text
+            assert "its WebRTC connection DAG follows" in caplog.text
+        finally:
+            await pipeline.leave_remote()
+
+    async def test_a_connection_frame_prints_how_the_media_path_connected(
+        self,
+        router: Router,
+        joined: stream.Accelerated,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        joined.log_latency = True
+        caplog.set_level("INFO")
+        await router.send(
+            {
+                "type": "connection",
+                "peer": "publisher",
+                "total_ms": 720,
+                "first_media_ms": 730,
+                "steps": [
+                    {"name": "coordinator join", "ms": 400, "at_ms": 405},
+                    {"name": "SFU join", "ms": 50, "at_ms": 505},
+                    {"name": "SetPublisher", "ms": 80, "at_ms": 620},
+                    {"name": "ICE", "ms": 40, "at_ms": 660},
+                    {"name": "DTLS", "ms": 60, "at_ms": 720},
+                ],
+            }
+        )
+
+        async def printed() -> None:
+            while "[DTLS 60 ms]" not in caplog.text:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(printed(), SETTLE)
+        assert (
+            "webrtc connection DAG peer=publisher | edge join start -> DTLS connected ~720 ms"
+            in caplog.text
+        )
+        assert "[coordinator join 400 ms]" in caplog.text
+        assert "[SetPublisher 80 ms]" in caplog.text
+        assert "[ICE 40 ms]" in caplog.text
+        assert "+-- first RTP at ~730 ms" in caplog.text
+
+    async def test_connection_frames_are_quiet_by_default(
+        self,
+        router: Router,
+        joined: stream.Accelerated,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        caplog.set_level("INFO")
+        events = joined.remote_events()
+        await router.send({"type": "connection", "peer": "publisher", "steps": []})
+        await router.send({"type": "turn", "turn_id": "turn-9", "roundtrip_ms": 10})
+        await asyncio.wait_for(anext(events), SETTLE)
+
+        assert "webrtc connection DAG" not in caplog.text
 
     async def test_latency_logging_is_quiet_by_default(
         self,

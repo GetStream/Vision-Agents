@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Any, AsyncIterator, Optional
 
 import aiortc
@@ -14,6 +15,7 @@ from vision_agents.core.llm.llm import (
     ImageContent,
 )
 from vision_agents.core.llm.remote import (
+    JoinStep,
     RemoteCall,
     RemoteEvent,
     RemotePipelineError,
@@ -22,7 +24,7 @@ from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from ._backend import Backend
-from ._latency import render_turn
+from ._latency import render_connection, render_join, render_turn
 from ._generated.api.default import close_session, create_session, list_agent_configs
 from ._generated.models import (
     CreateSessionRequest,
@@ -165,6 +167,8 @@ class Accelerated(OmniLLM):
         Returns once the backend is in the call, so an agent that has joined is one that
         is already listening. A call with nothing to join is held in writing instead.
         """
+        steps = list(call.join_steps)
+        step_started = time.perf_counter()
         request = self._request(call)
         if self.config:
             # The directory is the config, so it is stored before the config is looked
@@ -176,10 +180,13 @@ class Accelerated(OmniLLM):
                 customer_id=self.backend.customer_id,
             )
             request.config_id = await self._config_id(self.config)
+            steps.append(JoinStep("agent config", _ms_since(step_started)))
 
+        step_started = time.perf_counter()
         created = await create_session.asyncio(
             client=self.backend.client(), body=request
         )
+        steps.append(JoinStep("router session", _ms_since(step_started)))
         if isinstance(created, Error):
             raise RemotePipelineError(created.error)
         if created is None:
@@ -194,8 +201,12 @@ class Accelerated(OmniLLM):
             ),
             self.backend.headers,
         )
+        step_started = time.perf_counter()
         await self._socket.connect()
+        steps.append(JoinStep("event socket", _ms_since(step_started)))
         self._reader = asyncio.create_task(self._watch())
+        if self.log_latency:
+            logger.info("call=%s\n%s", call.call_id, render_join(call.call_id, steps))
         logger.info(
             "joined %s remotely as session %s",
             f"call {call.call_id}" if call.call_id else "a conversation in writing",
@@ -437,6 +448,15 @@ class Accelerated(OmniLLM):
     async def _received(self, frame: dict[str, Any]) -> None:
         """Turn one session frame into an event, or into a tool call to run."""
         kind = frame.get("type", "")
+
+        if kind == "connection":
+            if self.log_latency:
+                logger.info(
+                    "call=%s\n%s",
+                    self.session.call_id if self.session else "",
+                    render_connection(frame),
+                )
+            return
 
         if kind == "model_call":
             if not self.log_latency:
@@ -716,3 +736,8 @@ def _take_images(value: Any, images: list[ImageContent]) -> Any:
                 kept_list.append(_take_images(item, images))
         return kept_list
     return value
+
+
+def _ms_since(started: float) -> float:
+    """Milliseconds elapsed since a `time.perf_counter()` reading."""
+    return (time.perf_counter() - started) * 1000
