@@ -912,7 +912,8 @@ func readStart(connection *websocket.Conn) (start, error) {
 	if opening.Type != "" && opening.Type != "start" {
 		return start{}, errors.New("the first frame must be a start frame")
 	}
-	if opening.Target == "" && opening.ConfigID == "" {
+	if opening.Target == "" && opening.ConfigID == "" && opening.STT.Target == "" &&
+		opening.TTS.Target == "" && opening.LLM.Target == "" && opening.STS.Target == "" {
 		return start{}, errors.New("routing needs a target, either sent or held in a config")
 	}
 	return opening, nil

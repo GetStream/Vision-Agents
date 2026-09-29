@@ -708,6 +708,25 @@ func (s *SessionAPISuite) TestAModalityStreamNeedsATargetBeforeItRoutesAnything(
 	s.Contains(failure["error"], "needs a target")
 }
 
+func (s *SessionAPISuite) TestAModalityStreamTakesTheTargetFromItsOwnBlock() {
+	address := "ws" + strings.TrimPrefix(s.server.URL, "http") + "/v1/tts/stream"
+	header := http.Header{}
+	header.Set(CustomerHeader, "acme")
+
+	connection, _, err := websocket.DefaultDialer.Dial(address, header)
+	s.Require().NoError(err)
+	defer connection.Close()
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "start", "tts": map[string]any{"target": "en-low-latency"},
+	}))
+
+	connection.SetReadDeadline(time.Now().Add(settleFor))
+	var started map[string]any
+	s.Require().NoError(connection.ReadJSON(&started))
+	s.Equal("started", started["type"], "the SDKs name the target inside the option block")
+}
+
 func (s *SessionAPISuite) TestAModalityStreamSpeaksWhatItIsSent() {
 	address := "ws" + strings.TrimPrefix(s.server.URL, "http") + "/v1/tts/stream"
 	header := http.Header{}
