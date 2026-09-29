@@ -1080,7 +1080,9 @@ or browser playback. The router logs call join and each ICE peer connection
 independently; the subscriber can stay idle until someone publishes a track. The Python
 accelerated agent records join duration. Set `log_latency=True` on `stream.Accelerated`
 (or `VOICE_LATENCY_DAG=1` for `simple_voice_ai`) to print per-model timing and a console
-DAG for each turn. The router records metrics regardless of this logging flag.
+DAG for each turn, for the agent's join, and for each WebRTC media path: SFU join, offer
+and answer, ICE, DTLS and the first RTP packet, streamed as a `connection` frame on the
+session socket. The router records metrics regardless of this logging flag.
 Model-call durations annotate the stages they overlap and are not added to the
 speech-to-audio path.
 

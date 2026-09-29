@@ -88,7 +88,9 @@ type Edge struct {
 	// attending carries who comes and goes, which is how an agent that did not start the
 	// call knows somebody is there to talk to.
 	attending *emit.Emitter[agent.Attendance]
-	speaker   *speaker
+	// connecting carries how long each media path took to connect.
+	connecting *emit.Emitter[agent.ConnectionTiming]
+	speaker    *speaker
 
 	client *rtc.Client
 	call   *rtc.Call
@@ -105,6 +107,21 @@ type Edge struct {
 
 	leaveOnce sync.Once
 	leftDone  chan struct{}
+
+	// joinStarted is when Join began; every connection step is measured from it.
+	joinStarted time.Time
+	timingMu    sync.Mutex
+	// connected and firstMedia record which media paths have been reported, so each is
+	// reported once however many times the SDK's timing changes.
+	connected  map[string]bool
+	firstMedia map[string]bool
+	// waiting holds the timer that reports a connected path which has had no media yet.
+	waiting map[string]*time.Timer
+	// latest is the SDK's most recent timing, which a path reported by its timer uses.
+	latest rtc.ConnectionTiming
+	// mediaWait is how long a connected path waits for its first packet before it is
+	// reported without one.
+	mediaWait time.Duration
 }
 
 // New validates the options and returns an Edge. It connects nothing; Join does that.
@@ -142,9 +159,15 @@ func New(options Options) (*Edge, error) {
 		logger:    options.Logger.With("call", options.CallType+":"+options.CallID),
 		inbound:   emit.New[agent.InboundAudio](audioBuffer),
 		attending: emit.New[agent.Attendance](attendanceBuffer),
-		speaker:   newSpeaker(options.Logger),
-		listening: map[string]chan struct{}{},
-		leftDone:  make(chan struct{}),
+		// Two media paths, each reported once.
+		connecting: emit.New[agent.ConnectionTiming](2),
+		connected:  map[string]bool{},
+		firstMedia: map[string]bool{},
+		waiting:    map[string]*time.Timer{},
+		mediaWait:  firstMediaWait,
+		speaker:    newSpeaker(options.Logger),
+		listening:  map[string]chan struct{}{},
+		leftDone:   make(chan struct{}),
 	}, nil
 }
 
@@ -152,6 +175,7 @@ func New(options Options) (*Edge, error) {
 // agent's own audio track.
 func (e *Edge) Join(ctx context.Context) error {
 	started := time.Now()
+	e.joinStarted = started
 	client, err := e.connect()
 	if err != nil {
 		return err
@@ -161,6 +185,8 @@ func (e *Edge) Join(ctx context.Context) error {
 	// Kept off the edge until the join succeeds: leaving a call that never connected panics
 	// in the SDK, which has no signaling client yet to report its stats through.
 	call := client.Call(e.options.CallType, e.options.CallID)
+	// Set before Join so the coordinator and SFU steps are seen as they happen.
+	call.OnConnectionTiming(e.onConnectionTiming)
 	signalingStarted := time.Now()
 	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		e.listen(remote)
@@ -197,7 +223,6 @@ func (e *Edge) Join(ctx context.Context) error {
 		"subscribe_ms", subscribeMs,
 		"publish_ms", float64(time.Since(publishStarted).Microseconds())/1000,
 		"join_ms", float64(time.Since(started).Microseconds())/1000)
-	go e.reportICE(ctx, started)
 
 	e.logger.Info("joined the call",
 		"user", e.options.User.ID, "session", e.call.SessionID.Load(), "tracks", len(subscriptions))
@@ -248,6 +273,7 @@ func (e *Edge) leave() error {
 	}
 	e.inbound.Close()
 	e.attending.Close()
+	e.connecting.Close()
 
 	var failures []error
 	if err := e.speaker.Close(); err != nil {
@@ -264,44 +290,152 @@ func (e *Edge) leave() error {
 	return errors.Join(failures...)
 }
 
-// reportICE observes the two peer connections without replacing the SDK's own ICE
-// callbacks. Sampling adds at most 20 ms to the reported connection time.
-func (e *Edge) reportICE(ctx context.Context, started time.Time) {
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
-	timeout := time.NewTimer(30 * time.Second)
-	defer timeout.Stop()
-	timeoutCh := timeout.C
-	var publisherMs, subscriberMs float64
-	for {
-		if pc := e.call.PublisherPC(); pc != nil && publisherMs == 0 && iceConnected(pc.ICEConnectionState()) {
-			publisherMs = float64(time.Since(started).Microseconds()) / 1000
-			e.logger.Info("ice connection timing", "peer", "publisher", "connected_ms", publisherMs)
-			timeout.Stop()
-			timeoutCh = nil
+// Connections reports how long each media path took to connect, satisfying agent.Connector.
+func (e *Edge) Connections() <-chan agent.ConnectionTiming { return e.connecting.Events() }
+
+// onConnectionTiming reports each media path once it is connected and has sent or received
+// its first packet, or once it has waited mediaWait for one. It also logs the first packet
+// of a path that was reported without it. The SDK calls it on whichever goroutine recorded a
+// step, the packet path included, so nothing here may block.
+func (e *Edge) onConnectionTiming(timing rtc.ConnectionTiming) {
+	paths := []struct {
+		name string
+		peer rtc.PeerTiming
+	}{{publisherPath, timing.Publisher}, {subscriberPath, timing.Subscriber}}
+
+	for _, path := range paths {
+		if path.peer.DTLSConnected.IsZero() {
+			continue
 		}
-		if pc := e.call.SubscriberPC(); pc != nil && subscriberMs == 0 && iceConnected(pc.ICEConnectionState()) {
-			subscriberMs = float64(time.Since(started).Microseconds()) / 1000
-			e.logger.Info("ice connection timing", "peer", "subscriber", "connected_ms", subscriberMs)
+		hasMedia := !path.peer.FirstRTP.IsZero()
+
+		e.timingMu.Lock()
+		e.latest = timing
+		reported := e.connected[path.name]
+		report := !reported && hasMedia
+		logMedia := reported && hasMedia && !e.firstMedia[path.name]
+		if report || logMedia {
+			e.connected[path.name] = true
+			e.firstMedia[path.name] = true
+			if waiting := e.waiting[path.name]; waiting != nil {
+				waiting.Stop()
+			}
 		}
-		if publisherMs > 0 && subscriberMs > 0 {
-			return
+		if !reported && !hasMedia && e.waiting[path.name] == nil {
+			name := path.name
+			e.waiting[name] = time.AfterFunc(e.mediaWait, func() { e.reportWithoutMedia(name) })
 		}
-		select {
-		case <-ticker.C:
-		case <-timeoutCh:
-			e.logger.Warn("publisher ice connection did not complete")
-			return
-		case <-ctx.Done():
-			return
-		case <-e.leftDone:
-			return
+		e.timingMu.Unlock()
+
+		if report {
+			e.reportConnection(path.name, timing, path.peer)
+		}
+		if logMedia {
+			e.logger.Info("first media timing", "peer", path.name,
+				"first_rtp_ms", msBetween(e.joinStarted, path.peer.FirstRTP),
+				"after_dtls_ms", msBetween(path.peer.DTLSConnected, path.peer.FirstRTP))
 		}
 	}
 }
 
-func iceConnected(state webrtc.ICEConnectionState) bool {
-	return state == webrtc.ICEConnectionStateConnected || state == webrtc.ICEConnectionStateCompleted
+// reportWithoutMedia reports a path that connected but had no media within mediaWait, as a
+// subscriber does until somebody publishes.
+func (e *Edge) reportWithoutMedia(name string) {
+	e.timingMu.Lock()
+	if e.connected[name] {
+		e.timingMu.Unlock()
+		return
+	}
+	e.connected[name] = true
+	timing := e.latest
+	e.timingMu.Unlock()
+
+	peer := timing.Publisher
+	if name == subscriberPath {
+		peer = timing.Subscriber
+	}
+	e.reportConnection(name, timing, peer)
+}
+
+// reportConnection logs a connected path and hands its steps to the agent.
+func (e *Edge) reportConnection(name string, timing rtc.ConnectionTiming, peer rtc.PeerTiming) {
+	e.logger.Info("ice connection timing", "peer", name,
+		"connected_ms", msBetween(e.joinStarted, peer.ICEConnected))
+	layout := connectionTiming(name, e.joinStarted, timing, peer)
+	// Send waits for the reader; the SDK's goroutine must not.
+	go e.connecting.Send(layout)
+}
+
+const (
+	publisherPath  = "publisher"
+	subscriberPath = "subscriber"
+	// firstMediaWait bounds how long a connected path waits for its first packet before it
+	// is reported. The agent's publisher sends silence at once, so it normally takes a few
+	// milliseconds; a subscriber has nothing until somebody publishes.
+	firstMediaWait = 2 * time.Second
+)
+
+// connectionTiming lays one media path out as consecutive steps from the start of the join:
+// the steps both paths share, then the path's own. Steps that did not happen are left out.
+// A path's own steps are put in the order they happened, because a subscriber's ICE can
+// finish before the SFU acknowledges its answer.
+func connectionTiming(peer string, started time.Time, timing rtc.ConnectionTiming, path rtc.PeerTiming) agent.ConnectionTiming {
+	type milestone struct {
+		name string
+		at   time.Time
+	}
+	shared := []milestone{
+		// Building the SDK client, which opens the coordinator websocket.
+		{"coordinator websocket", timing.JoinStarted},
+		{"coordinator join", timing.CoordinatorDone},
+		{"SFU websocket", timing.SFUConnected},
+		{"SFU join", timing.SFUJoined},
+	}
+	own := []milestone{
+		{"SFU offer received", path.Offer},
+		{"SendAnswer", path.SignalDone},
+		// From the description being answered to the first connectivity check.
+		{"ICE start", path.ICEChecking},
+		{"ICE checks", path.ICEConnected},
+		{"DTLS", path.DTLSConnected},
+	}
+	if peer == publisherPath {
+		own[0].name, own[1].name = "offer created", "SetPublisher"
+	}
+	slices.SortStableFunc(own, func(a, b milestone) int { return a.at.Compare(b.at) })
+
+	layout := agent.ConnectionTiming{Peer: peer, TotalMs: msBetween(started, path.DTLSConnected)}
+	previous := started
+	for _, step := range append(shared, own...) {
+		if step.at.IsZero() {
+			continue
+		}
+		layout.Steps = append(layout.Steps, agent.ConnectionStep{
+			Name: step.name,
+			Ms:   msBetween(previous, step.at),
+			AtMs: msBetween(started, step.at),
+		})
+		if step.at.After(previous) {
+			previous = step.at
+		}
+	}
+	if !path.FirstRTP.IsZero() {
+		layout.FirstMediaMs = msBetween(started, path.FirstRTP)
+		layout.Steps = append(layout.Steps, agent.ConnectionStep{
+			Name: "first RTP",
+			Ms:   msBetween(path.DTLSConnected, path.FirstRTP),
+			AtMs: layout.FirstMediaMs,
+		})
+	}
+	return layout
+}
+
+// msBetween is the milliseconds from one moment to a later one, never negative.
+func msBetween(from, to time.Time) float64 {
+	if to.IsZero() || !to.After(from) {
+		return 0
+	}
+	return float64(to.Sub(from).Microseconds()) / 1000
 }
 
 // connect builds the SDK client, preferring a token over a secret.

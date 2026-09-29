@@ -32,6 +32,41 @@ type Edge interface {
 	Leave() error
 }
 
+// ConnectionStep is one step of connecting to a call.
+type ConnectionStep struct {
+	// Name says what the step was, for example "SFU join" or "DTLS".
+	Name string
+	// Ms is how long the step took.
+	Ms float64
+	// AtMs is when the step ended, measured from the start of the join.
+	AtMs float64
+}
+
+// ConnectionTiming is how long one of an edge's media paths took to connect, step by step,
+// from the moment the edge started joining.
+type ConnectionTiming struct {
+	// Peer names the path: "publisher" for what the agent sends, "subscriber" for what it
+	// receives. They are reported apart because a subscriber can wait for somebody to publish.
+	Peer string
+	// Steps are the join steps both paths share followed by this path's own, in order.
+	Steps []ConnectionStep
+	// TotalMs is from the start of the join to this path's DTLS handshake finishing.
+	TotalMs float64
+	// FirstMediaMs is from the start of the join to the path's first RTP packet, or zero if
+	// there was none yet when the path connected.
+	FirstMediaMs float64
+}
+
+// Connector is an edge that can say how long it took to connect.
+//
+// Separate from Edge rather than a fifth method on it, because only a transport that
+// negotiates media has steps worth reporting; a loopback connects instantly.
+type Connector interface {
+	// Connections reports each media path once, when it has connected. The channel closes
+	// when the edge leaves.
+	Connections() <-chan ConnectionTiming
+}
+
 // Attendance is somebody arriving in or leaving the call.
 type Attendance struct {
 	Participant stt.Participant

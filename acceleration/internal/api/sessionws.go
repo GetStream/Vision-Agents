@@ -422,6 +422,16 @@ func frameOf(event session.Event) (frame, bool) {
 			"interrupted":            typed.Interrupted,
 		}, true
 
+	case agent.Connection:
+		steps := make([]map[string]any, 0, len(typed.Steps))
+		for _, step := range typed.Steps {
+			steps = append(steps, map[string]any{"name": step.Name, "ms": step.Ms, "at_ms": step.AtMs})
+		}
+		return frame{
+			"type": "connection", "peer": typed.Peer, "steps": steps,
+			"total_ms": typed.TotalMs, "first_media_ms": typed.FirstMediaMs,
+		}, true
+
 	case agent.ModelCall:
 		return frame{
 			"type": "model_call", "operation_id": typed.OperationID,
