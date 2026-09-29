@@ -14,8 +14,8 @@ import { AgentHandle } from "./handle.js";
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
 
-/** The methods the router serves. It serves no PATCH, because the spec describes none. */
-export type Method = "get" | "post" | "put" | "delete";
+/** The methods the router serves. */
+export type Method = "get" | "post" | "put" | "patch" | "delete";
 
 type Operation<P extends keyof paths, M extends Method> = M extends keyof paths[P]
   ? NonNullable<paths[P][M]>
@@ -196,6 +196,13 @@ export class Client {
     ...options: Arguments<Operation<P, "put">>
   ): Promise<Result<Operation<P, "put">>> {
     return this.send("put", path, options[0]);
+  }
+
+  patch<P extends PathsWith<"patch">>(
+    path: P,
+    ...options: Arguments<Operation<P, "patch">>
+  ): Promise<Result<Operation<P, "patch">>> {
+    return this.send("patch", path, options[0]);
   }
 
   delete<P extends PathsWith<"delete">>(

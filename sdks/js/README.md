@@ -228,8 +228,9 @@ const branch = await session.fork({ response_id: items[2].response_id, title: "a
 ```
 
 `rewind` takes a response, a response's id, or any item of one. The model forgets the later
-turns, and they drop out of what `responses` reads back. A conversation kept in Stream Chat
-cannot be rewound, since the channel would still hold the later turns: fork it at the
+turns, and they drop out of what `responses` reads back. A text conversation is kept in
+Stream Chat unless it is incognito, and so cannot be rewound, since the channel would still
+hold the later turns: fork it at the
 response instead, which starts a new session carrying the history only that far. Both work
 from a browser as well as a server.
 

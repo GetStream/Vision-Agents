@@ -250,7 +250,7 @@ export class Session {
     return this.created.id;
   }
 
-  /** The conversation replies are written into, for a session that persists one. */
+  /** The conversation replies are written into, for a text session that is not incognito. */
   get conversationId(): string {
     return this.created.conversation_id ?? "";
   }
@@ -309,6 +309,22 @@ export class Session {
   /** Changes what the agent is told to be, from the next turn. */
   setInstructions(instructions: string): void {
     this.held().send({ type: "instructions", instructions });
+  }
+
+  /**
+   * Changes this session alone: its title, description, custom labels, instructions, models
+   * or voice.
+   *
+   * Server side only. The agent config it started from is untouched and a field left out is
+   * left as it is. A session that ended can still be renamed and relabelled; the rest needs
+   * it running and takes over from its next turn, so a reply being spoken finishes on what it
+   * started with. A target that does not route is refused and the conversation carries on.
+   */
+  update(changes: Schemas["UpdateSessionRequest"]): Promise<Schemas["Session"]> {
+    return this.client.patch("/v1/agents/sessions/{id}", {
+      path: { id: this.id },
+      body: changes,
+    });
   }
 
   /**
@@ -483,8 +499,8 @@ export class Session {
     const channel = this.created.conversation_id ?? "";
     if (!channel) {
       throw new ConfigurationError(
-        "this session keeps no transcript, so there is no channel to read; open it with " +
-          "persist_conversation, and note that an incognito session never has one",
+        "this session keeps no transcript, so there is no channel to read: only a text " +
+          "session has one, and an incognito session never does",
       );
     }
 

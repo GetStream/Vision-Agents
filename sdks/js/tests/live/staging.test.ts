@@ -202,7 +202,6 @@ describe(
       const session = await agentOf(page).sessions.create({
         title,
         project: "qa",
-        persist_conversation: true,
         llm: model,
         watch: false,
       });
@@ -215,7 +214,7 @@ describe(
 
       const found = await agentOf(page).sessions.search(title, { limit: 50 });
       assert.ok(
-        found.some((each) => each.id === session.id),
+        found.items.some((each) => each.id === session.id),
         "a conversation cannot be found by the title it was given",
       );
 
@@ -258,7 +257,7 @@ describe(
 
       const listed = await theirs.get("/v1/agents/sessions");
       assert.ok(
-        !listed.some((each) => each.id === session.id),
+        !listed.items.some((each) => each.id === session.id),
         "somebody else's session was listed",
       );
 
@@ -304,7 +303,6 @@ describe(
       });
       const session = await Session.open(page, {
         text: true,
-        persist_conversation: true,
         agent_id: uniqueId("conv"),
         llm: model,
       });
@@ -358,7 +356,6 @@ describe(
 
       const parent = await agentOf(page).sessions.create({
         title: "the first ask",
-        persist_conversation: true,
         llm: model,
       });
       opened.push({ api: page, id: parent.id });
