@@ -101,6 +101,7 @@ func main() {
 	in := flag.String("in", "", "unpacked AMI manual annotations; downloaded when empty")
 	out := flag.String("out", "", "where to write the set; standard output when empty")
 	all := flag.Bool("all", false, "keep every case found rather than spreading perState of each")
+	turns := flag.Bool("turns", false, "heard at the level of the turn: holds and hand-overs, for training")
 	exclude := flag.String("exclude", "", "a set whose meeting series are left out, so that "+
 		"cases for training share no speakers with it")
 	flag.Parse()
@@ -152,7 +153,11 @@ func main() {
 	for _, name := range names {
 		acts := meetings[name]
 		sort.Slice(acts, func(i, j int) bool { return acts[i].start < acts[j].start })
-		for _, one := range find(acts) {
+		finder := find
+		if *turns {
+			finder = findTurns
+		}
+		for _, one := range finder(acts) {
 			found[one.State] = append(found[one.State], one)
 		}
 	}
@@ -333,6 +338,125 @@ func find(acts []act) []flowCase {
 		cases[i].Participant = "A colleague"
 	}
 	return cases
+}
+
+// said is one word with who said it and the kind of act it belongs to.
+type said struct {
+	word
+	speaker, kind string
+}
+
+// findTurns is every hold and hand-over one meeting offers, heard at the level of the turn:
+// everything the speaker has said since they took the floor, as a live transcript accumulates
+// it. A turn lasts until somebody else says something that is not a backchannel. A pause of
+// pauseSec or more inside it, with nobody else speaking, is a wait when the speaker then goes
+// on, sentence end or not. The turn's last words are a respond when somebody else takes the
+// floor within answerWithinSec and the speaker stays silent carriedOnSec after that, statement
+// or question alike, so that neither label can be told from the punctuation.
+func findTurns(acts []act) []flowCase {
+	var stream []said
+	for _, one := range acts {
+		for _, w := range one.words {
+			if w.timed && !w.punc {
+				stream = append(stream, said{w, one.speaker, one.kind})
+			}
+		}
+	}
+	sort.SliceStable(stream, func(i, j int) bool { return stream[i].start < stream[j].start })
+	textOf := func(from, to float64, speaker string) string {
+		var words []word
+		for _, one := range acts {
+			if one.speaker != speaker || one.end < from || one.start > to {
+				continue
+			}
+			for _, w := range one.words {
+				if (w.punc && len(words) > 0 && w.start <= to) || (w.timed && w.start >= from && w.end <= to) {
+					words = append(words, w)
+				}
+			}
+		}
+		sort.SliceStable(words, func(i, j int) bool { return words[i].start < words[j].start })
+		return join(words)
+	}
+	takesFloor := func(s said) bool { return s.kind != "bck" && !caughtBeforeTheModel(s.text) }
+
+	var cases []flowCase
+	for i := 0; i < len(stream); {
+		speaker, start := stream[i].speaker, stream[i].start
+		// The turn: the speaker's words until somebody else takes the floor.
+		j := i
+		var mine []int
+		for ; j < len(stream); j++ {
+			if stream[j].speaker == speaker {
+				mine = append(mine, j)
+			} else if takesFloor(stream[j]) {
+				break
+			}
+		}
+		for k := 0; k+1 < len(mine); k++ {
+			a, b := stream[mine[k]], stream[mine[k+1]]
+			if b.start-a.end < pauseSec || k < 3 {
+				continue
+			}
+			heard := textOf(start, a.end, speaker)
+			cases = append(cases, flowCase{
+				State: "wait", Source: source(meetingOf(acts), a.end), Heard: heard, Expect: "wait",
+				History: contextBefore(acts, start, lastSpeakerBefore(acts, speaker, start)),
+			})
+		}
+		if len(mine) >= 4 && j < len(stream) {
+			last, next := stream[mine[len(mine)-1]], stream[j]
+			if next.start-last.end >= 0 && next.start-last.end <= answerWithinSec &&
+				!talks(acts, speaker, last.end+0.05, next.start+carriedOnSec) {
+				cases = append(cases, flowCase{
+					State: "respond", Source: source(meetingOf(acts), last.end),
+					Heard: textOf(start, last.end+0.05, speaker), Expect: "answer",
+					History: contextBefore(acts, start, next.speaker),
+				})
+			}
+		}
+		if j == i {
+			j++
+		}
+		i = j
+	}
+	for i := range cases {
+		cases[i].ID = "ami-turn-" + cases[i].State + "-" + strings.ReplaceAll(
+			strings.ToLower(strings.TrimPrefix(cases[i].Source, "AMI ")), " ", "-")
+		cases[i].Contract = "meeting"
+		cases[i].Participant = "A colleague"
+	}
+	return cases
+}
+
+func meetingOf(acts []act) string { return acts[0].meeting }
+
+// lastSpeakerBefore is who last took the floor before speaker's turn, the one the agent stands in for.
+func lastSpeakerBefore(acts []act, speaker string, at float64) string {
+	agent := ""
+	for _, one := range acts {
+		if one.start < at && one.speaker != speaker && substantive(one.kind) {
+			agent = one.speaker
+		}
+	}
+	return agent
+}
+
+// contextBefore is the four substantive acts ending before at, told from the agent's side.
+func contextBefore(acts []act, at float64, agent string) []history {
+	var said []history
+	for j := len(acts) - 1; j >= 0 && len(said) < 4; j-- {
+		one := acts[j]
+		if one.end > at || !substantive(one.kind) || len(spoken(one.words)) > 40 {
+			continue
+		}
+		speaker := "colleague"
+		if one.speaker == agent {
+			speaker = "agent"
+		}
+		said = append([]history{{Speaker: speaker, Text: one.text()}}, said...)
+	}
+	return said
 }
 
 // stoppedBy reports whether the speaker of held gave way to over: they fell silent soon after
