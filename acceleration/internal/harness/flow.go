@@ -133,16 +133,17 @@ Choose respond for a complete, relevant thought.
 A recorded menu reading out its options is one thought and not several, however long the
 pauses between them: choose wait until it has asked for a choice, and never interrupt one,
 because it is not listening and starts again from the top if it is talked over.
-If the agent is speaking, stop for a correction or direct interruption, shorten for a related
-addition that makes the current answer too long, and continue for a brief acknowledgement,
+If the agent is speaking, stop for a correction or direct interruption, shorten when the caller
+adds one more item of the same kind to what the agent is answering (another day, person, item
+or address for the same request, neither correcting nor replacing it), and continue for a brief acknowledgement,
 a cough or other non-speech noise, or clearly unrelated background speech. If the agent is
 not speaking, choose continue.
 Words that only repeat what the agent is saying are the caller's line echoing it back, so
 choose continue.
 When the caller has not finished and is talking over the agent, decide only the floor and
 always choose wait for the disposition: stop as soon as what has been said so far is a
-correction, a new request, a question, or a direct interruption such as "wait", "no", or
-"hang on"; shorten for a related addition; and continue while it is only an acknowledgement,
+correction, a different request, a question, or a direct interruption such as "wait", "no", or
+"hang on"; shorten for one more item of the same kind for the same request; and continue while it is only an acknowledgement,
 a noise, an echo of the agent's own words, or too short to tell.`
 
 func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *flow {
