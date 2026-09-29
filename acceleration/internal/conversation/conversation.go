@@ -148,8 +148,16 @@ type Conversation struct {
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning string
+	// indicated is the last AI indicator sent to watchers. Only run touches it.
+	indicated indication
 	stopped   chan struct{}
 	done      chan struct{}
+}
+
+// indication is the Stream AI indicator a reply last showed: which message, in which state.
+type indication struct {
+	message string
+	state   string
 }
 
 var validID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
@@ -1357,10 +1365,15 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 		fields["attachments"] = attachments
 	}
 	if op.Create {
+		custom := map[string]any{"source": "agent", "generating": m.FinishedAt == nil,
+			"support_message": metadata, "support_runtime": runtime}
+		// ai_generated is how Stream's AI components tell a streamed reply from the rest.
+		// User messages are written as the agent too, so it goes on assistant replies only.
+		if m.Role == "assistant" {
+			custom["ai_generated"] = true
+		}
 		_, err := c.service.client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &m.Text,
-			Custom: map[string]any{"source": "agent", "generating": m.FinishedAt == nil,
-				"support_message": metadata, "support_runtime": runtime},
+			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom,
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := c.service.client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
@@ -1445,13 +1458,16 @@ func (c *Conversation) flush() bool {
 }
 func (c *Conversation) run() {
 	defer close(c.done)
-	tick := time.NewTicker(200 * time.Millisecond)
+	// Stream's guidance for streamed replies is a live update at most every 50 to 100 ms.
+	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	retry := time.Time{}
 	for {
 		select {
 		case <-c.stopped:
-			c.flush()
+			if c.flush() {
+				c.indicate(nil)
+			}
 			return
 		case <-tick.C:
 			if time.Now().Before(retry) {
@@ -1464,7 +1480,8 @@ func (c *Conversation) run() {
 			c.mu.Lock()
 			m := c.data.Current
 			thinking := c.reasoning
-			dirty := c.dirty && m != nil && c.created[m.ID]
+			created := m != nil && c.created[m.ID]
+			dirty := c.dirty && created
 			if m != nil {
 				copy := *m
 				copy.Tools = append([]Tool{}, m.Tools...)
@@ -1475,6 +1492,13 @@ func (c *Conversation) run() {
 				c.dirty = false
 			}
 			c.mu.Unlock()
+			// Every pending write is stored by now, so a settled reply's final text is
+			// already in Stream Chat when its indicator clears.
+			if created && m.Role == "assistant" && m.FinishedAt == nil {
+				c.indicate(m)
+			} else {
+				c.indicate(nil)
+			}
 			if dirty && m != nil && m.FinishedAt == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				err := c.send(ctx, operation{Message: *m, thinking: thinking}, true)
@@ -1497,6 +1521,54 @@ func (c *Conversation) run() {
 			}
 		}
 	}
+}
+
+// indicate tells watchers what a live reply is doing with Stream's AI indicator events,
+// sending one only when that changes. A nil reply clears the last indicator. They are a
+// best-effort signal: the message's own state and generating fields stay authoritative,
+// so a failed send is not retried.
+func (c *Conversation) indicate(m *Message) {
+	next := indication{}
+	if m != nil {
+		next = indication{message: m.ID, state: aiState(*m)}
+	}
+	if next == c.indicated {
+		return
+	}
+	if c.indicated.message != "" && c.indicated.message != next.message {
+		c.sendIndicator(c.indicated.message, "")
+	}
+	if next.message != "" {
+		c.sendIndicator(next.message, next.state)
+	}
+	c.indicated = next
+}
+
+// sendIndicator sends ai_indicator.update with state, or ai_indicator.clear without one.
+func (c *Conversation) sendIndicator(messageID, state string) {
+	event := getstream.EventRequest{Type: "ai_indicator.clear", UserID: &c.data.Agent,
+		Custom: map[string]any{"message_id": messageID}}
+	if state != "" {
+		event.Type = "ai_indicator.update"
+		event.Custom["ai_state"] = state
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = c.service.client.Chat().SendEvent(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendEventRequest{Event: event})
+}
+
+// aiState maps a live reply to Stream's AI indicator states: generating once the answer
+// streams, checking external sources while a search runs, thinking otherwise.
+func aiState(m Message) string {
+	if m.State == "writing" {
+		return "AI_STATE_GENERATING"
+	}
+	for _, t := range m.Tools {
+		if t.Status == "running" && strings.Contains(t.Name, "search") {
+			return "AI_STATE_EXTERNAL_SOURCES"
+		}
+	}
+	return "AI_STATE_THINKING"
 }
 
 func sameMemoryScope(a, b memory.Scope) bool {
