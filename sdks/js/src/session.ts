@@ -291,17 +291,33 @@ export class Session {
     this.held().send({ type: "say", text: said });
   }
 
-  /** Answers text through the model, as though it had been said on the call. */
-  respond(said: string, options: { interrupt?: boolean } = {}): void {
+  /**
+   * Answers text through the model, as though it had been said on the call.
+   *
+   * A conversation that is kept is only answered for a named command, which is what lets the
+   * backend tell a retried question from a new one, so one is named for it the way
+   * `responses.create` names one. Returns the command, which `interrupt` can be given.
+   */
+  respond(said: string, options: { interrupt?: boolean; commandId?: string } = {}): string {
     if (options.interrupt) {
       this.held().send({ type: "interrupt" });
     }
-    this.held().send({ type: "respond", text: said });
+    const commandId =
+      options.commandId ?? (this.created.conversation_id ? crypto.randomUUID() : "");
+    this.held().send({
+      type: "respond",
+      text: said,
+      ...(commandId ? { command_id: commandId } : {}),
+    });
+    return commandId;
   }
 
-  /** Abandons the reply being spoken. */
-  interrupt(): void {
-    this.held().send({ type: "interrupt" });
+  /** Abandons the reply being spoken, or with `commandId` the one answering that command. */
+  interrupt(options: { commandId?: string } = {}): void {
+    this.held().send({
+      type: "interrupt",
+      ...(options.commandId ? { command_id: options.commandId } : {}),
+    });
   }
 
   /** Changes what the agent is told to be, from the next turn. */
