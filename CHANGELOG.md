@@ -292,6 +292,12 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+### The JavaScript SDK's session can use a chat client you already hold
+
+`session.chat({ client })` opens the conversation's channel on a connected `StreamChat` of
+yours instead of connecting a second one, and `interrupt({ commandId })` names the turn it
+stops.
+
 ### A dispatch worker can run tools for every session under an agent id
 
 A worker on `/v1/dispatch` can send `host_tools` naming an `agent_id` and the tools it runs
@@ -1153,6 +1159,23 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 - Chat readers are explicitly added to existing agent channels before their token is
   issued, so opening a members-only transcript no longer fails with `ReadChannel`.
+
+- The JavaScript SDK works in a browser without a `fetch` of your own: it called the global
+  `fetch` as its own method, which every browser refuses with "Illegal invocation".
+
+- The JavaScript SDK's session socket is admitted by the authenticating proxy: with
+  `authenticate` it now also carries the token as `authorization` with
+  `stream-auth-type=jwt`, which is how the proxy reads a socket's credential. It was refused
+  with a 401, so a page on a hosted deployment could only use `watch: false`.
+
+- The JavaScript SDK's `respond` names a command on a kept conversation, the way
+  `responses.create` does, so asking one over the socket is no longer refused with
+  "personal conversations require a command ID". It returns the command's id, and takes a
+  `commandId` of your own.
+
+- The JavaScript SDK tells a router reached by `customerId` who the end user is: `userId`
+  is sent as `user_id` in the query of every request and socket, which a router in `proxy`
+  mode reads. It was dropped, so the conversations such a caller opened belonged to nobody.
 
 - Managed research workspaces resume stopped Daytona VMs in place, refresh preview access and recover worker processes before research; pinned source revisions are preserved.
 
