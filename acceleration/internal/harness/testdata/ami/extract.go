@@ -27,9 +27,21 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
+
+// icsiURL is the ICSI Meeting Corpus's words and dialogue acts, for -corpus icsi.
+const icsiURL = "https://groups.inf.ed.ac.uk/ami/ICSICorpusAnnotations/ICSI_core_NXT.zip"
+
+// corpusLabel names the corpus in each case's source and id.
+var corpusLabel = "AMI"
+
+const icsiContract = "You are one of the researchers in a weekly research group meeting at the " +
+	"International Computer Science Institute. Everything said in the meeting is said to the whole " +
+	"group, you included. Take part the way a colleague would: answer a question put to the group " +
+	"or to you, and do not talk over whoever holds the floor."
 
 // corpusURL is the manual annotations: words with their timings and dialogue acts, no audio.
 const corpusURL = "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip"
@@ -101,6 +113,7 @@ func main() {
 	in := flag.String("in", "", "unpacked AMI manual annotations; downloaded when empty")
 	out := flag.String("out", "", "where to write the set; standard output when empty")
 	all := flag.Bool("all", false, "keep every case found rather than spreading perState of each")
+	corpusName := flag.String("corpus", "ami", "ami, or icsi: the ICSI Meeting Corpus core NXT annotations, unpacked, as -in")
 	turns := flag.Bool("turns", false, "heard at the level of the turn: holds and hand-overs, for training")
 	exclude := flag.String("exclude", "", "a set whose meeting series are left out, so that "+
 		"cases for training share no speakers with it")
@@ -122,17 +135,38 @@ func main() {
 		}
 	}
 
+	icsi := *corpusName == "icsi"
+	if icsi {
+		corpusLabel = "ICSI"
+		if *in == "" {
+			must(fmt.Errorf("-corpus icsi needs -in: %s, unpacked", icsiURL))
+		}
+	}
 	corpus, err := open(*in)
 	must(err)
-	kinds, err := daTypes(corpus)
-	must(err)
-	files, err := fs.Glob(corpus, "dialogueActs/*.dialog-act.xml")
+	var kinds map[string]string
+	pattern := "dialogueActs/*.dialog-act.xml"
+	if icsi {
+		pattern = "DialogueActs/*.dialogue-acts.xml"
+	} else {
+		kinds, err = daTypes(corpus)
+		must(err)
+	}
+	files, err := fs.Glob(corpus, pattern)
 	must(err)
 
 	meetings := map[string][]act{}
 	for _, file := range files {
 		base := path.Base(file)
 		meeting, speaker := strings.Split(base, ".")[0], strings.Split(base, ".")[1]
+		if icsi {
+			words, err := readWords(corpus, "Words/"+meeting+"."+speaker+".words.xml")
+			must(err)
+			acts, err := readICSIActs(corpus, file, meeting, speaker, words)
+			must(err)
+			meetings[meeting] = append(meetings[meeting], acts...)
+			continue
+		}
 		// The scenario meetings are the ones the contract describes.
 		if !regexp.MustCompile(`^(ES|IS|TS)`).MatchString(meeting) || excluded[series(meeting)] {
 			continue
@@ -172,6 +206,10 @@ func main() {
 		Source: "AMI Meeting Corpus manual annotations 1.6.2, CC BY 4.0, " +
 			"https://groups.inf.ed.ac.uk/ami/corpus/",
 		Contracts: map[string]string{"meeting": contract},
+	}
+	if icsi {
+		set.Source = "ICSI Meeting Corpus core annotations (NXT), CC BY 4.0, https://groups.inf.ed.ac.uk/ami/icsi/"
+		set.Contracts = map[string]string{"meeting": icsiContract}
 	}
 	for _, state := range []string{"respond", "wait", "stop", "continue-ack"} {
 		picked := found[state]
@@ -421,8 +459,8 @@ func findTurns(acts []act) []flowCase {
 		i = j
 	}
 	for i := range cases {
-		cases[i].ID = "ami-turn-" + cases[i].State + "-" + strings.ReplaceAll(
-			strings.ToLower(strings.TrimPrefix(cases[i].Source, "AMI ")), " ", "-")
+		cases[i].ID = strings.ToLower(corpusLabel) + "-turn-" + cases[i].State + "-" + strings.ReplaceAll(
+			strings.ToLower(strings.TrimPrefix(cases[i].Source, corpusLabel+" ")), " ", "-")
 		cases[i].Contract = "meeting"
 		cases[i].Participant = "A colleague"
 	}
@@ -615,7 +653,7 @@ func join(words []word) string {
 }
 
 func source(meeting string, at float64) string {
-	return fmt.Sprintf("AMI %s %.2fs", meeting, at)
+	return fmt.Sprintf("%s %s %.2fs", corpusLabel, meeting, at)
 }
 
 // caughtBeforeTheModel is the agent's overlapNoise, as flowbench_test.go mirrors it.
@@ -670,18 +708,28 @@ func readWords(corpus fs.FS, name string) ([]word, error) {
 			continue
 		}
 		var parsed struct {
-			ID    string   `xml:"http://nite.sourceforge.net/ id,attr"`
-			Start *float64 `xml:"starttime,attr"`
-			End   *float64 `xml:"endtime,attr"`
-			Punc  string   `xml:"punc,attr"`
-			Text  string   `xml:",chardata"`
+			ID string `xml:"http://nite.sourceforge.net/ id,attr"`
+			// Strings, not numbers: ICSI writes an untimed word as starttime="", which would decode as 0.
+			Start string `xml:"starttime,attr"`
+			End   string `xml:"endtime,attr"`
+			Punc  string `xml:"punc,attr"`
+			Class string `xml:"c,attr"` // ICSI's word class: W, TRUNCW, LET, ABBR and CD are words
+			Text  string `xml:",chardata"`
 		}
 		if err := decoder.DecodeElement(&parsed, &start); err != nil {
 			return nil, err
 		}
 		w := word{id: parsed.ID, text: parsed.Text, punc: parsed.Punc == "true"}
-		if parsed.Start != nil && parsed.End != nil {
-			w.start, w.end, w.timed = *parsed.Start, *parsed.End, true
+		switch parsed.Class {
+		case ".", "CM", "APOSS": // closing marks, commas and 's, written against the word before
+			w.punc = true
+		case "LQUOTE", "RQUOTE", "QUOTE", "HYPH", "SYM": // marks a recogniser never writes
+			w.text, w.punc = "", true
+		}
+		begin, errStart := strconv.ParseFloat(parsed.Start, 64)
+		finish, errEnd := strconv.ParseFloat(parsed.End, 64)
+		if errStart == nil && errEnd == nil {
+			w.start, w.end, w.timed = begin, finish, true
 		}
 		words = append(words, w)
 	}
@@ -710,6 +758,69 @@ func readActs(
 		kind := ""
 		if match := daPointer.FindStringSubmatch(block); match != nil {
 			kind = kinds[match[1]]
+		}
+		child := regexp.MustCompile(`<nite:child href="[^#]+#([^"]+)"`).FindStringSubmatch(block)
+		if child == nil {
+			continue
+		}
+		ids := childRange.FindStringSubmatch(child[1])
+		from, ok := index[ids[1]]
+		if !ok {
+			continue
+		}
+		to := from
+		if ids[2] != "" {
+			if to, ok = index[ids[2]]; !ok {
+				continue
+			}
+		}
+		one := act{meeting: meeting, speaker: speaker, kind: kind, words: words[from : to+1]}
+		timed := false
+		for _, w := range one.words {
+			if !w.timed {
+				continue
+			}
+			if !timed {
+				one.start, timed = w.start, true
+			}
+			one.end = w.end
+		}
+		if timed {
+			acts = append(acts, one)
+		}
+	}
+	return acts, nil
+}
+
+// readICSIActs reads one speaker's ICSI dialogue acts, their MRDA tags turned into the AMI kinds
+// the finders know: a backchannel (b) is bck, a question (q...) el.inf, a statement inf, and a
+// floor grabber or holder (fg, fh, h), an abandoned act (%) or nonspeech (x), none of them.
+func readICSIActs(corpus fs.FS, name, meeting, speaker string, words []word) ([]act, error) {
+	raw, err := fs.ReadFile(corpus, name)
+	if err != nil {
+		return nil, err
+	}
+	index := map[string]int{}
+	for i, w := range words {
+		index[w.id] = i
+	}
+	typeAttr := regexp.MustCompile(` type="([^"]*)"`)
+	var acts []act
+	for _, block := range strings.Split(string(raw), "<dialogueact ")[1:] {
+		kind := ""
+		if match := typeAttr.FindStringSubmatch(block); match != nil {
+			first := ""
+			if tag := strings.FieldsFunc(match[1], func(r rune) bool { return r == '^' || r == '|' || r == ':' || r == '.' }); len(tag) > 0 {
+				first = tag[0]
+			}
+			switch {
+			case first == "b":
+				kind = "bck"
+			case strings.HasPrefix(first, "q"):
+				kind = "el.inf"
+			case first == "s":
+				kind = "inf"
+			}
 		}
 		child := regexp.MustCompile(`<nite:child href="[^#]+#([^"]+)"`).FindStringSubmatch(block)
 		if child == nil {
