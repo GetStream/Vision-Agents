@@ -114,14 +114,14 @@ final class Agent
 
     /**
      * Holds the conversation in writing rather than on a call. Everything between hearing a
-     * question and answering it is unchanged: the same instructions, skills and knowledge.
+     * question and answering it is unchanged: the same instructions, skills and knowledge. It is
+     * kept in Stream Chat unless incognito.
      *
      * @param string $agentId the conversation being answered, which names the channel replies
      *     are written into; a worker answering several conversations has to set it
      * @param array<string, mixed>|null $custom
      */
     public function chat(
-        ?bool $persist = null,
         ?string $conversationId = null,
         string $agentId = '',
         ?string $title = null,
@@ -133,7 +133,6 @@ final class Agent
     ): Session {
         return $this->open(
             text: true,
-            persist: $persist,
             conversationId: $conversationId,
             agentId: $agentId === '' ? null : $agentId,
             title: $title,
@@ -163,7 +162,7 @@ final class Agent
      */
     public function reply(InboundMessage $message): Session
     {
-        return $this->chat(persist: true, conversationId: $message->conversationId(), agentId: $message->agentId);
+        return $this->chat(conversationId: $message->conversationId(), agentId: $message->agentId);
     }
 
     /**
@@ -319,7 +318,6 @@ final class Agent
         ?SessionPhone $phone = null,
         ?bool $navigating = null,
         ?bool $text = null,
-        ?bool $persist = null,
         ?string $conversationId = null,
         ?string $agentId = null,
         ?string $title = null,
@@ -338,7 +336,6 @@ final class Agent
     
         $request = new CreateSessionRequest(
             conversationId: $conversationId,
-            persistConversation: $persist,
             callId: $callId,
             text: $text,
             configId: $this->config === '' ? null : $this->resolveConfig(),

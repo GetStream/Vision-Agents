@@ -145,24 +145,21 @@ module GetStream
       # Holds the conversation in writing rather than on a call.
       #
       # No call is joined, nothing is transcribed and nothing is spoken; the instructions,
-      # skills and knowledge are the same. With a block the session is closed afterwards.
+      # skills and knowledge are the same. The conversation is kept in Stream Chat unless
+      # incognito: true is given. With a block the session is closed afterwards.
       #
-      # @param persist [Boolean] keep the conversation in Stream Chat.
       # @param conversation_id [String] the channel an earlier session was held in, to resume.
       # @param agent_id [String] the conversation being answered, which names the channel
       #   replies are written into. A worker answering several conversations has to set it.
-      def chat(persist: nil, conversation_id: nil, agent_id: nil, **options, &block)
+      def chat(conversation_id: nil, agent_id: nil, **options, &block)
         request = { text: true, conversation_id: conversation_id, agent_id: agent_id }
-        # An incognito conversation writes no transcript by definition, so persisting one is a
-        # contradiction the router refuses; dropped so the caller gets what they asked for.
-        request[:persist_conversation] = persist unless persist.nil? || options[:incognito]
         hold(open(request, options), false, &block)
       end
 
       # Answers a message written to an agent that is not running, in the channel it came
       # from, so whoever wrote it is already reading the answer as it is generated.
       def reply(message, **options, &block)
-        chat(persist: true, conversation_id: message.cid,
+        chat(conversation_id: message.cid,
              agent_id: message.agent_id.empty? ? nil : message.agent_id, **options, &block)
       end
 
@@ -392,7 +389,7 @@ module GetStream
     # One agent's conversations, addressed by the name it is configured under.
     #
     #   docs = api.agent("docs")
-    #   session = docs.sessions.create(title: "Is Stream better?", persist_conversation: true)
+    #   session = docs.sessions.create(title: "Is Stream better?")
     #   docs.sessions.search("billing")
     class Sessions
       def initialize(agent)
@@ -406,7 +403,6 @@ module GetStream
       def create(**options)
         watch = { interim: options.delete(:interim) || false, decisions: options.delete(:decisions) || false }
         options[:text] = true unless options[:call_id]
-        options.delete(:persist_conversation) if options[:incognito]
         created = @client.post("/v1/agents/sessions", body: @agent.session_request({}, options))
         Session.watching(@client, created, tools: @agent.tools, **watch)
       end

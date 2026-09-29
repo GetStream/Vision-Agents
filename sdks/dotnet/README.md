@@ -126,16 +126,24 @@ syncs first.
 ## Conversations, going back and branching off
 
 ```csharp
-var session = await api.Agent("docs").ChatAsync(new SessionOptions { Persist = true, Title = "Pricing" });
+var session = await api.Agent("docs").ChatAsync(new SessionOptions { Title = "Pricing" });
 var items = await session.Responses.Items.AllAsync();
-await session.Responses.RewindAsync(items[2]);
 var branch = await session.ForkAsync(new ForkOptions { ResponseId = items[2].ResponseId, Title = "asked again" });
 
 var found = await api.Sessions.SearchAsync("pricing", new SessionQuery { Limit = 20 });
 ```
 
-A conversation kept in Stream Chat cannot be rewound, since the channel still holds the
-later turns: fork it at the response instead.
+A text conversation is kept in Stream Chat unless it is `Incognito`, which keeps nothing.
+One kept in Stream Chat cannot be rewound, since the channel still holds the later turns:
+fork it at the response instead.
+
+## Changing models mid-conversation
+
+```csharp
+await session.UpdateSettingsAsync(new SessionSettingsRequest { Llm = "llm-thinking", Thinking = "high" });
+```
+
+It applies from the next turn; a property left null is left as it is.
 
 Somebody who has not signed up is a guest. `GuestUserAsync` mints one, `AsGuest` is a client
 acting for them, and `ClaimGuestUserAsync` moves their conversations onto the account they

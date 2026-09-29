@@ -261,6 +261,15 @@ impl Session {
             .await
     }
 
+    /// Changes the models and how they answer, from the next turn. A field left `None` is
+    /// left as it is.
+    pub async fn update_settings(
+        &self,
+        settings: types::SessionSettingsRequest,
+    ) -> Result<types::Session> {
+        self.client.set_session_settings(self.id(), &settings).await
+    }
+
     /// Continues this conversation as a new one.
     ///
     /// The parent is untouched and keeps its transcript. `response_id` branches from the end

@@ -13,8 +13,6 @@ final readonly class CreateSessionRequest
     public function __construct(
         // Stream Chat CID to resume; returned for persistent text sessions.
         public ?string $conversationId = null,
-        // Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-        public ?bool $persistConversation = null,
         // Older history was omitted from the model context.
         public ?bool $contextTruncated = null,
         // The call to join. Required unless the session is text.
@@ -102,7 +100,6 @@ final readonly class CreateSessionRequest
     {
         return new self(
             conversationId: array_key_exists('conversation_id', $data) && $data['conversation_id'] !== null ? Json::string($data, 'conversation_id') : null,
-            persistConversation: array_key_exists('persist_conversation', $data) && $data['persist_conversation'] !== null ? Json::bool($data, 'persist_conversation') : null,
             contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
             callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
             text: array_key_exists('text', $data) && $data['text'] !== null ? Json::bool($data, 'text') : null,
@@ -156,9 +153,6 @@ final readonly class CreateSessionRequest
         $out = [];
         if ($this->conversationId !== null) {
             $out['conversation_id'] = $this->conversationId;
-        }
-        if ($this->persistConversation !== null) {
-            $out['persist_conversation'] = $this->persistConversation;
         }
         if ($this->contextTruncated !== null) {
             $out['context_truncated'] = $this->contextTruncated;

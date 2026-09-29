@@ -29,10 +29,11 @@ public actor SessionSocket {
     ///
     /// The stream is returned rather than exposed as a property so that it cannot be attached
     /// to twice, and so there is no window between opening and attaching in which an event
-    /// could be dropped: reading does not begin until the stream exists.
-    public func open() -> AsyncThrowingStream<AgentEvent, any Error> {
+    /// could be dropped: reading does not begin until the stream exists. `headers` are added
+    /// to the ones this socket was made with, for credentials only known once it opens.
+    public func open(headers extra: [String: String] = [:]) -> AsyncThrowingStream<AgentEvent, any Error> {
         var request = URLRequest(url: url)
-        for (name, value) in headers {
+        for (name, value) in headers.merging(extra, uniquingKeysWith: { _, new in new }) {
             request.setValue(value, forHTTPHeaderField: name)
         }
 

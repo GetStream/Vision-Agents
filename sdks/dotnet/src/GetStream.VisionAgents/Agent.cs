@@ -124,9 +124,6 @@ public sealed record Pipeline
 /// <summary>What one conversation is about, as opposed to the agent behind it.</summary>
 public sealed record SessionOptions
 {
-    /// <summary>Keeps a text conversation in Stream Chat.</summary>
-    public bool Persist { get; init; }
-
     /// <summary>A Stream Chat CID to resume.</summary>
     public string? ConversationId { get; init; }
 
@@ -148,7 +145,7 @@ public sealed record SessionOptions
     /// <summary>Anything of the caller's own, which a later query can match on.</summary>
     public Dictionary<string, object?>? Custom { get; init; }
 
-    /// <summary>Holds the conversation and keeps nothing, whatever <see cref="Persist"/> says.</summary>
+    /// <summary>Holds the conversation and keeps nothing, not even the Stream Chat channel a text session is otherwise kept in.</summary>
     public bool Incognito { get; init; }
 
     /// <summary>Models for this conversation alone, over the agent's own.</summary>
@@ -590,10 +587,7 @@ public sealed class Agent : IAsyncDisposable
             UserName = Name,
             AgentId = VisionAgentsClient.Blank(options.AgentId) ?? UserId,
             Instructions = VisionAgentsClient.Blank(Instructions),
-            // An incognito conversation writes no transcript by definition, so asking for one
-            // too is dropped rather than refused.
             Incognito = options.Incognito ? true : null,
-            PersistConversation = options.Incognito || !options.Persist ? null : true,
             ConversationId = VisionAgentsClient.Blank(options.ConversationId),
             Title = VisionAgentsClient.Blank(options.Title),
             Description = VisionAgentsClient.Blank(options.Description),

@@ -38,6 +38,7 @@ class Router:
         app.router.add_get("/v1/agents/sessions/search", self._list)
         app.router.add_delete("/v1/agents/sessions/{id}", self._close)
         app.router.add_post("/v1/agents/sessions/{id}/fork", self._fork)
+        app.router.add_patch("/v1/agents/sessions/{id}/settings", self._settings)
         app.router.add_post("/v1/agents/sessions/{id}/responses", self._respond)
         app.router.add_get("/v1/agents/sessions/{id}/responses", self._responses)
         app.router.add_get("/v1/agents/sessions/{id}/responses/items", self._items)
@@ -68,6 +69,12 @@ class Router:
         forked = self._session("session-2")
         forked["forked_from"] = request.match_info["id"]
         return web.json_response(status=201, data=forked)
+
+    async def _settings(self, request: web.Request) -> web.Response:
+        await self._record(request)
+        updated = self._session(request.match_info["id"])
+        updated["llm"] = (await request.json()).get("llm", "")
+        return web.json_response(updated)
 
     async def _respond(self, request: web.Request) -> web.Response:
         await self._record(request)
@@ -190,7 +197,6 @@ class TestSessions:
                 description="The comparison question, again",
                 project="docs",
                 custom={"ticket": "4721"},
-                persist=True,
                 model_overwrites=stream.ModelOverwrites(
                     thinking=stream.ModelOverwritesThinking.HIGH
                 ),
@@ -209,21 +215,20 @@ class TestSessions:
         assert body["model_overwrites"] == {"thinking": "high"}
         # No call was named, so the conversation is held in writing and kept.
         assert body["text"] is True
-        assert body["persist_conversation"] is True
+        assert body["incognito"] is False
 
-    async def test_an_incognito_session_never_asks_for_a_transcript(
+    async def test_an_incognito_session_asks_the_router_to_keep_nothing(
         self, api: stream.Client, router: Router
     ):
-        # Asking for both is a contradiction, and the conversation the caller wanted is the
-        # incognito one: an off-the-record conversation writes nothing down by definition.
+        # Every text conversation is kept unless it is incognito, so incognito is the one
+        # thing that has to reach the router for nothing to be written down.
         session = await api.agent("docs").sessions.create(
-            stream.SessionOptions(incognito=True, persist=True)
+            stream.SessionOptions(incognito=True)
         )
         await session.close()
 
         body = router.body("POST", "/v1/agents/sessions")
         assert body["incognito"] is True
-        assert "persist_conversation" not in body
 
     async def test_querying_narrows_to_the_agent_and_the_filters_given(
         self, api: stream.Client, router: Router
@@ -337,17 +342,51 @@ class TestResponses:
         assert [turn.id for turn in turns] == ["response-1"]
         assert router.requests("GET", "/v1/agents/sessions/session-9/responses") == 1
 
-    async def test_rewinding_carries_on_from_the_response_given(
+    async def test_a_stored_text_conversation_names_every_question(
         self, api: stream.Client, router: Router
     ):
+        # The router requires a command id on a user's stored text conversation, and every
+        # text conversation is stored unless it is incognito.
+        path = "/v1/agents/sessions/session-1/responses"
         session = await api.agent("docs").sessions.create()
         try:
-            answer = await session.responses.create("Is Stream better?")
-            await session.responses.rewind(answer)
+            await session.responses.create("First question")
+            first = router.body("POST", path)["command_id"]
+            await session.responses.create("Second question")
+            second = router.body("POST", path)["command_id"]
+            await session.responses.create("Retried question", command_id="request-7")
+            retried = router.body("POST", path)["command_id"]
+            await session.responses.create(
+                "What is this?",
+                images=[stream.ImageSource(url="https://example.com/a.png")],
+            )
+            pictured = router.body("POST", path)
         finally:
             await session.close()
 
-        body = router.body("POST", "/v1/agents/sessions/session-1/rewind")
+        assert len(first) == 36
+        assert first != second, "two questions are two commands"
+        assert retried == "request-7"
+        assert "command_id" not in pictured, "a command carries text only"
+
+    async def test_a_session_keeping_no_conversation_names_no_command(
+        self, api: stream.Client, router: Router
+    ):
+        await api.agent("docs").sessions.responses("session-9").create("Anyone there?")
+
+        body = router.body("POST", "/v1/agents/sessions/session-9/responses")
+        assert "command_id" not in body
+
+    async def test_rewinding_carries_on_from_the_response_given(
+        self, api: stream.Client, router: Router
+    ):
+        # A stored text conversation cannot be rewound, so this is a call's, read back.
+        responses = api.agent("docs").sessions.responses("session-3")
+        [turn] = await responses.list()
+
+        await responses.rewind(turn)
+
+        body = router.body("POST", "/v1/agents/sessions/session-3/rewind")
         assert body == {"response_id": "response-1"}
 
     async def test_rewinding_to_an_item_goes_back_to_its_response(
@@ -377,6 +416,37 @@ class TestResponses:
 
         with pytest.raises(ValueError, match="no id"):
             await responses.rewind("")
+
+
+class TestSettings:
+    async def test_the_models_of_a_running_session_are_swapped(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create()
+        try:
+            updated = await session.update_settings(
+                stream.SessionSettings(llm="llm-thinking", thinking="high")
+            )
+        finally:
+            await session.close()
+
+        assert updated.id == "session-1"
+        assert updated.llm == "llm-thinking"
+        assert router.requests("PATCH", "/v1/agents/sessions/session-1/settings") == 1
+        body = router.body("PATCH", "/v1/agents/sessions/session-1/settings")
+        assert body == {"llm": "llm-thinking", "thinking": "high"}
+
+    async def test_an_empty_voice_is_sent_since_it_means_the_default(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create()
+        try:
+            await session.update_settings(stream.SessionSettings(voice=""))
+        finally:
+            await session.close()
+
+        body = router.body("PATCH", "/v1/agents/sessions/session-1/settings")
+        assert body == {"voice": ""}
 
 
 class TestFork:

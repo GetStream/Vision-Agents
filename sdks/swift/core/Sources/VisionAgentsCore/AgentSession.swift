@@ -29,12 +29,18 @@ public final class AgentSession {
     public var turns: [Turn] { conversation.turns }
     public var state: Conversation.State { conversation.state }
 
+    /// This session's turns as the router wrote them down: asking, reading back, rewinding.
+    public let responses: Responses
+
+    private let backend: Backend
     private let socket: SessionSocket
     private let tools: [String: AgentTool]
     private var pump: Task<Void, Never>?
 
     init(backend: Backend, session: Session, tools: [AgentTool]) {
         self.session = session
+        self.backend = backend
+        responses = Responses(backend: backend, sessionID: session.id)
         self.tools = Dictionary(tools.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         socket = SessionSocket(
             url: backend.socketURL(
@@ -42,14 +48,23 @@ public final class AgentSession {
                 // Interim transcripts arrive several times a second and decisions are for
                 // somebody watching a call, not for an app holding one.
                 query: ["decisions": "false"]),
-            headers: backend.headers,
+            headers: [:],
             urlSession: backend.urlSession)
     }
 
     /// Opens the socket and starts following the conversation. Doing this twice does nothing.
     public func start() async {
         guard pump == nil else { return }
-        let stream = await socket.open()
+        let headers: [String: String]
+        do {
+            headers = try await backend.headers()
+        } catch let error as AgentsError {
+            return stopped(error)
+        } catch {
+            return stopped(.transport(error))
+        }
+        guard pump == nil else { return }
+        let stream = await socket.open(headers: headers)
         isConnected = true
         pump = Task { [weak self] in
             do {

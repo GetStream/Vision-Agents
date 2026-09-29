@@ -34,7 +34,7 @@ public data class Session(
     val custom: JsonObject,
     val instructions: String,
     val llm: String,
-    /** The Stream Chat channel a persistent text conversation is kept in, or empty. */
+    /** The Stream Chat channel a text conversation is kept in, or empty when it is incognito. */
     val conversationId: String,
     /** The session this one was forked from, or empty. */
     val forkedFrom: String,

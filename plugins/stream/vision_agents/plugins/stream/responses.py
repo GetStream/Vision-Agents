@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any, AsyncIterator, List, Optional, Union
 
 from ._backend import Backend
@@ -114,22 +115,38 @@ class Responses:
     next question. A single turn's items come off the handle ``create`` returns.
     """
 
-    def __init__(self, backend: Backend, session_id: str):
+    def __init__(self, backend: Backend, session_id: str, kept: bool = False):
         self._backend = backend
         self._session_id = session_id
+        self._kept = kept
         self.items = Items(backend, session_id)
 
     async def create(
-        self, text: str, images: Optional[list[ImageSource]] = None
+        self,
+        text: str,
+        images: Optional[list[ImageSource]] = None,
+        command_id: str = "",
     ) -> AgentResponse:
         """Ask the agent something and name the turn it answers as.
 
         An incognito session records nothing, so the turn it hands back has no id: there is
         nothing to read back afterwards, which is what incognito means.
+
+        Args:
+            text: The question.
+            images: Pictures to ask about alongside it.
+            command_id: Names the question, so a retry is answered once rather than twice.
+                Left empty, a session kept in Stream Chat is given a fresh one, because the
+                router requires one there.
         """
         request = CreateResponseRequest(text=text)
         if images:
             request.images = images
+        # A command carries text only, so a question with images goes without one.
+        if not command_id and self._kept and not images:
+            command_id = str(uuid.uuid4())
+        if command_id:
+            request.command_id = command_id
 
         created = await create_response.asyncio(
             self._session_id, client=self._backend.client(), body=request
@@ -156,9 +173,9 @@ class Responses:
 
         The reply being spoken is abandoned and the conversation continues as though nothing
         after that response had been said: later turns are no longer listed, and the next
-        question is answered from that point. The response itself is kept. A persistent
-        conversation cannot be rewound, because its transcript lives in Chat; fork it at the
-        response instead.
+        question is answered from that point. The response itself is kept. A text
+        conversation kept in Chat cannot be rewound, because its transcript lives there; fork
+        it at the response instead.
 
         Args:
             to: The response to carry on from, any item of it, or its id.

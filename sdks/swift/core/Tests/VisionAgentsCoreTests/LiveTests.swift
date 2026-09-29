@@ -8,13 +8,12 @@ import Testing
 /// The Swift answer to `@pytest.mark.integration`: they are skipped unless
 /// `VISION_AGENTS_URL` is set, so the ordinary `swift test` stays offline and fast.
 ///
-///     VISION_AGENTS_URL=http://localhost:8080 VISION_AGENTS_CUSTOMER_ID=examples swift test
+///     VISION_AGENTS_URL=http://localhost:8080 VISION_AGENTS_CUSTOMER_ID=acme VISION_AGENTS_AGENT=myagent swift test
 struct Live {
     static let url = ProcessInfo.processInfo.environment["VISION_AGENTS_URL"]
     static let customerID =
         ProcessInfo.processInfo.environment["VISION_AGENTS_CUSTOMER_ID"] ?? "acme"
-    /// An agent config id. An id rather than a name, because reading the configs to resolve
-    /// one is server-side only; `go run ./configure` prints the id it wrote.
+    /// The name an agent config was synced under.
     static let agent = ProcessInfo.processInfo.environment["VISION_AGENTS_AGENT"] ?? ""
 
     static var available: Bool { url != nil }
@@ -81,9 +80,24 @@ struct LiveTests {
         #expect(await asked.orders.first?.uppercased() == "A-1042")
     }
 
-    /// Going back to the first turn takes the second out of the conversation, and a fork at
-    /// the first starts a session of its own.
-    @Test func aRewoundSessionCarriesOnFromTheResponseKept() async throws {
+    /// Asking over HTTP gets an answer the router writes down, without the socket.
+    @Test func askingThroughResponsesGetsAnAnswerWrittenDown() async throws {
+        let session = try await Live.agents.agent(Live.agent).sessions.create(SessionOptions())
+        defer { Task { await session.close() } }
+
+        let turn = try await session.responses.create("What are your opening hours? Answer in one sentence.")
+        try await until(30) {
+            (try? await session.responses.list().first { $0.id == turn.id }?.status) == .completed
+        }
+
+        // A guardrail refusing the question is a reply too, and is written down the same way.
+        let reply = try await session.responses.items(responseID: turn.id)
+            .filter { $0.kind == .answer || $0.kind == .blocked }.map(\.text).joined()
+        #expect(!reply.isEmpty)
+    }
+
+    /// A fork at the first turn starts a session of its own and leaves the original as it was.
+    @Test func aForkAtAResponseBranchesOffAndLeavesTheOriginal() async throws {
         let agents = Live.agents
         let session = try await agents.chat(agent: Live.agent)
         await session.start()
@@ -98,11 +112,9 @@ struct LiveTests {
         let kept = try #require(try await agents.responses(sessionID: session.id).first)
         #expect(kept.said.contains("Ada"))
 
-        try await agents.rewind(sessionID: session.id, to: kept.id)
-        #expect(try await agents.responses(sessionID: session.id).map(\.id) == [kept.id])
-
         let fork = try await agents.fork(sessionID: session.id, ForkOptions(responseID: kept.id))
         #expect(fork.id != session.id)
+        #expect(try await agents.responses(sessionID: session.id).count == 2)
         try await agents.close(sessionID: fork.id)
     }
 

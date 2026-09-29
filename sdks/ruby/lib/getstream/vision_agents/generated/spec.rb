@@ -880,11 +880,11 @@ module GetStream
           required: %w[contacts].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[text images].freeze,
+          properties: %w[text images videos command_id].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[conversation_id persist_conversation context_truncated call_id text config_id agent incognito title description project custom model_overwrites call_type user_id user_name agent_id instructions greeting navigating llm stt tts sts subagent search voice languages keyterms max_tokens tasks sandbox backchannel min_confidence skills skill_names tools tool_timeout_ms tags memory phone video].freeze,
+          properties: %w[conversation_id context_truncated call_id text config_id agent incognito title description project custom model_overwrites call_type user_id user_name agent_id instructions greeting navigating llm stt tts sts subagent search voice languages keyterms max_tokens tasks sandbox backchannel min_confidence skills skill_names tools tool_timeout_ms tags memory phone video].freeze,
           required: [].freeze, open: false
         }.freeze,
         "DataChange" => {
@@ -994,6 +994,10 @@ module GetStream
         "LlmOptions" => {
           properties: %w[target providers max_output_tokens temperature reasoning_effort format verbosity tool_choice store prompt_cache_key metadata].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "ModelCallTiming" => {
+          properties: %w[operation_id purpose started_at provider model ttft_ms duration_ms input_tokens output_tokens success].freeze,
+          required: %w[started_at provider model success].freeze, open: false
         }.freeze,
         "ModelOverwrites" => {
           properties: %w[llm stt tts sts subagent search thinking temperature max_output_tokens verbosity].freeze,
@@ -1112,7 +1116,7 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[conversation_id persist_conversation context_truncated id call_id text call_type user_id agent_id state created_at llm tts sts stt subagent voice mode video instructions agent config_id incognito title description project custom model_overwrites forked_from closed_at last_response_at].freeze,
+          properties: %w[conversation_id context_truncated id call_id text call_type user_id agent_id state created_at llm tts sts stt subagent voice mode video instructions agent config_id incognito title description project custom model_overwrites forked_from closed_at last_response_at].freeze,
           required: %w[id call_id call_type user_id agent_id state created_at].freeze, open: false
         }.freeze,
         "SessionMemory" => {
@@ -1224,7 +1228,7 @@ module GetStream
           required: %w[type text].freeze, open: false
         }.freeze,
         "TimelineEntry" => {
-          properties: %w[turn_id started_at heard said roundtrip_ms stt_latency_ms llm_ttft_ms tts_ttfb_ms speech_end_to_audio_ms audio_out_ms interrupted].freeze,
+          properties: %w[turn_id started_at cadence_ms decision_ms model_to_first_text_ms text_to_tts_ms tts_to_audio_ms model_calls heard said roundtrip_ms stt_latency_ms llm_ttft_ms tts_ttfb_ms speech_end_to_audio_ms audio_out_ms interrupted].freeze,
           required: %w[turn_id started_at].freeze, open: false
         }.freeze,
         "ToolResultCommand" => {
@@ -1262,6 +1266,10 @@ module GetStream
         "TurnStatsBucket" => {
           properties: %w[agent_id bucket turn_count interrupted_count audio_out_ms_total stt_latency_p50_ms stt_latency_p95_ms llm_ttft_p50_ms llm_ttft_p95_ms tts_ttfb_p50_ms tts_ttfb_p95_ms roundtrip_p50_ms roundtrip_p95_ms roundtrip_p99_ms].freeze,
           required: %w[agent_id bucket turn_count interrupted_count audio_out_ms_total].freeze, open: false
+        }.freeze,
+        "VideoSource" => {
+          properties: %w[url max_frames].freeze,
+          required: %w[url].freeze, open: false
         }.freeze,
         "Voice" => {
           properties: %w[id name description samples bindings created_at updated_at].freeze,

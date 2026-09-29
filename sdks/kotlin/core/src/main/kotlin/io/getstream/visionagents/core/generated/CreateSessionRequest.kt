@@ -44,13 +44,12 @@ import kotlinx.serialization.encoding.Encoder
  * 
  *
  * @param conversationId Stream Chat CID to resume; returned for persistent text sessions.
- * @param persistConversation Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
  * @param contextTruncated Older history was omitted from the model context.
  * @param callId The call to join. Required unless the session is text.
  * @param text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket. 
  * @param configId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call. 
  * @param agent The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: \"docs\" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree. 
- * @param incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from. 
+ * @param incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from. 
  * @param title What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it. 
  * @param description A longer note about the conversation, searched alongside the title.
  * @param project What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins. 
@@ -94,10 +93,6 @@ internal data class CreateSessionRequest (
     @SerialName(value = "conversation_id")
     val conversationId: kotlin.String? = null,
 
-    /* Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
-    @SerialName(value = "persist_conversation")
-    val persistConversation: kotlin.Boolean? = null,
-
     /* Older history was omitted from the model context. */
     @SerialName(value = "context_truncated")
     val contextTruncated: kotlin.Boolean? = null,
@@ -118,7 +113,7 @@ internal data class CreateSessionRequest (
     @SerialName(value = "agent")
     val agent: kotlin.String? = null,
 
-    /* Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.  */
+    /* Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.  */
     @SerialName(value = "incognito")
     val incognito: kotlin.Boolean? = null,
 

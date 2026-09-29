@@ -259,7 +259,7 @@ impl Agent {
     }
 
     /// [`Agent::chat`], with whatever else the session is opened with: a conversation id to
-    /// continue, `persist_conversation`, a title, `incognito` and the rest. What is set in
+    /// continue, a title, `incognito` and the rest. What is set in
     /// `request` wins over what the agent would have said.
     pub async fn chat_with(&self, mut request: types::CreateSessionRequest) -> Result<Session> {
         request.text = Some(true);
@@ -285,7 +285,6 @@ impl Agent {
     /// from, so whoever wrote it is already reading the answer as it is generated.
     pub async fn reply(&self, message: &InboundMessage) -> Result<Session> {
         self.chat_with(types::CreateSessionRequest {
-            persist_conversation: Some(true),
             conversation_id: Some(format!("{}:{}", message.channel_type, message.channel_id)),
             agent_id: (!message.agent_id.is_empty()).then(|| message.agent_id.clone()),
             ..Default::default()

@@ -38,7 +38,6 @@ public class Sessions internal constructor(
             project = options.project,
             custom = options.custom,
             incognito = options.incognito,
-            persistConversation = options.persistConversation,
             conversationId = options.conversationId,
             modelOverwrites = options.modelOverwrites?.schema,
             instructions = options.instructions,

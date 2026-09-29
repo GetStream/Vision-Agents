@@ -35,7 +35,6 @@ final readonly class Sessions
         ?string $project = null,
         ?array $custom = null,
         ?bool $incognito = null,
-        ?bool $persist = null,
         ?string $conversationId = null,
         ?ModelOverwrites $modelOverwrites = null,
         ?string $callId = null,
@@ -43,7 +42,6 @@ final readonly class Sessions
     ): Session {
         $request = new CreateSessionRequest(
             conversationId: $conversationId,
-            persistConversation: $persist,
             callId: $callId,
             text: $callId === null ? true : null,
             agent: $this->agent,

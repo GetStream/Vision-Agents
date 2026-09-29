@@ -158,6 +158,17 @@ module GetStream
         Session.watching(@client, forked, tools: @tools, **@options)
       end
 
+      # Changes the models and voice of this session only, from the next turn. The config it
+      # started from is untouched, and a target that does not route is refused before
+      # anything changes. Returns the session as the router now has it.
+      #
+      # @param settings any SessionSettingsRequest field: llm, stt, tts, sts, subagent, voice,
+      #   thinking, temperature, max_output_tokens, verbosity. An empty sts makes the session a
+      #   cascade again; an empty voice returns to the provider's default.
+      def update_settings(**settings)
+        @client.patch("/v1/agents/sessions/{id}/settings", path: { id: id }, body: settings)
+      end
+
       # Blocks until the conversation ends. Returns false if the timeout passed first.
       def wait(timeout: nil)
         until_true(timeout) { @ended }

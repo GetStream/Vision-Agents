@@ -303,7 +303,7 @@ final class AgentResponseItem {
 }
 
 final class CreateResponseRequest {
-  const CreateResponseRequest({required this.text, this.images});
+  const CreateResponseRequest({required this.text, this.images, this.videos, this.commandId});
 
   factory CreateResponseRequest.fromJson(Object? value) {
     final json = _object(value, 'CreateResponseRequest');
@@ -316,22 +316,36 @@ final class CreateResponseRequest {
             ImageSource.fromJson(item),
         ],
       },
+      videos: switch (json['videos']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'CreateResponseRequest.videos'))
+            VideoSource.fromJson(item),
+        ],
+      },
+      commandId: switch (json['command_id']) {
+        null => null,
+        final Object value => _string(value, 'CreateResponseRequest.command_id'),
+      },
     );
   }
 
   final String text;
   final List<ImageSource>? images;
+  final List<VideoSource>? videos;
+  final String? commandId;
 
   Map<String, Object?> toJson() => {
     'text': text,
     if (images case final value?) 'images': [for (final item in value) item.toJson()],
+    if (videos case final value?) 'videos': [for (final item in value) item.toJson()],
+    'command_id': ?commandId,
   };
 }
 
 final class CreateSessionRequest {
   const CreateSessionRequest({
     this.conversationId,
-    this.persistConversation,
     this.contextTruncated,
     this.callId,
     this.text,
@@ -380,10 +394,6 @@ final class CreateSessionRequest {
       conversationId: switch (json['conversation_id']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.conversation_id'),
-      },
-      persistConversation: switch (json['persist_conversation']) {
-        null => null,
-        final Object value => _bool(value, 'CreateSessionRequest.persist_conversation'),
       },
       contextTruncated: switch (json['context_truncated']) {
         null => null,
@@ -563,7 +573,6 @@ final class CreateSessionRequest {
   }
 
   final String? conversationId;
-  final bool? persistConversation;
   final bool? contextTruncated;
   final String? callId;
   final bool? text;
@@ -607,7 +616,6 @@ final class CreateSessionRequest {
 
   Map<String, Object?> toJson() => {
     'conversation_id': ?conversationId,
-    'persist_conversation': ?persistConversation,
     'context_truncated': ?contextTruncated,
     'call_id': ?callId,
     'text': ?text,
@@ -1148,7 +1156,6 @@ final class SearchResult {
 final class Session {
   const Session({
     this.conversationId,
-    this.persistConversation,
     this.contextTruncated,
     required this.id,
     required this.callId,
@@ -1186,10 +1193,6 @@ final class Session {
       conversationId: switch (json['conversation_id']) {
         null => null,
         final Object value => _string(value, 'Session.conversation_id'),
-      },
-      persistConversation: switch (json['persist_conversation']) {
-        null => null,
-        final Object value => _bool(value, 'Session.persist_conversation'),
       },
       contextTruncated: switch (json['context_truncated']) {
         null => null,
@@ -1290,7 +1293,6 @@ final class Session {
   }
 
   final String? conversationId;
-  final bool? persistConversation;
   final bool? contextTruncated;
   final String id;
   final String callId;
@@ -1323,7 +1325,6 @@ final class Session {
 
   Map<String, Object?> toJson() => {
     'conversation_id': ?conversationId,
-    'persist_conversation': ?persistConversation,
     'context_truncated': ?contextTruncated,
     'id': id,
     'call_id': callId,
@@ -1512,6 +1513,26 @@ final class SessionVideo {
   final int? maxFrames;
 
   Map<String, Object?> toJson() => {'source': ?source, 'max_frames': ?maxFrames};
+}
+
+final class VideoSource {
+  const VideoSource({required this.url, this.maxFrames});
+
+  factory VideoSource.fromJson(Object? value) {
+    final json = _object(value, 'VideoSource');
+    return VideoSource(
+      url: _string(json['url'], 'VideoSource.url'),
+      maxFrames: switch (json['max_frames']) {
+        null => null,
+        final Object value => _int(value, 'VideoSource.max_frames'),
+      },
+    );
+  }
+
+  final String url;
+  final int? maxFrames;
+
+  Map<String, Object?> toJson() => {'url': url, 'max_frames': ?maxFrames};
 }
 
 String _string(Object? value, String at) =>

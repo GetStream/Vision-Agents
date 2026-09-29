@@ -48,7 +48,7 @@ final class LiveTest extends TestCase
         }
     }
 
-    public function testResponsesRewindAndFork(): void
+    public function testResponsesAndFork(): void
     {
         $agent = new Agent(name: 'php-sdk-live', instructions: 'Answer in at most five words.', client: $this->client);
         $session = $this->open($agent->chat(title: 'php sdk live'));
@@ -63,9 +63,6 @@ final class LiveTest extends TestCase
         self::assertNotEmpty($second->items->all(), 'a finished response has items');
         self::assertCount(2, $session->responses->list());
 
-        $session->responses->rewind($first);
-        self::assertSame([$first->id()], array_map(static fn ($row) => $row->id, $session->responses->list()));
-
         $fork = $this->open($session->fork(new ForkSessionRequest(responseId: $first->id(), title: 'php sdk fork')));
         self::assertNotSame($session->id(), $fork->id());
     }
@@ -73,7 +70,7 @@ final class LiveTest extends TestCase
     public function testAPersistedConversationIsForkedNotRewound(): void
     {
         $agent = new Agent(name: 'php-sdk-live', instructions: 'Answer in at most five words.', client: $this->client);
-        $session = $this->open($agent->chat(persist: true));
+        $session = $this->open($agent->chat());
         $response = $session->responses->create('Name a colour.');
         $this->settle($session);
 

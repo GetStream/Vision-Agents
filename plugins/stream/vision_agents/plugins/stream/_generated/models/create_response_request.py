@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.image_source import ImageSource
+    from ..models.video_source import VideoSource
 
 
 T = TypeVar("T", bound="CreateResponseRequest")
@@ -22,12 +23,16 @@ class CreateResponseRequest:
     Attributes:
         text (str): What to answer, as though it had been said.
         images (list[ImageSource] | Unset):
+        videos (list[VideoSource] | Unset): Recorded clips to show the agent. The router samples evenly spaced frames
+            from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a
+            video, since none of the ones routed here take one whole.
         command_id (str | Unset): Required for personal persistent text conversations, and text only. Reuse this ID and
             identical text for retries; a retry starts no second turn and returns no id.
     """
 
     text: str
     images: list[ImageSource] | Unset = UNSET
+    videos: list[VideoSource] | Unset = UNSET
     command_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -41,6 +46,13 @@ class CreateResponseRequest:
                 images_item = images_item_data.to_dict()
                 images.append(images_item)
 
+        videos: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.videos, Unset):
+            videos = []
+            for videos_item_data in self.videos:
+                videos_item = videos_item_data.to_dict()
+                videos.append(videos_item)
+
         command_id = self.command_id
 
         field_dict: dict[str, Any] = {}
@@ -52,6 +64,8 @@ class CreateResponseRequest:
         )
         if images is not UNSET:
             field_dict["images"] = images
+        if videos is not UNSET:
+            field_dict["videos"] = videos
         if command_id is not UNSET:
             field_dict["command_id"] = command_id
 
@@ -60,6 +74,7 @@ class CreateResponseRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.image_source import ImageSource
+        from ..models.video_source import VideoSource
 
         d = dict(src_dict)
         text = d.pop("text")
@@ -73,11 +88,21 @@ class CreateResponseRequest:
 
                 images.append(images_item)
 
+        _videos = d.pop("videos", UNSET)
+        videos: list[VideoSource] | Unset = UNSET
+        if _videos is not UNSET:
+            videos = []
+            for videos_item_data in _videos:
+                videos_item = VideoSource.from_dict(videos_item_data)
+
+                videos.append(videos_item)
+
         command_id = d.pop("command_id", UNSET)
 
         create_response_request = cls(
             text=text,
             images=images,
+            videos=videos,
             command_id=command_id,
         )
 

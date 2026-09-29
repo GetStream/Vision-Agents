@@ -351,6 +351,35 @@ async fn a_rewind_to_nothing_is_refused_before_it_is_sent() {
 }
 
 #[tokio::test]
+async fn settings_are_changed_with_only_what_was_set() {
+    let server = Server::start().await;
+    let (chat, _socket) = open(&server, weather()).await;
+    server.route(
+        Method::PATCH,
+        "/v1/agents/sessions/s1/settings",
+        200,
+        session("s1"),
+    );
+
+    let updated = chat
+        .update_settings(types::SessionSettingsRequest {
+            llm: Some("llm-thinking".into()),
+            thinking: Some(types::SessionSettingsRequestThinking::High),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(updated.id, "s1");
+    assert_eq!(
+        server
+            .request(Method::PATCH, "/v1/agents/sessions/s1/settings")
+            .body,
+        json!({"llm": "llm-thinking", "thinking": "high"})
+    );
+}
+
+#[tokio::test]
 async fn a_fork_at_a_response_runs_the_same_functions() {
     let server = Server::start().await;
     let (parent, _parent_socket) = open(&server, weather()).await;

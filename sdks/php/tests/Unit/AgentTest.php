@@ -148,7 +148,8 @@ final class AgentTest extends TestCase
         $agent->reply(InboundMessage::fromFrame(['channel_id' => 'ch1', 'text' => 'hi', 'agent_id' => 'jean-7']));
 
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
-        self::assertTrue($sent['persist_conversation']);
+        self::assertTrue($sent['text']);
+        self::assertArrayNotHasKey('incognito', $sent);
         self::assertSame('agent:ch1', $sent['conversation_id']);
         self::assertSame('jean-7', $sent['agent_id']);
     }

@@ -187,13 +187,12 @@ class TestAgent < LocalRouterTest
   def test_chat_holds_the_conversation_in_writing
     serve_session
 
-    agent.chat(persist: true, conversation_id: "agent:room-1") { nil }
+    agent.chat(conversation_id: "agent:room-1") { nil }
     assert_equal true, session_request["text"]
-    assert_equal true, session_request["persist_conversation"]
     assert_equal "agent:room-1", session_request["conversation_id"]
+    refute session_request.key?("incognito")
 
-    agent.chat(persist: true, incognito: true) { nil }
-    refute session_request.key?("persist_conversation")
+    agent.chat(incognito: true) { nil }
     assert_equal true, session_request["incognito"]
     assert_empty @router.seen(:post, CALLS)
   end
@@ -206,7 +205,8 @@ class TestAgent < LocalRouterTest
 
     assert_equal "agent:room-1", session_request["conversation_id"]
     assert_equal "support-1", session_request["agent_id"]
-    assert_equal true, session_request["persist_conversation"]
+    assert_equal true, session_request["text"]
+    refute session_request.key?("incognito")
   end
 
   def test_an_outbound_call_is_placed_before_the_agent_joins
@@ -396,12 +396,26 @@ class TestSessions < LocalRouterTest
   def test_create_opens_a_written_conversation
     serve_session
 
-    session = client.agent("docs").sessions.create(title: "Is Stream better?", persist_conversation: true)
+    session = client.agent("docs").sessions.create(title: "Is Stream better?")
     session.close
 
     request = @router.last(:post, "/v1/agents/sessions").json
     assert_equal({ "agent" => "docs", "user_id" => "docs", "user_name" => "docs", "agent_id" => "docs",
-                   "title" => "Is Stream better?", "persist_conversation" => true, "text" => true }, request)
+                   "title" => "Is Stream better?", "text" => true }, request)
+  end
+
+  def test_update_settings_changes_the_models_of_one_session
+    serve_session
+    @router.on(:patch, "/v1/agents/sessions/sess_1/settings", body: { "id" => "sess_1", "llm" => "llm-thinking" })
+
+    session = client.agent("docs").sessions.create
+    updated = session.update_settings(llm: "llm-thinking", thinking: "high", sts: "")
+    session.close
+
+    assert_equal "llm-thinking", updated["llm"]
+    assert_equal({ "llm" => "llm-thinking", "thinking" => "high", "sts" => "" },
+                 @router.last(:patch, "/v1/agents/sessions/sess_1/settings").json)
+    assert_raises(VA::ConfigurationError) { session.update_settings(model: "llm-fast") }
   end
 end
 

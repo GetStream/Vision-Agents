@@ -25,9 +25,7 @@ public data class SessionOptions(
     val custom: JsonObject? = null,
     /** Record nothing about this conversation: it cannot be found, rewound or forked afterwards. */
     val incognito: Boolean? = null,
-    /** Keep a text conversation in Stream Chat. */
-    val persistConversation: Boolean? = null,
-    /** The Stream Chat channel of a persistent conversation to carry on. */
+    /** The Stream Chat channel of an earlier text conversation to carry on. */
     val conversationId: String? = null,
     /** What to change about the models for this conversation alone. */
     val modelOverwrites: ModelOverwrites? = null,
