@@ -324,7 +324,7 @@ says, so a directory is a starting point rather than an override.
 | `edge/`         | Creating the Stream call and minting a link to listen in on it     |
 | `tools/`        | The function registry and the JSON Schema derived from an argument struct |
 | `acceleration/` | The generated client. Do not edit it                               |
-| `examples/`     | A conversation in writing, and one out loud                        |
+| `examples/`     | A conversation in writing, one out loud, and a parking lot counted from a picture |
 
 ## Regenerating the client
 
