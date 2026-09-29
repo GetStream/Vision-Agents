@@ -149,7 +149,8 @@ func main() {
 	perCall := flag.Int("per-call", 8, "cases a call asks for")
 	variants := flag.Int("variants", 1, "calls per state and business; recorded menus get three times as many")
 	workers := flag.Int("workers", 16, "calls in flight")
-	model := flag.String("model", "muse-spark-1.3-contributor", "the writer")
+	writer := flag.String("writer", "muse", "the CLI that writes the cases: muse, or claude (Claude Code, headless, no tools)")
+	model := flag.String("model", "muse-spark-1.3-contributor", "the writer's model, such as sonnet for claude")
 	effort := flag.String("effort", "max", "the writer's reasoning effort")
 	limit := flag.Int("limit", 0, "make only this many calls, for a trial")
 	more := flag.String("more", "", "extra calls for some states, such as shorten=3: calls per business for them")
@@ -200,11 +201,15 @@ func main() {
 					continue
 				}
 				started := time.Now()
-				text, err := ask(*model, *effort, empty, strings.TrimSuffix(path, ".json")+".prompt",
+				text, err := ask(*writer, *model, *effort, empty, strings.TrimSuffix(path, ".json")+".prompt",
 					prompt(j.b, j.s, *perCall, j.variant))
 				mu.Lock()
 				if err == nil {
 					err = os.WriteFile(path, []byte(text), 0o644)
+				}
+				if err == nil {
+					// Which model wrote this call's cases, since a pool can be written by several.
+					err = os.WriteFile(strings.TrimSuffix(path, ".json")+".writer", []byte(*model), 0o644)
 				}
 				if err != nil {
 					failed++
@@ -237,9 +242,14 @@ func main() {
 	var cases []flowCase
 	counts := map[string]int{}
 	for _, j := range jobs {
-		raw, err := os.ReadFile(filepath.Join(*work, fmt.Sprintf("%s-%s-%s%d.json", j.s.name, j.b.name, j.s.tag, j.variant)))
+		file := filepath.Join(*work, fmt.Sprintf("%s-%s-%s%d.json", j.s.name, j.b.name, j.s.tag, j.variant))
+		raw, err := os.ReadFile(file)
 		if err != nil {
 			continue
+		}
+		writtenBy := *model
+		if name, err := os.ReadFile(strings.TrimSuffix(file, ".json") + ".writer"); err == nil {
+			writtenBy = strings.TrimSpace(string(name))
 		}
 		var answer struct {
 			Cases []flowCase `json:"cases"`
@@ -259,7 +269,7 @@ func main() {
 			known[key] = true
 			c.ID = fmt.Sprintf("synthetic-%s-%s-%s%d-%d", j.s.name, j.b.name, j.s.tag, j.variant, i)
 			c.State, c.Expect, c.Contract = j.s.name, j.s.expect, j.b.name
-			c.Source = "synthetic, written by " + *model
+			c.Source = "synthetic, written by " + writtenBy
 			c.AgentSpeaking = j.s.speaking
 			if !c.AgentSpeaking {
 				c.AgentSaid = ""
@@ -303,14 +313,25 @@ func main() {
 }
 
 // ask runs one prompt, kept at file, through the CLI with no tools and one model step.
-func ask(model, effort, dir, file, text string) (string, error) {
+func ask(writer, model, effort, dir, file, text string) (string, error) {
 	if err := os.WriteFile(file, []byte(text), 0o644); err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "muse", "exec", "--model", model, "--reasoning-effort", effort,
-		"--max-model-steps", "1", "--prompt-file", file)
+	var cmd *exec.Cmd
+	switch writer {
+	case "muse":
+		cmd = exec.CommandContext(ctx, "muse", "exec", "--model", model, "--reasoning-effort", effort,
+			"--max-model-steps", "1", "--prompt-file", file)
+	case "claude":
+		// Headless, with every tool refused, so the writer can only answer with text.
+		cmd = exec.CommandContext(ctx, "claude", "-p", "--model", model, "--output-format", "text",
+			"--disallowed-tools", "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Agent,NotebookEdit")
+		cmd.Stdin = strings.NewReader(text)
+	default:
+		return "", fmt.Errorf("unknown writer %q", writer)
+	}
 	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
