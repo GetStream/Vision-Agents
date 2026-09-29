@@ -292,6 +292,15 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+### A reply can start before the flow controller rules: `ROUTER_SPECULATIVE_REPLIES`
+
+The flow controller decides whether the words a caller settled on were meant for the agent,
+and the reply used to wait for that ruling, so every answered turn paid for two model round
+trips one after the other. With `ROUTER_SPECULATIVE_REPLIES=true` the reply is asked for
+beside the ruling and held until it comes back: an answer for the same words speaks it, and
+anything else drops it unheard. It is off by default, because a dropped reply is still paid
+for, and on a pause-heavy call most of them are dropped.
+
 ### A dispatch worker can run tools for every session under an agent id
 
 A worker on `/v1/dispatch` can send `host_tools` naming an `agent_id` and the tools it runs
