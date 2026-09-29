@@ -88,6 +88,17 @@ var businesses = []business{
 	{"council-outbound", "You are calling Brookfield City Council on behalf of a resident to book a bulky waste pickup. Work through whatever menu answers you and ask for a person if the menu cannot help.", true},
 }
 
+// heldOut are businesses kept out of training as well as the benchmark: a test set written
+// for them (-businesses test) measures a model on scenarios no choice was made on.
+var heldOut = []business{
+	{"optician", "You are the appointment line for Clearview Opticians. You can book, move and cancel eye tests and contact lens fittings, and tell a patient whether their new glasses are ready to collect.", false},
+	{"movers", "You take bookings for Halfmoon Removals. You can quote and book a house move, change its date, and add packing or storage for a customer.", false},
+	{"bike-shop", "You are the service desk for Spoke and Chain bicycle repairs. You can book a service or repair, tell a customer whether their bike is ready, and hold a part for them.", false},
+	{"library", "You are the help line for Eastgate Public Library. You can renew loans, place and cancel holds, and book study rooms for a member.", false},
+	{"licensing-outbound", "You are calling the Riverside Vehicle Licensing Office on behalf of a driver to renew a licence that expires next month. Work through whatever menu answers you and ask for a person if the menu cannot help.", true},
+	{"school-outbound", "You are calling Oakridge Primary School's office on behalf of a parent to report that their child is off sick today. Work through whatever menu answers you and ask for a person if the menu cannot help.", true},
+}
+
 // state is one situation, described for the writer, and what the controller should do in it.
 type state struct {
 	name, expect, describe string
@@ -110,7 +121,7 @@ var states = []state{
 	{"wait-menu", "wait", "The agent is on a call it placed, and the other end is a recorded menu. The menu has read some of its options but has not yet asked the caller to choose. Set participant to \"The line\"; history may be empty or hold what the menu said before.", false, true, ""},
 	{"clarify", "answer-clarify", floorFree + "The caller asks for something the agent cannot act on without asking which thing they mean: the history mentions two or more things the request could refer to (two bookings, two cards, two parcels), or the request leans on something the agent was never told, and the words do not say which. The history must set up the ambiguity, and the request itself must be a complete sentence.", false, false, ""},
 	{"ignore", "ignore", floorFree + "The words are not for the agent: either a different person in the caller's room talking to somebody there (set participant to \"Someone at the caller's microphone\" and another_voice to true), or the caller turning away to talk to someone else in the room (participant \"The caller\"). Mix the two.", false, false, ""},
-	{"stop", "interrupt", talking + "The caller cuts in with a correction, a new request, a question, or a direct interruption such as \"wait\", \"no\", or \"hang on\", so the agent must stop.", true, false, ""},
+	{"stop", "interrupt", talking + "The caller cuts in with a correction, a different request, a question, or a direct interruption such as \"wait\", \"no\", or \"hang on\", so the agent must stop.", true, false, ""},
 	{"shorten", "shorten", talking + "The caller adds one more item of the same kind to what the agent is already answering: another day, another person, another item, another address, for the same request. The agent should fold it in and wrap up briefly rather than stop. It keeps the original request; it neither corrects nor replaces it, and it is not a new topic.", true, false, ""},
 	{"continue-ack", "continue", talking + "The caller only acknowledges, with a backchannel such as \"okay\", \"mm-hmm\", \"right\", \"yep\", or \"got it\". Vary them.", true, false, ""},
 	{"continue-noise", "continue", talking + "What arrives is a noise from the caller's side, written in square brackets, such as [coughs], [baby crying], [keyboard typing], [door closes].", true, false, ""},
@@ -154,6 +165,7 @@ func main() {
 	effort := flag.String("effort", "max", "the writer's reasoning effort")
 	limit := flag.Int("limit", 0, "make only this many calls, for a trial")
 	more := flag.String("more", "", "extra calls for some states, such as shorten=3: calls per business for them")
+	which := flag.String("businesses", "train", "which businesses to write for: train, or test (held out of training and the benchmark)")
 	flag.Parse()
 	if *work == "" || *out == "" {
 		fmt.Fprintln(os.Stderr, "usage: generate -work DIR -out FILE")
@@ -163,9 +175,13 @@ func main() {
 	empty := filepath.Join(*work, "cwd")
 	must(os.MkdirAll(empty, 0o755)) // the CLI roots its tools here, so it has nothing to touch
 
+	pool := businesses
+	if *which == "test" {
+		pool = heldOut
+	}
 	var jobs []job
 	for _, s := range states {
-		for _, b := range businesses {
+		for _, b := range pool {
 			if s.outbound != b.outbound {
 				continue
 			}
@@ -326,7 +342,7 @@ func ask(writer, model, effort, dir, file, text string) (string, error) {
 			"--max-model-steps", "1", "--prompt-file", file)
 	case "claude":
 		// Headless, with every tool refused, so the writer can only answer with text.
-		cmd = exec.CommandContext(ctx, "claude", "-p", "--model", model, "--output-format", "text",
+		cmd = exec.CommandContext(ctx, "claude", "-p", "--model", model, "--effort", effort, "--output-format", "text",
 			"--disallowed-tools", "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Agent,NotebookEdit")
 		cmd.Stdin = strings.NewReader(text)
 	default:
