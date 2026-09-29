@@ -79,7 +79,8 @@ export interface BackendOptions {
    * With `apiSecret` it is sent as a header, which is how a backend says which of its
    * users it is acting for; the sessions it opens then belong to that user, so the user's
    * own device can reach them afterwards. With `token` it is already in the token and
-   * this is ignored.
+   * this is ignored. With `customerId` it is sent as `user_id` in the query, which a router
+   * with nothing in front of it reads the same way.
    */
   userId?: string;
   /**
@@ -324,6 +325,9 @@ export class Backend {
       }
     } else {
       url.searchParams.set("customer_id", this.customerId);
+      if (this.userId) {
+        url.searchParams.set("user_id", this.userId);
+      }
     }
     return url.toString();
   }
@@ -336,6 +340,17 @@ export class Backend {
       );
     }
     return new this.webSocketImpl(url);
+  }
+
+  /**
+   * What a request carries in its query rather than its headers.
+   *
+   * A router reached by customer id is told the end user as `user_id`: a header would do on
+   * a server, but a page cannot send one the router's CORS does not admit, and the query is
+   * read the same way.
+   */
+  query(): Record<string, string> {
+    return !this.apiKey && this.customerId && this.userId ? { user_id: this.userId } : {};
   }
 
   /** Sends one request. Exposed so the client and the sockets share one fetch. */

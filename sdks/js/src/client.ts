@@ -216,7 +216,7 @@ export class Client {
 
     const operation = `${method.toUpperCase()} ${template}`;
     const url = new URL(this.backend.url + fill(template, path));
-    for (const [name, value] of Object.entries(query ?? {})) {
+    for (const [name, value] of Object.entries({ ...this.backend.query(), ...query })) {
       if (value === undefined || value === null) {
         continue;
       }

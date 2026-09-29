@@ -276,6 +276,17 @@ describe("Backend", () => {
     assert.equal(url.searchParams.get("stream-auth-type"), null);
   });
 
+  it("names the end user to a router reached by customer id", async () => {
+    const backend = new Backend({ url: router.url, customerId: "local", userId: "ana" });
+
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("customer_id"), "local");
+    assert.equal(url.searchParams.get("user_id"), "ana");
+    assert.deepEqual(backend.query(), { user_id: "ana" });
+    assert.deepEqual(await backend.headers(), { "X-Customer-Id": "local" }, "no header a page's CORS would refuse");
+    assert.deepEqual(new Backend({ url: router.url, customerId: "local" }).query(), {});
+  });
+
   it("calls the runtime's fetch on the global object, which a browser insists on", async () => {
     // A browser's fetch throws "Illegal invocation" unless it is called on the window. Node's
     // does not care, so the check is made here.
