@@ -107,13 +107,25 @@ type flowCase struct {
 	AgentSaid     string    `json:"agent_said,omitempty"`
 	Unfinished    bool      `json:"unfinished,omitempty"`
 	Expect        string    `json:"expect"`
+	// Silence is how long the floor stayed quiet after the heard words: the pause the speaker
+	// talked through, or the gap before somebody else took the floor. Audio cut for a case may
+	// run this far past its words and no further.
+	Silence float64 `json:"silence,omitempty"`
+	// Recent is the speaker's words in the recentSec before the decision point: what an audio clip
+	// of that length ending there says, for aligning a speech encoder with the words.
+	Recent string `json:"recent,omitempty"`
 }
+
+// recentSec is how much audio before a decision point a clip for the case holds.
+const recentSec = 7.5
 
 func main() {
 	in := flag.String("in", "", "unpacked AMI manual annotations; downloaded when empty")
 	out := flag.String("out", "", "where to write the set; standard output when empty")
 	all := flag.Bool("all", false, "keep every case found rather than spreading perState of each")
 	corpusName := flag.String("corpus", "ami", "ami, or icsi: the ICSI Meeting Corpus core NXT annotations, unpacked, as -in")
+	segments := flag.Float64("segments", 0, "cut every meeting into windows of this many seconds with the words said in them, for aligning a speech encoder, instead of cases")
+	skip := flag.String("skip", "", "with -segments: comma-separated meetings to leave out, such as a test set's")
 	turns := flag.Bool("turns", false, "heard at the level of the turn: holds and hand-overs, for training")
 	exclude := flag.String("exclude", "", "a set whose meeting series are left out, so that "+
 		"cases for training share no speakers with it")
@@ -176,6 +188,11 @@ func main() {
 		acts, err := readActs(corpus, file, meeting, speaker, words, kinds)
 		must(err)
 		meetings[meeting] = append(meetings[meeting], acts...)
+	}
+
+	if *segments > 0 {
+		writeSegments(meetings, *segments, strings.Split(*skip, ","), *out)
+		return
 	}
 
 	found := map[string][]flowCase{}
@@ -439,6 +456,7 @@ func findTurns(acts []act) []flowCase {
 			heard := textOf(start, a.end, speaker)
 			cases = append(cases, flowCase{
 				State: "wait", Source: source(meetingOf(acts), a.end), Heard: heard, Expect: "wait",
+				Silence: b.start - a.end, Recent: textOf(max(start, a.end-recentSec), a.end, speaker),
 				History: contextBefore(acts, start, lastSpeakerBefore(acts, speaker, start)),
 			})
 		}
@@ -449,6 +467,7 @@ func findTurns(acts []act) []flowCase {
 				cases = append(cases, flowCase{
 					State: "respond", Source: source(meetingOf(acts), last.end),
 					Heard: textOf(start, last.end+0.05, speaker), Expect: "answer",
+					Silence: next.start - last.end, Recent: textOf(max(start, last.end-recentSec), last.end+0.05, speaker),
 					History: contextBefore(acts, start, next.speaker),
 				})
 			}
@@ -468,6 +487,67 @@ func findTurns(acts []act) []flowCase {
 }
 
 func meetingOf(acts []act) string { return acts[0].meeting }
+
+// segment is a window of a meeting's recording and every word said in it, all speakers in time order.
+type segment struct {
+	ID      string  `json:"id"`
+	Meeting string  `json:"meeting"`
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Text    string  `json:"text"`
+}
+
+// writeSegments cuts each meeting, less those in skip, into back-to-back windows of length seconds,
+// keeping the windows with at least five words, for teaching a projector what speech says.
+func writeSegments(meetings map[string][]act, length float64, skip []string, out string) {
+	skipped := map[string]bool{}
+	for _, m := range skip {
+		skipped[m] = true
+	}
+	var all []segment
+	kept := 0
+	names := make([]string, 0, len(meetings))
+	for name := range meetings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if skipped[name] {
+			continue
+		}
+		kept++
+		var words []word
+		last := 0.0
+		for _, one := range meetings[name] {
+			for _, w := range one.words {
+				if w.timed {
+					words = append(words, w)
+					last = max(last, w.end)
+				}
+			}
+		}
+		sort.SliceStable(words, func(i, j int) bool { return words[i].start < words[j].start })
+		for from := 0.0; from+length <= last; from += length {
+			var in []word
+			for _, w := range words {
+				if w.start >= from && w.end <= from+length {
+					in = append(in, w)
+				}
+			}
+			if len(spoken(in)) < 5 {
+				continue
+			}
+			all = append(all, segment{
+				ID:      fmt.Sprintf("%s-seg-%s-%.1f", strings.ToLower(corpusLabel), strings.ToLower(name), from),
+				Meeting: name, Start: from, End: from + length, Text: strings.TrimLeft(join(in), " .,?!"),
+			})
+		}
+	}
+	encoded, err := json.Marshal(all)
+	must(err)
+	must(os.WriteFile(out, encoded, 0o644))
+	fmt.Fprintf(os.Stderr, "%d segments of %.1f s from %d meetings\n", len(all), length, kept)
+}
 
 // lastSpeakerBefore is who last took the floor before speaker's turn, the one the agent stands in for.
 func lastSpeakerBefore(acts []act, speaker string, at float64) string {

@@ -166,7 +166,7 @@ func main() {
 	effort := flag.String("effort", "max", "the writer's reasoning effort")
 	limit := flag.Int("limit", 0, "make only this many calls, for a trial")
 	more := flag.String("more", "", "extra calls for some states, such as shorten=3: calls per business for them")
-	only := flag.String("only", "", "write only these states, comma separated, such as wait-digits")
+	only := flag.String("only", "", "write only these states, comma separated, such as wait-digits or respond/clear for one kind of near miss")
 	which := flag.String("businesses", "train", "which businesses to write for: train, or test (held out of training and the benchmark)")
 	flag.Parse()
 	if *work == "" || *out == "" {
@@ -183,7 +183,8 @@ func main() {
 	}
 	var jobs []job
 	for _, s := range states {
-		if *only != "" && !slices.Contains(strings.Split(*only, ","), s.name) {
+		if *only != "" && !slices.Contains(strings.Split(*only, ","), s.name) &&
+			!slices.Contains(strings.Split(*only, ","), s.name+"/"+s.tag) {
 			continue
 		}
 		for _, b := range pool {
