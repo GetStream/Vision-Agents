@@ -395,14 +395,14 @@ func localChoices(one flowCase) []localChoice {
 		}
 	case one.Unfinished:
 		return []localChoice{
-			{"stop: a correction, a new request, a question, or a direct interruption", outcomeInterrupt},
-			{"shorten: a related addition that makes the current answer too long", outcomeShorten},
+			{"stop: a correction, a different request, a question, or a direct interruption", outcomeInterrupt},
+			{"shorten: one more item of the same kind for the request being answered, neither correcting nor replacing it", outcomeShorten},
 			{"continue: an acknowledgement, a noise, an echo of the agent, unrelated background speech, or too short to tell", outcomeContinue},
 		}
 	default:
 		return []localChoice{
-			{"stop: a correction, a new request, a question, or a direct interruption", outcomeInterrupt},
-			{"shorten: a related addition that makes the current answer too long", outcomeShorten},
+			{"stop: a correction, a different request, a question, or a direct interruption", outcomeInterrupt},
+			{"shorten: one more item of the same kind for the request being answered, neither correcting nor replacing it", outcomeShorten},
 			{"continue: a brief acknowledgement, a noise, or an echo of the agent's own words", outcomeContinue},
 			{"ignore: background speech, or addressed to somebody else", outcomeIgnore},
 		}
