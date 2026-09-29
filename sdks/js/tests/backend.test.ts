@@ -255,6 +255,27 @@ describe("Backend", () => {
     );
   });
 
+  it("hands the proxy a socket's credential the way it reads a request's", async () => {
+    // The proxy refuses a socket carrying only `token`; `token` stays for a router reached
+    // directly, which is what reads it.
+    const backend = new Backend({ url: router.url, apiKey: "key", token: "t", authenticate: true });
+
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("api_key"), "key");
+    assert.equal(url.searchParams.get("token"), "t");
+    assert.equal(url.searchParams.get("authorization"), "t");
+    assert.equal(url.searchParams.get("stream-auth-type"), "jwt", "a user, never a backend");
+  });
+
+  it("leaves a socket to a router reached directly as it was", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "key", token: "t" });
+
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("token"), "t");
+    assert.equal(url.searchParams.get("authorization"), null);
+    assert.equal(url.searchParams.get("stream-auth-type"), null);
+  });
+
   it("calls the runtime's fetch on the global object, which a browser insists on", async () => {
     // A browser's fetch throws "Illegal invocation" unless it is called on the window. Node's
     // does not care, so the check is made here.

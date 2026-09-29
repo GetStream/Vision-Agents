@@ -294,8 +294,9 @@ export class Backend {
    * The WebSocket URL for a path on the router, credentials included.
    *
    * They go in the query string because a browser WebSocket carries no headers of its own.
-   * `Stream-Auth-Type` has no query counterpart on purpose, which is why a socket opened
-   * from a browser cannot claim to be a backend.
+   * A socket never says it is a backend: `Stream-Auth-Type: server` has no query counterpart
+   * on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is what it
+   * reads for a user whoever the token is for.
    */
   async socketURL(path: string, query: Record<string, string> = {}): Promise<string> {
     this.assertCredentialed();
@@ -305,15 +306,19 @@ export class Backend {
     }
 
     if (this.apiKey) {
+      const token = this.authenticate
+        ? await this.proxyToken()
+        : this.apiSecret
+          ? await this.serverToken()
+          : await this.userToken();
       url.searchParams.set("api_key", this.apiKey);
-      url.searchParams.set(
-        "token",
-        this.authenticate
-          ? await this.proxyToken()
-          : this.apiSecret
-            ? await this.serverToken()
-            : await this.userToken(),
-      );
+      url.searchParams.set("token", token);
+      if (this.authenticate) {
+        // The proxy reads a socket's credential the way it reads a request's, as
+        // `authorization` and `stream-auth-type`, and refuses one carrying only `token`.
+        url.searchParams.set("authorization", token);
+        url.searchParams.set("stream-auth-type", "jwt");
+      }
       if (this.userId) {
         url.searchParams.set("user_id", this.userId);
       }

@@ -48,14 +48,14 @@ export interface SessionOptions {
   /** Report the router's own routing decisions. On by default at the backend. */
   decisions?: boolean;
   /**
-   * Whether to watch the conversation. On by default, and what a browser has to turn off.
+   * Whether to watch the conversation. On by default.
    *
    * A watched conversation is the lower-latency arrangement and the only one that reports
-   * what the agent is doing word by word, so it is what a server wants. It is also not
-   * available to a page on a hosted deployment: the proxy requires a header a browser
-   * WebSocket cannot set. Off, the conversation is opened and read over HTTP instead —
-   * `responses.create()` asks, `responses.items` reads the turn back — and `say`, `respond`,
-   * `interrupt`, `setInstructions` and `events` have nothing to send to.
+   * what the agent is doing word by word. A page on a hosted deployment can watch one too:
+   * the socket carries the credential in its query, where the proxy reads it. Off, the
+   * conversation is opened and read over HTTP instead — `responses.create()` asks,
+   * `responses.items` reads the turn back — and `say`, `respond`, `interrupt`,
+   * `setInstructions` and `events` have nothing to send to.
    */
   watch?: boolean;
 }
@@ -150,11 +150,9 @@ export class Session {
   readonly responses: Responses;
 
   /**
-   * Undefined for a conversation that is read and written to over HTTP rather than watched.
-   *
-   * That is what a browser has on a hosted deployment: the proxy wants a header a browser
-   * WebSocket cannot set, so a page that insisted on a socket could not open a conversation
-   * at all. Turns go in through `responses.create` and come back out of `responses.items`.
+   * Undefined for a conversation that is read and written to over HTTP rather than watched
+   * (`watch: false`). Turns go in through `responses.create` and come back out of
+   * `responses.items`.
    */
   private readonly socket: Socket | undefined;
   /** The Stream Chat channel and the video call, each opened on first use. */
