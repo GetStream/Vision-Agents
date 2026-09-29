@@ -2,6 +2,45 @@
 
 ## Breaking Changes
 
+### Session, response and item lists page by cursor instead of offset
+
+`GET /v1/agents/sessions`, `/v1/agents/sessions/search`, `/v1/agents/sessions/{id}/responses`
+and `/v1/agents/sessions/{id}/responses/items` no longer take `offset`, and return a page
+object instead of a bare array: `{items, has_more, next_cursor}`. Pass `next_cursor` back as
+`cursor`, with the same filters, for the next page. A session opened or deleted while someone
+pages no longer repeats or skips a row, and a deep page costs the same as the first.
+
+In the Go SDK, `Sessions.Query` and `Sessions.Search` return `*acceleration.SessionPage` and
+take `Query.Cursor` instead of `Query.Offset`. `Responses.List` and `Items.List` take a cursor
+string instead of an offset and return the page. `Items.Unwind` follows the cursor as before.
+In JavaScript, `sessions.query`, `sessions.search`, `responses.list` and `items.list` take
+`cursor` instead of `offset` and return the page.
+
+### One `update` for a session, in place of settings and instructions
+
+`PATCH /v1/agents/sessions/{id}` (`updateSession`) changes a session's title, description,
+custom labels, instructions, models and voice in one request, and returns the session as it
+now is. A session that ended can still be renamed and relabelled. The id, the call and
+incognito cannot change. `PATCH .../settings` and `PUT .../instructions` still work but are
+deprecated. In Go, `session.UpdateSettings(client.Settings{...})` is now
+`session.Update(client.SessionUpdate{...})`, and `agent.Sessions.Update(id, ...)` renames a
+conversation without a live handle. In JavaScript, `session.updateSettings({...})` is now
+`session.update({...})`. Other SDKs follow.
+
+### Sessions are kept in Stream Chat by default, and `persist_conversation` is gone
+
+`persist_conversation` has been removed from `POST /v1/agents/sessions` and from every SDK's
+session options. Every text session is now kept in a Stream Chat channel, so any Stream Chat SDK
+can read it back; pass `incognito: true` to keep nothing. Voice calls were already written to
+Chat, and now show what the caller is saying as it is transcribed, through ephemeral message
+updates, before storing the settled turn. A router without Stream credentials still runs a new
+text session, without a channel.
+
+What was true of a persisted conversation is now true of every text session: a user's
+questions carry a `command_id` (the SDKs add it), rewinding is refused (fork at the response
+instead), and the session ends when its last watcher disconnects, leaving the channel to
+resume with `conversation_id`.
+
 ### The `lemonslice` and `liveavatar` plugins have been removed
 
 `vision-agents[lemonslice]` and `vision-agents[liveavatar]` are gone, along with
@@ -155,6 +194,57 @@ credentials, err := backend.Credentials()  // was: backend.Headers()
 Half a credential is refused by `Resolve` rather than ignored, so a missing secret is not
 quietly downgraded to an unauthenticated request.
 
+### Go tools are types, added to `agent.Tools()`
+
+A tool is now a struct with `Name`, `Description` and `Run` methods. Its exported fields are
+the arguments the model fills in; unexported fields carry whatever `Run` needs:
+
+```go
+type LookupOrder struct {
+	OrderID string `json:"order_id" schema:"the order number"`
+	orders  *Orders
+}
+
+func (LookupOrder) Name() string        { return "lookup_order" }
+func (LookupOrder) Description() string { return "Look up an order by its number" }
+func (l LookupOrder) Run(ctx context.Context) (any, error) { return l.orders.Find(ctx, l.OrderID) }
+
+agent.Tools().Add(LookupOrder{orders: orders})
+```
+
+`agents.RegisterFunction` and `agents.Registrar` are gone, `Agent.Functions()` is now
+`Agent.Tools()`, and `agents.Dispatch.Host` takes a `*tools.Registry`. `tools.Register` is
+unchanged for a caller that prefers a closure. In `client`, `Agent.Functions()` and
+`Session.Functions()` are now `Tools()`, and the `Functions` field of `SessionOptions` and
+`ForkOptions` is now `Tools`.
+
+### A Go agent's session is a `client.Session`, with `Responses`
+
+`agent.Chat`, `agent.Join`, `agent.WaitForCall` and `agent.StartCall` return an
+`agents.Session` that embeds `*client.Session`, so a conversation the agent opened reads the
+same as one opened by name, as it does in JavaScript:
+
+```go
+session, err := agent.Chat(ctx)
+answer, err := session.Responses.Create(ctx, "Where is order 1042?")
+```
+
+`Fork`, `Chat()` and `Video()` come with it. `Say` and `Respond` now take whether to
+interrupt, like `client.Session.Say` already did: `session.Respond(text)` is
+`session.Respond(text, true)`, and `session.Say(text)` is `session.Say(text, false)`.
+`Session.Session()` is `Session.Created()`.
+
+### Go `Responses.Create` takes `client.Image` and `client.Clip`
+
+`session.Responses.Create(ctx, text, inputs ...client.Input)` replaces the variadic
+`acceleration.ImageSource`. `client.Image{URL, Detail}` is a picture, and `client.Clip` or
+`client.ClipFile(path)` is a video:
+
+```go
+_, err = session.Responses.Create(ctx, "Which receipt is for order 1042?",
+	client.Image{URL: "https://example.com/receipts/1041.png"})
+```
+
 ### Routing in the Go SDK starts from a client, and `SyncRouters` / `DefineRouter` moved onto it
 
 Where the router is and who is calling it is now said once, to `stream.NewClient`, rather
@@ -303,6 +393,29 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
 ## New Features
+
+### Choose a session's id when creating it
+
+`POST /v1/agents/sessions` takes an optional `id`, a UUID the caller chose, so the session can
+be referred to before it exists. An id some session already has is refused with a 409. Without
+one the router generates a UUIDv7 rather than a random hex string. In Go it is
+`SessionOptions.ID`, and in JavaScript `sessions.create({ id })`. Other SDKs follow.
+
+### Change a running session's models from the server SDKs
+
+`PATCH /v1/agents/sessions/{id}/settings` is wrapped on the session object in every server
+SDK: `updateSettings` (JavaScript), `update_settings` (Python, Ruby, Rust), `updateSettings`
+(PHP), `UpdateSettings` (Go) and `UpdateSettingsAsync` (C#). Each returns the session as it now
+runs. It stays backend-only, so the Kotlin, Swift and Dart SDKs do not offer it.
+
+### `responses.create` takes a video
+
+`POST /v1/agents/sessions/{id}/responses` takes `videos`: up to two clips, each an `http(s)`
+URL or a `data:video/...` URI of at most 50 MB. The router samples `max_frames` frames
+spread evenly through each clip (8 by default, up to 32) with ffmpeg, which the router
+image now ships, and hands them to the vision subagent like attached images, each captioned
+with where in the clip it was taken. URLs are fetched only from public addresses. The Go
+SDK sends them with `client.Clip{URL, MaxFrames}` or `client.ClipFile(path)`.
 
 ### A dispatch worker can run tools for every session under an agent id
 
@@ -1141,6 +1254,19 @@ Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` 
 Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
 
 ## Bug Fixes
+
+- The Python client now adds a `command_id` when it asks a stored text conversation
+  something, as the JavaScript SDK does, so a user's question is no longer refused.
+- An incognito voice call is no longer written into Stream Chat. The transcript writer was
+  opened for every call, whatever `incognito` said.
+- Images sent with a turn are no longer dropped when the conversation model also asks the
+  vision skill to look. Its own ask superseded the task holding the images, and the new one
+  looked at the camera instead, failing with "nobody is connected to run it" on a text
+  session.
+- The Go SDK can hold a user's kept conversation. A pipeline acting for an end user
+  (`Backend.UserID`) on a persisted text session now sends each `Respond` with a fresh
+  `command_id`; the router refused those turns with "personal conversations require a
+  command ID". Sessions speaking for the app are unchanged.
 
 - `POST /v1/agents/sessions/{id}/responses` takes an optional `command_id`, so a page can ask
   a user's kept conversation over HTTP and still get the turn's id back; it was refused with

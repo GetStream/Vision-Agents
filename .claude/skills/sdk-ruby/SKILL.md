@@ -171,3 +171,16 @@ Reject it if it:
 - symbolises wire hashes, or drops a frame kind it does not know;
 - changes the folder fingerprint without the pinned hash still passing;
 - uses `YAML.load`, `rescue Exception`, or a mock.
+
+## Pending: cursor pagination
+
+Go has moved; this SDK still needs to. `listSessions`, `searchSessions`, `listResponses` and
+`listResponseItems` take `cursor` instead of `offset` and return `{items, has_more,
+next_cursor}` instead of an array. See the `pagination` skill and `sdks/go/client`.
+
+## Pending: session update (Go is done)
+
+The Go SDK moved to `PATCH /v1/agents/sessions/{id}` (`updateSession`), which changes title,
+description, custom, instructions, models and voice in one call. Regenerate, then expose
+`session.update(...)` and `agent.sessions.update(id, ...)`; drop the settings method. See "Updating a session" in the `sdk` skill. The `/settings` and
+`/instructions` endpoints are deprecated.
