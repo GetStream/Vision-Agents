@@ -1460,6 +1460,37 @@ type AgentConfig struct {
 	Voice     *string            `json:"voice,omitempty"`
 }
 
+// AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
+type AgentConfigPatch struct {
+	Greeting *string `json:"greeting,omitempty"`
+
+	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
+	Guardrail          *string   `json:"guardrail,omitempty"`
+	Instructions       *string   `json:"instructions,omitempty"`
+	Keyterms           *[]string `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
+	Llm                *string   `json:"llm,omitempty"`
+
+	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
+	Mode *AgentMode `json:"mode,omitempty"`
+
+	// Name What the config is called, which is unique among the customer's own.
+	Name    *string   `json:"name,omitempty"`
+	Plugins *[]string `json:"plugins,omitempty"`
+
+	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	Sandbox  *Sandbox           `json:"sandbox,omitempty"`
+	Search   *string            `json:"search,omitempty"`
+	Skills   *[]string          `json:"skills,omitempty"`
+	Sts      *string            `json:"sts,omitempty"`
+	Stt      *string            `json:"stt,omitempty"`
+	Subagent *string            `json:"subagent,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+	Tts      *string            `json:"tts,omitempty"`
+	Video    *SessionVideo      `json:"video,omitempty"`
+	Voice    *string            `json:"voice,omitempty"`
+}
+
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
 	Greeting *string `json:"greeting,omitempty"`
@@ -4686,6 +4717,9 @@ type CreateChatTokenJSONRequestBody = ChatTokenRequest
 // CreateAgentConfigJSONRequestBody defines body for CreateAgentConfig for application/json ContentType.
 type CreateAgentConfigJSONRequestBody = AgentConfigRequest
 
+// PatchAgentConfigJSONRequestBody defines body for PatchAgentConfig for application/json ContentType.
+type PatchAgentConfigJSONRequestBody = AgentConfigPatch
+
 // UpdateAgentConfigJSONRequestBody defines body for UpdateAgentConfig for application/json ContentType.
 type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 
@@ -5260,6 +5294,28 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
 	GetAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchAgentConfigWithBody Change some of an agent config
+	//
+	// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+	PatchAgentConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchAgentConfig Change some of an agent config
+	//
+	// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+	PatchAgentConfig(ctx context.Context, id string, body PatchAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateAgentConfigWithBody Replace an agent config
 	//
@@ -6970,6 +7026,48 @@ func (c *Client) DeleteAgentConfig(ctx context.Context, id ResourceID, reqEditor
 // Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
 func (c *Client) GetAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentConfigRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchAgentConfigWithBody Change some of an agent config
+//
+// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+func (c *Client) PatchAgentConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchAgentConfigRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchAgentConfig Change some of an agent config
+//
+// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+func (c *Client) PatchAgentConfig(ctx context.Context, id string, body PatchAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchAgentConfigRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10555,6 +10653,53 @@ func NewGetAgentConfigRequest(server string, id ResourceID) (*http.Request, erro
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewPatchAgentConfigRequest calls the generic PatchAgentConfig builder with application/json body
+func NewPatchAgentConfigRequest(server string, id string, body PatchAgentConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchAgentConfigRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewPatchAgentConfigRequestWithBody constructs an http.Request for the PatchAgentConfig method, with any body, and a specified content type
+func NewPatchAgentConfigRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/configs/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -15954,6 +16099,28 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
 	GetAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error)
 
+	// PatchAgentConfigWithBodyWithResponse Change some of an agent config
+	//
+	// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+	PatchAgentConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchAgentConfigResponse, error)
+
+	// PatchAgentConfigWithResponse Change some of an agent config
+	//
+	// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+	PatchAgentConfigWithResponse(ctx context.Context, id string, body PatchAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchAgentConfigResponse, error)
+
 	// UpdateAgentConfigWithBodyWithResponse Replace an agent config
 	//
 	// Every field is written, so the body is what the config now is rather than what changed about it. Sessions already running keep the configuration they started with.
@@ -18612,6 +18779,82 @@ func (r GetAgentConfigResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAgentConfigResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PatchAgentConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentConfig
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON200() *AgentConfig {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchAgentConfigResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchAgentConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchAgentConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchAgentConfigResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26017,6 +26260,40 @@ func (c *ClientWithResponses) GetAgentConfigWithResponse(ctx context.Context, id
 	return ParseGetAgentConfigResponse(rsp)
 }
 
+// PatchAgentConfigWithBodyWithResponse Change some of an agent config
+//
+// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+func (c *ClientWithResponses) PatchAgentConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchAgentConfigResponse, error) {
+	rsp, err := c.PatchAgentConfigWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchAgentConfigResponse(rsp)
+}
+
+// PatchAgentConfigWithResponse Change some of an agent config
+//
+// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+func (c *ClientWithResponses) PatchAgentConfigWithResponse(ctx context.Context, id string, body PatchAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchAgentConfigResponse, error) {
+	rsp, err := c.PatchAgentConfig(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchAgentConfigResponse(rsp)
+}
+
 // UpdateAgentConfigWithBodyWithResponse Replace an agent config
 //
 // Every field is written, so the body is what the config now is rather than what changed about it. Sessions already running keep the configuration they started with.
@@ -29284,6 +29561,67 @@ func ParseGetAgentConfigResponse(rsp *http.Response) (*GetAgentConfigResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchAgentConfigResponse parses an HTTP response from a PatchAgentConfigWithResponse call
+func ParsePatchAgentConfigResponse(rsp *http.Response) (*PatchAgentConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchAgentConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentConfig
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

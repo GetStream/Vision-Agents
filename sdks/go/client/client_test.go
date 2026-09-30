@@ -58,6 +58,24 @@ func newRouter(t *testing.T) *router {
 		answer(w, http.StatusOK, stored)
 	})
 
+	mux.HandleFunc("PATCH /v1/agents/configs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		backend.mu.Lock()
+		defer backend.mu.Unlock()
+		sent := backend.bodies[r.Method+" "+r.URL.Path]
+		for i, config := range backend.configs {
+			if config.Id != r.PathValue("id") {
+				continue
+			}
+			if guardrail, ok := sent["guardrail"].(string); ok {
+				backend.configs[i].Guardrail = &guardrail
+			}
+			answer(w, http.StatusOK, backend.configs[i])
+			return
+		}
+		answer(w, http.StatusNotFound, acceleration.Error{Error: "no such agent config"})
+	})
+
 	mux.HandleFunc("POST /v1/agents/sessions", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusCreated, acceleration.Session{
@@ -858,6 +876,40 @@ func TestAnAgentIsLookedUpByTheNameItIsConfiguredUnder(t *testing.T) {
 	}
 	if name := backend.query(t, "GET", "/v1/agents/configs").Get("name"); name != "docs" {
 		t.Errorf("the config was asked for by %q", name)
+	}
+}
+
+func TestUpdatingAConfigSendsOnlyWhatChanged(t *testing.T) {
+	backend := newRouter(t)
+	instructions := "be brief"
+	backend.configs = []acceleration.AgentConfig{{Id: "config-1", Name: "docs", Instructions: &instructions}}
+	policy := "Only answer questions about Acme."
+
+	config, err := backend.client(t).Agent("docs").UpdateConfig(t.Context(),
+		acceleration.AgentConfigPatch{Guardrail: &policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Guardrail == nil || *config.Guardrail != policy {
+		t.Errorf("the guardrail came back as %v", config.Guardrail)
+	}
+	if config.Instructions == nil || *config.Instructions != instructions {
+		t.Errorf("the instructions came back as %v", config.Instructions)
+	}
+	sent := backend.body(t, "PATCH", "/v1/agents/configs/config-1")
+	if len(sent) != 1 {
+		t.Errorf("the patch sent %v rather than only the guardrail", sent)
+	}
+}
+
+func TestUpdatingAnAgentNothingIsStoredUnderFails(t *testing.T) {
+	backend := newRouter(t)
+	policy := "Only answer questions about Acme."
+
+	_, err := backend.client(t).Agent("nowhere").UpdateConfig(t.Context(),
+		acceleration.AgentConfigPatch{Guardrail: &policy})
+	if err == nil || !strings.Contains(err.Error(), "nowhere") {
+		t.Errorf("updating an agent nobody stored answered %v", err)
 	}
 }
 
