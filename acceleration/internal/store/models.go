@@ -895,8 +895,19 @@ type SimulationLine struct {
 	// Intended is what the agent meant to say, where that differs from what the caller
 	// heard. Only an audio simulation has both, and the difference is the whole point of
 	// running one.
-	Intended string    `json:"intended,omitempty"`
-	At       time.Time `json:"at"`
+	Intended string `json:"intended,omitempty"`
+	// Tools are what the agent did on this turn rather than said, which is what a question
+	// about whether something was actually done is settled by.
+	Tools []SimulationTool `json:"tools,omitempty"`
+	At    time.Time        `json:"at"`
+}
+
+// SimulationTool is one tool the agent ran during a simulated conversation.
+type SimulationTool struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Result    string `json:"result"`
+	Error     string `json:"error,omitempty"`
 }
 
 // SimulationRunFilter narrows which runs are listed. Every field is optional, and an empty

@@ -279,6 +279,15 @@ func (a *Agent) availableTools() harness.Tools {
 	return available
 }
 
+// Tools names what the agent may do rather than say on this call.
+func (a *Agent) Tools() []string {
+	var names []string
+	for _, tool := range a.availableTools().Tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
 // transfer hands the caller to a human and leaves.
 //
 // A warm transfer waits for the human to be on the call before saying anything, because a

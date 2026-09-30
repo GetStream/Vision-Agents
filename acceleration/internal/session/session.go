@@ -588,6 +588,9 @@ func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persist
 // driving a conversation knows a turn is over rather than merely answered once.
 func (s *Session) Busy() bool { return s.voiceAgent.Busy() }
 
+// Tools names what the agent may do rather than say.
+func (s *Session) Tools() []string { return s.voiceAgent.Tools() }
+
 // SetInstructions changes what the agent is told to be from the next turn on.
 func (s *Session) SetInstructions(text string) {
 	s.spec.Instructions = text
