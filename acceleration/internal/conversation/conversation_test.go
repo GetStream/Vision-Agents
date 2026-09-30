@@ -742,6 +742,24 @@ func TestEmptyCallerOwnedChannelInitializesCommandLedgerWithoutRecreatingIt(t *t
 	require.ErrorContains(t, err, "not a channel member")
 }
 
+func TestUserMessageIsStoredUnderItsCommandID(t *testing.T) {
+	db, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "employee-one")
+	require.NoError(t, err)
+	receipt, err := c.BeginCommand("3f2a9c1e-5b7d-4e8f-9a01-2b3c4d5e6f70", "question")
+	require.NoError(t, err)
+	require.Equal(t, "3f2a9c1e-5b7d-4e8f-9a01-2b3c4d5e6f70", receipt.UserMessageID)
+	require.NotEqual(t, receipt.UserMessageID, receipt.AssistantMessageID)
+	saved(t, c)
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.Equal(t, "question", db.messages[receipt.UserMessageID]["text"])
+	require.Equal(t, "employee-one", db.messages[receipt.UserMessageID]["user_id"])
+}
+
 func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	db, client := newChat(t)
 	root := t.TempDir()
