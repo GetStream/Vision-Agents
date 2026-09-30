@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -28,8 +29,15 @@ type chatStore struct {
 	order           []string
 	patches         []map[string]any
 	updates         int
+	events          []sentEvent
 	fail            bool
 	failAfterCreate bool
+}
+
+// sentEvent is a channel event as the fake received it, with the stored updates made before it.
+type sentEvent struct {
+	body    map[string]any
+	updates int
 }
 
 func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
@@ -51,6 +59,10 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 		parts := strings.Split(r.URL.Path, "/")
 		result := map[string]any{}
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/event"):
+			event := body["event"].(map[string]any)
+			db.events = append(db.events, sentEvent{body: event, updates: db.updates})
+			result["event"] = event
 		case strings.HasSuffix(r.URL.Path, "/query"):
 			id := parts[len(parts)-2]
 			if data, ok := body["data"].(map[string]any); ok {
@@ -1111,4 +1123,61 @@ func TestProgressIsLiveUntilTheReplySettles(t *testing.T) {
 	require.NotContains(t, string(stored), "Weighing the two options.")
 	c.Release()
 	s.Close()
+}
+
+// TestRepliesFollowStreamAIProtocol covers what Stream's AI components need from a reply:
+// ai_generated on the assistant's message only, an AI indicator that follows the reply
+// through thinking, a search and writing, and a clear that only comes once the final
+// text is stored.
+func TestRepliesFollowStreamAIProtocol(t *testing.T) {
+	db, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	states := func() []string {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		var seen []string
+		for _, e := range db.events {
+			custom, _ := e.body["custom"].(map[string]any)
+			require.Equal(t, id, custom["message_id"])
+			if e.body["type"] == "ai_indicator.clear" {
+				seen = append(seen, "clear")
+			} else {
+				seen = append(seen, custom["ai_state"].(string))
+			}
+		}
+		return seen
+	}
+	thinking := []string{"AI_STATE_THINKING"}
+	require.Eventually(t, func() bool { return slices.Equal(states(), thinking) }, 3*time.Second, 20*time.Millisecond)
+
+	db.mu.Lock()
+	for _, m := range db.messages {
+		custom := m["custom"].(map[string]any)
+		role := custom["support_runtime"].(map[string]any)["role"]
+		require.Equal(t, role == "assistant", custom["ai_generated"] == true, "ai_generated on a %v message", role)
+	}
+	db.mu.Unlock()
+
+	c.Observe(agent.ToolStarted{ID: "one", Tool: "search", StartedAt: time.Now().UTC()})
+	searching := append(thinking, "AI_STATE_EXTERNAL_SOURCES")
+	require.Eventually(t, func() bool { return slices.Equal(states(), searching) }, 3*time.Second, 20*time.Millisecond)
+	c.Observe(agent.ToolRan{ID: "one", Result: `{}`})
+	c.Observe(agent.ResponseDelta{Text: "The answer."})
+	require.Eventually(t, func() bool { return slices.Contains(states(), "AI_STATE_GENERATING") }, 3*time.Second, 20*time.Millisecond)
+
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	require.Eventually(t, func() bool { return slices.Contains(states(), "clear") }, 3*time.Second, 20*time.Millisecond)
+	db.mu.Lock()
+	last := db.events[len(db.events)-1]
+	db.mu.Unlock()
+	require.Equal(t, "ai_indicator.clear", last.body["type"])
+	require.Equal(t, 1, last.updates, "the indicator cleared before the final text was stored")
+	c.Release()
 }

@@ -13,6 +13,8 @@
 
 - Preserve the immutable registry revision on caller-selected session skills.
 
+- Follow Stream's AI message protocol in persistent conversations: assistant replies carry `ai_generated: true`, live updates go out every 100 ms, and `ai_indicator.update` (thinking, checking external sources, generating) and `ai_indicator.clear` track each reply.
+
 ## Breaking Changes
 
 ### `ROUTER_AUTH_MODE` defaults to `api_key`, and `noauth` has been split in two
