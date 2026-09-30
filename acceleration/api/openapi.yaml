@@ -6407,6 +6407,39 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
       summary: Abandon the reply being spoken
+  /v1/agents/sessions/{id}/memories:
+    delete:
+      description: |-
+        Deletes every memory learned in the session, running or ended, and leaves the rest of the user's memories alone. Ending a session keeps its memories, so the next conversation knows what this one established; this is how to take them back.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteSessionMemories
+      parameters:
+        - description: The session whose memories to delete.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The session whose memories to delete.
+            type: string
+      responses:
+        "204":
+          description: The memories are deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Delete what one session remembered
   /v1/agents/sessions/{id}/respond:
     post:
       operationId: respondSession
@@ -7015,6 +7048,38 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
       summary: Store an agent directory's instructions, skills, knowledge and settings
+  /v1/agents/users/{user_id}/memories:
+    delete:
+      description: |-
+        Deletes every memory about the user, whichever session and agent learned it and whatever memory filter it was written under. Only the calling app's memories are deleted, and a user nothing is known about is not an error.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: truncateMemories
+      parameters:
+        - description: The memory user id sessions were opened with, memory.user_id on a session.
+          in: path
+          name: user_id
+          required: true
+          schema:
+            description: The memory user id sessions were opened with, memory.user_id on a session.
+            minLength: 1
+            type: string
+      responses:
+        "204":
+          description: The memories are deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Delete everything remembered about one user
   /v1/agents/voices:
     get:
       operationId: listVoices

@@ -192,6 +192,7 @@ type SessionAPISuite struct {
 	voice         *recordingTTS
 	conversations *conversation.Service
 	outbox        string
+	memories      *keptMemories
 }
 
 func TestSessionAPISuite(t *testing.T) {
@@ -245,10 +246,12 @@ func (s *SessionAPISuite) SetupTest() {
 	s.Require().NoError(err)
 	s.T().Cleanup(s.conversations.Close)
 
+	s.memories = &keptMemories{}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		LLM:           reasoner,
 		STT:           transcriber,
 		TTS:           speaker,
+		Memory:        s.memories,
 		Conversations: s.conversations,
 		Logger:        logger,
 		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {

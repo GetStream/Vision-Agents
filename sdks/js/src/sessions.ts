@@ -122,6 +122,14 @@ export class Sessions {
     return this.client.get("/v1/agents/sessions/{id}", { path: { id } });
   }
 
+  /**
+   * Deletes what one conversation remembered, running or ended, and leaves the rest of the
+   * user's memories alone. Server side only.
+   */
+  deleteMemories(id: string): Promise<void> {
+    return this.client.delete("/v1/agents/sessions/{id}/memories", { path: { id } });
+  }
+
   /** The query as the wire spells it, with the agent's own name always in it. */
   private filter(query: SessionQuery): Record<string, string | number | undefined> {
     return {

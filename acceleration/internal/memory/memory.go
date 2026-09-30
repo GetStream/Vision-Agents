@@ -29,16 +29,29 @@ type Scope struct {
 	AppID string
 	// UserID is who the memories are about, which here is the customer.
 	UserID string
+	// AgentID is the agent that learned them.
+	AgentID string
+	// RunID is the session they were learned in. It is written but never recalled by:
+	// what one session learned is what the next one is meant to know.
+	RunID string
 	// Extra narrows recall further with the caller's own labels, such as the company a
 	// user belongs to. It cannot widen it: a provider is given these alongside the user
 	// id, never instead of it, so an extra label is a filter and not an identity.
 	Extra map[string]string
 }
 
-// Validate reports whether the scope identifies someone.
+// Validate reports whether the scope says whose memories these are, where they came from
+// and which application may read them.
 func (s Scope) Validate() error {
-	if s.UserID == "" {
+	switch {
+	case s.UserID == "":
 		return errors.New("memory: a user id is required, memories are never shared")
+	case s.AppID == "":
+		return errors.New("memory: an app id is required, memories never cross applications")
+	case s.AgentID == "":
+		return errors.New("memory: an agent id is required")
+	case s.RunID == "":
+		return errors.New("memory: a run id is required")
 	}
 	return nil
 }
@@ -73,6 +86,10 @@ type Store interface {
 	Recall(ctx context.Context, query Query) ([]Memory, error)
 	// Remember hands a conversation over to be learned from.
 	Remember(ctx context.Context, scope Scope, messages []llm.Message) error
+	// Truncate deletes everything known about one user of one app.
+	Truncate(ctx context.Context, appID, userID string) error
+	// ForgetRun deletes what one session of one app learned.
+	ForgetRun(ctx context.Context, appID, runID string) error
 	// Provider is the stable provider name used in stats, e.g. "mem0".
 	Provider() string
 	Close() error

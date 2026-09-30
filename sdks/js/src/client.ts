@@ -10,6 +10,7 @@ import {
   type GuestUserOptions,
 } from "./guests.js";
 import { AgentHandle } from "./handle.js";
+import { Memories } from "./memories.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -109,9 +110,12 @@ type Arguments<Op> = Record<string, never> extends RequestOptions<Op>
  */
 export class Client {
   readonly backend: Backend;
+  /** What the app's agents remember about its users. */
+  readonly memories: Memories;
 
   constructor(backend: Backend | BackendOptions = {}) {
     this.backend = backend instanceof Backend ? backend : new Backend(backend);
+    this.memories = new Memories(this);
   }
 
   /**

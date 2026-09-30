@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -211,6 +212,25 @@ func (s *Sessions) Update(ctx context.Context, id string, update SessionUpdate) 
 	return updated.JSON200, nil
 }
 
+// DeleteMemories deletes what one conversation remembered, running or ended, and leaves the
+// rest of the user's memories alone. Only a backend may ask.
+func (s *Sessions) DeleteMemories(ctx context.Context, id string) error {
+	api, err := s.client.api()
+	if err != nil {
+		return err
+	}
+
+	deleted, err := api.DeleteSessionMemoriesWithResponse(ctx, id)
+	if err != nil {
+		return fmt.Errorf("client: deleting the memories of %s: %w", id, err)
+	}
+	if deleted.StatusCode() != http.StatusNoContent {
+		return failure("deleting the memories of "+id, deleted.Status(),
+			deleted.JSON400, deleted.JSON401, deleted.JSON403, deleted.JSON404)
+	}
+	return nil
+}
+
 // Responses is a session's turns, read back without holding the conversation.
 //
 // For a conversation that has ended, or one being held somewhere else: the rows are in the
@@ -372,8 +392,14 @@ func (s *Session) SetInstructions(instructions string) error {
 	return s.pipeline.SetInstructions(instructions)
 }
 
-// Close ends the conversation. Safe to call after it has already ended.
+// Close ends the conversation. Safe to call after it has already ended. What it remembered
+// is kept for the next one; DeleteMemories takes it back.
 func (s *Session) Close(ctx context.Context) error { return s.pipeline.Leave(ctx) }
+
+// DeleteMemories deletes what this conversation remembered. See Sessions.DeleteMemories.
+func (s *Session) DeleteMemories(ctx context.Context) error {
+	return s.agent.Sessions.DeleteMemories(ctx, s.ID())
+}
 
 // SessionUpdate is what to change about a session. A nil field is left as it is; an empty
 // Sts makes the session a cascade again, and an empty Voice returns to the provider's

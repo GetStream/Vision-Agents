@@ -5595,6 +5595,15 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/sessions/{id}/interrupt (the `InterruptSession` operationId).
 	InterruptSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteSessionMemories Delete what one session remembered
+	//
+	// Deletes every memory learned in the session, running or ended, and leaves the rest of the user's memories alone. Ending a session keeps its memories, so the next conversation knows what this one established; this is how to take them back.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/memories (the `DeleteSessionMemories` operationId).
+	DeleteSessionMemories(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 	//
 	// Takes any type of body and a specified content type.
@@ -5871,6 +5880,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TruncateMemories Delete everything remembered about one user
+	//
+	// Deletes every memory about the user, whichever session and agent learned it and whatever memory filter it was written under. Only the calling app's memories are deleted, and a user nothing is known about is not an error.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/users/{user_id}/memories (the `TruncateMemories` operationId).
+	TruncateMemories(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVoices The voices the calling customer has brought with them
 	//
@@ -7714,6 +7732,25 @@ func (c *Client) InterruptSession(ctx context.Context, id SessionID, reqEditors 
 	return c.Client.Do(req)
 }
 
+// DeleteSessionMemories Delete what one session remembered
+//
+// Deletes every memory learned in the session, running or ended, and leaves the rest of the user's memories alone. Ending a session keeps its memories, so the next conversation knows what this one established; this is how to take them back.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/memories (the `DeleteSessionMemories` operationId).
+func (c *Client) DeleteSessionMemories(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSessionMemoriesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 //
 // Takes any type of body and a specified content type.
@@ -8299,6 +8336,25 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 // Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSyncAgentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TruncateMemories Delete everything remembered about one user
+//
+// Deletes every memory about the user, whichever session and agent learned it and whatever memory filter it was written under. Only the calling app's memories are deleted, and a user nothing is known about is not an error.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/users/{user_id}/memories (the `TruncateMemories` operationId).
+func (c *Client) TruncateMemories(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTruncateMemoriesRequest(c.Server, userId)
 	if err != nil {
 		return nil, err
 	}
@@ -12392,6 +12448,40 @@ func NewInterruptSessionRequest(server string, id SessionID) (*http.Request, err
 	return req, nil
 }
 
+// NewDeleteSessionMemoriesRequest constructs an http.Request for the DeleteSessionMemories method
+func NewDeleteSessionMemoriesRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/memories", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRespondSessionRequest calls the generic RespondSession builder with application/json body
 func NewRespondSessionRequest(server string, id SessionID, body RespondSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -13392,6 +13482,40 @@ func NewSyncAgentRequestWithBody(server string, contentType string, body io.Read
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewTruncateMemoriesRequest constructs an http.Request for the TruncateMemories method
+func NewTruncateMemoriesRequest(server string, userId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/users/%s/memories", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -16406,6 +16530,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/sessions/{id}/interrupt (the `InterruptSession` operationId).
 	InterruptSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*InterruptSessionResponse, error)
 
+	// DeleteSessionMemoriesWithResponse Delete what one session remembered
+	//
+	// Deletes every memory learned in the session, running or ended, and leaves the rest of the user's memories alone. Ending a session keeps its memories, so the next conversation knows what this one established; this is how to take them back.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/memories (the `DeleteSessionMemories` operationId).
+	DeleteSessionMemoriesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSessionMemoriesResponse, error)
+
 	// RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -16706,6 +16841,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithResponse(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
+
+	// TruncateMemoriesWithResponse Delete everything remembered about one user
+	//
+	// Deletes every memory about the user, whichever session and agent learned it and whatever memory filter it was written under. Only the calling app's memories are deleted, and a user nothing is known about is not an error.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/users/{user_id}/memories (the `TruncateMemories` operationId).
+	TruncateMemoriesWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*TruncateMemoriesResponse, error)
 
 	// ListVoicesWithResponse The voices the calling customer has brought with them
 	//
@@ -20770,6 +20916,75 @@ func (r InterruptSessionResponse) ContentType() string {
 	return ""
 }
 
+type DeleteSessionMemoriesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteSessionMemoriesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteSessionMemoriesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteSessionMemoriesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteSessionMemoriesResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteSessionMemoriesResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteSessionMemoriesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteSessionMemoriesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteSessionMemoriesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteSessionMemoriesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RespondSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22226,6 +22441,68 @@ func (r SyncAgentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SyncAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type TruncateMemoriesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r TruncateMemoriesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r TruncateMemoriesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r TruncateMemoriesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r TruncateMemoriesResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r TruncateMemoriesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r TruncateMemoriesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TruncateMemoriesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r TruncateMemoriesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26529,6 +26806,23 @@ func (c *ClientWithResponses) InterruptSessionWithResponse(ctx context.Context, 
 	return ParseInterruptSessionResponse(rsp)
 }
 
+// DeleteSessionMemoriesWithResponse Delete what one session remembered
+//
+// Deletes every memory learned in the session, running or ended, and leaves the rest of the user's memories alone. Ending a session keeps its memories, so the next conversation knows what this one established; this is how to take them back.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/memories (the `DeleteSessionMemories` operationId).
+func (c *ClientWithResponses) DeleteSessionMemoriesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSessionMemoriesResponse, error) {
+	rsp, err := c.DeleteSessionMemories(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteSessionMemoriesResponse(rsp)
+}
+
 // RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -27019,6 +27313,23 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 		return nil, err
 	}
 	return ParseSyncAgentResponse(rsp)
+}
+
+// TruncateMemoriesWithResponse Delete everything remembered about one user
+//
+// Deletes every memory about the user, whichever session and agent learned it and whatever memory filter it was written under. Only the calling app's memories are deleted, and a user nothing is known about is not an error.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/users/{user_id}/memories (the `TruncateMemories` operationId).
+func (c *ClientWithResponses) TruncateMemoriesWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*TruncateMemoriesResponse, error) {
+	rsp, err := c.TruncateMemories(ctx, userId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTruncateMemoriesResponse(rsp)
 }
 
 // ListVoicesWithResponse The voices the calling customer has brought with them
@@ -30708,6 +31019,63 @@ func ParseInterruptSessionResponse(rsp *http.Response) (*InterruptSessionRespons
 	return response, nil
 }
 
+// ParseDeleteSessionMemoriesResponse parses an HTTP response from a DeleteSessionMemoriesWithResponse call
+func ParseDeleteSessionMemoriesResponse(rsp *http.Response) (*DeleteSessionMemoriesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteSessionMemoriesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRespondSessionResponse parses an HTTP response from a RespondSessionWithResponse call
 func ParseRespondSessionResponse(rsp *http.Response) (*RespondSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31849,6 +32217,56 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseTruncateMemoriesResponse parses an HTTP response from a TruncateMemoriesWithResponse call
+func ParseTruncateMemoriesResponse(rsp *http.Response) (*TruncateMemoriesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TruncateMemoriesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

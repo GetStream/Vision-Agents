@@ -395,6 +395,7 @@ type stubMemory struct {
 	mu        sync.Mutex
 	knows     []memory.Memory
 	scope     memory.Scope
+	learnedAs memory.Scope
 	learned   [][]llm.Message
 	recallErr error
 }
@@ -409,15 +410,24 @@ func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Mem
 	return m.knows, nil
 }
 
-func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) error {
+func (m *stubMemory) Remember(_ context.Context, scope memory.Scope, messages []llm.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.learnedAs = scope
 	m.learned = append(m.learned, messages)
 	return nil
 }
 
-func (m *stubMemory) Provider() string { return "stub" }
-func (m *stubMemory) Close() error     { return nil }
+func (m *stubMemory) writtenAs() memory.Scope {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.learnedAs
+}
+
+func (m *stubMemory) Truncate(context.Context, string, string) error  { return nil }
+func (m *stubMemory) ForgetRun(context.Context, string, string) error { return nil }
+func (m *stubMemory) Provider() string                                { return "stub" }
+func (m *stubMemory) Close() error                                    { return nil }
 
 func (m *stubMemory) remembered() [][]llm.Message {
 	m.mu.Lock()
@@ -502,6 +512,8 @@ type AgentSuite struct {
 	duplex DuplexOptions
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
+	// incognito holds the session off the record.
+	incognito bool
 	// knows is what the agent may look things up in, when a test gives it a knowledge
 	// base, and namespace is which one it reads.
 	knows     *stubKnowledge
@@ -530,6 +542,7 @@ func TestAgentSuite(t *testing.T) {
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.remembers = nil
+	s.incognito = false
 	s.knows = nil
 	s.namespace = ""
 	s.finds = nil
@@ -702,6 +715,8 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
 		AppID:              "router",
+		SessionID:          "session-1",
+		Incognito:          s.incognito,
 		Store:              s.records,
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
@@ -1356,7 +1371,37 @@ func (s *AgentSuite) TestMemoriesBelongToTheCustomerAndTheApp() {
 	s.remembers = &stubMemory{}
 	s.join(true)
 
-	s.Equal(memory.Scope{AppID: "router", UserID: "acme"}, s.remembers.scopedTo())
+	s.Equal(memory.Scope{
+		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		Extra: map[string]string{"app_id": "router"},
+	}, s.remembers.scopedTo(), "the app id is always the customer, and a caller's own only narrows it")
+}
+
+func (s *AgentSuite) TestAnAgentWithMemoryButNoSessionIsRefused() {
+	_, err := New(Options{
+		Text:       true,
+		CustomerID: "acme",
+		AgentID:    "agent-1",
+		LLM:        s.reasoner(slog.New(slog.DiscardHandler)),
+		Memory:     &stubMemory{},
+	})
+
+	s.ErrorContains(err, "run id", "a memory written without its session could never be traced back to it")
+}
+
+func (s *AgentSuite) TestAnIncognitoSessionRecallsButRemembersNothing() {
+	s.remembers = &stubMemory{knows: []memory.Memory{{Text: "Prefers to be called Al"}}}
+	s.incognito = true
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I moved to Austin")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	s.Require().NoError(s.agent.Close())
+	s.Contains(s.model.requests()[0].Instructions, "Prefers to be called Al")
+	s.Empty(s.remembers.remembered(), "an incognito session is not kept, in memory or anywhere else")
 }
 
 func (s *AgentSuite) TestAnAgentThatCannotRecallStillTakesTheCall() {
@@ -1381,6 +1426,10 @@ func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
 	s.says(participant, "I moved to Austin")
 
 	s.eventually(func() bool { return len(s.remembers.remembered()) == 1 }, "nothing was remembered")
+	s.Equal(memory.Scope{
+		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		Extra: map[string]string{"app_id": "router"},
+	}, s.remembers.writtenAs())
 	exchange := s.remembers.remembered()[0]
 	s.Require().Len(exchange, 2, "what was asked and what was answered")
 	s.Equal(llm.Message{Role: llm.User, Content: "I moved to Austin"}, exchange[0])

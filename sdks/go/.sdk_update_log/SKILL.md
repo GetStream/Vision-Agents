@@ -85,6 +85,29 @@ session.interrupt()
 
 session.fork(options) // similar options to channel creation
 
+// one method changes a session: title, description, custom, instructions, models, voice
+session.update({title: "Pricing", llm: "openai/gpt-5"})
+agent.sessions.update(sessionId, {title: "Pricing"}) // an ended session can still be renamed
+```
+
+### Updating a session
+
+Changing a session is one method named `update`, spelled the way the language spells it:
+`session.update` (JS, Python, Ruby, Rust, Dart, Kotlin, Swift, PHP), `session.Update` (Go),
+`session.UpdateAsync` (.NET). It calls `PATCH /v1/agents/sessions/{id}` (`updateSession`)
+and returns the session as it now is. Take the generated `UpdateSessionRequest` or the
+language's keyword arguments; a field left out is left as it is.
+
+* Editable: `title`, `description`, `custom`, `instructions`, `llm`, `stt`, `tts`, `sts`,
+  `subagent`, `voice`, `thinking`, `temperature`, `max_output_tokens`, `verbosity`.
+* Not editable: `id`, the call, `incognito`. Fork for a session that differs in those.
+* A session that ended accepts only `title`, `description` and `custom`, so also offer
+  `agent.sessions.update(id, ...)` for renaming one without a live handle.
+* Don't add separate `setInstructions` / `updateSettings` methods for new SDKs; the
+  `/instructions` and `/settings` endpoints are deprecated.
+
+```js
+
 
 Guest users
 
@@ -189,3 +212,26 @@ router = acceleration.Router("clinic")
 async with router.stt.realtime() as stt:
 	 await stt.process_audio(chunk, CALLER)
 ```
+
+## Asking goes through responses.create
+
+The Go SDK has no `session.Respond`: every question is `session.Responses.Create(ctx, text, inputs...)`,
+which returns the response id, takes images and clips, and adds a `command_id` for a conversation kept in
+Stream Chat. The socket `respond` frame is left for the router, not wrapped by an SDK. The other SDKs
+still wrap the frame (`respond` in JavaScript, Python, Ruby, PHP and Rust, `RespondAsync` in C#, and
+`send` in Kotlin, Swift and Dart) and should drop it for `responses.create` the same way, with the docs
+moving with them.
+
+`listSessions`, `searchSessions`, `listResponses` and `listResponseItems` page by cursor now (see the
+`pagination` skill): `cursor` replaces `offset`, and each returns `{items, has_more, next_cursor}`
+instead of an array. Go and JavaScript have moved. Python (`plugins/stream`), Swift, Kotlin, Dart, .NET,
+Ruby, Rust and PHP still send `offset` and expect an array, and need to move with their generated
+clients regenerated.
+
+`createSession` takes an optional `id` (a UUID the caller chose) and answers 409 when a session already has it; generated ids are UUIDv7. Go (`SessionOptions.ID`) and JavaScript (`sessions.create({ id })`) have moved. Python (`plugins/stream`), Swift, Kotlin, Dart, .NET, Ruby, Rust and PHP need their generated clients regenerated and the option exposed.
+
+A session is changed with `update`, backed by `updateSession` (`PATCH /v1/agents/sessions/{id}`): title, description, custom, instructions, models and voice in one call. `setSessionSettings` (`PATCH .../settings`) is deprecated. Go (`session.Update`) and JavaScript (`session.update`) have moved. Python (`update_settings`), Ruby, Rust (`update_settings`), PHP (`updateSettings`) and .NET (`UpdateSettingsAsync`) still call the settings endpoint and should become `update` on `updateSession`, with the "Update a running session" tabs in the docs moving with them.
+
+Credentials come from the environment. A client built with no arguments reads `STREAM_API_KEY` and `STREAM_API_SECRET` itself, so examples, READMEs and docs write `new Client()` (or the SDK's equivalent), never `new Client({ apiKey: process.env.STREAM_API_KEY, apiSecret: process.env.STREAM_API_SECRET })`. Pass them explicitly only when they come from somewhere other than those variables. Go, JavaScript, Python (`plugins/stream`), Ruby, PHP, .NET and Rust already fall back to them; any SDK that does not should, and snippets that pass them by hand should drop them.
+
+Memory can be deleted. `truncateMemories` (`DELETE /v1/agents/users/{user_id}/memories`) deletes everything remembered about one user, from every session and agent; `deleteSessionMemories` (`DELETE /v1/agents/sessions/{id}/memories`) deletes what one session learned. Both answer 204 and are server-side only. Ending a session (`closeSession`, what `close` calls) keeps its memories, so never wipe memory from `close`. Name them `memories.truncate(userId)`, `sessions.deleteMemories(id)` and `session.deleteMemories()`, spelled the way the language spells them. Go (`Client.Memories().Truncate`, `Sessions.DeleteMemories`, `Session.DeleteMemories`) and JavaScript (`client.memories.truncate`, `sessions.deleteMemories`, `session.deleteMemories`) have moved. Python (`plugins/stream`), Swift, Kotlin, Dart, .NET, Ruby, Rust and PHP need their generated clients regenerated and the three methods added.

@@ -19,7 +19,18 @@ func (s *MemorySuite) TestAScopeWithoutAUserIsRejected() {
 }
 
 func (s *MemorySuite) TestAScopedMemoryBelongsToSomeone() {
-	s.NoError(Scope{AppID: "router", UserID: "acme"}.Validate())
+	s.NoError(Scope{AppID: "router", UserID: "acme", AgentID: "support", RunID: "session-1"}.Validate())
+}
+
+func (s *MemorySuite) TestAScopeMissingAnyIdentityIsRejected() {
+	whole := Scope{AppID: "router", UserID: "acme", AgentID: "support", RunID: "session-1"}
+	for missing, scope := range map[string]Scope{
+		"app id":   {UserID: whole.UserID, AgentID: whole.AgentID, RunID: whole.RunID},
+		"agent id": {AppID: whole.AppID, UserID: whole.UserID, RunID: whole.RunID},
+		"run id":   {AppID: whole.AppID, UserID: whole.UserID, AgentID: whole.AgentID},
+	} {
+		s.ErrorContains(scope.Validate(), missing)
+	}
 }
 
 func (s *MemorySuite) TestNothingRecalledMeansNothingIsPrepended() {

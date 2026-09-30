@@ -427,7 +427,16 @@ export class Session {
     await this.finished;
   }
 
-  /** Ends the conversation. Safe to call after it has already ended. */
+  /**
+   * Deletes what this conversation remembered. Ending it keeps its memories, so the next
+   * conversation knows what this one established; this is how to take them back. Server
+   * side only.
+   */
+  deleteMemories(): Promise<void> {
+    return this.client.delete("/v1/agents/sessions/{id}/memories", { path: { id: this.id } });
+  }
+
+  /** Ends the conversation. Safe to call after it has already ended. What it remembered is kept. */
   async close(): Promise<void> {
     if (this.socket?.open) {
       this.socket.send({ type: "close" });

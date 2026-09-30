@@ -132,6 +132,20 @@ func newRouter(t *testing.T) *router {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/memories", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") == "someone-elses" {
+			answer(w, http.StatusNotFound, acceleration.Error{Error: "unknown session"})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/users/{user_id}/memories", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	mux.HandleFunc("POST /v1/agents/guests", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusCreated, acceleration.GuestUser{
@@ -592,6 +606,52 @@ func TestAResponseThatWasNeverRecordedCannotBeRewoundTo(t *testing.T) {
 	}
 	if asked := backend.requests("POST", "/v1/agents/sessions/session-1/rewind"); asked != 0 {
 		t.Errorf("the router was asked %d times", asked)
+	}
+}
+
+func TestDeletingASessionsMemoriesAsksForThatSessionsAlone(t *testing.T) {
+	backend := newRouter(t)
+	session := onCall(t, backend)
+
+	if err := session.DeleteMemories(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if asked := backend.requests("DELETE", "/v1/agents/sessions/session-1/memories"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+	if asked := backend.requests("DELETE", "/v1/agents/sessions/session-1"); asked != 0 {
+		t.Error("deleting what a session remembered must not end it")
+	}
+}
+
+func TestAnotherCustomersSessionsMemoriesAreRefused(t *testing.T) {
+	backend := newRouter(t)
+
+	err := backend.client(t).Agent("docs").Sessions.DeleteMemories(t.Context(), "someone-elses")
+	if err == nil || !strings.Contains(err.Error(), "unknown session") {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+func TestTruncatingDeletesEverythingAboutOneUser(t *testing.T) {
+	backend := newRouter(t)
+
+	if err := backend.client(t).Memories().Truncate(t.Context(), "user 123"); err != nil {
+		t.Fatal(err)
+	}
+	if asked := backend.requests("DELETE", "/v1/agents/users/user 123/memories"); asked != 1 {
+		t.Errorf("the router was asked %v", backend.asked)
+	}
+}
+
+func TestTruncatingNobodyIsRefusedBeforeTheRouter(t *testing.T) {
+	backend := newRouter(t)
+
+	if err := backend.client(t).Memories().Truncate(t.Context(), ""); err == nil {
+		t.Fatal("an empty user id was truncated")
+	}
+	if len(backend.asked) != 0 {
+		t.Errorf("the router was asked %v", backend.asked)
 	}
 }
 

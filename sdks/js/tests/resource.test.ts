@@ -197,6 +197,69 @@ describe("sessions", () => {
 
     await held.close();
   });
+
+  it("deletes what one session remembered without ending it", async () => {
+    const { session: held } = await open();
+    router.serve("DELETE", "/v1/agents/sessions/session-1/memories", { status: 204 });
+
+    await held.deleteMemories();
+
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-1/memories").length, 1);
+    assert.equal(
+      router.requestsTo("DELETE", "/v1/agents/sessions/session-1").length,
+      0,
+      "deleting what a session remembered must not end it",
+    );
+    await held.close();
+  });
+
+  it("deletes an ended session's memories by its id", async () => {
+    router.serve("DELETE", "/v1/agents/sessions/session-9/memories", { status: 204 });
+
+    await api.agent("docs").sessions.deleteMemories("session-9");
+
+    assert.equal(router.last.path, "/v1/agents/sessions/session-9/memories");
+  });
+
+  it("says why the router would not delete a session's memories", async () => {
+    router.serve("DELETE", "/v1/agents/sessions/someone-elses/memories", {
+      status: 404,
+      body: { error: "unknown session" },
+    });
+
+    await assert.rejects(
+      api.agent("docs").sessions.deleteMemories("someone-elses"),
+      (error: unknown) => error instanceof RouterError && error.status === 404,
+    );
+  });
+});
+
+describe("memories", () => {
+  let router: TestRouter;
+  let api: Client;
+
+  beforeEach(async () => {
+    router = await TestRouter.start();
+    api = new Client({ url: router.url, customerId: "local" });
+  });
+
+  afterEach(async () => {
+    await router.stop();
+  });
+
+  it("truncates everything remembered about one user", async () => {
+    router.serve("DELETE", "/v1/agents/users/user%20123/memories", { status: 204 });
+
+    await api.memories.truncate("user 123");
+
+    assert.equal(router.last.method, "DELETE");
+    assert.equal(router.last.path, "/v1/agents/users/user%20123/memories");
+  });
+
+  it("refuses to truncate nobody before asking the router", async () => {
+    await assert.rejects(api.memories.truncate(""), ConfigurationError);
+    assert.equal(router.received.length, 0);
+  });
 });
 
 describe("responses", () => {

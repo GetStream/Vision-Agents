@@ -205,7 +205,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	var remembering memory.Store
 	if spec.Memory.UserID != "" {
 		if m.options.Memory == nil {
-			return nil, errors.New("session: memory is unavailable; configure the backend memory provider")
+			return nil, ErrNoMemory
 		}
 		remembering = m.options.Memory
 	}
@@ -405,6 +405,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		SearchTarget:       spec.SearchTarget,
 		Guardrail:          screening,
 		AppID:              spec.Memory.AppID,
+		SessionID:          spec.ID,
+		Incognito:          spec.Incognito,
 		MemoryUserID:       spec.Memory.UserID,
 		MemoryFilter:       spec.Memory.Filter,
 		Store:              m.options.Store,
@@ -883,6 +885,24 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	return true, found.Close()
 }
 
+// TruncateMemories deletes everything remembered about one of the customer's users, from
+// every session and every agent.
+func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID string) error {
+	if m.options.Memory == nil {
+		return ErrNoMemory
+	}
+	return m.options.Memory.Truncate(ctx, customerID, userID)
+}
+
+// ForgetSession deletes what one session learned. Whoever asks has to have checked the
+// session is the customer's: the id alone says nothing about whose it is.
+func (m *Manager) ForgetSession(ctx context.Context, customerID, sessionID string) error {
+	if m.options.Memory == nil {
+		return ErrNoMemory
+	}
+	return m.options.Memory.ForgetRun(ctx, customerID, sessionID)
+}
+
 // Shutdown ends every session, which is what a router does on its way down rather than
 // dropping calls by exiting.
 func (m *Manager) Shutdown() error {
@@ -1006,6 +1026,9 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 
 // ErrSessionExists is a session asked for by an id some session already has.
 var ErrSessionExists = errors.New("session: a session with that id already exists")
+
+// ErrNoMemory is memory asked of a deployment with no memory provider.
+var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
 
 // newID is a handle for an agent or a turn. It is random rather than sequential because it
 // is the only thing standing between two customers who both guessed at an id.
