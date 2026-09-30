@@ -227,6 +227,16 @@ func (h *Harness) Remember(response llm.Response) {
 	h.stored.identity = response.Provider + "/" + response.Model
 }
 
+// Forget drops what a provider that keeps its replies is known to have read, because a
+// reply was asked for and then thrown away unread. Respond recorded that input as sent, so
+// without this the next turn with the same words would send nothing new and continue from
+// a reply that never saw them. The next turn sends the whole conversation instead.
+func (h *Harness) Forget() {
+	h.mu.Lock()
+	h.stored = stored{}
+	h.mu.Unlock()
+}
+
 // resume works out how much of the input still has to be sent, and what to continue from.
 //
 // It returns the whole input and no previous response whenever the shortcut cannot be

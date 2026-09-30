@@ -146,6 +146,12 @@ type Options struct {
 	VideoSource    string
 	VideoMaxFrames int
 
+	// SpeculativeReplies starts the reply to a settled turn while the flow controller is
+	// still deciding whether it was meant for the agent, and holds it until the ruling says
+	// to answer. It takes the ruling's round trip off every answered turn, and costs the
+	// tokens of the replies a ruling throws away. Off by default.
+	SpeculativeReplies bool
+
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
 	// LanguageHints narrow the candidates in every modality.
@@ -235,6 +241,9 @@ type Agent struct {
 	// the event loop and the floor until Cerebras answered.
 	generatingCancel map[string]context.CancelFunc
 	toolCancels      map[string]context.CancelFunc
+	// speculations are replies started before the flow controller ruled on their words,
+	// held until it does, by candidate.
+	speculations map[string]*speculation
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -474,6 +483,7 @@ func New(options Options) (*Agent, error) {
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
+		speculations:     map[string]*speculation{},
 		cadence:          settling,
 		duplex:           listening,
 	}
@@ -1207,6 +1217,7 @@ func (a *Agent) perform(action Action) {
 		a.checkIn(action.Participant, action.Text)
 
 	case ActSupersede:
+		a.dropSpeculation(action.TurnID)
 		if err := a.harness.CancelDecision(action.TurnID); err != nil {
 			a.fail(err, "flow")
 		}
@@ -1215,6 +1226,7 @@ func (a *Agent) perform(action Action) {
 		a.ask(action.Candidate)
 
 	case ActInterrupt:
+		a.dropSpeculations()
 		a.abandon(action.TurnID)
 		a.mu.Lock()
 		for _, cancel := range a.toolCancels {
@@ -1233,6 +1245,9 @@ func (a *Agent) perform(action Action) {
 
 	case ActAnswer:
 		a.abandon(action.Supersede)
+		if a.adoptSpeculation(action.Candidate, action.Clarify) {
+			return
+		}
 		if err := a.respondCandidate(action.Candidate, action.Clarify); err != nil {
 			a.fail(err, "llm")
 		}
@@ -1267,6 +1282,7 @@ func (a *Agent) ask(ready candidate) {
 	// agent counts as speaking until it has drained.
 	speaking = speaking || a.speechPending()
 
+	a.speculate(current, ready, speaking, anotherVoice)
 	if err := current.Decide(harness.FlowTurn{
 		ID:           ready.ID,
 		Instructions: instructions,
@@ -1278,6 +1294,7 @@ func (a *Agent) ask(ready candidate) {
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 	}); err != nil {
+		a.dropSpeculation(ready.ID)
 		a.converse.Unasked(ready.ID)
 		a.fail(err, "flow")
 	}
@@ -2059,6 +2076,9 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 		switch typed := event.(type) {
 		case harness.Decided:
 			a.act(a.converse.Ruled(typed, a.floor()))
+			// An answer took the reply started for these words; any other ruling leaves it
+			// unwanted.
+			a.dropSpeculation(typed.CandidateID)
 
 		case harness.Compacted:
 			a.applyCompaction(typed)

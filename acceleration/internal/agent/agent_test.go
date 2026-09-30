@@ -510,6 +510,9 @@ type AgentSuite struct {
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
+	// speculates starts replies before the flow controller has ruled, off unless a test
+	// says otherwise.
+	speculates bool
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
 	// incognito holds the session off the record.
@@ -553,6 +556,7 @@ func (s *AgentSuite) SetupTest() {
 	s.tools = harness.Tools{}
 	s.runner = nil
 	s.duplex = DuplexOptions{}
+	s.speculates = false
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -724,6 +728,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		ToolRunner:         running,
 		Tools:              s.tools,
 		Duplex:             s.duplex,
+		SpeculativeReplies: s.speculates,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,
@@ -951,6 +956,91 @@ func (s *AgentSuite) TestASettledTurnIsAnsweredAndSpoken() {
 
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
 		"the reply was never published to the call")
+}
+
+func (s *AgentSuite) TestASpeculativeReplyStartsBeforeTheRulingAndIsSpokenOnlyAfterIt() {
+	s.speculates = true
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 },
+		"the reply should be asked for while the flow controller is still deciding")
+	s.Len(s.flow.requests(), 1)
+	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+		"nothing may be spoken before the ruling says to answer")
+	s.Empty(s.agent.History(), "the words are not the conversation's until they are answered")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
+		"a ruling to answer should release the reply already started")
+	s.Len(s.model.requests(), 1, "the reply started early is the one spoken, not a second one")
+	s.eventually(func() bool { return len(s.agent.History()) == 2 }, "the exchange was never kept")
+	s.Equal("hello", s.agent.History()[0].Content)
+}
+
+func (s *AgentSuite) TestASpeculativeReplyIsDroppedWhenTheRulingDoesNotAnswer() {
+	s.speculates = true
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "child", Name: "Child"}
+	s.speak(participant)
+
+	s.says(participant, "mom where is my backpack")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 },
+		"the reply should be asked for while the flow controller is still deciding")
+
+	close(ruling)
+
+	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"a reply to speech the agent was not meant to answer must never be heard")
+	s.Empty(s.agent.History())
+	s.Zero(countOf[Responding](s.reported()))
+}
+
+func (s *AgentSuite) TestAClarifyingRulingStartsAgainRatherThanUsingTheEarlyReply() {
+	// The early reply was written without the note that says the words were ambiguous, so
+	// speaking it would answer a question the caller may not have asked.
+	s.speculates = true
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"clarify","floor":"continue"}`}
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "do it like last time")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the early reply never started")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"a clarifying ruling should ask for a reply of its own")
+	s.Contains(s.model.requests()[1].Instructions, "ambiguous")
+	s.NotContains(s.model.requests()[0].Instructions, "ambiguous")
+}
+
+func (s *AgentSuite) TestWithoutSpeculationTheReplyWaitsForTheRuling() {
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
+
+	s.Never(func() bool { return len(s.model.requests()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+		"without speculation the reply is only asked for once the ruling is in")
+	close(ruling)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply never started")
 }
 
 func (s *AgentSuite) TestARevisionReplacesTheWordsBeforeCadenceActs() {

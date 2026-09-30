@@ -394,6 +394,15 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A reply can start before the flow controller rules: `ROUTER_SPECULATIVE_REPLIES`
+
+The flow controller decides whether the words a caller settled on were meant for the agent,
+and the reply used to wait for that ruling, so every answered turn paid for two model round
+trips one after the other. With `ROUTER_SPECULATIVE_REPLIES=true` the reply is asked for
+beside the ruling and held until it comes back: an answer for the same words speaks it, and
+anything else drops it unheard. It is off by default, because a dropped reply is still paid
+for, and on a pause-heavy call most of them are dropped.
+
 ### Choose a session's id when creating it
 
 `POST /v1/agents/sessions` takes an optional `id`, a UUID the caller chose, so the session can
