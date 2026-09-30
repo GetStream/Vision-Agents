@@ -3,7 +3,7 @@ module github.com/GetStream/Vision-Agents/acceleration
 go 1.27.0
 
 require (
-	github.com/GetStream/getstream-go-webrtc v0.0.0-20260930202507-b831988f598d
+	github.com/GetStream/getstream-go-webrtc v0.0.0-20260930211010-9dd287d2c96e
 	github.com/GetStream/getstream-go/v5 v5.2.0
 	github.com/GetStream/protocol v1.49.0
 	github.com/danielgtaylor/huma/v2 v2.39.1
@@ -189,7 +189,7 @@ tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 // directives of a dependency do not apply here, so every consumer needs all four.
 replace github.com/pion/webrtc/v4 => github.com/GetStream/pion-webrtc/v4 v4.2.22-warp.3
 
-replace github.com/pion/ice/v4 => github.com/GetStream/pion-ice/v4 v4.4.4-warp.2
+replace github.com/pion/ice/v4 => github.com/GetStream/pion-ice/v4 v4.4.4-warp.3
 
 replace github.com/pion/dtls/v4 => github.com/GetStream/pion-dtls/v4 v4.0.0-rc.1-warp.1
 
