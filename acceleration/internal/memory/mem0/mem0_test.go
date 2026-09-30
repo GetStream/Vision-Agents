@@ -24,6 +24,10 @@ type platform struct {
 	body    map[string]any
 	status  int
 	respond string
+	// replies are answered in order before respond is, for a conversation of several calls.
+	replies []string
+	// requests is every call that arrived, as method and path, in order.
+	requests []string
 }
 
 func newPlatform() *platform {
@@ -31,14 +35,19 @@ func newPlatform() *platform {
 	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		stub.path = r.URL.Path
 		stub.auth = r.Header.Get("Authorization")
+		stub.requests = append(stub.requests, r.Method+" "+r.URL.RequestURI())
 
 		raw, _ := io.ReadAll(r.Body)
 		stub.body = map[string]any{}
 		_ = json.Unmarshal(raw, &stub.body)
 
+		reply := stub.respond
+		if len(stub.replies) > 0 {
+			reply, stub.replies = stub.replies[0], stub.replies[1:]
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(stub.status)
-		_, _ = w.Write([]byte(stub.respond))
+		_, _ = w.Write([]byte(reply))
 	}))
 	return stub
 }
@@ -67,7 +76,7 @@ func (s *Mem0Suite) SetupTest() {
 	})
 	s.Require().NoError(err)
 	s.store = store
-	s.scope = memory.Scope{AppID: "router", UserID: "acme"}
+	s.scope = memory.Scope{AppID: "router", UserID: "acme", AgentID: "support", RunID: "session-1"}
 }
 
 func (s *Mem0Suite) TestAKeyIsRequired() {
@@ -93,7 +102,20 @@ func (s *Mem0Suite) TestRecallScopesTheSearchToWhoTheMemoriesBelongTo() {
 	s.Equal("where do they live", s.platform.body["query"])
 	s.Equal(float64(3), s.platform.body["top_k"])
 	s.Equal(map[string]any{"user_id": "acme", "app_id": "router"}, s.platform.body["filters"],
-		"v3 rejects entity ids at the top level, they belong in filters")
+		"v3 rejects entity ids at the top level, they belong in filters; the agent and run are not recalled by")
+}
+
+func (s *Mem0Suite) TestTheCallersLabelsNarrowRecallThroughMetadata() {
+	s.scope.Extra = map[string]string{"company_id": "12312", "user_id": "somebody-else"}
+
+	_, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: "anything"})
+	s.Require().NoError(err)
+
+	s.Equal(map[string]any{
+		"user_id":  "acme",
+		"app_id":   "router",
+		"metadata": map[string]any{"company_id": "12312", "user_id": "somebody-else"},
+	}, s.platform.body["filters"], "v3 refuses unknown top-level keys, and a label must not rewrite the user")
 }
 
 func (s *Mem0Suite) TestRecallReturnsWhatIsKnownMostRelevantFirst() {
@@ -139,10 +161,31 @@ func (s *Mem0Suite) TestRememberHandsTheConversationOver() {
 	s.Equal("/v3/memories/add/", s.platform.path)
 	s.Equal("acme", s.platform.body["user_id"])
 	s.Equal("router", s.platform.body["app_id"])
+	s.Equal("support", s.platform.body["agent_id"])
+	s.Equal("session-1", s.platform.body["run_id"])
+	s.NotContains(s.platform.body, "metadata", "a session with no labels writes none")
 	s.Equal([]any{
 		map[string]any{"role": "user", "content": "I moved to Austin"},
 		map[string]any{"role": "assistant", "content": "Noted."},
 	}, s.platform.body["messages"])
+}
+
+func (s *Mem0Suite) TestRememberLabelsWhatItWritesSoRecallCanFilterOnIt() {
+	s.scope.Extra = map[string]string{"company_id": "12312"}
+
+	err := s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved to Austin"}})
+	s.Require().NoError(err)
+
+	s.Equal(map[string]any{"company_id": "12312"}, s.platform.body["metadata"])
+}
+
+func (s *Mem0Suite) TestRememberWithoutARunIsRejectedBeforeTheNetwork() {
+	s.scope.RunID = ""
+
+	err := s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved to Austin"}})
+
+	s.ErrorContains(err, "run id")
+	s.Empty(s.platform.path)
 }
 
 func (s *Mem0Suite) TestRememberingNothingIsNotACall() {
@@ -150,6 +193,51 @@ func (s *Mem0Suite) TestRememberingNothingIsNotACall() {
 	s.Require().NoError(s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User}}))
 
 	s.Empty(s.platform.path, "an empty conversation has nothing to learn from")
+}
+
+func (s *Mem0Suite) TestForgettingASessionDeletesExactlyWhatItsFiltersList() {
+	s.platform.replies = []string{
+		`{"results":[{"id":"m1"},{"id":"m2"}]}`,
+		`{"message":"Successfully deleted 2 memories"}`,
+		`{"results":[]}`,
+	}
+
+	s.Require().NoError(s.store.ForgetRun(s.ctx, "acme", "session-1"))
+
+	s.Equal([]string{
+		"POST /v3/memories/?page=1&page_size=100",
+		"DELETE /v1/batch/",
+		"POST /v3/memories/?page=1&page_size=100",
+	}, s.platform.requests, "the delete-all endpoint ignores the run and would delete the whole app")
+	s.Equal(map[string]any{"filters": map[string]any{"app_id": "acme", "run_id": "session-1"}}, s.platform.body)
+}
+
+func (s *Mem0Suite) TestTruncatingDeletesEveryPageOfTheUsersMemories() {
+	s.platform.replies = []string{
+		`{"results":[{"id":"m1"}]}`, `{"message":"ok"}`,
+		`{"results":[{"id":"m2"}]}`, `{"message":"ok"}`,
+		`{"results":[]}`,
+	}
+
+	s.Require().NoError(s.store.Truncate(s.ctx, "acme", "222"))
+
+	s.Len(s.platform.requests, 5, "each page is deleted before the next is read")
+	s.Equal(map[string]any{"filters": map[string]any{"app_id": "acme", "user_id": "222"}}, s.platform.body)
+}
+
+func (s *Mem0Suite) TestAMemoryStillListedAfterDeletingStopsTheLoop() {
+	s.platform.replies = []string{`{"results":[{"id":"m1"}]}`, `{"message":"ok"}`}
+	s.platform.respond = `{"results":[{"id":"m1"}]}`
+
+	err := s.store.ForgetRun(s.ctx, "acme", "session-1")
+
+	s.ErrorContains(err, "still listed")
+}
+
+func (s *Mem0Suite) TestForgettingWithoutAnAppIsRejectedBeforeTheNetwork() {
+	s.ErrorContains(s.store.Truncate(s.ctx, "", "222"), "app id")
+	s.ErrorContains(s.store.ForgetRun(s.ctx, "acme", ""), "run id")
+	s.Empty(s.platform.requests, "an unscoped delete would take somebody else's memories")
 }
 
 func (s *Mem0Suite) TestAFailureCarriesWhatThePlatformSaid() {

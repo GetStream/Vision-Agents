@@ -83,6 +83,9 @@ type task struct {
 	capture   bool
 	selection CaptureRequest
 	evidence  []string
+	// attached is a task given images the caller sent with the turn, rather than frames it
+	// captures for itself.
+	attached  bool
 	id        string
 	skill     string
 	turnID    string
@@ -179,6 +182,7 @@ func (m *manager) Create(
 	}
 	for _, message := range messages {
 		if message.HasImage() {
+			created.attached = true
 			for _, part := range message.Parts {
 				if part.Text != "" {
 					created.evidence = append(created.evidence, part.Text)
@@ -199,6 +203,15 @@ func (m *manager) Create(
 
 	go m.start(created)
 	return created.id, nil
+}
+
+// Attached reports whether a skill is already looking at images the caller sent with this
+// turn. Delegating the skill again would supersede the one task that has them.
+func (m *manager) Attached(skill, turnID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	running, ok := m.running[m.bySkill[skill]]
+	return ok && running.attached && running.turnID == turnID
 }
 
 func (m *manager) start(created *task) {

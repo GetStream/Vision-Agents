@@ -29,8 +29,6 @@ class CreateSessionRequest:
     """
     Attributes:
         conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
-        persist_conversation (bool | Unset): Persist a text conversation in Stream Chat, creating a channel when no CID
-            is supplied.
         context_truncated (bool | Unset): Older history was omitted from the model context.
         call_id (str | Unset): The call to join. Required unless the session is text.
         text (bool | Unset): Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing
@@ -45,9 +43,9 @@ class CreateSessionRequest:
             refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too,
             since there is no sensible answer when they disagree.
         incognito (bool | Unset): Hold the conversation and record nothing about it: no session row, no turns, no
-            transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as
-            any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused,
-            because there is nothing to fork from.
+            transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it
+            simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork
+            from.
              Default: False.
         title (str | Unset): What to call the conversation, for a list a person reads. Never shown to the model: what a
             conversation is called is a label on it rather than part of it.
@@ -108,7 +106,6 @@ class CreateSessionRequest:
     """
 
     conversation_id: str | Unset = UNSET
-    persist_conversation: bool | Unset = UNSET
     context_truncated: bool | Unset = UNSET
     call_id: str | Unset = UNSET
     text: bool | Unset = False
@@ -153,8 +150,6 @@ class CreateSessionRequest:
 
     def to_dict(self) -> dict[str, Any]:
         conversation_id = self.conversation_id
-
-        persist_conversation = self.persist_conversation
 
         context_truncated = self.context_truncated
 
@@ -271,8 +266,6 @@ class CreateSessionRequest:
         field_dict.update({})
         if conversation_id is not UNSET:
             field_dict["conversation_id"] = conversation_id
-        if persist_conversation is not UNSET:
-            field_dict["persist_conversation"] = persist_conversation
         if context_truncated is not UNSET:
             field_dict["context_truncated"] = context_truncated
         if call_id is not UNSET:
@@ -373,8 +366,6 @@ class CreateSessionRequest:
 
         d = dict(src_dict)
         conversation_id = d.pop("conversation_id", UNSET)
-
-        persist_conversation = d.pop("persist_conversation", UNSET)
 
         context_truncated = d.pop("context_truncated", UNSET)
 
@@ -507,7 +498,6 @@ class CreateSessionRequest:
 
         create_session_request = cls(
             conversation_id=conversation_id,
-            persist_conversation=persist_conversation,
             context_truncated=context_truncated,
             call_id=call_id,
             text=text,

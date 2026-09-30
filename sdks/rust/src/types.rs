@@ -1314,6 +1314,10 @@ pub struct CreateResponseRequest {
     pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
     ///What to answer, as though it had been said.
     pub text: ::std::string::String,
+    /**Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
+    */
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub videos: ::std::option::Option<::std::vec::Vec<VideoSource>>,
 }
 ///`CreateSessionRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -1354,7 +1358,7 @@ pub struct CreateSessionRequest {
     */
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<::std::string::String>,
-    /**Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+    /**Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
     */
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub incognito: ::std::option::Option<bool>,
@@ -1385,9 +1389,6 @@ pub struct CreateSessionRequest {
     */
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub navigating: ::std::option::Option<bool>,
-    ///Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub persist_conversation: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub phone: ::std::option::Option<SessionPhone>,
     /**What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
@@ -3922,9 +3923,6 @@ pub struct Session {
     pub mode: ::std::option::Option<SessionMode>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub model_overwrites: ::std::option::Option<ModelOverwrites>,
-    ///Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub persist_conversation: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub project: ::std::option::Option<::std::string::String>,
     pub state: SessionState,
@@ -5818,6 +5816,16 @@ pub struct TurnStatsBucket {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts_ttfb_p95_ms: ::std::option::Option<f64>,
     pub turn_count: i64,
+}
+///`VideoSource`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct VideoSource {
+    ///How many frames to sample, evenly spaced across the clip. Default 8.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_frames: ::std::option::Option<i64>,
+    /**Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+    */
+    pub url: ::std::string::String,
 }
 ///`Voice`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

@@ -544,6 +544,14 @@ func (h *Harness) act(turnID string, found directive) {
 		return
 	}
 	h.mu.Unlock()
+	// The model is told a colleague is already looking at what the caller sent, and asks
+	// for it anyway. Its copy has none of the images, so it would only replace the task
+	// that does.
+	if h.tasks != nil && h.tasks.Attached(skill.Name, turnID) {
+		h.logger.Debug("the caller's attachments are already being looked at",
+			"skill", skill.Name, "prompt", found.body)
+		return
+	}
 
 	if skill.CaptureVideo {
 		skill.VideoSource = found.source

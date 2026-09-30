@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
@@ -385,6 +386,58 @@ func (s *APIIntegrationSuite) TestHealthReportsBothDependenciesAsOk() {
 	s.Equal("ok", status.Dependencies["redis"])
 	s.Equal("ok", status.Dependencies["stt"])
 	s.Equal("ok", status.Dependencies["tts"])
+}
+
+func (s *APIIntegrationSuite) TestAnAppPolicyIsStoredAndReadBackWithWhatItsBudgetSpent() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+	policies, err := policy.New(s.store, nil)
+	s.Require().NoError(err)
+	server, err := NewServer(Options{
+		Routers:  map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Store:    s.store,
+		Policies: policies,
+	})
+	s.Require().NoError(err)
+	host := httptest.NewServer(server.Handler())
+	s.T().Cleanup(host.Close)
+
+	customerID := "policy-" + s.customerID
+	send := func(method, body string) (int, Policy) {
+		request, err := http.NewRequestWithContext(s.ctx, method, host.URL+"/v1/policies/app",
+			strings.NewReader(body))
+		s.Require().NoError(err)
+		request.Header.Set(CustomerHeader, customerID)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(request)
+		s.Require().NoError(err)
+		defer response.Body.Close()
+		var stored Policy
+		s.Require().NoError(json.NewDecoder(response.Body).Decode(&stored))
+		return response.StatusCode, stored
+	}
+
+	status, stored := send(http.MethodPut,
+		`{"budget": {"limit_micros": 5000000, "interval": "daily"}, "prompt_injection": true}`)
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().NotNil(stored.Budget)
+	s.Equal(int64(5000000), stored.Budget.LimitMicros)
+	s.Equal(BudgetIntervalDaily, stored.Budget.Interval)
+
+	status, read := send(http.MethodGet, "")
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().NotNil(read.Budget)
+	s.Require().NotNil(read.Budget.SpentMicros)
+	s.Zero(*read.Budget.SpentMicros)
+	s.NotNil(read.Budget.ResetsAt)
+	s.Require().NotNil(read.PromptInjection)
+	s.True(*read.PromptInjection)
 }
 
 func (s *APIIntegrationSuite) TestRollupThenStatsReportsTheCustomersUsage() {

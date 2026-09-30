@@ -210,8 +210,9 @@ func (s *stubTTS) spoken() []tts.Request {
 // stubMemory records the scope it was asked under, which is what a memory filter has to
 // reach for it to mean anything.
 type stubMemory struct {
-	mu    sync.Mutex
-	scope memory.Scope
+	mu      sync.Mutex
+	scope   memory.Scope
+	learned [][]llm.Message
 }
 
 func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Memory, error) {
@@ -221,9 +222,23 @@ func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Mem
 	return nil, nil
 }
 
-func (m *stubMemory) Remember(context.Context, memory.Scope, []llm.Message) error { return nil }
-func (m *stubMemory) Provider() string                                            { return "stub" }
-func (m *stubMemory) Close() error                                                { return nil }
+func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.learned = append(m.learned, messages)
+	return nil
+}
+
+func (m *stubMemory) Truncate(context.Context, string, string) error  { return nil }
+func (m *stubMemory) ForgetRun(context.Context, string, string) error { return nil }
+func (m *stubMemory) Provider() string                                { return "stub" }
+func (m *stubMemory) Close() error                                    { return nil }
+
+func (m *stubMemory) remembered() [][]llm.Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([][]llm.Message(nil), m.learned...)
+}
 
 func (m *stubMemory) scopedTo() memory.Scope {
 	m.mu.Lock()
@@ -717,6 +732,17 @@ func (s *SessionSuite) TestAWrittenAnswerIsStoredInTheConversation() {
 	s.Equal([]string{"Hello."}, s.records.replies())
 }
 
+func (s *SessionSuite) TestAnIncognitoCallWritesNothingIntoChat() {
+	s.records = &stubTranscript{}
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1", Incognito: true})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Empty(s.records.replies(), "a channel in Stream Chat is a record")
+}
+
 func (s *SessionSuite) TestWhatWasAskedInWritingIsRememberedForTheRestOfTheCall() {
 	// Otherwise the caller cannot refer to it out loud, and the agent answers as though it
 	// had never been asked.
@@ -950,6 +976,19 @@ func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
 		{Role: llm.Assistant, Content: "Yes."},
 	}, created.voiceAgent.History())
 	s.Len(recorded.exchanges, 1, "the later turn is no longer part of the conversation")
+}
+
+func (s *SessionSuite) TestARenamedSessionKeepsWhatItWasNotAskedToChange() {
+	s.manages()
+	created := s.writes(Spec{Title: "First ask", Description: "About pricing", Custom: map[string]any{"tab": "docs"}})
+	renamed := "Pricing, again"
+
+	created.Describe(s.ctx, Labels{Title: &renamed})
+
+	spec := created.Spec()
+	s.Equal("Pricing, again", spec.Title)
+	s.Equal("About pricing", spec.Description, "a field left out is left as it is")
+	s.Equal(map[string]any{"tab": "docs"}, spec.Custom)
 }
 
 func (s *SessionSuite) TestRewindingToAResponseTheSessionNeverHadIsUnknown() {
@@ -1293,7 +1332,7 @@ func (s *SessionSuite) TestTheCallersMemoryFilterScopesWhatIsRecalled() {
 	s.remembers = &stubMemory{}
 	s.manages()
 
-	s.joins(Spec{Memory: MemorySpec{
+	created := s.joins(Spec{ConfigID: "support", Memory: MemorySpec{
 		UserID: "222",
 		AppID:  "router",
 		Filter: map[string]string{"company_id": "12312"},
@@ -1301,8 +1340,40 @@ func (s *SessionSuite) TestTheCallersMemoryFilterScopesWhatIsRecalled() {
 
 	scope := s.remembers.scopedTo()
 	s.Equal("222", scope.UserID, "the customer was recalled instead of the caller's user")
-	s.Equal("router", scope.AppID)
-	s.Equal(map[string]string{"company_id": "12312"}, scope.Extra)
+	s.Equal("acme", scope.AppID, "the app id is always the customer")
+	s.Equal("support", scope.AgentID, "the agent is the config the session was opened from")
+	s.Equal(created.ID(), scope.RunID)
+	s.Equal(map[string]string{"company_id": "12312", "app_id": "router"}, scope.Extra,
+		"the caller's app id narrows recall like any other label")
+}
+
+func (s *SessionSuite) TestAnIncognitoSessionWritesNothingToMemory() {
+	s.remembers = &stubMemory{}
+	s.manages()
+	created := s.joins(Spec{Incognito: true, Memory: MemorySpec{UserID: "222"}})
+	events, detach := created.Watch()
+	defer detach()
+
+	s.says(created, "I moved to Austin")
+	s.Require().NotEmpty(awaitReply(events), "the turn never finished")
+	s.Require().NoError(created.Close())
+
+	s.Equal("222", s.remembers.scopedTo().UserID, "an incognito session may still recall")
+	s.Empty(s.remembers.remembered(), "an incognito session is not kept, in memory or anywhere else")
+}
+
+func (s *SessionSuite) TestARecordedSessionWritesToMemory() {
+	s.remembers = &stubMemory{}
+	s.manages()
+	created := s.joins(Spec{Memory: MemorySpec{UserID: "222"}})
+	events, detach := created.Watch()
+	defer detach()
+
+	s.says(created, "I moved to Austin")
+	s.Require().NotEmpty(awaitReply(events), "the turn never finished")
+	s.Require().NoError(created.Close())
+
+	s.NotEmpty(s.remembers.remembered(), "a finished turn is handed to memory")
 }
 
 func (s *SessionSuite) TestChangingTheInstructionsAppliesToTheNextTurn() {

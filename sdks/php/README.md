@@ -68,13 +68,19 @@ foreach ($second->items->unwind() as $item) {
     echo $item->kind, "\n";
 }
 
-$session->responses->rewind($first);                       // forget everything after it
-$fork = $session->fork(new ForkSessionRequest(responseId: $first->id()));
+$fork = $session->fork(new ForkSessionRequest(responseId: $first->id()));  // carry on from the first
 ```
 
-A response is created running and finishes on its own. Rewind takes a response `id`, not a
-`turn_id`. A conversation kept with `persist: true` is refused a rewind with a 400: fork it
-instead.
+A response is created running and finishes on its own. A written conversation is kept in
+Stream Chat unless it is opened with `incognito: true`. Neither can be rewound (the router
+answers 400): fork at the response instead. `$session->responses->rewind()` is for a call, and
+takes a response `id`, not a `turn_id`.
+
+To keep the conversation and change what it runs on, from the next turn, for this session only:
+
+```php
+$row = $session->updateSettings(llm: 'llm-thinking', thinking: 'high');
+```
 
 Past conversations, by agent:
 

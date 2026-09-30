@@ -92,7 +92,7 @@ func (c *Client) ServerSide() bool { return c.backend.UserID == "" }
 // No request is made: this is the name in a wrapper, and a name that matches nothing
 // configured is refused when a conversation is opened rather than here.
 func (c *Client) Agent(name string) *Agent {
-	agent := &Agent{client: c, name: name, functions: tools.NewRegistry()}
+	agent := &Agent{client: c, name: name, tools: tools.NewRegistry()}
 	agent.Sessions = &Sessions{client: c, agent: agent}
 	return agent
 }
@@ -145,21 +145,19 @@ type Agent struct {
 
 	client *Client
 	name   string
-	// functions are the caller's own, offered by every conversation this agent opens. Held
-	// on the agent rather than per session because a function registered once should not
-	// have to be registered again for the next conversation.
-	functions *tools.Registry
+	// tools are the caller's own, offered by every conversation this agent opens. Held on
+	// the agent rather than per session because a tool added once should not have to be
+	// added again for the next conversation.
+	tools *tools.Registry
 }
 
 // Name is what the agent is called, which is what a caller knows it as.
 func (a *Agent) Name() string { return a.name }
 
-// Functions are the ones this agent's conversations offer the model, to register into.
+// Tools are the ones this agent's conversations offer the model, to add to:
 //
-// It satisfies the target agents.Register takes, so the same registration works here:
-//
-//	agents.Register(agent, "get_weather", "Get current weather", func(...) {...})
-func (a *Agent) Functions() *tools.Registry { return a.functions }
+//	agent.Tools().Add(GetWeather{})
+func (a *Agent) Tools() *tools.Registry { return a.tools }
 
 // Config is how the agent is configured, as the backend has it, or nil for a name nothing is
 // stored under.

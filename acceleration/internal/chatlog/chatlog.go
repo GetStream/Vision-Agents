@@ -8,8 +8,9 @@
 // Writing is asynchronous and drops rather than blocks: a conversation must never wait on
 // the network to store what was just said.
 //
-// A reply is shown while it is still being written. The pieces go out as ephemeral
-// updates, which reach anyone watching the channel without storing a version per token.
+// A reply is shown while it is still being written, and a participant's words while they
+// are still being transcribed. The revisions go out as ephemeral updates, which reach
+// anyone watching the channel without storing a version per token.
 // Responded means the model finished, not that the caller heard it; the durable
 // transcript is stored when speech finishes, and an interruption is not stored as a
 // fully spoken reply.
@@ -86,6 +87,12 @@ const (
 	spoken
 	// interrupt closes a reply that was abandoned before it was heard in full.
 	interrupt
+	// hearing is a participant's words so far, revised as they keep talking.
+	hearing
+	// heard is what a participant settled on saying.
+	heard
+	// ignored is speech the agent decided was not meant for it.
+	ignored
 )
 
 // Options configures a Log. The credentials fall back to the environment, the same way
@@ -219,8 +226,20 @@ func (l *Log) Start(ctx context.Context) error {
 // said are ignored, so a caller can hand it every event without filtering.
 func (l *Log) Record(event agent.Event) {
 	switch typed := event.(type) {
+	case agent.Hearing:
+		if typed.Text == "" {
+			return
+		}
+		l.enqueue(message{author: participantUser(typed.Participant), text: typed.Text, kind: hearing, source: SourceSpeech})
 	case agent.Heard:
-		l.Say(participantUser(typed.Participant), typed.Text)
+		if typed.Text == "" {
+			return
+		}
+		l.enqueue(message{author: participantUser(typed.Participant), text: typed.Text, kind: heard, source: SourceSpeech})
+	case agent.Decided:
+		if typed.Kind == string(agent.ActIgnore) {
+			l.enqueue(message{author: participantUser(typed.Participant), kind: ignored, source: SourceSpeech})
+		}
 	case agent.ResponseDelta:
 		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, kind: piece, source: SourceAgent})
 	case agent.Responded:
@@ -337,6 +356,8 @@ type writer struct {
 	known       map[string]struct{}
 	writing     map[string]*reply
 	interrupted map[string]struct{}
+	// listening is what each participant is saying, by user id, until it settles.
+	listening map[string]*reply
 }
 
 func newWriter(l *Log) *writer {
@@ -347,6 +368,7 @@ func newWriter(l *Log) *writer {
 		known:       map[string]struct{}{l.agent.ID: {}},
 		writing:     map[string]*reply{},
 		interrupted: map[string]struct{}{},
+		listening:   map[string]*reply{},
 	}
 }
 
@@ -383,40 +405,73 @@ func (w *writer) handle(queued message) {
 	case interrupt:
 		w.interrupted[queued.turnID] = struct{}{}
 		w.abandon(queued.turnID, "")
+	case hearing:
+		listening, started := w.listening[queued.author.ID]
+		if !started {
+			listening = &reply{author: queued.author}
+			w.listening[queued.author.ID] = listening
+		}
+		listening.text = queued.text
+	case heard:
+		listening, started := w.listening[queued.author.ID]
+		delete(w.listening, queued.author.ID)
+		if !started || listening.messageID == "" {
+			w.store(queued.author, queued.text, SourceSpeech, false)
+			return
+		}
+		w.patch(listening, queued.text, false, SourceSpeech)
+	case ignored:
+		w.retract(queued.author.ID)
 	case whole:
 		w.store(queued.author, queued.text, queued.source, false)
 	}
 }
 
-// show sends what has been written since the last tick to anyone watching. The first
-// piece is stored, so the channel has a message to update and to keep if the reply is
-// never finished; the rest are ephemeral, which reach watchers without a write per token.
+// show sends what has been written or heard since the last tick to anyone watching. The
+// first revision is stored, so the channel has a message to update and to keep if it never
+// settles; the rest are ephemeral, which reach watchers without a write per token.
 func (w *writer) show() {
 	for turnID, writing := range w.writing {
-		if writing.text == writing.shown {
-			continue
-		}
+		w.showOne(writing, SourceAgent, "turn", turnID)
+	}
+	for userID, listening := range w.listening {
+		w.showOne(listening, SourceSpeech, "user", userID)
+	}
+}
 
-		ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
-		var err error
-		if writing.messageID == "" {
-			writing.messageID, err = w.send(ctx, writing.author, writing.text, true, false, SourceAgent)
-		} else {
-			_, err = w.log.client.Chat().EphemeralMessageUpdate(ctx, writing.messageID,
-				&getstream.EphemeralMessageUpdateRequest{
-					UserID: &writing.author.ID,
-					Set: map[string]any{
-						"text": writing.text, generatingField: true, SourceField: SourceAgent,
-					},
-				})
-		}
-		cancel()
+func (w *writer) showOne(writing *reply, source string, key, id string) {
+	if writing.text == writing.shown {
+		return
+	}
 
-		if err != nil {
-			w.log.logger.Error("could not show a reply being written", "turn", turnID, "error", err)
-			continue
-		}
-		writing.shown = writing.text
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	var err error
+	if writing.messageID == "" {
+		writing.messageID, err = w.send(ctx, writing.author, writing.text, true, false, source)
+	} else {
+		_, err = w.log.client.Chat().EphemeralMessageUpdate(ctx, writing.messageID,
+			&getstream.EphemeralMessageUpdateRequest{
+				UserID: &writing.author.ID,
+				Set: map[string]any{
+					"text": writing.text, generatingField: true, SourceField: source,
+				},
+			})
+	}
+	if err != nil {
+		w.log.logger.Error("could not show a message being written", key, id, "error", err)
+		return
+	}
+	writing.shown = writing.text
+}
+
+// retract empties what a participant was heard saying before it settled, so words the
+// agent never took as said are not left in the channel as if they were.
+func (w *writer) retract(userID string) {
+	listening, started := w.listening[userID]
+	delete(w.listening, userID)
+	if started && listening.messageID != "" {
+		w.patch(listening, "", false, SourceSpeech)
 	}
 }
 
@@ -464,6 +519,9 @@ func (w *writer) closeOut() {
 	for turnID := range w.writing {
 		w.abandon(turnID, "")
 	}
+	for userID := range w.listening {
+		w.retract(userID)
+	}
 }
 
 func (w *writer) ensure(queued message) *reply {
@@ -483,7 +541,7 @@ func (w *writer) abandon(turnID, spoken string) {
 	delete(w.writing, turnID)
 	if spoken != "" {
 		if started && writing.messageID != "" {
-			w.patch(writing, spoken, true)
+			w.patch(writing, spoken, true, SourceAgent)
 			return
 		}
 		w.store(w.log.agent, spoken, SourceAgent, true)
@@ -492,17 +550,17 @@ func (w *writer) abandon(turnID, spoken string) {
 	if !started || writing.messageID == "" {
 		return
 	}
-	w.patch(writing, "", true)
+	w.patch(writing, "", true, SourceAgent)
 }
 
-func (w *writer) patch(writing *reply, text string, interrupted bool) {
+func (w *writer) patch(writing *reply, text string, interrupted bool, source string) {
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 	_, err := w.log.client.Chat().UpdateMessagePartial(ctx, writing.messageID,
 		&getstream.UpdateMessagePartialRequest{
 			UserID: &writing.author.ID,
 			Set: map[string]any{
-				"text": text, generatingField: false, interruptedField: interrupted, SourceField: SourceAgent,
+				"text": text, generatingField: false, interruptedField: interrupted, SourceField: source,
 			},
 		})
 	if err != nil {

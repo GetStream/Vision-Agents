@@ -448,6 +448,459 @@ internal enum Operations {
             }
         }
     }
+    /// Find a conversation by what it was called
+    ///
+    /// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
+    /// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
+    /// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/search`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/search/get(searchSessions)`.
+    internal enum SearchSessions {
+        internal static let id: Swift.String = "searchSessions"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query`.
+            internal struct Query: Sendable, Hashable {
+                /// What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error.
+                ///
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/q`.
+                internal var q: Components.Parameters.SessionSearchText?
+                /// The agent name the session was opened against.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/agent`.
+                internal var agent: Components.Parameters.SessionAgent?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/config_id`.
+                internal var configId: Components.Parameters.SessionConfigID?
+                /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
+                ///
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/user_id`.
+                internal var userId: Components.Parameters.SessionUserID?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/project`.
+                internal var project: Components.Parameters.SessionProject?
+                /// - Remark: Generated from `#/components/parameters/SessionStateFilter`.
+                internal enum SessionStateFilter: String, Codable, Hashable, Sendable, CaseIterable {
+                    case running = "running"
+                    case closed = "closed"
+                }
+                /// Omitted is both.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/state`.
+                internal var state: Components.Parameters.SessionStateFilter?
+                /// Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+                ///
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/custom`.
+                internal var custom: Components.Parameters.SessionCustom?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/created_after`.
+                internal var createdAfter: Components.Parameters.SessionCreatedAfter?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/created_before`.
+                internal var createdBefore: Components.Parameters.SessionCreatedBefore?
+                /// Up to 200. Omitted is 25.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/limit`.
+                internal var limit: Components.Parameters.SessionLimit?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/query/offset`.
+                internal var offset: Components.Parameters.SessionOffset?
+                /// Creates a new `Query`.
+                ///
+                /// - Parameters:
+                ///   - q: What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error.
+                ///   - agent: The agent name the session was opened against.
+                ///   - configId:
+                ///   - userId: Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
+                ///   - project:
+                ///   - state: Omitted is both.
+                ///   - custom: Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+                ///   - createdAfter:
+                ///   - createdBefore:
+                ///   - limit: Up to 200. Omitted is 25.
+                ///   - offset:
+                internal init(
+                    q: Components.Parameters.SessionSearchText? = nil,
+                    agent: Components.Parameters.SessionAgent? = nil,
+                    configId: Components.Parameters.SessionConfigID? = nil,
+                    userId: Components.Parameters.SessionUserID? = nil,
+                    project: Components.Parameters.SessionProject? = nil,
+                    state: Components.Parameters.SessionStateFilter? = nil,
+                    custom: Components.Parameters.SessionCustom? = nil,
+                    createdAfter: Components.Parameters.SessionCreatedAfter? = nil,
+                    createdBefore: Components.Parameters.SessionCreatedBefore? = nil,
+                    limit: Components.Parameters.SessionLimit? = nil,
+                    offset: Components.Parameters.SessionOffset? = nil
+                ) {
+                    self.q = q
+                    self.agent = agent
+                    self.configId = configId
+                    self.userId = userId
+                    self.project = project
+                    self.state = state
+                    self.custom = custom
+                    self.createdAfter = createdAfter
+                    self.createdBefore = createdBefore
+                    self.limit = limit
+                    self.offset = offset
+                }
+            }
+            internal var query: Operations.SearchSessions.Input.Query
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.SearchSessions.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.SearchSessions.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.SearchSessions.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - query:
+            ///   - headers:
+            internal init(
+                query: Operations.SearchSessions.Input.Query = .init(),
+                headers: Operations.SearchSessions.Input.Headers = .init()
+            ) {
+                self.query = query
+                self.headers = headers
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/search/GET/responses/200/content/application\/json`.
+                    case json([Components.Schemas.Session])
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: [Components.Schemas.Session] {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.SearchSessions.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.SearchSessions.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The matching sessions, best match first
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/search/get(searchSessions)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.SearchSessions.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.SearchSessions.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/search/get(searchSessions)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/search/get(searchSessions)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// One session
+    ///
+    /// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
+    internal enum GetSession {
+        internal static let id: Swift.String = "getSession"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/path/id`.
+                internal var id: Components.Parameters.SessionID
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                internal init(id: Components.Parameters.SessionID) {
+                    self.id = id
+                }
+            }
+            internal var path: Operations.GetSession.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetSession.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetSession.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.GetSession.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            internal init(
+                path: Operations.GetSession.Input.Path,
+                headers: Operations.GetSession.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/content/application\/json`.
+                    case json(Components.Schemas.Session)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.Session {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.GetSession.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.GetSession.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The session
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.GetSession.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.GetSession.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            internal var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
     /// Leave the call and end the session
     ///
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
@@ -1019,6 +1472,528 @@ internal enum Operations {
             /// No such modality, provider or shortcut
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Ask the agent something and get a handle on the answer
+    ///
+    /// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+    /// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/responses`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)`.
+    internal enum CreateResponse {
+        internal static let id: Swift.String = "createResponse"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/path/id`.
+                internal var id: Components.Parameters.SessionID
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                internal init(id: Components.Parameters.SessionID) {
+                    self.id = id
+                }
+            }
+            internal var path: Operations.CreateResponse.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CreateResponse.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CreateResponse.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.CreateResponse.Input.Headers
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/requestBody`.
+            internal enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/requestBody/content/application\/json`.
+                case json(Components.Schemas.CreateResponseRequest)
+            }
+            internal var body: Operations.CreateResponse.Input.Body
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            ///   - body:
+            internal init(
+                path: Operations.CreateResponse.Input.Path,
+                headers: Operations.CreateResponse.Input.Headers = .init(),
+                body: Operations.CreateResponse.Input.Body
+            ) {
+                self.path = path
+                self.headers = headers
+                self.body = body
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Accepted: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/content/application\/json`.
+                    case json(Components.Schemas.AgentResponse)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.AgentResponse {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.CreateResponse.Output.Accepted.Body
+                /// Creates a new `Accepted`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.CreateResponse.Output.Accepted.Body) {
+                    self.body = body
+                }
+            }
+            /// The agent is answering
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/202`.
+            ///
+            /// HTTP response code: `202 accepted`.
+            case accepted(Operations.CreateResponse.Output.Accepted)
+            /// The associated value of the enum case if `self` is `.accepted`.
+            ///
+            /// - Throws: An error if `self` is not `.accepted`.
+            /// - SeeAlso: `.accepted`.
+            internal var accepted: Operations.CreateResponse.Output.Accepted {
+                get throws {
+                    switch self {
+                    case let .accepted(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "accepted",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            internal var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            internal struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/409/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/409/content/application\/json`.
+                    case json(Components.Schemas._Error)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas._Error {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.CreateResponse.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.CreateResponse.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// The command ID was already accepted with different content
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.CreateResponse.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            internal var conflict: Operations.CreateResponse.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// What the agent did, turn by turn, in the order it happened
+    ///
+    /// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+    /// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+    /// Nothing is returned for an incognito session, which has no items to return.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses/items`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)`.
+    internal enum ListResponseItems {
+        internal static let id: Swift.String = "listResponseItems"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/path/id`.
+                internal var id: Components.Parameters.SessionID
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                internal init(id: Components.Parameters.SessionID) {
+                    self.id = id
+                }
+            }
+            internal var path: Operations.ListResponseItems.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/query`.
+            internal struct Query: Sendable, Hashable {
+                /// Narrow to one turn's items. Omitted is every turn in the session.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/query/response_id`.
+                internal var responseId: Components.Parameters.ResponseIDFilter?
+                /// Up to 1000. Omitted is 200.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/query/limit`.
+                internal var limit: Components.Parameters.ItemLimit?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/query/offset`.
+                internal var offset: Components.Parameters.SessionOffset?
+                /// Creates a new `Query`.
+                ///
+                /// - Parameters:
+                ///   - responseId: Narrow to one turn's items. Omitted is every turn in the session.
+                ///   - limit: Up to 1000. Omitted is 200.
+                ///   - offset:
+                internal init(
+                    responseId: Components.Parameters.ResponseIDFilter? = nil,
+                    limit: Components.Parameters.ItemLimit? = nil,
+                    offset: Components.Parameters.SessionOffset? = nil
+                ) {
+                    self.responseId = responseId
+                    self.limit = limit
+                    self.offset = offset
+                }
+            }
+            internal var query: Operations.ListResponseItems.Input.Query
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.ListResponseItems.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.ListResponseItems.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.ListResponseItems.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - query:
+            ///   - headers:
+            internal init(
+                path: Operations.ListResponseItems.Input.Path,
+                query: Operations.ListResponseItems.Input.Query = .init(),
+                headers: Operations.ListResponseItems.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.query = query
+                self.headers = headers
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/content/application\/json`.
+                    case json([Components.Schemas.AgentResponseItem])
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: [Components.Schemas.AgentResponseItem] {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.ListResponseItems.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.ListResponseItems.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The items, oldest first
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.ListResponseItems.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.ListResponseItems.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            internal var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/404`.
             ///
             /// HTTP response code: `404 notFound`.
             case notFound(Components.Responses.NotFound)

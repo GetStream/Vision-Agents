@@ -45,10 +45,10 @@ The session starts from the stored config, and only what the code sets is sent o
 are about, under `user_id`, and what else narrows recall.
 
 `chat` holds the same conversation in writing: the same instructions, skills and knowledge,
-nothing transcribed or spoken.
+nothing transcribed or spoken. It is kept in Stream Chat unless `incognito: true` is given.
 
 ```ruby
-agent.chat(persist: true) { |session| session.responses.create("What changed in v3?") }
+agent.chat { |session| session.responses.create("What changed in v3?") }
 ```
 
 ## Credentials
@@ -148,18 +148,25 @@ adds a page to the agent's knowledge base and waits for it to be read.
 ## Going back, and branching off
 
 ```ruby
-agent.chat(persist: false) do |session|
+agent.chat do |session|
   first = session.responses.create("Pick a number")
   session.responses.create("Double it")
-  session.responses.rewind(first)
   branch = session.fork(response_id: first, title: "asked again")
 end
 
 api.agent("support").sessions.search("billing")
 ```
 
-A conversation kept in Stream Chat cannot be rewound, because the channel still holds the
-later turns: the router answers 400, and forking at the response is the way back.
+A written conversation is kept in Stream Chat unless it is opened with `incognito: true`.
+Neither can be rewound: the channel still holds the later turns, and an incognito one recorded
+nothing to rebuild from. The router answers 400, and forking at the response is the way back.
+`session.responses.rewind(response)` is for a call.
+
+To keep the conversation and change what it runs on, from the next turn, for this session only:
+
+```ruby
+session.update_settings(llm: "llm-thinking", thinking: "high")
+```
 
 ## Guests
 

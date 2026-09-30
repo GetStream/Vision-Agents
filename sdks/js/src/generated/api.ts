@@ -889,7 +889,13 @@ export type paths = {
         readonly delete: operations["closeSession"];
         readonly options?: never;
         readonly head?: never;
-        readonly patch?: never;
+        /**
+         * Change a session
+         * @description Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+         *     A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+         *     Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+         */
+        readonly patch: operations["updateSession"];
         readonly trace?: never;
     };
     readonly "/v1/agents/sessions/{id}/commands/{command_id}": {
@@ -995,7 +1001,8 @@ export type paths = {
         readonly get?: never;
         /**
          * Change what the agent is told to be
-         * @description Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+         * @deprecated
+         * @description Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
          */
         readonly put: operations["setSessionInstructions"];
         readonly post?: never;
@@ -1020,6 +1027,28 @@ export type paths = {
          */
         readonly post: operations["interruptSession"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/memories": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete what one session remembered
+         * @description Deletes every memory learned in the session, running or ended, and leaves the rest of the user's memories alone. Ending a session keeps its memories, so the next conversation knows what this one established; this is how to take them back.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteSessionMemories"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1145,7 +1174,8 @@ export type paths = {
         readonly head?: never;
         /**
          * Change the models and voice of one running session
-         * @description Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+         * @deprecated
+         * @description Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
          *     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
          */
         readonly patch: operations["setSessionSettings"];
@@ -1366,6 +1396,28 @@ export type paths = {
          */
         readonly post: operations["syncAgent"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/users/{user_id}/memories": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete everything remembered about one user
+         * @description Deletes every memory about the user, whichever session and agent learned it and whatever memory filter it was written under. Only the calling app's memories are deleted, and a user nothing is known about is not an error.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["truncateMemories"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1845,6 +1897,7 @@ export type paths = {
         /**
          * Replace the calling app's policy
          * @description A field left out is no opinion, so the organization's setting shows through.
+         *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly put: operations["updateAppPolicy"];
@@ -2304,6 +2357,18 @@ export type components = {
             readonly text?: string;
             readonly tool_name?: string;
         };
+        readonly AgentResponseItemPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["AgentResponseItem"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly AgentResponsePage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["AgentResponse"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
         readonly AttachedNumber: {
             readonly route_id: string;
             /** @description Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com. */
@@ -2696,6 +2761,8 @@ export type components = {
             readonly images?: readonly components["schemas"]["ImageSource"][];
             /** @description What to answer, as though it had been said. */
             readonly text: string;
+            /** @description Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole. */
+            readonly videos?: readonly components["schemas"]["VideoSource"][];
         };
         readonly CreateSessionRequest: {
             /** @description The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree. */
@@ -2725,8 +2792,10 @@ export type components = {
             readonly description?: string;
             /** @description Said on joining without going through the model. Empty means the agent waits to be spoken to. */
             readonly greeting?: string;
+            /** @description The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7. */
+            readonly id?: string;
             /**
-             * @description Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+             * @description Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
              * @default false
              */
             readonly incognito?: boolean;
@@ -2750,8 +2819,6 @@ export type components = {
              * @default false
              */
             readonly navigating?: boolean;
-            /** @description Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
-            readonly persist_conversation?: boolean;
             readonly phone?: components["schemas"]["SessionPhone"];
             /** @description What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins. */
             readonly project?: string;
@@ -3704,8 +3771,6 @@ export type components = {
             readonly llm?: string;
             readonly mode?: components["schemas"]["SessionMode"];
             readonly model_overwrites?: components["schemas"]["ModelOverwrites"];
-            /** @description Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
-            readonly persist_conversation?: boolean;
             readonly project?: string;
             readonly state: components["schemas"]["SessionState"];
             /** @description The provider and model holding a native conversation, once routing has picked one. */
@@ -3740,6 +3805,12 @@ export type components = {
          * @enum {string}
          */
         readonly SessionMode: "cascade" | "native" | "text";
+        readonly SessionPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Session"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
         /** @description The number the session acts from, which is what turns transferring on. */
         readonly SessionPhone: {
             /** @description One of the customer's own numbers, written as +15551234567. */
@@ -4629,6 +4700,39 @@ export type components = {
             /** Format: int64 */
             readonly turn_count: number;
         };
+        /** @description What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended; everything else needs it running. */
+        readonly UpdateSessionRequest: {
+            /** @description Replaces the caller's labels whole. An empty object clears them. */
+            readonly custom?: {
+                readonly [key: string]: unknown;
+            };
+            readonly description?: string;
+            /** @description What the agent is told to be, from the next turn. */
+            readonly instructions?: string;
+            /** @description The conversation model, a provider/model or a capability shortcut. */
+            readonly llm?: string;
+            readonly max_output_tokens?: number;
+            /** @description A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
+            readonly sts?: string;
+            readonly stt?: string;
+            readonly subagent?: string;
+            /** Format: double */
+            readonly temperature?: number;
+            /** @enum {string} */
+            readonly thinking?: "none" | "minimal" | "low" | "medium" | "high";
+            readonly title?: string;
+            readonly tts?: string;
+            /** @enum {string} */
+            readonly verbosity?: "low" | "medium" | "high";
+            /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
+            readonly voice?: string;
+        };
+        readonly VideoSource: {
+            /** @description How many frames to sample, evenly spaced across the clip. Default 8. */
+            readonly max_frames?: number;
+            /** @description Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
+            readonly url: string;
+        };
         readonly Voice: {
             readonly bindings?: readonly components["schemas"]["VoiceBinding"][];
             /** Format: date-time */
@@ -4747,6 +4851,8 @@ export type components = {
         readonly CommandID: string;
         /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
         readonly ConfigName: string;
+        /** @description The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page. */
+        readonly Cursor: string;
         /** @description Up to 1000. Omitted is 200. */
         readonly ItemLimit: number;
         /** @description Which kind of model to route. */
@@ -4771,7 +4877,6 @@ export type components = {
         readonly SessionID: string;
         /** @description Up to 200. Omitted is 25. */
         readonly SessionLimit: number;
-        readonly SessionOffset: number;
         readonly SessionProject: string;
         /** @description What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error. */
         readonly SessionSearchText: string;
@@ -6222,6 +6327,8 @@ export interface operations {
                 readonly config_id?: components["parameters"]["SessionConfigID"];
                 readonly created_after?: components["parameters"]["SessionCreatedAfter"];
                 readonly created_before?: components["parameters"]["SessionCreatedBefore"];
+                /** @description The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page. */
+                readonly cursor?: components["parameters"]["Cursor"];
                 /**
                  * @description Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
                  * @example {"tenant":"acme"}
@@ -6229,7 +6336,6 @@ export interface operations {
                 readonly custom?: components["parameters"]["SessionCustom"];
                 /** @description Up to 200. Omitted is 25. */
                 readonly limit?: components["parameters"]["SessionLimit"];
-                readonly offset?: components["parameters"]["SessionOffset"];
                 readonly project?: components["parameters"]["SessionProject"];
                 /** @description Omitted is both. */
                 readonly state?: components["parameters"]["SessionStateFilter"];
@@ -6242,13 +6348,13 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The customer's sessions, newest first. A page shorter than the limit asked for is the last one, which is all a caller walking the list needs: counting every conversation a busy customer ever had costs more than the page itself. */
+            /** @description The customer's sessions, newest first. There is no total: counting every conversation a busy customer ever had costs more than the page itself. */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["Session"][];
+                    readonly "application/json": components["schemas"]["SessionPage"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -6280,6 +6386,15 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description A session with that id already exists */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly getSession: {
@@ -6328,6 +6443,37 @@ export interface operations {
                 content?: never;
             };
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly updateSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: components["parameters"]["SessionID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UpdateSessionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The session as it now is */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Session"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
         };
     };
@@ -6508,6 +6654,40 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly deleteSessionMemories: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session whose memories to delete. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The memories are deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     readonly respondSession: {
         readonly parameters: {
             readonly query?: never;
@@ -6558,9 +6738,10 @@ export interface operations {
     readonly listResponses: {
         readonly parameters: {
             readonly query?: {
+                /** @description The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page. */
+                readonly cursor?: components["parameters"]["Cursor"];
                 /** @description Up to 200. Omitted is 25. */
                 readonly limit?: components["parameters"]["SessionLimit"];
-                readonly offset?: components["parameters"]["SessionOffset"];
             };
             readonly header?: never;
             readonly path: {
@@ -6577,9 +6758,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["AgentResponse"][];
+                    readonly "application/json": components["schemas"]["AgentResponsePage"];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
@@ -6628,9 +6810,10 @@ export interface operations {
     readonly listResponseItems: {
         readonly parameters: {
             readonly query?: {
+                /** @description The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page. */
+                readonly cursor?: components["parameters"]["Cursor"];
                 /** @description Up to 1000. Omitted is 200. */
                 readonly limit?: components["parameters"]["ItemLimit"];
-                readonly offset?: components["parameters"]["SessionOffset"];
                 /** @description Narrow to one turn's items. Omitted is every turn in the session. */
                 readonly response_id?: components["parameters"]["ResponseIDFilter"];
             };
@@ -6649,9 +6832,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["AgentResponseItem"][];
+                    readonly "application/json": components["schemas"]["AgentResponseItemPage"];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
@@ -6754,6 +6938,8 @@ export interface operations {
                 readonly config_id?: components["parameters"]["SessionConfigID"];
                 readonly created_after?: components["parameters"]["SessionCreatedAfter"];
                 readonly created_before?: components["parameters"]["SessionCreatedBefore"];
+                /** @description The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page. */
+                readonly cursor?: components["parameters"]["Cursor"];
                 /**
                  * @description Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
                  * @example {"tenant":"acme"}
@@ -6761,7 +6947,6 @@ export interface operations {
                 readonly custom?: components["parameters"]["SessionCustom"];
                 /** @description Up to 200. Omitted is 25. */
                 readonly limit?: components["parameters"]["SessionLimit"];
-                readonly offset?: components["parameters"]["SessionOffset"];
                 readonly project?: components["parameters"]["SessionProject"];
                 /** @description What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error. */
                 readonly q?: components["parameters"]["SessionSearchText"];
@@ -6782,7 +6967,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["Session"][];
+                    readonly "application/json": components["schemas"]["SessionPage"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -7191,6 +7376,39 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly truncateMemories: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The memory user id sessions were opened with, memory.user_id on a session. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The memories are deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly listVoices: {
@@ -8004,6 +8222,15 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly updateAppPolicy: {
@@ -8031,6 +8258,15 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly getOrganizationPolicy: {
@@ -8054,6 +8290,15 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly updateOrganizationPolicy: {
@@ -8081,6 +8326,15 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly listRouterConfigs: {

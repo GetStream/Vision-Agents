@@ -27,6 +27,23 @@ const (
 	maxItemLimit     = 1000
 )
 
+// SessionLimit is the page size a session or turn list uses for the limit asked for.
+//
+// The queries return one row more than this, so a caller can tell the page is not the last
+// without counting.
+func SessionLimit(asked int) int { return clampLimit(asked, defaultSessionLimit, maxSessionLimit) }
+
+// ItemLimit is the page size an item list uses for the limit asked for. SessionItems
+// returns one row more than this, the same as the session queries.
+func ItemLimit(asked int) int { return clampLimit(asked, defaultItemLimit, maxItemLimit) }
+
+func clampLimit(asked, fallback, most int) int {
+	if asked <= 0 {
+		return fallback
+	}
+	return min(asked, most)
+}
+
 // SaveSession records that a session was opened.
 //
 // Written when the session starts rather than when it ends, so a session that is still
@@ -124,6 +141,15 @@ func (s *Store) DescribeSession(ctx context.Context, customerID, id, title, desc
 	return nil
 }
 
+// SessionExists reports whether any customer has a session with this id.
+func (s *Store) SessionExists(ctx context.Context, id string) (bool, error) {
+	exists, err := s.db.NewSelect().Model((*AgentSession)(nil)).Where("id = ?", id).Exists(ctx)
+	if err != nil {
+		return false, fmt.Errorf("store: session exists: %w", err)
+	}
+	return exists, nil
+}
+
 // StoredSession returns one session a customer ran.
 func (s *Store) StoredSession(ctx context.Context, customerID, id string) (AgentSession, error) {
 	if customerID == "" || id == "" {
@@ -159,6 +185,9 @@ func (s *Store) QuerySessions(ctx context.Context, customerID string, filter Ses
 	query := s.db.NewSelect().Model((*AgentSession)(nil)).
 		Where("customer_id = ?", customerID).
 		Order("created_at DESC", "id DESC")
+	if after := filter.Cursor; after != nil {
+		query = query.Where("(created_at, id) < (?, ?)", after.CreatedAt, after.ID)
+	}
 	query = narrowSessions(query, filter)
 
 	var sessions []AgentSession
@@ -191,11 +220,17 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 	// websearch_to_tsquery rather than to_tsquery, because the text comes from a search
 	// box: it takes quoted phrases and bare words and never fails on punctuation, where
 	// to_tsquery would answer a syntax error to somebody who typed an apostrophe.
+	const rank = "ts_rank(searchable, websearch_to_tsquery('english', ?))"
 	query := s.db.NewSelect().Model((*AgentSession)(nil)).
+		ColumnExpr("?TableColumns").
+		ColumnExpr(rank+" AS rank", text).
 		Where("customer_id = ?", customerID).
 		Where("searchable @@ websearch_to_tsquery('english', ?)", text).
-		OrderExpr("ts_rank(searchable, websearch_to_tsquery('english', ?)) DESC", text).
-		Order("created_at DESC", "id DESC")
+		Order("rank DESC", "created_at DESC", "id DESC")
+	if after := filter.Cursor; after != nil {
+		query = query.Where("("+rank+", created_at, id) < (?::real, ?, ?)",
+			text, after.Rank, after.CreatedAt, after.ID)
+	}
 	query = narrowSessions(query, filter)
 
 	var sessions []AgentSession
@@ -210,17 +245,7 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 // honoured by query and forgotten by search is one a caller uses to read somebody else's
 // conversations.
 func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQuery {
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = defaultSessionLimit
-	}
-	if limit > maxSessionLimit {
-		limit = maxSessionLimit
-	}
-	query = query.Limit(limit)
-	if filter.Offset > 0 {
-		query = query.Offset(filter.Offset)
-	}
+	query = query.Limit(SessionLimit(filter.Limit) + 1)
 
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
@@ -319,16 +344,10 @@ func (s *Store) FinishResponse(ctx context.Context, id, status, failure string, 
 }
 
 // SessionResponses returns a session's turns, oldest first, which read in order are the
-// conversation.
-func (s *Store) SessionResponses(ctx context.Context, customerID, sessionID string, limit, offset int) ([]AgentResponse, error) {
+// conversation. A nil after is the first page.
+func (s *Store) SessionResponses(ctx context.Context, customerID, sessionID string, limit int, after *ResponsePosition) ([]AgentResponse, error) {
 	if customerID == "" || sessionID == "" {
 		return nil, errors.New("store: a customer and a session id are required")
-	}
-	if limit <= 0 {
-		limit = defaultSessionLimit
-	}
-	if limit > maxSessionLimit {
-		limit = maxSessionLimit
 	}
 
 	query := s.db.NewSelect().Model((*AgentResponse)(nil)).
@@ -336,9 +355,9 @@ func (s *Store) SessionResponses(ctx context.Context, customerID, sessionID stri
 		Where("session_id = ?", sessionID).
 		Where("rewound_at IS NULL").
 		Order("created_at ASC", "id ASC").
-		Limit(limit)
-	if offset > 0 {
-		query = query.Offset(offset)
+		Limit(SessionLimit(limit) + 1)
+	if after != nil {
+		query = query.Where("(created_at, id) > (?, ?)", after.CreatedAt, after.ID)
 	}
 
 	var responses []AgentResponse
@@ -385,16 +404,11 @@ func (s *Store) AppendResponseItems(ctx context.Context, items []AgentResponseIt
 //
 // One flat stream rather than a list per turn, because that is how a conversation reads and
 // how it is rendered: the question, what the agent did about it, what it said, then the next
-// question. A caller that wants one turn's items passes that response id.
-func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, responseID string, limit, offset int) ([]AgentResponseItem, error) {
+// question. A caller that wants one turn's items passes that response id. A nil after is
+// the first page.
+func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, responseID string, limit int, after *ItemPosition) ([]AgentResponseItem, error) {
 	if customerID == "" || sessionID == "" {
 		return nil, errors.New("store: a customer and a session id are required")
-	}
-	if limit <= 0 {
-		limit = defaultItemLimit
-	}
-	if limit > maxItemLimit {
-		limit = maxItemLimit
 	}
 
 	// Joined to responses rather than trusting the session id on the item, because the
@@ -406,12 +420,13 @@ func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, respons
 		Where("ari.session_id = ?", sessionID).
 		Where("r.rewound_at IS NULL").
 		Order("ari.at ASC", "ari.response_id ASC", "ari.ordinal ASC").
-		Limit(limit)
+		Limit(ItemLimit(limit) + 1)
 	if responseID != "" {
 		query = query.Where("ari.response_id = ?", responseID)
 	}
-	if offset > 0 {
-		query = query.Offset(offset)
+	if after != nil {
+		query = query.Where("(ari.at, ari.response_id, ari.ordinal) > (?, ?, ?)",
+			after.At, after.ResponseID, after.Ordinal)
 	}
 
 	var items []AgentResponseItem

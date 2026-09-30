@@ -29,6 +29,24 @@ internal protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)`.
     func createSession(_ input: Operations.CreateSession.Input) async throws -> Operations.CreateSession.Output
+    /// Find a conversation by what it was called
+    ///
+    /// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
+    /// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
+    /// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/search`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/search/get(searchSessions)`.
+    func searchSessions(_ input: Operations.SearchSessions.Input) async throws -> Operations.SearchSessions.Output
+    /// One session
+    ///
+    /// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
+    func getSession(_ input: Operations.GetSession.Input) async throws -> Operations.GetSession.Output
     /// Leave the call and end the session
     ///
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
@@ -51,6 +69,25 @@ internal protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)`.
     func listResponses(_ input: Operations.ListResponses.Input) async throws -> Operations.ListResponses.Output
+    /// Ask the agent something and get a handle on the answer
+    ///
+    /// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+    /// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/responses`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)`.
+    func createResponse(_ input: Operations.CreateResponse.Input) async throws -> Operations.CreateResponse.Output
+    /// What the agent did, turn by turn, in the order it happened
+    ///
+    /// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+    /// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+    /// Nothing is returned for an incognito session, which has no items to return.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses/items`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)`.
+    func listResponseItems(_ input: Operations.ListResponseItems.Input) async throws -> Operations.ListResponseItems.Output
     /// Go back to a response and carry on from there
     ///
     /// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
@@ -106,6 +143,40 @@ extension APIProtocol {
             body: body
         ))
     }
+    /// Find a conversation by what it was called
+    ///
+    /// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
+    /// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
+    /// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/search`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/search/get(searchSessions)`.
+    internal func searchSessions(
+        query: Operations.SearchSessions.Input.Query = .init(),
+        headers: Operations.SearchSessions.Input.Headers = .init()
+    ) async throws -> Operations.SearchSessions.Output {
+        try await searchSessions(Operations.SearchSessions.Input(
+            query: query,
+            headers: headers
+        ))
+    }
+    /// One session
+    ///
+    /// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
+    internal func getSession(
+        path: Operations.GetSession.Input.Path,
+        headers: Operations.GetSession.Input.Headers = .init()
+    ) async throws -> Operations.GetSession.Output {
+        try await getSession(Operations.GetSession.Input(
+            path: path,
+            headers: headers
+        ))
+    }
     /// Leave the call and end the session
     ///
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
@@ -151,6 +222,45 @@ extension APIProtocol {
         headers: Operations.ListResponses.Input.Headers = .init()
     ) async throws -> Operations.ListResponses.Output {
         try await listResponses(Operations.ListResponses.Input(
+            path: path,
+            query: query,
+            headers: headers
+        ))
+    }
+    /// Ask the agent something and get a handle on the answer
+    ///
+    /// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+    /// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/responses`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)`.
+    internal func createResponse(
+        path: Operations.CreateResponse.Input.Path,
+        headers: Operations.CreateResponse.Input.Headers = .init(),
+        body: Operations.CreateResponse.Input.Body
+    ) async throws -> Operations.CreateResponse.Output {
+        try await createResponse(Operations.CreateResponse.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// What the agent did, turn by turn, in the order it happened
+    ///
+    /// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+    /// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+    /// Nothing is returned for an incognito session, which has no items to return.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses/items`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)`.
+    internal func listResponseItems(
+        path: Operations.ListResponseItems.Input.Path,
+        query: Operations.ListResponseItems.Input.Query = .init(),
+        headers: Operations.ListResponseItems.Input.Headers = .init()
+    ) async throws -> Operations.ListResponseItems.Output {
+        try await listResponseItems(Operations.ListResponseItems.Input(
             path: path,
             query: query,
             headers: headers

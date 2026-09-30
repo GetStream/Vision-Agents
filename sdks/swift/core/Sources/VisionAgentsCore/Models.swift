@@ -69,6 +69,58 @@ public struct Response: Sendable, Hashable, Identifiable {
     }
 }
 
+/// One thing the agent did while answering a response: what was said, thought, answered,
+/// blocked or failed, in the order it happened.
+public struct ResponseItem: Sendable, Hashable {
+    public let responseID: String
+    /// Where this falls within its response.
+    public let ordinal: Int
+    public let kind: Kind
+    public let text: String
+    /// The tool called, for an item that records a tool call.
+    public let toolName: String
+
+    public enum Kind: String, Sendable {
+        case said
+        case thought
+        case answer
+        case blocked
+        case error
+        /// A kind this SDK has never heard of.
+        case unknown
+    }
+
+    init(_ schema: Components.Schemas.AgentResponseItem) {
+        responseID = schema.responseId
+        ordinal = schema.ordinal
+        kind = Kind(rawValue: schema.kind.rawValue) ?? .unknown
+        text = schema.text ?? ""
+        toolName = schema.toolName ?? ""
+    }
+}
+
+/// An image to show the agent with what is asked, by URL or as a data URI.
+public struct ImageSource: Sendable, Hashable {
+    public var url: String
+    /// How closely the model looks. Nil lets the model decide.
+    public var detail: Detail?
+
+    public enum Detail: String, Sendable {
+        case auto
+        case low
+        case high
+    }
+
+    public init(url: String, detail: Detail? = nil) {
+        self.url = url
+        self.detail = detail
+    }
+
+    var schema: Components.Schemas.ImageSource {
+        .init(url: url, detail: detail.flatMap { .init(rawValue: $0.rawValue) })
+    }
+}
+
 /// What to change about a conversation while continuing it as a new one.
 ///
 /// `nil` means the fork keeps what the parent had.

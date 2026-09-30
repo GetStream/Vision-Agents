@@ -55,7 +55,7 @@ rag = await turbopuffer.create_rag(
 
 ## Environment Variables
 
-- `TURBO_PUFFER_KEY`: TurboPuffer API key
+- `TURBOPUFFER_API_KEY`: TurboPuffer API key
 - `GOOGLE_API_KEY`: Google API key (for Gemini embeddings)
 
 ## Dependencies

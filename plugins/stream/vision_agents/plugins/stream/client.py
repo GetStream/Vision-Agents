@@ -56,7 +56,7 @@ class Client:
         docs = api.agent("docs")
 
         session = await docs.sessions.create(
-            stream.SessionOptions(title="Is Stream better?", project="docs", persist=True)
+            stream.SessionOptions(title="Is Stream better?", project="docs")
         )
         answer = await session.responses.create("Is Stream better than Sendbird?")
         async for item in answer.items.unwind():

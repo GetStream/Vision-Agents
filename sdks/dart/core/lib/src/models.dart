@@ -77,8 +77,8 @@ final class Session {
   final String agent;
   final String configId;
 
-  /// The Stream Chat channel the conversation is kept in, as `type:id`. Empty unless the
-  /// session was opened with `persistConversation`.
+  /// The Stream Chat channel the conversation is kept in, as `type:id`. Empty for a call and
+  /// for an incognito session.
   final String conversationId;
   final String instructions;
 
@@ -319,7 +319,6 @@ final class SessionOptions {
     this.project,
     this.custom,
     this.incognito,
-    this.persistConversation,
     this.conversationId,
     this.modelOverwrites,
     this.tools = const [],
@@ -357,9 +356,6 @@ final class SessionOptions {
   /// Hold the conversation and record nothing about it. It cannot be found, rewound or
   /// forked afterwards, which is the point.
   final bool? incognito;
-
-  /// Keep a text conversation in Stream Chat.
-  final bool? persistConversation;
 
   /// A Stream Chat channel, as `type:id`, to resume. Leave it out on a first open: the
   /// channel is the backend's to name, and a resume passes the one the first open was given.

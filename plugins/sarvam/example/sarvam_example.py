@@ -2,9 +2,9 @@
 Sarvam AI Example
 
 This example creates a voice AI agent powered entirely by Sarvam AI models:
-- Sarvam STT (saaras:v3) for speech-to-text with VAD-based turn detection
+- Sarvam STT (saaras:v3-realtime) for speech-to-text with VAD-based turn detection
 - Sarvam TTS (bulbul:v3) for text-to-speech in Indian languages
-- Sarvam LLM (sarvam-m) for chat completions
+- Sarvam LLM (sarvam-105b) for chat completions
 - GetStream for real-time edge communication
 
 Requirements:
@@ -37,7 +37,7 @@ async def create_agent(**kwargs) -> Agent:
         ),
         stt=sarvam.STT(language="en-IN"),
         tts=sarvam.TTS(language="en-IN", speaker="shubh"),
-        llm=sarvam.LLM(model="sarvam-m"),
+        llm=sarvam.LLM(model="sarvam-105b"),
     )
     return agent
 

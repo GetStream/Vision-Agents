@@ -18,6 +18,13 @@ When running an agent using @acceleration/ or an example using @acceleration/ re
 | `sdks/dotnet/`, `sdks/ruby/`, `sdks/rust/`, `sdks/php/` | Server-side SDKs: agents, dispatch, folder sync and the router. Built and tested in Docker; each has an `sdk-<lang>` skill |
 | `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
 
+## SDK changes
+
+When you need to make an SDK change start by only changing Go
+Leave a note in the sdk skill at the bottom that other SDKs also need to udpate.
+We run this periodically, you don't need to change all SDKs at once.
+Go goes first, and later on we update the others.
+
 ## Local dev
 
 Everything reads the repo-root `.env` for provider credentials.
@@ -61,8 +68,29 @@ uv run --no-sync mypy
 
 `--no-sync` avoids a uv panic in sandboxed environments.
 
-`acceleration/api/openapi.yaml` is the source of truth for the HTTP layer. After editing it,
-regenerate every client — see [acceleration/README.md](acceleration/README.md).
+## HTTP API
+
+The router serves its API with [chi](https://github.com/go-chi/chi) and [Huma](https://huma.rocks).
+The Go structs are the source of truth: `acceleration/api/openapi.yaml` is rendered from them and
+is never edited by hand.
+
+- Declare an operation with `huma.Register` in the file for its resource, with its request and
+  response bodies as Go structs beside it. `internal/api/policies.go` is the example to copy.
+- Describe fields with `doc:` tags and constrain them with `minimum:`, `enum:`, `readOnly:` and
+  the rest, so what validates a request is also what documents it. A type's own description goes
+  in a `TransformSchema` method, and a named string enum in a `Schema` method using `namedEnum`.
+- Fail with `huma.Error400BadRequest(...)` and its siblings. They answer in the API's
+  `{"error": "..."}` shape, and a request that fails validation is a 400.
+- An operation is server-side only unless it sets `Extensions: {"x-client-accessible": true}`.
+- List endpoints page by cursor. Read the `pagination` skill
+  (`.claude/skills/pagination/SKILL.md`) before adding one or a `limit` parameter.
+- After changing an operation, run `go run ./cmd/openapi` in `acceleration/`, then regenerate the
+  clients (see [acceleration/README.md](acceleration/README.md)). A test fails if the committed
+  `openapi.yaml` is out of date.
+
+`acceleration/api/legacy.yaml` holds the operations not yet moved to Go, which oapi-codegen still
+generates. Do not add to it. Move an operation by registering it with Huma and deleting it from
+`legacy.yaml`, along with any component nothing left there refers to.
 
 The JavaScript SDK is its own npm package, checked with node 22 and no runtime dependencies:
 
@@ -74,6 +102,9 @@ npm test        # typecheck, then the suite against a real http and ws server
 ```
 
 ## Testing
+
+For Go tests, read the `go-testing` skill (`.claude/skills/go-testing/SKILL.md`) first: testify
+suites, the shared `RouterSuite` for integration tests, and how to wait for async writes.
 
 - Framework: pytest. Never mock.
 - `@pytest.mark.asyncio` is not needed (asyncio_mode = auto).

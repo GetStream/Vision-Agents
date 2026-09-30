@@ -1142,6 +1142,28 @@ type AgentSession struct {
 	// ClosedAt is nil while the session is still running.
 	ClosedAt       *time.Time `bun:"closed_at"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
+	// Rank is how well a search matched, zero outside a search.
+	Rank float32 `bun:"rank,scanonly"`
+}
+
+// SessionPosition is the last session of a page, by every key the list is sorted on.
+type SessionPosition struct {
+	CreatedAt time.Time `json:"t"`
+	ID        string    `json:"id"`
+	Rank      float32   `json:"r,omitempty"`
+}
+
+// ResponsePosition is the last turn of a page.
+type ResponsePosition struct {
+	CreatedAt time.Time `json:"t"`
+	ID        string    `json:"id"`
+}
+
+// ItemPosition is the last item of a page.
+type ItemPosition struct {
+	At         time.Time `json:"t"`
+	ResponseID string    `json:"r"`
+	Ordinal    int       `json:"o"`
 }
 
 // SessionFilter narrows a session list to the ones worth reading.
@@ -1163,7 +1185,8 @@ type SessionFilter struct {
 	Before time.Time
 	After  time.Time
 	Limit  int
-	Offset int
+	// Cursor starts the page after this session. Nil is the first page.
+	Cursor *SessionPosition
 }
 
 // What became of one response.

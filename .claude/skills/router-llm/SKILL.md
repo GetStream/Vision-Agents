@@ -126,8 +126,9 @@ parsing its own block into a typed struct so an unknown field is refused rather 
 
 1. A field on `ResponseParams`, and on `options.LLM` plus `Merge` if a config should be able to
    default it.
-2. The same field on `LlmOptions` in
-   [`openapi.yaml`](../../../acceleration/api/openapi.yaml), then regenerate all three clients.
+2. The same field on `LlmOptions`, on its Go struct in
+   `internal/api`, or in [`legacy.yaml`](../../../acceleration/api/legacy.yaml) until it has moved there. Then run
+   `go run ./cmd/openapi` and regenerate all three clients.
 3. Send it in each provider that takes it, and add a `Capabilities` field plus a `Validate` case
    if the answer changes when it is ignored.
 4. A test in [`llmtest`](../../../acceleration/internal/llm/llmtest) so every provider is held

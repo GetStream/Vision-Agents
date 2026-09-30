@@ -39,7 +39,7 @@ public sealed class AgentTests : IDisposable
             Client = client,
         });
 
-        var request = agent.Request(null, new SessionOptions { Persist = true, Title = "Billing" }, null, false);
+        var request = agent.Request(null, new SessionOptions { Title = "Billing" }, null, false);
 
         Assert.Equal("jean-luc", agent.UserId);
         Assert.Equal(("support", null), (request.Agent, request.ConfigId));
@@ -52,7 +52,7 @@ public sealed class AgentTests : IDisposable
         Assert.Equal("support", request.Tags!["team"]);
         Assert.Equal("ada", request.Memory!.UserId);
         Assert.Equal(new Dictionary<string, string> { ["topic"] = "billing" }, request.Memory.Filter);
-        Assert.Equal((true, "Billing"), (request.PersistConversation, request.Title));
+        Assert.Equal((null, "Billing"), (request.Incognito, request.Title));
     }
 
     [Fact]
@@ -73,9 +73,9 @@ public sealed class AgentTests : IDisposable
         using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
         var agent = new Agent(new AgentOptions { Name = "jean", Client = client });
 
-        var request = agent.Request(null, new SessionOptions { Persist = true, Incognito = true }, null, false);
+        var request = agent.Request(null, new SessionOptions { Incognito = true }, null, false);
 
-        Assert.Equal((true, null), (request.Incognito, request.PersistConversation));
+        Assert.True(request.Incognito);
     }
 
     [Fact]

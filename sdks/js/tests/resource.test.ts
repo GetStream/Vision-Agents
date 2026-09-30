@@ -120,7 +120,7 @@ describe("sessions", () => {
   });
 
   it("puts a query on the wire as the parameters the router reads", async () => {
-    router.serve("GET", "/v1/agents/sessions", { body: [session()] });
+    router.serve("GET", "/v1/agents/sessions", { body: { items: [session()], has_more: false } });
     const after = new Date("2026-01-01T00:00:00.000Z");
 
     await api.agent("docs").sessions.query({
@@ -129,6 +129,7 @@ describe("sessions", () => {
       custom: { tab: "docs", seat: 4 },
       createdAfter: after,
       limit: 10,
+      cursor: "page-2",
     });
 
     const query = router.last.query;
@@ -138,11 +139,12 @@ describe("sessions", () => {
     assert.equal(query.get("custom"), '{"tab":"docs","seat":4}');
     assert.equal(query.get("created_after"), after.toISOString());
     assert.equal(query.get("limit"), "10");
+    assert.equal(query.get("cursor"), "page-2");
     assert.equal(query.get("user_id"), null, "a filter nobody set is not sent empty");
   });
 
   it("searches on the search path, carrying the same filters", async () => {
-    router.serve("GET", "/v1/agents/sessions/search", { body: [session()] });
+    router.serve("GET", "/v1/agents/sessions/search", { body: { items: [session()], has_more: false } });
 
     await api.agent("docs").sessions.search("sendbird", { project: "Health" });
 
@@ -172,6 +174,91 @@ describe("sessions", () => {
 
     await forked.close();
     await parent.close();
+  });
+
+  it("changes a running session and hands back the session as it now is", async () => {
+    const { session: held } = await open();
+    router.serve("PATCH", "/v1/agents/sessions/session-1", {
+      status: 200,
+      body: session({ llm: "llm-thinking" }),
+    });
+
+    const updated = await held.update({ title: "Order 1042", llm: "llm-thinking", thinking: "high" });
+
+    assert.equal(updated.id, "session-1");
+    assert.equal(updated.llm, "llm-thinking");
+    const [sent] = router.requestsTo("PATCH", "/v1/agents/sessions/session-1");
+    assert.ok(sent, "no update reached the router");
+    assert.deepEqual(
+      sent.body,
+      { title: "Order 1042", llm: "llm-thinking", thinking: "high" },
+      "only what was named is sent",
+    );
+
+    await held.close();
+  });
+
+  it("deletes what one session remembered without ending it", async () => {
+    const { session: held } = await open();
+    router.serve("DELETE", "/v1/agents/sessions/session-1/memories", { status: 204 });
+
+    await held.deleteMemories();
+
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-1/memories").length, 1);
+    assert.equal(
+      router.requestsTo("DELETE", "/v1/agents/sessions/session-1").length,
+      0,
+      "deleting what a session remembered must not end it",
+    );
+    await held.close();
+  });
+
+  it("deletes an ended session's memories by its id", async () => {
+    router.serve("DELETE", "/v1/agents/sessions/session-9/memories", { status: 204 });
+
+    await api.agent("docs").sessions.deleteMemories("session-9");
+
+    assert.equal(router.last.path, "/v1/agents/sessions/session-9/memories");
+  });
+
+  it("says why the router would not delete a session's memories", async () => {
+    router.serve("DELETE", "/v1/agents/sessions/someone-elses/memories", {
+      status: 404,
+      body: { error: "unknown session" },
+    });
+
+    await assert.rejects(
+      api.agent("docs").sessions.deleteMemories("someone-elses"),
+      (error: unknown) => error instanceof RouterError && error.status === 404,
+    );
+  });
+});
+
+describe("memories", () => {
+  let router: TestRouter;
+  let api: Client;
+
+  beforeEach(async () => {
+    router = await TestRouter.start();
+    api = new Client({ url: router.url, customerId: "local" });
+  });
+
+  afterEach(async () => {
+    await router.stop();
+  });
+
+  it("truncates everything remembered about one user", async () => {
+    router.serve("DELETE", "/v1/agents/users/user%20123/memories", { status: 204 });
+
+    await api.memories.truncate("user 123");
+
+    assert.equal(router.last.method, "DELETE");
+    assert.equal(router.last.path, "/v1/agents/users/user%20123/memories");
+  });
+
+  it("refuses to truncate nobody before asking the router", async () => {
+    await assert.rejects(api.memories.truncate(""), ConfigurationError);
+    assert.equal(router.received.length, 0);
   });
 });
 
@@ -220,7 +307,7 @@ describe("responses", () => {
       status: 201,
       body: session({ id: "session-2", conversation_id: "agent:support-1" }),
     });
-    const kept = await api.agent("docs").sessions.create({ persist_conversation: true, watch: false });
+    const kept = await api.agent("docs").sessions.create({ text: true, watch: false });
     router.serve("POST", "/v1/agents/sessions/session-2/responses", {
       status: 202,
       body: { id: "response-1", session_id: "session-2", status: "running", created_at: new Date().toISOString() },
@@ -248,7 +335,7 @@ describe("responses", () => {
         created_at: new Date().toISOString(),
       },
     });
-    router.serve("GET", "/v1/agents/sessions/session-1/responses/items", { body: [] });
+    router.serve("GET", "/v1/agents/sessions/session-1/responses/items", { body: { items: [], has_more: false } });
 
     const answering = await held.responses.create("Anything");
     await answering.items.all();
@@ -257,17 +344,20 @@ describe("responses", () => {
   });
 
   it("reads the whole conversation's items when nothing narrows it", async () => {
-    router.serve("GET", "/v1/agents/sessions/session-1/responses/items", { body: [] });
+    router.serve("GET", "/v1/agents/sessions/session-1/responses/items", { body: { items: [], has_more: false } });
 
     await held.responses.items.all();
 
     assert.equal(router.last.query.get("response_id"), null);
   });
 
-  it("pages until a short page says there is no more", async () => {
+  it("follows the cursor until a page says there is no more", async () => {
     const page = 2;
     router.serve("GET", "/v1/agents/sessions/session-1/responses/items", (_, calls) => ({
-      body: calls === 0 ? [item(0), item(1)] : [item(2)],
+      body:
+        calls === 0
+          ? { items: [item(0), item(1)], has_more: true, next_cursor: "after-1" }
+          : { items: [item(2)], has_more: false },
     }));
 
     const read: number[] = [];
@@ -277,24 +367,26 @@ describe("responses", () => {
 
     assert.deepEqual(read, [0, 1, 2]);
     const asked = router.requestsTo("GET", "/v1/agents/sessions/session-1/responses/items");
-    assert.equal(asked.length, 2, "a short page is the last page, so nothing is asked again");
-    assert.equal(asked[1]?.query.get("offset"), "2", "the second page picks up where the first ended");
+    assert.equal(asked.length, 2, "the last page says so, so nothing is asked again");
+    assert.equal(asked[1]?.query.get("cursor"), "after-1", "the second page picks up where the first ended");
   });
 
   it("rewinds to the response an item belongs to, since an item is what a transcript shows", async () => {
-    router.serve("POST", "/v1/agents/sessions/session-1/rewind", { status: 204 });
+    // A stored text conversation cannot be rewound, so this is a call's, read back.
+    const call = api.agent("docs").sessions.responses("call-1");
+    router.serve("POST", "/v1/agents/sessions/call-1/rewind", { status: 204 });
 
-    await held.responses.rewind(item(3));
+    await call.rewind(item(3));
     assert.deepEqual(router.last.body, { response_id: "response-1" });
 
-    await held.responses.rewind("response-2");
+    await call.rewind("response-2");
     assert.deepEqual(router.last.body, { response_id: "response-2" });
   });
 
   it("says why the router would not rewind", async () => {
     router.serve("POST", "/v1/agents/sessions/session-1/rewind", {
       status: 400,
-      body: { error: "session: this conversation cannot be rewound" },
+      body: { error: "session: a stored text conversation cannot be rewound; fork it at the response" },
     });
 
     await assert.rejects(

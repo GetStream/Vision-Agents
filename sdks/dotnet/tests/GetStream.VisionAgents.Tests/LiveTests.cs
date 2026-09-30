@@ -72,7 +72,7 @@ public sealed class LiveTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RewindsToATurnAndForksFromIt()
+    public async Task ForksFromAnEarlierTurn()
     {
         await using var agent = Agent();
         var session = Remember(await agent.ChatAsync(cancellationToken: Cancel));
@@ -83,9 +83,6 @@ public sealed class LiveTests : IAsyncLifetime
         }
 
         var kept = (await session.Responses.ListAsync(cancellationToken: Cancel))[0];
-        await session.Responses.RewindAsync(kept.Id, Cancel);
-
-        Assert.Equal([kept.Id], (await session.Responses.ListAsync(cancellationToken: Cancel)).Select(response => response.Id));
         var forked = Remember(await session.ForkAsync(new ForkOptions { ResponseId = kept.Id }, Cancel));
         Assert.Equal(session.Id, forked.Created.ForkedFrom);
     }
@@ -94,7 +91,7 @@ public sealed class LiveTests : IAsyncLifetime
     public async Task RefusesToRewindAConversationKeptInStreamChat()
     {
         await using var agent = Agent();
-        var session = Remember(await agent.ChatAsync(new SessionOptions { Persist = true }, Cancel));
+        var session = Remember(await agent.ChatAsync(cancellationToken: Cancel));
 
         var refused = await Assert.ThrowsAsync<RouterException>(() => session.Responses.RewindAsync("anything", Cancel));
 
@@ -107,7 +104,7 @@ public sealed class LiveTests : IAsyncLifetime
     {
         await using var agent = Agent();
         var title = $"dotnet {Guid.NewGuid():N}";
-        var session = Remember(await agent.ChatAsync(new SessionOptions { Persist = true, Title = title }, Cancel));
+        var session = Remember(await agent.ChatAsync(new SessionOptions { Title = title }, Cancel));
         await session.CloseAsync(Cancel);
 
         var found = await EventuallyAsync(() => _client.Sessions.SearchAsync(title, new SessionQuery { Limit = 50 }, Cancel),

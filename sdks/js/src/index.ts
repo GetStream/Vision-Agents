@@ -38,6 +38,8 @@ export {
 
 export { AgentHandle } from "./handle.js";
 
+export { Memories } from "./memories.js";
+
 export {
   Sessions,
   timestamp,

@@ -192,6 +192,7 @@ type SessionAPISuite struct {
 	voice         *recordingTTS
 	conversations *conversation.Service
 	outbox        string
+	memories      *keptMemories
 }
 
 func TestSessionAPISuite(t *testing.T) {
@@ -245,10 +246,12 @@ func (s *SessionAPISuite) SetupTest() {
 	s.Require().NoError(err)
 	s.T().Cleanup(s.conversations.Close)
 
+	s.memories = &keptMemories{}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		LLM:           reasoner,
 		STT:           transcriber,
 		TTS:           speaker,
+		Memory:        s.memories,
 		Conversations: s.conversations,
 		Logger:        logger,
 		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
@@ -544,6 +547,64 @@ func (s *SessionAPISuite) TestChangingAnUnknownSessionIsNotFound() {
 
 	response := s.send(http.MethodPatch, "/v1/agents/sessions/nobody/settings", "acme",
 		SessionSettingsRequest{Llm: &model})
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+func (s *SessionAPISuite) TestUpdatingASessionRenamesItAndMovesItInOneRequest() {
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1"), Title: label("First ask")})
+	model := "vision/vision-model"
+
+	response := s.send(http.MethodPatch, "/v1/agents/sessions/"+created.Id, "acme", UpdateSessionRequest{
+		Title:        label("Pricing"),
+		Description:  label("Asked twice"),
+		Custom:       &map[string]any{"pinned": true},
+		Instructions: label("Answer in French."),
+		Llm:          &model,
+	})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	var fetched Session
+	s.decodeBody(s.send(http.MethodGet, "/v1/agents/sessions/"+created.Id, "acme", nil), &fetched)
+	s.Equal("Pricing", value(fetched.Title))
+	s.Equal("Asked twice", value(fetched.Description))
+	s.Equal(map[string]any{"pinned": true}, value(fetched.Custom))
+	s.Equal("Answer in French.", value(fetched.Instructions))
+	s.Equal(model, value(fetched.Llm))
+}
+
+func (s *SessionAPISuite) TestAnUpdateCannotMakeASessionIncognito() {
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
+
+	response := s.send(http.MethodPatch, "/v1/agents/sessions/"+created.Id, "acme",
+		map[string]any{"id": "another", "incognito": true, "title": "Renamed"})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	var updated Session
+	s.decodeBody(response, &updated)
+	s.Equal(created.Id, updated.Id)
+	s.Nil(updated.Incognito, "a session that is being recorded cannot take it back")
+	s.Equal("Renamed", value(updated.Title))
+}
+
+func (s *SessionAPISuite) TestARefusedModelLeavesTheWholeUpdateUndone() {
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1"), Title: label("First ask")})
+	target := "openai/gpt-realtime-2"
+
+	response := s.send(http.MethodPatch, "/v1/agents/sessions/"+created.Id, "acme",
+		UpdateSessionRequest{Title: label("Renamed"), Sts: &target})
+
+	s.Equal(http.StatusBadRequest, response.StatusCode)
+	var fetched Session
+	s.decodeBody(s.send(http.MethodGet, "/v1/agents/sessions/"+created.Id, "acme", nil), &fetched)
+	s.Equal("First ask", value(fetched.Title))
+}
+
+func (s *SessionAPISuite) TestUpdatingAnotherCustomersSessionIsNotFound() {
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
+
+	response := s.send(http.MethodPatch, "/v1/agents/sessions/"+created.Id, "other",
+		UpdateSessionRequest{Title: label("Mine now")})
 
 	s.Equal(http.StatusNotFound, response.StatusCode)
 }
@@ -1069,9 +1130,9 @@ func (s *SessionAPISuite) listed(customerID string) []Session {
 	response := s.send(http.MethodGet, "/v1/agents/sessions", customerID, nil)
 	s.Require().Equal(http.StatusOK, response.StatusCode)
 
-	var sessions []Session
+	var sessions SessionPage
 	s.decodeBody(response, &sessions)
-	return sessions
+	return sessions.Items
 }
 
 func (s *SessionAPISuite) TestAttachmentsReachOnlyTheSubagent() {

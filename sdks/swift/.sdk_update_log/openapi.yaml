@@ -358,6 +358,226 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/policies/app:
+    get:
+      operationId: getAppPolicy
+      summary: The calling app's budget, data policy and prompt injection setting
+      description: >
+        What the app itself decided. Its organization's policy applies as well, as a floor
+        the app can tighten and cannot loosen: both budgets are enforced, the stricter data
+        policy wins, and prompt injection is screened if either turns it on.
+      responses:
+        "200":
+          description: The app's policy, with what its budget has spent so far
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: updateAppPolicy
+      summary: Replace the calling app's policy
+      description: >
+        A field left out is no opinion, so the organization's setting shows through.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Policy"
+      responses:
+        "200":
+          description: The policy was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/data/export:
+    get:
+      operationId: exportData
+      summary: Everything this app has, as newline-delimited JSON
+      description: >
+        One line per row, `{"table": ..., "row": {...}}`, and a last line
+        `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is
+        also what says the export finished: a stream that broke halfway has no cursor
+        line, so half a copy cannot be mistaken for a whole one. The rows are read at one
+        moment rather than stitched together, and exporting starts recording changes so
+        that `listDataChanges` carries on from exactly where this left off.
+
+        Only the calling app's rows are here, and credentials are not: an API key secret,
+        an OAuth access token and an OAuth refresh token stay with the deployment that
+        holds them, so an imported plugin connection has to be authorized again. The audio
+        behind a voice sample and a call recording lives in an object bucket rather than in
+        this database; the rows naming those objects are here, and copying the bucket is
+        yours to do.
+
+        Server-side only, and refused entirely when the router runs with
+        ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
+      responses:
+        "200":
+          description: The export, streamed
+          content:
+            # Newline-delimited JSON, declared as text so that every client generator
+            # can express it. The server sends application/x-ndjson.
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: This deployment has no database to export from.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /v1/data/import:
+    post:
+      operationId: importData
+      summary: Write an export, or a batch of changes, into this deployment
+      description: >
+        Takes what `exportData` produced, and the same lines with a `change` in place of a
+        `row` for what `listDataChanges` returned. Every row is written under the calling
+        app whatever the file says, so an export from one app cannot be imported into
+        another's rows, and rows belonging to a customer through a parent are only written
+        where that parent is the caller's.
+
+        Importing is idempotent: the same export applied twice leaves what applying it
+        once would.
+
+        Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+      requestBody:
+        required: true
+        content:
+          # The file exportData produced: newline-delimited JSON, sent as it stands.
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: What was written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataImport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: This deployment has no database to import into.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /v1/data/changes:
+    get:
+      operationId: listDataChanges
+      summary: What has happened to this app's rows since a cursor
+      description: >
+        Oldest first, for replaying onto the deployment that took the export. A change is
+        only returned once every transaction older than it has committed, so following the
+        cursor never steps over a row, and a change carries the row as it now reads rather
+        than the columns that changed, so applying one twice is the same as applying it
+        once.
+
+        Changes are only recorded for an app that has exported, and only for as long as
+        the deployment's retention window. A cursor older than what is still kept is
+        answered 410, which means export again.
+
+        Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+      parameters:
+        - {name: after, in: query, description: The cursor the last page ended at., schema: {type: integer, format: int64}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 500}}
+      responses:
+        "200":
+          description: The changes since the cursor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataChangePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "410":
+          description: The changes since that cursor are no longer kept, so export again.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: This deployment has no database to read changes from.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /v1/policies/organization:
+    get:
+      operationId: getOrganizationPolicy
+      summary: The calling app's organization's policy
+      description: >
+        Applies to every app the router has seen the organization name. A request that
+        names no organization is a 400.
+      responses:
+        "200":
+          description: The organization's policy, with what its budget has spent so far
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: updateOrganizationPolicy
+      summary: Replace the calling app's organization's policy
+      description: >
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Policy"
+      responses:
+        "200":
+          description: The policy was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/router/configs:
     get:
       operationId: listRouterConfigs
@@ -3027,6 +3247,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The command ID was already accepted with different content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/agents/sessions/{id}/responses/items:
     get:
@@ -3619,6 +3845,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Speech"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/image/generations:
+    post:
+      operationId: generateImage
+      summary: Draw pictures from a prompt, and return them
+      description: >
+        Routed like search: a target or a priority list picks the model, failover and
+        billing work as they do everywhere else, and one request is one stat row counting
+        its pictures. The pictures come back in the response as bytes, never as a link,
+        and nothing is stored, so the id cannot be fetched again.
+
+        The request is answered when the pictures are drawn, within 240 seconds; a caller
+        that hangs up cancels the job at the provider. A generation that got as far as a
+        provider answers 200 whether it drew or not: a failed one carries status failed,
+        an error_code and the error, and costs nothing. A request that could not be
+        routed at all, or that asks for something no model could draw, is a 400.
+
+        A failed generation is asked of the next candidate only when the provider never
+        accepted the job, and never after a safety filter refused it, since asking the
+        next vendor is shopping for a laxer filter.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImageGenerationRequest"
+      responses:
+        "200":
+          description: What was drawn, or why nothing was
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageGeneration"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4585,6 +4852,124 @@ components:
             or 24h. Omitting it asks nothing.
           example: none
 
+    Policy:
+      type: object
+      description: >
+        What an organization or an app decided about spend, data handling and prompt
+        injection. Every field is optional, and a field left out is no opinion rather than
+        off.
+      properties:
+        budget:
+          $ref: "#/components/schemas/Budget"
+        data_policy:
+          $ref: "#/components/schemas/DataPolicy"
+        prompt_injection:
+          type: boolean
+          description: >
+            Screen what every LLM response is asked for prompt injection. The newest input -
+            the user's turn and any tool results - goes to the classifier (lcm) beside the
+            model call, so it adds nothing to time to first token. The end of the response is
+            held until the verdict, and a response whose input reads as an injection fails
+            with prompt_injection before its tool calls can be acted on.
+
+    Budget:
+      type: object
+      description: >
+        A cap on spend across every modality, reset on a UTC boundary each interval. Once it
+        is spent every new session and every LLM response is refused until the next
+        interval. Checks are cached for a few seconds, so a busy app can overshoot by what
+        it spends in that time.
+      required: [limit_micros, interval]
+      properties:
+        limit_micros:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The cap, in millionths of a dollar.
+          example: 100000000
+        interval:
+          $ref: "#/components/schemas/BudgetInterval"
+        spent_micros:
+          type: integer
+          format: int64
+          readOnly: true
+          description: What has been spent in the current interval.
+        resets_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: When the current interval ends.
+
+    BudgetInterval:
+      type: string
+      enum: [hourly, daily, weekly, monthly]
+      description: How often a budget resets. A week starts on Monday.
+
+    DataChange:
+      type: object
+      description: One thing that happened to one row of the calling app's data.
+      required: [seq, table, op, key, at]
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: Where this sits in the order changes happened, and the cursor to resume from.
+        table:
+          type: string
+          description: Which table the row is in.
+          example: agent_configs
+        op:
+          type: string
+          enum: [insert, update, delete]
+        key:
+          type: object
+          additionalProperties: true
+          description: What identifies the row, which is all a delete has.
+        row:
+          type: object
+          additionalProperties: true
+          description: The row as it now reads, absent for a delete and never carrying a credential.
+        at:
+          type: string
+          format: date-time
+
+    DataChangePage:
+      type: object
+      required: [changes, cursor]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataChange"
+        cursor:
+          type: integer
+          format: int64
+          description: What to pass as `after` next time.
+        caught_up:
+          type: boolean
+          description: >
+            Nothing else has happened yet, which is when a switchover is safe: point your
+            SDKs at the new deployment, wait for this to be true once more, and stop.
+
+    DataImport:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: integer
+          format: int64
+          description: How many rows were written.
+        tables:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: How many of them went into each table.
+        cursor:
+          type: integer
+          format: int64
+          description: The cursor the export named, to ask the other deployment for changes from.
+
     Endpointing:
       type: string
       enum: [silence, semantic]
@@ -4955,6 +5340,137 @@ components:
           type: number
           format: float
           description: How relevant the provider judged it.
+
+    ImageOptions:
+      type: object
+      description: >
+        Where to draw and what the picture should be. A size, shape, seed, negative prompt
+        or format narrows the candidates to the models that declared it, so it is either
+        honoured or the request is refused.
+      properties:
+        target:
+          type: string
+          description: A provider/model or a capability shortcut. Defaults to image-fast.
+          example: image-fast
+        providers:
+          type: array
+          items:
+            type: string
+          description: >
+            A priority list of where to try, in the order given, which wins over target
+            when it holds anything. Each entry is a provider name, a provider/model or a
+            capability shortcut, expanded where it stands.
+          example: ["fal", "image-quality"]
+        size:
+          type: string
+          pattern: "^[0-9]+x[0-9]+$"
+          description: Width by height in pixels, for the models that take a size.
+          example: 1024x1024
+        aspect_ratio:
+          type: string
+          pattern: "^[0-9]+:[0-9]+$"
+          description: The shape, for the models that are asked for one rather than a size.
+          example: "1:1"
+        n:
+          type: integer
+          minimum: 1
+          maximum: 4
+          default: 1
+          description: How many pictures to draw.
+        seed:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Draws the same picture again from the same prompt, on a model that reads one.
+        negative_prompt:
+          type: string
+          description: What to keep out of the picture.
+        output_format:
+          type: string
+          enum: [png, jpeg]
+          description: The encoding, on a model that can be asked for one.
+
+    ImageGenerationRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          description: What to draw, in the caller's own words.
+          example: A yellow watering can beside a seedling, flat illustration, no text
+        options:
+          $ref: "#/components/schemas/ImageOptions"
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+
+    ImageGenerationStatus:
+      type: string
+      enum: [completed, failed]
+      description: Whether the pictures were drawn. A failed generation says why in error_code and error.
+
+    ImageErrorCode:
+      type: string
+      enum: [content_filtered, unsupported_option, provider_failed, timeout, cancelled]
+      description: >
+        Why a generation drew nothing, absent when it completed. content_filtered is a
+        safety filter refusing the prompt or the picture; unsupported_option a size, shape
+        or setting no candidate could honour; provider_failed anything else a provider did
+        wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
+
+    GeneratedImage:
+      type: object
+      required: [media_type, width, height, data]
+      properties:
+        media_type:
+          type: string
+          enum: [image/png, image/jpeg]
+          description: What the picture is, read off the picture itself rather than the provider's label.
+        width:
+          type: integer
+        height:
+          type: integer
+        seed:
+          type: integer
+          format: int64
+          description: The seed the provider reports, which draws the same picture again. Absent when it reports none.
+        data:
+          type: string
+          format: byte
+          description: The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
+
+    ImageGeneration:
+      type: object
+      required: [id, status, images, cost_micros]
+      properties:
+        id:
+          type: string
+          description: This response's own id, for logs. Nothing is stored under it.
+          example: img_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+        status:
+          $ref: "#/components/schemas/ImageGenerationStatus"
+        provider:
+          type: string
+          description: Who drew it, or who refused to. Absent when nothing got as far as a provider.
+          example: fal
+        model:
+          type: string
+          example: alibaba/qwen-image-3/text-to-image
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/GeneratedImage"
+          description: The pictures, as many as were asked for. Empty when the generation failed.
+        cost_micros:
+          type: integer
+          format: int64
+          description: Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed.
+        error_code:
+          $ref: "#/components/schemas/ImageErrorCode"
+        error:
+          type: string
+          description: What went wrong, in words. Absent when the generation completed.
 
     RecordingSource:
       type: object
@@ -6323,6 +6839,31 @@ components:
         started_at:
           type: string
           format: date-time
+        cadence_ms:
+          type: number
+          format: double
+          description: Last transcript revision to a stable turn ready for the flow controller.
+        decision_ms:
+          type: number
+          format: double
+          description: Stable turn to the main model request, including flow and queueing.
+        model_to_first_text_ms:
+          type: number
+          format: double
+          description: Main model request to the first text delta admitted to the voice pipeline.
+        text_to_tts_ms:
+          type: number
+          format: double
+          description: First text delta to the first TTS request.
+        tts_to_audio_ms:
+          type: number
+          format: double
+          description: First TTS request to the first audio chunk published to the edge.
+        model_calls:
+          type: array
+          description: Individual model requests for this turn, including flow and delegated work.
+          items:
+            $ref: "#/components/schemas/ModelCallTiming"
         heard:
           type: string
           description: What the caller said, when it can be matched to this exchange.
@@ -6332,7 +6873,7 @@ components:
         roundtrip_ms:
           type: number
           format: double
-          description: How long the caller waited between finishing and being answered.
+          description: Last transcript revision to first audio published; includes cadence settling.
         stt_latency_ms:
           type: number
           format: double
@@ -6352,7 +6893,7 @@ components:
           type: number
           format: double
           nullable: true
-          description: Voice in to voice out, which is the whole of what the caller felt.
+          description: Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
         audio_out_ms:
           type: number
           format: double
@@ -6360,6 +6901,40 @@ components:
         interrupted:
           type: boolean
           description: Whether the caller talked over the answer.
+
+    ModelCallTiming:
+      type: object
+      required: [started_at, provider, model, success]
+      properties:
+        operation_id:
+          type: string
+          description: Response ID for this operation; retries can share an ID.
+        purpose:
+          type: string
+          description: reply, flow or subagent.
+        started_at:
+          type: string
+          format: date-time
+        provider:
+          type: string
+        model:
+          type: string
+        ttft_ms:
+          type: number
+          format: double
+          description: Request to first token.
+        duration_ms:
+          type: number
+          format: double
+          description: Request to completed response or failed create.
+        input_tokens:
+          type: integer
+          format: int64
+        output_tokens:
+          type: integer
+          format: int64
+        success:
+          type: boolean
 
     CallEvent:
       type: object
@@ -6912,6 +7487,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ImageSource"
+        command_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+          description: Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
 
     AgentResponse:
       type: object
@@ -7130,13 +7709,14 @@ components:
 
     Modality:
       type: string
-      enum: [stt, tts, llm, sts, search, lcm, memory, knowledge, phone]
+      enum: [stt, tts, llm, sts, search, lcm, image, memory, knowledge, phone]
       description: >
-        What kind of work was done. The first six are routed across providers; sts is
+        What kind of work was done. The first seven are routed across providers; sts is
         speech to speech, one native audio model in place of a transcriber, a text model
         and a voice. lcm is a large classifier model: it answers a question about a piece
         of text with a typed value and the probability behind it rather than with prose,
-        which is what a guardrail asks before a reply is spoken. Memory, knowledge and
+        which is what a guardrail asks before a reply is spoken. image is pictures drawn
+        from a prompt. Memory, knowledge and
         phone are recorded but not routed, since there is one memory store, one knowledge
         base and one vendor per number, so the provider paths do not serve them while the
         statistics paths do.
@@ -7184,6 +7764,23 @@ components:
             nothing was served or the deployment keeps no statistics.
         benchmark:
           $ref: "#/components/schemas/ProviderBenchmark"
+        price:
+          $ref: "#/components/schemas/ProviderPrice"
+
+    ProviderPrice:
+      type: object
+      description: >
+        What this deployment is billed for the model, in US dollars. A rate is absent when
+        the model is not billed by that unit.
+      properties:
+        per_million_input_tokens:
+          type: number
+          format: double
+          example: 0.75
+        per_million_output_tokens:
+          type: number
+          format: double
+          example: 3.75
 
     ProviderBenchmark:
       type: object
@@ -7218,6 +7815,15 @@ components:
           format: double
           description: US dollars one task of the search benchmark cost, searches and the answering model's tokens together.
           example: 0.127
+        intelligence_index:
+          type: integer
+          description: Artificial Analysis Intelligence Index of a text model at the reasoning effort the router asks for.
+          example: 33
+        output_tokens_per_second:
+          type: number
+          format: double
+          description: Tokens a text model writes per second on the host the router calls.
+          example: 330
 
     Route:
       type: object
@@ -7282,6 +7888,7 @@ components:
           input_tokens_total,
           cached_input_tokens_total,
           output_tokens_total,
+          images_total,
           cost_micros_total,
           request_count,
           error_count,
@@ -7314,6 +7921,10 @@ components:
           type: integer
           format: int64
           description: Generated tokens, reasoning included. Zero outside llm.
+        images_total:
+          type: integer
+          format: int64
+          description: Pictures drawn. Zero outside image.
         cost_micros_total:
           type: integer
           format: int64
@@ -7350,6 +7961,7 @@ components:
           input_tokens_total,
           cached_input_tokens_total,
           output_tokens_total,
+          images_total,
           cost_micros_total,
           request_count,
           error_count,
@@ -7377,6 +7989,9 @@ components:
           type: integer
           format: int64
         output_tokens_total:
+          type: integer
+          format: int64
+        images_total:
           type: integer
           format: int64
         cost_micros_total:

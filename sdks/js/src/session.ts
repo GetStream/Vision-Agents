@@ -48,14 +48,14 @@ export interface SessionOptions {
   /** Report the router's own routing decisions. On by default at the backend. */
   decisions?: boolean;
   /**
-   * Whether to watch the conversation. On by default, and what a browser has to turn off.
+   * Whether to watch the conversation. On by default.
    *
    * A watched conversation is the lower-latency arrangement and the only one that reports
-   * what the agent is doing word by word, so it is what a server wants. It is also not
-   * available to a page on a hosted deployment: the proxy requires a header a browser
-   * WebSocket cannot set. Off, the conversation is opened and read over HTTP instead —
-   * `responses.create()` asks, `responses.items` reads the turn back — and `say`, `respond`,
-   * `interrupt`, `setInstructions` and `events` have nothing to send to.
+   * what the agent is doing word by word. A page on a hosted deployment can watch one too:
+   * the socket carries the credential in its query, where the proxy reads it. Off, the
+   * conversation is opened and read over HTTP instead — `responses.create()` asks,
+   * `responses.items` reads the turn back — and `say`, `respond`, `interrupt`,
+   * `setInstructions` and `events` have nothing to send to.
    */
   watch?: boolean;
 }
@@ -150,11 +150,9 @@ export class Session {
   readonly responses: Responses;
 
   /**
-   * Undefined for a conversation that is read and written to over HTTP rather than watched.
-   *
-   * That is what a browser has on a hosted deployment: the proxy wants a header a browser
-   * WebSocket cannot set, so a page that insisted on a socket could not open a conversation
-   * at all. Turns go in through `responses.create` and come back out of `responses.items`.
+   * Undefined for a conversation that is read and written to over HTTP rather than watched
+   * (`watch: false`). Turns go in through `responses.create` and come back out of
+   * `responses.items`.
    */
   private readonly socket: Socket | undefined;
   /** The Stream Chat channel and the video call, each opened on first use. */
@@ -250,7 +248,7 @@ export class Session {
     return this.created.id;
   }
 
-  /** The conversation replies are written into, for a session that persists one. */
+  /** The conversation replies are written into, for a text session that is not incognito. */
   get conversationId(): string {
     return this.created.conversation_id ?? "";
   }
@@ -293,22 +291,54 @@ export class Session {
     this.held().send({ type: "say", text: said });
   }
 
-  /** Answers text through the model, as though it had been said on the call. */
-  respond(said: string, options: { interrupt?: boolean } = {}): void {
+  /**
+   * Answers text through the model, as though it had been said on the call.
+   *
+   * A conversation that is kept is only answered for a named command, which is what lets the
+   * backend tell a retried question from a new one, so one is named for it the way
+   * `responses.create` names one. Returns the command, which `interrupt` can be given.
+   */
+  respond(said: string, options: { interrupt?: boolean; commandId?: string } = {}): string {
     if (options.interrupt) {
       this.held().send({ type: "interrupt" });
     }
-    this.held().send({ type: "respond", text: said });
+    const commandId =
+      options.commandId ?? (this.created.conversation_id ? crypto.randomUUID() : "");
+    this.held().send({
+      type: "respond",
+      text: said,
+      ...(commandId ? { command_id: commandId } : {}),
+    });
+    return commandId;
   }
 
-  /** Abandons the reply being spoken. */
-  interrupt(): void {
-    this.held().send({ type: "interrupt" });
+  /** Abandons the reply being spoken, or with `commandId` the one answering that command. */
+  interrupt(options: { commandId?: string } = {}): void {
+    this.held().send({
+      type: "interrupt",
+      ...(options.commandId ? { command_id: options.commandId } : {}),
+    });
   }
 
   /** Changes what the agent is told to be, from the next turn. */
   setInstructions(instructions: string): void {
     this.held().send({ type: "instructions", instructions });
+  }
+
+  /**
+   * Changes this session alone: its title, description, custom labels, instructions, models
+   * or voice.
+   *
+   * Server side only. The agent config it started from is untouched and a field left out is
+   * left as it is. A session that ended can still be renamed and relabelled; the rest needs
+   * it running and takes over from its next turn, so a reply being spoken finishes on what it
+   * started with. A target that does not route is refused and the conversation carries on.
+   */
+  update(changes: Schemas["UpdateSessionRequest"]): Promise<Schemas["Session"]> {
+    return this.client.patch("/v1/agents/sessions/{id}", {
+      path: { id: this.id },
+      body: changes,
+    });
   }
 
   /**
@@ -372,10 +402,12 @@ export class Session {
    * installed it gets told that rather than a module-not-found from inside this package.
    *
    * It needs a credential of its own: the channel is Stream Chat, not this router, so a
-   * client reached by customer id has nothing to connect with.
+   * client reached by customer id has nothing to connect with. A caller already holding a
+   * connected `StreamChat` passes it as `client`, and the channel is opened on that one
+   * rather than on a second connection.
    */
-  chat(): Promise<SessionChat> {
-    this.chatPeer ??= this.openChat();
+  chat(options: { client?: ChatClient } = {}): Promise<SessionChat> {
+    this.chatPeer ??= this.openChat(options.client);
     return this.chatPeer;
   }
 
@@ -395,7 +427,16 @@ export class Session {
     await this.finished;
   }
 
-  /** Ends the conversation. Safe to call after it has already ended. */
+  /**
+   * Deletes what this conversation remembered. Ending it keeps its memories, so the next
+   * conversation knows what this one established; this is how to take them back. Server
+   * side only.
+   */
+  deleteMemories(): Promise<void> {
+    return this.client.delete("/v1/agents/sessions/{id}/memories", { path: { id: this.id } });
+  }
+
+  /** Ends the conversation. Safe to call after it has already ended. What it remembered is kept. */
   async close(): Promise<void> {
     if (this.socket?.open) {
       this.socket.send({ type: "close" });
@@ -479,13 +520,21 @@ export class Session {
     }
   }
 
-  private async openChat(): Promise<SessionChat> {
+  private async openChat(client?: ChatClient): Promise<SessionChat> {
     const channel = this.created.conversation_id ?? "";
     if (!channel) {
       throw new ConfigurationError(
-        "this session keeps no transcript, so there is no channel to read; open it with " +
-          "persist_conversation, and note that an incognito session never has one",
+        "this session keeps no transcript, so there is no channel to read: only a text " +
+          "session has one, and an incognito session never does",
       );
+    }
+    // The wire writes the channel as type:id, which is what the backend calls a
+    // conversation. Splitting it here keeps that spelling out of the caller's way.
+    const [type, ...rest] = channel.split(":");
+
+    // A page that already holds a connected client has no second connection to make.
+    if (client) {
+      return { client, channel: client.channel(type ?? "agent", rest.join(":")) };
     }
 
     const credentials = await this.client.backend.streamCredentials();
@@ -499,9 +548,6 @@ export class Session {
     const chat = await peer<ChatModule>("stream-chat", "chat");
     const connected = new chat.StreamChat(credentials.apiKey);
     await connected.connectUser(credentials.user, credentials.token);
-    // The wire writes the channel as type:id, which is what the backend calls a
-    // conversation. Splitting it here keeps that spelling out of the caller's way.
-    const [type, ...rest] = channel.split(":");
     return { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
   }
 

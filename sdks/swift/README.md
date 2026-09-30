@@ -21,22 +21,31 @@ Shipping these means splitting each into its own repository from CI, or a packag
 ## Using them
 
 ```swift
-let agents = VisionAgents(url: URL(string: "https://your-router")!, customerID: "acme")
+let agents = VisionAgents(apiKey: "your_api_key")
+agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
 
 // In writing. No call is joined, nothing is transcribed or spoken.
-let chat = try await agents.chat(agent: configID)
-await chat.start()
-try await chat.send("What are your opening hours?")
-// chat.turns grows as the reply streams in; chat.state says what the agent is doing.
+let session = try await agents.agent("myagent").sessions.create()
+let turn = try await session.responses.create("What are your opening hours?")
+// session.responses.items(responseID: turn.id) reads back what the agent did.
+
+// Or watch it arrive: session.turns grows as the reply streams in.
+await session.start()
+try await session.send("And on Sundays?")
 
 // Out loud. The agent joins a call and so does this device.
-let voice = try await VoiceSession.start(agents: agents, agent: configID)
+let voice = try await VoiceSession.start(agents: agents, agent: "myagent")
 await voice.join(credentials: yourBackend.callCredentials)
 ```
 
-`agent:` is a config id, not a name, and `join` is handed a closure rather than minting its
-own token. Both are the same fact: reading the configs and minting a call token are server-side
-only, so the app is told which agent it talks to and is handed the token to join with.
+`VisionAgents(apiKey:)` reaches Stream's hosted router; pass `url:` for another. The token
+comes from a closure because your backend mints it and it expires: it is asked for once, then
+again after a 401. The key goes in the query string and the token in the `Authorization`
+header, never in a URL. A router running locally with nothing in front of it is reached by
+customer id instead: `VisionAgents(url: URL(string: "http://localhost:8080")!, customerID: "acme")`.
+
+`join` is handed a closure rather than minting its own token for the same reason the app has
+no secret: minting a call token is server-side only.
 
 With `VisionAgentsUI` a whole conversation is one view:
 
@@ -61,7 +70,10 @@ let lookup = AgentTool(
     await Orders.local.find(arguments["order_id"]?.stringValue ?? "")
 }
 
-let chat = try await agents.chat(agent: configID, tools: [lookup])
+var options = SessionOptions(agent: "myagent")
+options.tools = [lookup]
+let session = try await agents.sessions.create(options)
+await session.start()   // the socket is what carries tool calls to this device
 ```
 
 ### Looking something up
@@ -70,7 +82,7 @@ let chat = try await agents.chat(agent: configID, tools: [lookup])
 answer are one round trip and the answer is for whoever asked:
 
 ```swift
-let router = Router(url: url, customerID: "acme", config: "healthcare")
+let router = Router(backend: agents.backend, config: "healthcare")
 let found = try await router.search("perioperative antibiotic guidance")
 ```
 
@@ -86,15 +98,16 @@ try await agents.rewind(sessionID: session.id, to: turns[0].id)
 let branch = try await agents.fork(sessionID: session.id, ForkOptions(responseID: turns[0].id))
 ```
 
-A conversation kept in Stream Chat cannot be rewound, since its transcript would bring the
-turns back; fork it at the response instead. An open `AgentSession` keeps the transcript it
+A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
+cannot be rewound, since its transcript would bring the turns back; fork it at the response
+instead. An open `AgentSession` keeps the transcript it
 already showed, so reload it from `responses` after a rewind.
 
 ## What is deliberately not here
 
 The router is server-side only by default: a handful of operations are marked
 `x-client-accessible` in the spec and everything else answers a device 403. This SDK uses
-seven of them, and `generate.py` fails if the filter names anything the spec does not open —
+eleven of them, and `generate.py` fails if the filter names anything the spec does not open —
 which is what stops it growing a method that only ever fails.
 
 What that leaves out, and where it went instead:

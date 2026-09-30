@@ -19,6 +19,7 @@ from ._generated.api.default import (
     get_session,
     list_sessions,
     search_sessions,
+    set_session_settings,
 )
 from ._generated.models import (
     CreateSessionRequest,
@@ -29,6 +30,9 @@ from ._generated.models import (
     ModelOverwrites,
     SearchSessionsState,
     Session as SessionRow,
+    SessionSettingsRequest,
+    SessionSettingsRequestThinking,
+    SessionSettingsRequestVerbosity,
     SessionTool,
     SessionToolParameters,
 )
@@ -87,11 +91,10 @@ class SessionOptions:
         custom: The caller's own labels, which a query can match on.
         incognito: Hold the conversation and keep nothing: no row, no turns, no transcript. It
             cannot be searched for, listed or forked afterwards, which is the point of it.
+            Otherwise a text conversation is kept in Stream Chat, so it outlives the session.
         model_overwrites: What to change about the models for this conversation alone.
         call_id: The call to join. Empty holds the conversation in writing.
         call_type: The Stream call type. Empty leaves the backend's default.
-        persist: Keep what was said in Stream Chat, so it outlives the session. What a
-            conversation somebody comes back to wants, which is most of them.
         conversation_id: The channel an earlier session was held in, to resume.
         instructions: Overrides the agent's own system prompt for this conversation.
         user_id: Who the conversation belongs to, for a backend opening one on somebody's
@@ -110,7 +113,6 @@ class SessionOptions:
 
     call_id: str = ""
     call_type: str = ""
-    persist: bool = False
     conversation_id: str = ""
     instructions: str = ""
     user_id: str = ""
@@ -147,6 +149,33 @@ class ForkOptions:
 
     interim: bool = False
     decisions: bool = False
+
+
+@dataclass
+class SessionSettings:
+    """What to change about a running conversation's models, for this session alone.
+
+    A field left as None is left as it is. An empty string is a value: an empty ``sts``
+    makes the session a cascade again, and an empty ``voice`` returns to the provider's
+    default.
+
+    Attributes:
+        llm: The conversation model, a provider/model or a capability shortcut.
+        sts: A speech-to-speech target, which makes the session native.
+        thinking: ``none``, ``minimal``, ``low``, ``medium`` or ``high``.
+        verbosity: ``low``, ``medium`` or ``high``.
+    """
+
+    llm: Optional[str] = None
+    stt: Optional[str] = None
+    tts: Optional[str] = None
+    sts: Optional[str] = None
+    subagent: Optional[str] = None
+    voice: Optional[str] = None
+    thinking: Optional[str] = None
+    temperature: Optional[float] = None
+    max_output_tokens: Optional[int] = None
+    verbosity: Optional[str] = None
 
 
 @dataclass
@@ -263,13 +292,8 @@ class Sessions:
             # for: a conversation somebody comes back to.
             request.text = True
 
-        # An incognito conversation writes no transcript by definition, so asking for one is
-        # a contradiction the router refuses rather than quietly honours. Dropped here so a
-        # caller that set both gets the conversation they asked for rather than a 400.
         if options.incognito:
             request.incognito = True
-        elif options.persist:
-            request.persist_conversation = True
 
         declared = _tools(self._functions)
         if declared:
@@ -293,7 +317,9 @@ class Session:
         socket: Socket,
     ):
         self.created = created
-        self.responses = Responses(backend, created.id)
+        self.responses = Responses(
+            backend, created.id, kept=bool(created.conversation_id)
+        )
 
         self._backend = backend
         self._functions = functions
@@ -435,6 +461,32 @@ class Session:
         row = _unwrapped(forked, f"forking the session {self.id}")
         return await Session.watching(self._backend, row, self._functions, options)
 
+    async def update_settings(self, settings: SessionSettings) -> SessionRow:
+        """Swap the models or the voice this conversation runs on, for this session alone.
+
+        Server side only. The agent config it started from is untouched, and the new models
+        take over from the next turn: a reply being spoken finishes on the ones it started
+        with. A target that does not route is refused and the conversation carries on as it
+        was.
+        """
+        request = SessionSettingsRequest()
+        for name in ("llm", "stt", "tts", "sts", "subagent", "voice"):
+            if getattr(settings, name) is not None:
+                setattr(request, name, getattr(settings, name))
+        if settings.thinking is not None:
+            request.thinking = SessionSettingsRequestThinking(settings.thinking)
+        if settings.temperature is not None:
+            request.temperature = settings.temperature
+        if settings.max_output_tokens is not None:
+            request.max_output_tokens = settings.max_output_tokens
+        if settings.verbosity is not None:
+            request.verbosity = SessionSettingsRequestVerbosity(settings.verbosity)
+
+        updated = await set_session_settings.asyncio(
+            self.id, client=self._backend.client(), body=request
+        )
+        return _unwrapped(updated, f"changing the settings of {self.id}")
+
     def chat(self):
         """The Stream Chat channel this conversation is written into.
 
@@ -445,8 +497,8 @@ class Session:
         channel = self.conversation_id
         if not channel:
             raise ValueError(
-                f"the session {self.id} keeps no transcript, so there is no channel to read; "
-                "open it with persist, and note that an incognito session never has one"
+                f"the session {self.id} keeps no transcript, so there is no channel to read: "
+                "only a text session has one, and an incognito session never does"
             )
 
         client = self._stream()

@@ -121,8 +121,9 @@ the provider's library.
 
 1. A field on `options.TTS`, with `Merge` and a `Term` plus a line in `Terms()` if it is
    optional behaviour.
-2. The same field on `TtsOptions` in
-   [`openapi.yaml`](../../../acceleration/api/openapi.yaml), then regenerate all three clients.
+2. The same field on `TtsOptions`, on its Go struct in
+   `internal/api`, or in [`legacy.yaml`](../../../acceleration/api/legacy.yaml) until it has moved there. Then run
+   `go run ./cmd/openapi` and regenerate all three clients.
 3. Read it in each provider that can express it, refuse it where the vendor has a range and the
    request is outside it, and declare it in `supports:`.
 4. A test for the refusal, not only for the happy path.

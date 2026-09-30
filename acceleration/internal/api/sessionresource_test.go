@@ -79,7 +79,6 @@ func (s *SessionAPISuite) TestAnIncognitoSessionKeepsNoTranscript() {
 	incognito := true
 	created := s.writes(CreateSessionRequest{
 		Incognito: &incognito, ConversationId: label(""),
-		PersistConversation: &incognito,
 	})
 
 	s.Require().NotNil(created.Incognito)
@@ -258,23 +257,62 @@ func (s *SessionAPISuite) TestSearchingWithoutAStoreFindsNothingRatherThanFailin
 	response := s.send(http.MethodGet, "/v1/agents/sessions/search?q=sendbird", "acme", nil)
 
 	s.Require().Equal(http.StatusOK, response.StatusCode)
-	var found []Session
+	var found SessionPage
 	s.decodeBody(response, &found)
-	s.Empty(found, "what search reads is the rows, and there are none")
+	s.Empty(found.Items, "what search reads is the rows, and there are none")
+	s.False(found.HasMore)
 }
 
 func (s *SessionAPISuite) TestListingNarrowsToTheProjectAsked() {
 	s.writes(CreateSessionRequest{Project: label("Health")})
 	s.writes(CreateSessionRequest{Project: label("Billing")})
 
-	var found []Session
+	var found SessionPage
 	response := s.send(http.MethodGet, "/v1/agents/sessions?project=Health", "acme", nil)
 	s.Require().Equal(http.StatusOK, response.StatusCode)
 	s.decodeBody(response, &found)
 
-	s.Require().Len(found, 1)
-	s.Require().NotNil(found[0].Project)
-	s.Equal("Health", *found[0].Project)
+	s.Require().Len(found.Items, 1)
+	s.Require().NotNil(found.Items[0].Project)
+	s.Equal("Health", *found.Items[0].Project)
+}
+
+func (s *SessionAPISuite) TestListingPagesByCursorWithoutRepeatingASession() {
+	for range 3 {
+		s.writes(CreateSessionRequest{Project: label("Paged")})
+	}
+
+	var first SessionPage
+	response := s.send(http.MethodGet, "/v1/agents/sessions?project=Paged&limit=2", "acme", nil)
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	s.decodeBody(response, &first)
+	s.Require().Len(first.Items, 2)
+	s.True(first.HasMore)
+	s.Require().NotNil(first.NextCursor)
+
+	// Opened between pages, and newer than both, so it must not push anything onto page two.
+	s.writes(CreateSessionRequest{Project: label("Paged")})
+
+	var second SessionPage
+	response = s.send(http.MethodGet,
+		"/v1/agents/sessions?project=Paged&limit=2&cursor="+*first.NextCursor, "acme", nil)
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	s.decodeBody(response, &second)
+	s.Require().Len(second.Items, 1)
+	s.False(second.HasMore)
+	s.Nil(second.NextCursor)
+
+	seen := map[string]bool{}
+	for _, one := range append(first.Items, second.Items...) {
+		s.False(seen[one.Id], "a session came back on two pages")
+		seen[one.Id] = true
+	}
+}
+
+func (s *SessionAPISuite) TestACursorThisListNeverHandedOutIsRefused() {
+	response := s.send(http.MethodGet, "/v1/agents/sessions?cursor=not-a-cursor", "acme", nil)
+
+	s.Equal(http.StatusBadRequest, response.StatusCode)
 }
 
 func boolean(of bool) *bool { return &of }
@@ -350,15 +388,15 @@ func TestForkingWithoutTheMessagesStartsFromNothing(t *testing.T) {
 	require.Equal(t, "session-1", spec.ForkedFrom, "it is still a fork")
 }
 
-func TestForkingAParentThatKeptNoTranscriptHasNothingToCarry(t *testing.T) {
+func TestForkingAParentThatKeptNoTranscriptStillKeepsTheFork(t *testing.T) {
 	parent := store.AgentSession{ID: "session-1"}
 
 	spec, err := forkSpec(session.Found{Stored: &parent}, ForkSessionRequest{}, nil)
 
 	require.NoError(t, err)
 	require.Nil(t, spec.Recall)
-	require.False(t, spec.PersistConversation,
-		"a fork is not made to persist for the sake of history that does not exist")
+	require.True(t, spec.PersistConversation,
+		"a text conversation is kept in Stream Chat whether or not it has history to carry")
 }
 
 func TestAVoiceSessionCannotBeForkedWithoutACallToJoin(t *testing.T) {

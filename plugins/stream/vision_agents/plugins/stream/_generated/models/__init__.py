@@ -234,6 +234,7 @@ from .tts_options import TtsOptions
 from .tts_options_overwrites import TtsOptionsOverwrites
 from .tts_options_pronunciations import TtsOptionsPronunciations
 from .turn_stats_bucket import TurnStatsBucket
+from .video_source import VideoSource
 from .voice import Voice
 from .voice_binding import VoiceBinding
 from .voice_binding_state import VoiceBindingState
@@ -479,6 +480,7 @@ __all__ = (
     "TtsOptionsOverwrites",
     "TtsOptionsPronunciations",
     "TurnStatsBucket",
+    "VideoSource",
     "Voice",
     "VoiceBinding",
     "VoiceBindingState",

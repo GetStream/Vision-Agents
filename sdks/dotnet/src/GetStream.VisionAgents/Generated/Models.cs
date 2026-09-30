@@ -4375,12 +4375,6 @@ namespace GetStream.VisionAgents.Models
         public string? ConversationId { get; set; } = default!;
 
         /// <summary>
-        /// Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("persist_conversation")]
-        public bool? PersistConversation { get; set; } = default!;
-
-        /// <summary>
         /// Older history was omitted from the model context.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("context_truncated")]
@@ -4414,7 +4408,7 @@ namespace GetStream.VisionAgents.Models
         public string? Agent { get; set; } = default!;
 
         /// <summary>
-        /// Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+        /// Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
         /// <br/>
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("incognito")]
@@ -4752,6 +4746,34 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class VideoSource
+    {
+
+        /// <summary>
+        /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("url")]
+        public string Url { get; set; } = default!;
+
+        /// <summary>
+        /// How many frames to sample, evenly spaced across the clip. Default 8.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_frames")]
+        public int? MaxFrames { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class TextContentPart
     {
 
@@ -4892,12 +4914,6 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("conversation_id")]
         public string? ConversationId { get; set; } = default!;
-
-        /// <summary>
-        /// Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("persist_conversation")]
-        public bool? PersistConversation { get; set; } = default!;
 
         /// <summary>
         /// Older history was omitted from the model context.
@@ -5150,6 +5166,13 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("images")]
         public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
+
+        /// <summary>
+        /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("videos")]
+        public System.Collections.Generic.List<VideoSource>? Videos { get; set; } = default!;
 
         /// <summary>
         /// Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.

@@ -34,8 +34,7 @@ impl Responses {
     pub async fn create(&self, text: &str) -> Result<AgentResponse> {
         self.create_with(&types::CreateResponseRequest {
             text: text.into(),
-            images: None,
-            command_id: None,
+            ..Default::default()
         })
         .await
     }

@@ -16,6 +16,11 @@ extension Components {
         ///
         /// - Remark: Generated from `#/components/parameters/SessionID`.
         internal typealias SessionID = Swift.String
+        /// What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/parameters/SessionSearchText`.
+        internal typealias SessionSearchText = Swift.String
         /// The agent name the session was opened against.
         ///
         /// - Remark: Generated from `#/components/parameters/SessionAgent`.
@@ -51,5 +56,13 @@ extension Components {
         internal typealias SessionLimit = Swift.Int
         /// - Remark: Generated from `#/components/parameters/SessionOffset`.
         internal typealias SessionOffset = Swift.Int
+        /// Up to 1000. Omitted is 200.
+        ///
+        /// - Remark: Generated from `#/components/parameters/ItemLimit`.
+        internal typealias ItemLimit = Swift.Int
+        /// Narrow to one turn's items. Omitted is every turn in the session.
+        ///
+        /// - Remark: Generated from `#/components/parameters/ResponseIDFilter`.
+        internal typealias ResponseIDFilter = Swift.String
     }
 }

@@ -134,7 +134,7 @@ public sealed class Dispatch
                 return answering;
             }
             var agent = await createAgent(cancellationToken).ConfigureAwait(false);
-            await agent.ChatAsync(new SessionOptions { Persist = true, AgentId = message.AgentId }, cancellationToken).ConfigureAwait(false);
+            await agent.ChatAsync(new SessionOptions { AgentId = message.AgentId }, cancellationToken).ConfigureAwait(false);
             _agents[message.ChannelId] = agent;
             return agent;
         }

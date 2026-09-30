@@ -80,21 +80,35 @@ func TestWhatIsPassedInBeatsWhatTheEnvironmentSays(t *testing.T) {
 	}
 }
 
+func TestABackendToldNothingIsTheHostedRouter(t *testing.T) {
+	t.Setenv(URLEnv, "")
+	t.Setenv(CustomerEnv, "")
+	t.Setenv(APIKeyEnv, "ntv9")
+	t.Setenv(APISecretEnv, "shh")
+
+	resolved, err := Backend{}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.URL != DefaultURL || !resolved.Authenticate {
+		t.Errorf("resolved to %s, authenticating %v", resolved.URL, resolved.Authenticate)
+	}
+}
+
 func TestABackendNobodyIsBilledForIsRefused(t *testing.T) {
 	t.Setenv(URLEnv, "http://localhost:8080")
 	t.Setenv(CustomerEnv, "")
 	t.Setenv(APIKeyEnv, "")
 	t.Setenv(APISecretEnv, "")
 
-	if _, err := (Backend{}).Resolve(); err == nil {
-		t.Fatal("a request with no customer would be work nobody pays for")
+	if _, err := (Backend{}).Resolve(); err != ErrNoCredential {
+		t.Errorf("resolved with %v, want a refusal naming the missing credential", err)
 	}
 }
 
 func TestACredentialSaysWhoIsCallingWithoutACustomerID(t *testing.T) {
 	t.Setenv(URLEnv, "https://acceleration.example.com")
 	t.Setenv(CustomerEnv, "")
-	t.Setenv(AuthenticateEnv, "true")
 	t.Setenv(APIKeyEnv, "ntv9")
 	t.Setenv(APISecretEnv, "shh")
 
@@ -104,7 +118,7 @@ func TestACredentialSaysWhoIsCallingWithoutACustomerID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.APIKey != "ntv9" || resolved.APISecret != "shh" {
+	if !resolved.Authenticate || resolved.APIKey != "ntv9" || resolved.APISecret != "shh" {
 		t.Errorf("the credential resolved to %q / %q", resolved.APIKey, resolved.APISecret)
 	}
 }
@@ -116,7 +130,6 @@ func TestACredentialLyingAroundDoesNotTurnAuthenticationOn(t *testing.T) {
 	// refuses it the paths that configure an agent.
 	t.Setenv(URLEnv, "http://127.0.0.1:8098")
 	t.Setenv(CustomerEnv, "support-local")
-	t.Setenv(AuthenticateEnv, "")
 	t.Setenv(APIKeyEnv, "ntv9")
 	t.Setenv(APISecretEnv, "shh")
 
@@ -143,11 +156,10 @@ func TestAskingToAuthenticateWithNothingToAuthenticateWithIsRefused(t *testing.T
 	t.Setenv(CustomerEnv, "acme")
 	t.Setenv(APIKeyEnv, "")
 	t.Setenv(APISecretEnv, "")
-	t.Setenv(AuthenticateEnv, "true")
 
 	// Falling back to the customer header would send a request the proxy refuses, and
 	// report it as whatever the proxy says rather than as the missing credential it is.
-	if _, err := (Backend{}).Resolve(); err != ErrNoCredential {
+	if _, err := (Backend{Authenticate: true}).Resolve(); err != ErrNoCredential {
 		t.Errorf("resolved with %v, want a refusal naming the missing credential", err)
 	}
 }

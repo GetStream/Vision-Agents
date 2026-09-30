@@ -53,16 +53,6 @@ func run(ctx context.Context, number, dial string, buy bool, greeting string) er
 		Greeting: greeting,
 	})
 
-	if err := agents.RegisterFunction(llm, "get_weather",
-		"Get the current weather for a location",
-		func(_ context.Context, in struct {
-			Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
-		}) (any, error) {
-			return fmt.Sprintf("It is 20 degrees and sunny in %s.", in.Location), nil
-		}); err != nil {
-		return err
-	}
-
 	agent, err := agents.New(agents.Options{
 		Name:         "jean",
 		Instructions: "You are Jean, a voice assistant. Be brief and warm, and answer in one or two sentences.",
@@ -77,6 +67,9 @@ func run(ctx context.Context, number, dial string, buy bool, greeting string) er
 		},
 	})
 	if err != nil {
+		return err
+	}
+	if err := agent.Tools().Add(GetWeather{}); err != nil {
 		return err
 	}
 
@@ -111,6 +104,17 @@ func run(ctx context.Context, number, dial string, buy bool, greeting string) er
 	}
 	fmt.Println("the call ended")
 	return nil
+}
+
+// GetWeather is the one tool Jean has. Its field is what the model fills in.
+type GetWeather struct {
+	Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
+}
+
+func (GetWeather) Name() string        { return "get_weather" }
+func (GetWeather) Description() string { return "Get the current weather for a location" }
+func (w GetWeather) Run(context.Context) (any, error) {
+	return fmt.Sprintf("It is 20 degrees and sunny in %s.", w.Location), nil
 }
 
 // who names a participant, falling back to the id for one that joined without a name.

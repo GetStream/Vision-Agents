@@ -174,7 +174,7 @@ async fn a_message_is_replied_to_in_its_own_channel() {
 
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
     assert_eq!(sent["conversation_id"], "messaging:c1");
-    assert_eq!(sent["persist_conversation"], true);
+    assert!(sent.get("incognito").is_none());
     assert_eq!(sent["agent_id"], "support-bot");
     assert_eq!(sent["text"], true);
 }

@@ -28,18 +28,20 @@ type worked struct {
 	opened   []acceleration.CreateSessionRequest
 	asked    []string
 	sessions map[string]chan stream.Frame
+	// sockets are the open session sockets, by session id, which answers are written to.
+	sockets map[string]*socket
 
 	// hand is what the router pushes down the dispatch socket once a worker is waiting.
 	hand func(*websocket.Conn)
 	// hold is what the router does with a session once it is open. Nil answers every
 	// question with one piece of text.
-	hold func(*testing.T, *websocket.Conn, string)
+	hold func(*testing.T, *socket, string)
 }
 
 func newWorked(t *testing.T, hand func(*websocket.Conn)) *worked {
 	t.Helper()
 
-	router := &worked{hand: hand, sessions: map[string]chan stream.Frame{}}
+	router := &worked{hand: hand, sessions: map[string]chan stream.Frame{}, sockets: map[string]*socket{}}
 	var opened atomic.Int64
 	mux := http.NewServeMux()
 
@@ -54,6 +56,23 @@ func newWorked(t *testing.T, hand func(*websocket.Conn)) *worked {
 		id := "session-" + string(rune('a'+opened.Add(1)-1))
 		reply(w, http.StatusCreated, acceleration.Session{
 			Id: id, AgentId: "agent-1", State: "running", CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/responses", func(w http.ResponseWriter, r *http.Request) {
+		var request acceleration.CreateResponseRequest
+		_ = json.NewDecoder(r.Body).Decode(&request)
+
+		router.mu.Lock()
+		router.asked = append(router.asked, r.PathValue("id")+": "+request.Text)
+		router.mu.Unlock()
+		// The answer arrives on the session's socket after the question is taken, as it does
+		// from the backend.
+		go router.respond(t, r.PathValue("id"), request.Text)
+
+		reply(w, http.StatusAccepted, acceleration.AgentResponse{
+			Id: "response-1", SessionId: r.PathValue("id"), Said: &request.Text,
+			Status: "running", CreatedAt: time.Now(),
 		})
 	})
 
@@ -90,12 +109,24 @@ func newWorked(t *testing.T, hand func(*websocket.Conn)) *worked {
 	return router
 }
 
-// answer holds one session: it records every question and replies to it the way the
-// backend would.
+// socket is one session's socket, written to by one answer at a time.
+type socket struct {
+	mu         sync.Mutex
+	connection *websocket.Conn
+}
+
+func (s *socket) WriteJSON(frame any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.connection.WriteJSON(frame)
+}
+
+// answer holds one session's socket, collecting the tool results sent back on it.
 func (w *worked) answer(t *testing.T, connection *websocket.Conn, id string) {
 	replies := make(chan stream.Frame, 8)
 	w.mu.Lock()
 	w.sessions[id] = replies
+	w.sockets[id] = &socket{connection: connection}
 	w.mu.Unlock()
 
 	for {
@@ -104,18 +135,6 @@ func (w *worked) answer(t *testing.T, connection *websocket.Conn, id string) {
 			return
 		}
 		switch frame.Type() {
-		case "respond":
-			w.mu.Lock()
-			w.asked = append(w.asked, frame.String("text"))
-			hold := w.hold
-			w.mu.Unlock()
-
-			if hold != nil {
-				hold(t, connection, frame.String("text"))
-				continue
-			}
-			_ = connection.WriteJSON(stream.Frame{"type": "response_delta", "text": "answering " + frame.String("text")})
-			_ = connection.WriteJSON(stream.Frame{"type": "responded", "text": "answering " + frame.String("text")})
 		case "tool_result":
 			select {
 			case replies <- frame:
@@ -123,6 +142,27 @@ func (w *worked) answer(t *testing.T, connection *websocket.Conn, id string) {
 			}
 		}
 	}
+}
+
+// respond answers one question on its session's socket the way the backend would.
+func (w *worked) respond(t *testing.T, id, text string) {
+	var held *socket
+	for held == nil {
+		w.mu.Lock()
+		held = w.sockets[id]
+		hold := w.hold
+		w.mu.Unlock()
+		if held == nil {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if hold != nil {
+			hold(t, held, text)
+			return
+		}
+	}
+	_ = held.WriteJSON(stream.Frame{"type": "response_delta", "text": "answering " + text})
+	_ = held.WriteJSON(stream.Frame{"type": "responded", "text": "answering " + text})
 }
 
 // questions is what the router was asked, in the order it was asked.
@@ -246,8 +286,8 @@ func TestASessionIsOpenedOnTheChannelTheQuestionWasAskedIn(t *testing.T) {
 	if opened.AgentId == nil || *opened.AgentId != "support-42" {
 		t.Errorf("the session was opened for agent %v, want support-42", opened.AgentId)
 	}
-	if opened.PersistConversation == nil || !*opened.PersistConversation {
-		t.Error("the session does not persist; the answer would be written nowhere the person can read it")
+	if opened.Incognito != nil && *opened.Incognito {
+		t.Error("the session is incognito; the answer would be written nowhere the person can read it")
 	}
 }
 
@@ -293,14 +333,13 @@ func TestAMessageOnAnotherChannelGetsAnAgentOfItsOwn(t *testing.T) {
 }
 
 func TestASecondQuestionWaitsForTheAnswerToTheFirst(t *testing.T) {
-	// Responding interrupts whatever is being said, which is right on a call and wrong
-	// here: two messages written in quick succession would throw the first answer away
-	// half-written, and the person would watch it disappear.
+	// Two messages written in quick succession must not be answered on top of each other:
+	// the person would watch two answers interleave in one channel.
 	router := newWorked(t, nil)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var overlapped atomic.Bool
-	router.hold = func(_ *testing.T, connection *websocket.Conn, text string) {
+	router.hold = func(_ *testing.T, connection *socket, text string) {
 		if text == "first" {
 			close(started)
 			<-release
@@ -341,7 +380,7 @@ func TestAConversationKeepsRunningFunctionsAfterALongAnswer(t *testing.T) {
 	router := newWorked(t, func(connection *websocket.Conn) {
 		_ = connection.WriteJSON(written("support-42", "how many?"))
 	})
-	router.hold = func(_ *testing.T, connection *websocket.Conn, _ string) {
+	router.hold = func(_ *testing.T, connection *socket, _ string) {
 		for range 200 {
 			_ = connection.WriteJSON(stream.Frame{"type": "response_delta", "text": "."})
 		}
@@ -352,10 +391,7 @@ func TestAConversationKeepsRunningFunctionsAfterALongAnswer(t *testing.T) {
 
 	var ran atomic.Bool
 	dispatch, _ := answering(t, router, func(llm *stream.Pipeline) {
-		_ = RegisterFunction(llm, "count", "count things", func(context.Context, struct{}) (any, error) {
-			ran.Store(true)
-			return 42, nil
-		})
+		_ = llm.Functions().Add(count{ran: &ran})
 	})
 	defer waited(t, dispatch)()
 
@@ -427,7 +463,7 @@ func TestAnAnswerIsGivenAsLongAsTheWorkerAskedFor(t *testing.T) {
 	// source tree needs longer, and a turn abandoned underneath it is an answer the
 	// person watched stop halfway.
 	router := newWorked(t, nil)
-	router.hold = func(_ *testing.T, connection *websocket.Conn, text string) {
+	router.hold = func(_ *testing.T, connection *socket, text string) {
 		if text == "slow" {
 			// Neither responded nor error, which is the only case the timeout is
 			// reached in: a turn the backend never ends.
@@ -495,4 +531,16 @@ func isClosed(done chan struct{}) bool {
 	default:
 		return false
 	}
+}
+
+// count is a tool that says 42 and remembers it was asked.
+type count struct {
+	ran *atomic.Bool
+}
+
+func (count) Name() string        { return "count" }
+func (count) Description() string { return "count things" }
+func (c count) Run(context.Context) (any, error) {
+	c.ran.Store(true)
+	return 42, nil
 }

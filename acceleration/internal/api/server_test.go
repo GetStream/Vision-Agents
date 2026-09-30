@@ -15,6 +15,7 @@ import (
 	"time"
 
 	sentryhttp "github.com/getsentry/sentry-go/http"
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -322,6 +323,40 @@ func (s *ServerSuite) TestHealthNeedsNoCustomerHeader() {
 	s.Equal("not configured", status.Dependencies["redis"])
 	s.Equal("ok", status.Dependencies["stt"], "health reports which modalities are served")
 	s.NotContains(status.Dependencies, "tts")
+}
+
+func (s *ServerSuite) TestABodyThatDoesNotValidateIsABadRequestInTheErrorShape() {
+	request := httptest.NewRequest(http.MethodPut, "/v1/policies/app",
+		strings.NewReader(`{"budget": {"limit_micros": 0, "interval": "daily"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(CustomerHeader, "acme")
+	recorder := httptest.NewRecorder()
+	s.handler.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+	var body Error
+	s.decode(recorder, &body)
+	s.Contains(body.Error, "limit_micros")
+}
+
+func (s *ServerSuite) TestAPolicyRequiresTheCustomerHeader() {
+	recorder := s.get("/v1/policies/app", "")
+
+	s.Equal(http.StatusUnauthorized, recorder.Code)
+	var body Error
+	s.decode(recorder, &body)
+	s.Equal(missingCustomer().Error, body.Error)
+}
+
+func (s *ServerSuite) TestTheCommittedSpecIsRenderedFromTheOperations() {
+	// api/openapi.yaml is what every client generator reads, so one edited by hand or
+	// left behind by a change to an operation is a client out of step with the server.
+	committed, err := os.ReadFile("../../api/openapi.yaml")
+	s.Require().NoError(err)
+	rendered, err := Spec()
+	s.Require().NoError(err)
+
+	s.Equal(string(rendered), string(committed), "run go run ./cmd/openapi in acceleration/")
 }
 
 func (s *ServerSuite) TestProvidersRequireTheCustomerHeader() {
@@ -1086,30 +1121,25 @@ func (s *ServerSuite) TestEveryOperationTheSpecDoesNotOpenIsRefusedToAUsersDevic
 	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
 	handler := s.keyed(key, secret)
 
-	spec, err := GetSpec()
+	operations, err := specifiedOperations((&Server{}).newAPI(chi.NewRouter()).OpenAPI())
 	s.Require().NoError(err)
 
 	refused := 0
-	for path, item := range spec.Paths.Map() {
-		for method, operation := range item.Operations() {
-			if operation.Security != nil && len(*operation.Security) == 0 {
-				continue
-			}
-			if open, ok := operation.Extensions[clientAccessibleExtension].(bool); ok && open {
-				continue
-			}
-			refused++
-
-			// A path parameter is filled with anything: the refusal comes before the
-			// handler that would look the resource up.
-			target := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(path, "x")
-			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(method, target, strings.NewReader(`{}`))
-			request.Header.Set("Content-Type", "application/json")
-			handler.ServeHTTP(recorder, s.asUser(request, key, secret))
-
-			s.Equal(http.StatusForbidden, recorder.Code, method+" "+path)
+	for _, operation := range operations {
+		if operation.public || operation.open {
+			continue
 		}
+		refused++
+
+		// A path parameter is filled with anything: the refusal comes before the
+		// handler that would look the resource up.
+		target := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(operation.path, "x")
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(operation.method, target, strings.NewReader(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+		s.Equal(http.StatusForbidden, recorder.Code, operation.method+" "+operation.path)
 	}
 	s.NotZero(refused, "the spec leaves nothing server-side only")
 }
@@ -1120,25 +1150,23 @@ func (s *ServerSuite) TestEveryOperationTheSpecOpensIsReachableByAUsersDevice() 
 	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
 	handler := s.keyed(key, secret)
 
-	spec, err := GetSpec()
+	operations, err := specifiedOperations((&Server{}).newAPI(chi.NewRouter()).OpenAPI())
 	s.Require().NoError(err)
 
 	opened := 0
-	for path, item := range spec.Paths.Map() {
-		for method, operation := range item.Operations() {
-			if open, ok := operation.Extensions[clientAccessibleExtension].(bool); !ok || !open {
-				continue
-			}
-			opened++
-
-			target := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(path, "x")
-			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(method, target, strings.NewReader(`{}`))
-			request.Header.Set("Content-Type", "application/json")
-			handler.ServeHTTP(recorder, s.asUser(request, key, secret))
-
-			s.NotEqual(http.StatusForbidden, recorder.Code, method+" "+path)
+	for _, operation := range operations {
+		if !operation.open {
+			continue
 		}
+		opened++
+
+		target := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(operation.path, "x")
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(operation.method, target, strings.NewReader(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+		s.NotEqual(http.StatusForbidden, recorder.Code, operation.method+" "+operation.path)
 	}
 	s.NotZero(opened, "the spec opens nothing to a client")
 }
@@ -1194,7 +1222,7 @@ func excludedRoutes(t *testing.T) map[string]bool {
 			Security    *[]map[string][]string
 		} `yaml:"paths"`
 	}
-	read(t, "../../api/openapi.yaml", &spec)
+	read(t, "../../api/legacy.yaml", &spec)
 
 	excluded := map[string]bool{}
 	for _, id := range codegen.OutputOptions.Excluded {

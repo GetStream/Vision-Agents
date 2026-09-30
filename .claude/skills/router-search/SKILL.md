@@ -67,8 +67,9 @@ that reads out a stranger's blog post.
 
 1. A field on `options.Search`, with `Merge`, plus a `Term` and a line in `Terms()` unless it
    picks the route the way `depth` does.
-2. The same field on `SearchOptions` in
-   [`openapi.yaml`](../../../acceleration/api/openapi.yaml), then regenerate all three clients.
+2. The same field on `SearchOptions`, on its Go struct in
+   `internal/api`, or in [`legacy.yaml`](../../../acceleration/api/legacy.yaml) until it has moved there. Then run
+   `go run ./cmd/openapi` and regenerate all three clients.
 3. Send it in each provider that takes it, translating into that vendor's shape — a cache age
    into a date floor, a country into whatever it calls a country — and declare it in
    `supports:`.

@@ -82,9 +82,9 @@ chat.responses.rewind(turns[0])
 val branch = agents.attach(chat.fork(ForkOptions(responseId = turns[0].id)).id)
 ```
 
-A conversation kept in Stream Chat (`persistConversation`) cannot be rewound, since its
-transcript would bring the turns back: the router answers 400, so fork it at the response
-instead. An open `AgentSession` keeps the transcript it already showed, so reload it from
+A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
+cannot be rewound, since its transcript would bring the turns back: the router answers 400, so
+fork it at the response instead. An open `AgentSession` keeps the transcript it already showed, so reload it from
 `responses` after a rewind.
 
 ### Guests, and who this device is

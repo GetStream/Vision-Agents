@@ -79,7 +79,8 @@ export interface BackendOptions {
    * With `apiSecret` it is sent as a header, which is how a backend says which of its
    * users it is acting for; the sessions it opens then belong to that user, so the user's
    * own device can reach them afterwards. With `token` it is already in the token and
-   * this is ignored.
+   * this is ignored. With `customerId` it is sent as `user_id` in the query, which a router
+   * with nothing in front of it reads the same way.
    */
   userId?: string;
   /**
@@ -156,7 +157,9 @@ export class Backend {
     this.authenticate = options.authenticate ?? boolean(env(AUTHENTICATE_ENV));
     this.webSocketImpl = options.webSocket ?? globalWebSocket();
 
-    const chosen = options.fetch ?? globalThis.fetch;
+    // Bound, because a browser only lets fetch be called on the window: kept as a field and
+    // called as this object's method, it throws "Illegal invocation" on every request.
+    const chosen = options.fetch ?? globalThis.fetch?.bind(globalThis);
     if (!chosen) {
       throw new ConfigurationError(
         "there is no fetch here; pass one as the fetch option or run on Node 22 or newer",
@@ -292,8 +295,9 @@ export class Backend {
    * The WebSocket URL for a path on the router, credentials included.
    *
    * They go in the query string because a browser WebSocket carries no headers of its own.
-   * `Stream-Auth-Type` has no query counterpart on purpose, which is why a socket opened
-   * from a browser cannot claim to be a backend.
+   * A socket never says it is a backend: `Stream-Auth-Type: server` has no query counterpart
+   * on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is what it
+   * reads for a user whoever the token is for.
    */
   async socketURL(path: string, query: Record<string, string> = {}): Promise<string> {
     this.assertCredentialed();
@@ -303,20 +307,27 @@ export class Backend {
     }
 
     if (this.apiKey) {
+      const token = this.authenticate
+        ? await this.proxyToken()
+        : this.apiSecret
+          ? await this.serverToken()
+          : await this.userToken();
       url.searchParams.set("api_key", this.apiKey);
-      url.searchParams.set(
-        "token",
-        this.authenticate
-          ? await this.proxyToken()
-          : this.apiSecret
-            ? await this.serverToken()
-            : await this.userToken(),
-      );
+      url.searchParams.set("token", token);
+      if (this.authenticate) {
+        // The proxy reads a socket's credential the way it reads a request's, as
+        // `authorization` and `stream-auth-type`, and refuses one carrying only `token`.
+        url.searchParams.set("authorization", token);
+        url.searchParams.set("stream-auth-type", "jwt");
+      }
       if (this.userId) {
         url.searchParams.set("user_id", this.userId);
       }
     } else {
       url.searchParams.set("customer_id", this.customerId);
+      if (this.userId) {
+        url.searchParams.set("user_id", this.userId);
+      }
     }
     return url.toString();
   }
@@ -329,6 +340,17 @@ export class Backend {
       );
     }
     return new this.webSocketImpl(url);
+  }
+
+  /**
+   * What a request carries in its query rather than its headers.
+   *
+   * A router reached by customer id is told the end user as `user_id`: a header would do on
+   * a server, but a page cannot send one the router's CORS does not admit, and the query is
+   * read the same way.
+   */
+  query(): Record<string, string> {
+    return !this.apiKey && this.customerId && this.userId ? { user_id: this.userId } : {};
   }
 
   /** Sends one request. Exposed so the client and the sockets share one fetch. */
