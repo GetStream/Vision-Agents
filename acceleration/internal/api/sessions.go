@@ -711,8 +711,11 @@ func storedSessionOf(row store.AgentSession) Session {
 		CallType:  row.CallType,
 		UserId:    row.UserID,
 		AgentId:   row.AgentID,
-		State:     SessionState(row.State),
+		State:     Live,
 		CreatedAt: row.CreatedAt,
+	}
+	if row.State == store.SessionClosed {
+		rendered.State = Ended
 	}
 	// A session with no call was held in writing, which is what the absence of one means.
 	if row.CallID == "" {

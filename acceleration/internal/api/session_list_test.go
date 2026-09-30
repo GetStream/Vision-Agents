@@ -122,7 +122,7 @@ func (s *SessionListSuite) TestAStoppedSessionIsListedWithWhenItEnded() {
 	s.Require().Eventually(func() bool {
 		for _, one := range s.serverClient.querySessions(SessionQuery{}).Items {
 			if one.Id == closing.Id {
-				return one.ClosedAt != nil
+				return one.ClosedAt != nil && one.State == Ended
 			}
 		}
 		return false
