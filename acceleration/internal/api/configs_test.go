@@ -88,6 +88,62 @@ func (s *ConfigsSuite) TestUpdatingAConfigReplacesWhatItWas() {
 	s.Nil(updated.Instructions, "a field left out of a replacement is gone from it")
 }
 
+func (s *ConfigsSuite) TestPatchingAConfigKeepsWhatWasNotSent() {
+	created := s.createConfig(map[string]any{
+		"name": "support", "llm": "llm-flow", "instructions": "be brief",
+		"skills": []string{"think"},
+	})
+	policy := "---\ntype: lcm\n---\nOnly answer questions about Acme."
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"guardrail": policy}, &patched))
+
+	s.Equal(policy, value(patched.Guardrail))
+	s.Equal("llm-flow", value(patched.Llm))
+	s.Equal("be brief", value(patched.Instructions))
+	s.Equal([]string{"think"}, value(patched.Skills))
+}
+
+func (s *ConfigsSuite) TestAPatchWithAGuardrailThatDoesNotParseChangesNothing() {
+	created := s.createConfig(map[string]any{"name": "support", "llm": "llm-flow"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"llm": "en-low-latency", "guardrail": "---\ntype: regex\n---\nNo."})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "regex")
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal("llm-flow", value(read.Llm))
+}
+
+func (s *ConfigsSuite) TestAPatchNamingAFieldConfigsDoNotHaveIsRefused() {
+	created := s.createConfig(map[string]any{"name": "support"})
+
+	s.Equal(http.StatusBadRequest, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"guardrails": "Only answer questions about Acme."}, nil))
+}
+
+func (s *ConfigsSuite) TestAnotherAppsConfigIsNotTheirsToPatch() {
+	created := s.createConfig(map[string]any{"name": "support"})
+
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return as.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+			map[string]any{"instructions": "mine now"}, nil)
+	})
+}
+
+func (s *ConfigsSuite) TestOnlyTheAppsOwnBackendMayPatchAConfig() {
+	created := s.createConfig(map[string]any{"name": "support"})
+
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+			map[string]any{"instructions": "be brief"}, nil)
+	})
+}
+
 func (s *ConfigsSuite) TestADeletedConfigCannotBeUsedAgain() {
 	created := s.createConfig(map[string]any{"name": "support"})
 

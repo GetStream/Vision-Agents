@@ -217,6 +217,60 @@ components:
         - created_at
         - updated_at
       type: object
+    AgentConfigPatch:
+      additionalProperties: false
+      description: What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
+      properties:
+        greeting:
+          type: string
+        guardrail:
+          description: 'A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.'
+          type: string
+        instructions:
+          type: string
+        keyterms:
+          items:
+            type: string
+          type: array
+        knowledge_namespace:
+          type: string
+        llm:
+          type: string
+        mode:
+          $ref: '#/components/schemas/AgentMode'
+        name:
+          description: What the config is called, which is unique among the customer's own.
+          minLength: 1
+          type: string
+        plugins:
+          items:
+            type: string
+          type: array
+        sandbox:
+          $ref: '#/components/schemas/Sandbox'
+        search:
+          type: string
+        skills:
+          items:
+            type: string
+          type: array
+        sts:
+          type: string
+        stt:
+          type: string
+        subagent:
+          type: string
+        tags:
+          additionalProperties:
+            type: string
+          type: object
+        tts:
+          type: string
+        video:
+          $ref: '#/components/schemas/SessionVideo'
+        voice:
+          type: string
+      type: object
     AgentConfigRequest:
       properties:
         greeting:
@@ -5417,6 +5471,48 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
       summary: One agent config
+    patch:
+      description: |-
+        Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: patchAgentConfig
+      parameters:
+        - description: The config, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The config, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentConfigPatch'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConfig'
+          description: The config as it now is
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Change some of an agent config
     put:
       description: |
         Every field is written, so the body is what the config now is rather than what changed about it. Sessions already running keep the configuration they started with.

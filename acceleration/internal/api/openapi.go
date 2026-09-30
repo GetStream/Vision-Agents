@@ -188,6 +188,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerSessionStop(api)
 	s.registerSessionDelete(api)
 	s.registerMemories(api)
+	s.registerConfigPatch(api)
 	return api
 }
 
