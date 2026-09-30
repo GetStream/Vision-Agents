@@ -1106,6 +1106,22 @@ class TestAgent:
         assert llm.joined.memory_filter == {"user_id": "222"}
         assert llm.left
 
+    async def test_a_remote_pipeline_is_told_how_long_the_agent_took_to_join(
+        self, call: Call
+    ):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.join(call, wait_for_end=False):
+            pass
+
+        assert llm.joined is not None
+        assert [step.name for step in llm.joined.join_steps] == [
+            "start components",
+            "chat conversation",
+        ]
+        assert all(step.ms >= 0 for step in llm.joined.join_steps)
+
     async def test_a_remote_pipeline_reports_speech_as_the_agents_own_events(
         self, call: Call
     ):

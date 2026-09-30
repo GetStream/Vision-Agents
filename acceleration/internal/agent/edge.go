@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -30,6 +31,30 @@ type Edge interface {
 	// longer than the chunk it was given represents.
 	PublishAudio(pcm audio.PcmData) error
 	Leave() error
+}
+
+// JoinTrace is how an edge joined its call, step by step, as its transport recorded it.
+type JoinTrace struct {
+	// Trace is the transport's own record as JSON, passed through unchanged. For a Stream
+	// call it is the SDK's join DAG (jointrace.Report): every step with what it waited for,
+	// its kind and peer, its times and round trips, and the critical path.
+	Trace json.RawMessage
+	// CriticalPath names the critical path's steps, for logs, for example
+	// "sfu.ws.dial > sfu.join > pub.offer".
+	CriticalPath string
+	// CriticalMs and CriticalRTTs are the critical path's length, and its network part in
+	// round trips.
+	CriticalMs   float64
+	CriticalRTTs float64
+}
+
+// Connector is an edge that can say how long it took to connect.
+//
+// Separate from Edge rather than a fifth method on it, because only a transport that
+// negotiates media has steps worth reporting; a loopback connects instantly.
+type Connector interface {
+	// JoinTraces reports how the edge joined, once. The channel closes when the edge leaves.
+	JoinTraces() <-chan JoinTrace
 }
 
 // Attendance is somebody arriving in or leaving the call.

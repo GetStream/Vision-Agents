@@ -8,17 +8,20 @@ package streamedge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/audio/opus"
 	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
+	"github.com/GetStream/getstream-go-webrtc/jointrace"
 	"github.com/GetStream/getstream-go-webrtc/track"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
@@ -88,7 +91,9 @@ type Edge struct {
 	// attending carries who comes and goes, which is how an agent that did not start the
 	// call knows somebody is there to talk to.
 	attending *emit.Emitter[agent.Attendance]
-	speaker   *speaker
+	// tracing carries how the call was joined, once.
+	tracing *emit.Emitter[agent.JoinTrace]
+	speaker *speaker
 
 	client *rtc.Client
 	call   *rtc.Call
@@ -142,6 +147,7 @@ func New(options Options) (*Edge, error) {
 		logger:    options.Logger.With("call", options.CallType+":"+options.CallID),
 		inbound:   emit.New[agent.InboundAudio](audioBuffer),
 		attending: emit.New[agent.Attendance](attendanceBuffer),
+		tracing:   emit.New[agent.JoinTrace](1),
 		speaker:   newSpeaker(options.Logger),
 		listening: map[string]chan struct{}{},
 		leftDone:  make(chan struct{}),
@@ -161,6 +167,8 @@ func (e *Edge) Join(ctx context.Context) error {
 	// Kept off the edge until the join succeeds: leaving a call that never connected panics
 	// in the SDK, which has no signaling client yet to report its stats through.
 	call := client.Call(e.options.CallType, e.options.CallID)
+	// Set before Join, which starts the trace.
+	call.OnJoinTrace(e.onJoinTrace)
 	signalingStarted := time.Now()
 	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		e.listen(remote)
@@ -197,7 +205,6 @@ func (e *Edge) Join(ctx context.Context) error {
 		"subscribe_ms", subscribeMs,
 		"publish_ms", float64(time.Since(publishStarted).Microseconds())/1000,
 		"join_ms", float64(time.Since(started).Microseconds())/1000)
-	go e.reportICE(ctx, started)
 
 	e.logger.Info("joined the call",
 		"user", e.options.User.ID, "session", e.call.SessionID.Load(), "tracks", len(subscriptions))
@@ -248,6 +255,7 @@ func (e *Edge) leave() error {
 	}
 	e.inbound.Close()
 	e.attending.Close()
+	e.tracing.Close()
 
 	var failures []error
 	if err := e.speaker.Close(); err != nil {
@@ -264,44 +272,37 @@ func (e *Edge) leave() error {
 	return errors.Join(failures...)
 }
 
-// reportICE observes the two peer connections without replacing the SDK's own ICE
-// callbacks. Sampling adds at most 20 ms to the reported connection time.
-func (e *Edge) reportICE(ctx context.Context, started time.Time) {
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
-	timeout := time.NewTimer(30 * time.Second)
-	defer timeout.Stop()
-	timeoutCh := timeout.C
-	var publisherMs, subscriberMs float64
-	for {
-		if pc := e.call.PublisherPC(); pc != nil && publisherMs == 0 && iceConnected(pc.ICEConnectionState()) {
-			publisherMs = float64(time.Since(started).Microseconds()) / 1000
-			e.logger.Info("ice connection timing", "peer", "publisher", "connected_ms", publisherMs)
-			timeout.Stop()
-			timeoutCh = nil
-		}
-		if pc := e.call.SubscriberPC(); pc != nil && subscriberMs == 0 && iceConnected(pc.ICEConnectionState()) {
-			subscriberMs = float64(time.Since(started).Microseconds()) / 1000
-			e.logger.Info("ice connection timing", "peer", "subscriber", "connected_ms", subscriberMs)
-		}
-		if publisherMs > 0 && subscriberMs > 0 {
-			return
-		}
-		select {
-		case <-ticker.C:
-		case <-timeoutCh:
-			e.logger.Warn("publisher ice connection did not complete")
-			return
-		case <-ctx.Done():
-			return
-		case <-e.leftDone:
-			return
-		}
+// JoinTraces reports how the call was joined, satisfying agent.Connector.
+func (e *Edge) JoinTraces() <-chan agent.JoinTrace { return e.tracing.Events() }
+
+// onJoinTrace hands the SDK's record of the join to the agent, unchanged. The SDK calls it
+// once, on its own goroutine, when media flows both ways or after rtc.JoinTraceTimeout.
+func (e *Edge) onJoinTrace(trace jointrace.Trace) {
+	joined, err := joinTrace(trace)
+	if err != nil {
+		e.logger.Warn("join trace not reported", "error", err)
+		return
 	}
+	e.logger.Info("join trace", "critical_ms", joined.CriticalMs, "critical_rtts", joined.CriticalRTTs,
+		"critical_path", joined.CriticalPath)
+	e.logger.Debug("join DAG\n" + trace.String())
+	e.tracing.Send(joined)
 }
 
-func iceConnected(state webrtc.ICEConnectionState) bool {
-	return state == webrtc.ICEConnectionStateConnected || state == webrtc.ICEConnectionStateCompleted
+// joinTrace is the SDK's trace as the agent carries it: the SDK's own JSON report, and the
+// critical path pulled out of it for logs.
+func joinTrace(trace jointrace.Trace) (agent.JoinTrace, error) {
+	report := trace.Report()
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		return agent.JoinTrace{}, fmt.Errorf("streamedge: encode the join trace: %w", err)
+	}
+	return agent.JoinTrace{
+		Trace:        encoded,
+		CriticalPath: strings.Join(report.CriticalPath, " > "),
+		CriticalMs:   report.CriticalMs,
+		CriticalRTTs: report.CriticalRTTs,
+	}, nil
 }
 
 // connect builds the SDK client, preferring a token over a secret.

@@ -124,7 +124,11 @@ type Session struct {
 	// disturbing the others.
 	watchers    map[uint64]*watcher
 	nextWatcher uint64
-	state       State
+	// connection is how the agent joined the call. It is state rather than conversation, so
+	// unlike everything else it is replayed to a watcher that attaches late: the join
+	// usually finishes before the caller's socket is open.
+	connection *agent.Connection
+	state      State
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so
@@ -327,6 +331,9 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 		for _, pending := range s.tools.Pending() {
 			attached.send(pending)
 		}
+	}
+	if s.connection != nil {
+		attached.send(*s.connection)
 	}
 	s.mu.Unlock()
 
@@ -768,6 +775,11 @@ func (s *Session) consume() {
 	defer s.running.Done()
 
 	for event := range s.voiceAgent.Events() {
+		if connected, ok := event.(agent.Connection); ok {
+			s.mu.Lock()
+			s.connection = &connected
+			s.mu.Unlock()
+		}
 		if s.persisted != nil {
 			s.persisted.Observe(event)
 		}

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     AsyncIterator,
     Literal,
@@ -34,6 +34,19 @@ class RemotePipelineError(Exception):
 
 
 @dataclass
+class JoinStep:
+    """One step the agent took to join a call before handing it to a remote pipeline.
+
+    Attributes:
+        name: What the step was, for example "create call (coordinator)".
+        ms: How long it took, in milliseconds.
+    """
+
+    name: str
+    ms: float
+
+
+@dataclass
 class RemoteCall:
     """What a remote pipeline needs to know to run a conversation on the agent's behalf.
 
@@ -48,6 +61,8 @@ class RemoteCall:
         harness: How delegated work is configured, if at all.
         cost_tracking: Labels attributed to every request the call makes.
         memory_filter: Which memories this call may recall, keyed by scope.
+        join_steps: The steps the agent already took to join, in order, so a pipeline
+            that reports latency can show the whole path to the call.
     """
 
     call_type: str
@@ -58,6 +73,7 @@ class RemoteCall:
     harness: Optional[Harness] = None
     cost_tracking: Optional[dict[str, str]] = None
     memory_filter: Optional[dict[str, str]] = None
+    join_steps: list[JoinStep] = field(default_factory=list)
 
 
 @dataclass

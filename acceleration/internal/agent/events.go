@@ -124,6 +124,11 @@ type Responded struct {
 
 func (Responded) isAgentEvent() {}
 
+// Connection reports how the agent joined the call.
+type Connection struct{ JoinTrace }
+
+func (Connection) isAgentEvent() {}
+
 // ModelCall reports one provider attempt, including flow and delegated work.
 type ModelCall struct{ llm.CallTiming }
 

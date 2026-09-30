@@ -610,6 +610,10 @@ func (a *Agent) Join(ctx context.Context) error {
 			a.running.Add(1)
 			go a.consumeRoster(roster)
 		}
+		if connector, ok := a.options.Edge.(Connector); ok {
+			a.running.Add(1)
+			go a.consumeConnections(connector)
+		}
 	}
 
 	changed := a.modelsChanged()
@@ -1004,6 +1008,15 @@ func (a *Agent) consumeEdge() {
 		if err := listener.ProcessAudio(inbound.Audio, inbound.Participant); err != nil {
 			a.fail(err, "stt")
 		}
+	}
+}
+
+// consumeConnections reports how the edge joined the call.
+func (a *Agent) consumeConnections(connector Connector) {
+	defer a.running.Done()
+
+	for trace := range connector.JoinTraces() {
+		a.emitter.Send(Connection{JoinTrace: trace})
 	}
 }
 

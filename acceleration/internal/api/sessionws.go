@@ -422,6 +422,10 @@ func frameOf(event session.Event) (frame, bool) {
 			"interrupted":            typed.Interrupted,
 		}, true
 
+	case agent.Connection:
+		// The transport's trace goes out as it recorded it.
+		return frame{"type": "connection", "trace": typed.Trace}, true
+
 	case agent.ModelCall:
 		return frame{
 			"type": "model_call", "operation_id": typed.OperationID,

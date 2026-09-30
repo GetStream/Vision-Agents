@@ -1,0 +1,240 @@
+{
+  "origin_unix_ms": 1790000000000,
+  "join_at_ms": 0,
+  "rtt_ms": {
+    "coordinator": 50,
+    "sfu": 50,
+    "udp": 50
+  },
+  "spans": [
+    {
+      "name": "coord.join",
+      "kind": "net",
+      "peer": "coordinator",
+      "start_ms": 0,
+      "end_ms": 200,
+      "ms": 200,
+      "rtts": 4,
+      "critical": true,
+      "cost_ms": 200
+    },
+    {
+      "name": "pcs.create",
+      "after": [
+        "coord.join"
+      ],
+      "kind": "local",
+      "peer": "local",
+      "start_ms": 200,
+      "end_ms": 202,
+      "ms": 2,
+      "rtts": 0,
+      "critical": true,
+      "cost_ms": 2
+    },
+    {
+      "name": "sfu.ws.dial",
+      "after": [
+        "pcs.create"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 202,
+      "end_ms": 352,
+      "ms": 150,
+      "rtts": 3,
+      "critical": true,
+      "cost_ms": 150
+    },
+    {
+      "name": "sfu.join",
+      "after": [
+        "sfu.ws.dial"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 352,
+      "end_ms": 402,
+      "ms": 50,
+      "rtts": 1,
+      "critical": true,
+      "cost_ms": 50
+    },
+    {
+      "name": "pub.debounce",
+      "after": [
+        "sfu.join"
+      ],
+      "kind": "timer",
+      "peer": "local",
+      "start_ms": 402,
+      "end_ms": 403,
+      "ms": 1,
+      "rtts": 0
+    },
+    {
+      "name": "sub.debounce",
+      "after": [
+        "sfu.join"
+      ],
+      "kind": "timer",
+      "peer": "sfu",
+      "start_ms": 402,
+      "end_ms": 480,
+      "ms": 78,
+      "rtts": 0,
+      "critical": true,
+      "cost_ms": 78
+    },
+    {
+      "name": "pub.offer",
+      "after": [
+        "pub.debounce"
+      ],
+      "kind": "local",
+      "peer": "local",
+      "start_ms": 403,
+      "end_ms": 405,
+      "ms": 2,
+      "rtts": 0
+    },
+    {
+      "name": "pub.setpublisher",
+      "after": [
+        "pub.offer"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 405,
+      "end_ms": 455,
+      "ms": 50,
+      "rtts": 1
+    },
+    {
+      "name": "pub.ice",
+      "after": [
+        "pub.setpublisher"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 456,
+      "end_ms": 506,
+      "ms": 50,
+      "rtts": 1
+    },
+    {
+      "name": "sub.offer",
+      "after": [
+        "sub.debounce"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 480,
+      "end_ms": 505,
+      "ms": 25,
+      "rtts": 0.5,
+      "critical": true,
+      "cost_ms": 25
+    },
+    {
+      "name": "sub.sendanswer",
+      "after": [
+        "sub.offer"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 505,
+      "end_ms": 556,
+      "ms": 51,
+      "rtts": 1.02,
+      "critical": true,
+      "cost_ms": 51
+    },
+    {
+      "name": "pub.dtls",
+      "after": [
+        "pub.ice"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 506,
+      "end_ms": 556,
+      "ms": 50,
+      "rtts": 1
+    },
+    {
+      "name": "sub.ice",
+      "after": [
+        "sub.sendanswer"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 507,
+      "end_ms": 557,
+      "ms": 50,
+      "rtts": 1,
+      "critical": true,
+      "cost_ms": 1
+    },
+    {
+      "name": "pub.rtp",
+      "after": [
+        "pub.dtls"
+      ],
+      "kind": "local",
+      "peer": "local",
+      "start_ms": 556,
+      "end_ms": 560,
+      "ms": 4,
+      "rtts": 0
+    },
+    {
+      "name": "sub.dtls",
+      "after": [
+        "sub.ice"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 557,
+      "end_ms": 607,
+      "ms": 50,
+      "rtts": 1,
+      "critical": true,
+      "cost_ms": 50
+    },
+    {
+      "name": "sub.rtp",
+      "after": [
+        "sub.dtls"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 607,
+      "end_ms": 630,
+      "ms": 23,
+      "rtts": 0.46,
+      "critical": true,
+      "cost_ms": 23
+    }
+  ],
+  "critical_path": [
+    "coord.join",
+    "pcs.create",
+    "sfu.ws.dial",
+    "sfu.join",
+    "sub.debounce",
+    "sub.offer",
+    "sub.sendanswer",
+    "sub.ice",
+    "sub.dtls",
+    "sub.rtp"
+  ],
+  "critical_ms": 630,
+  "critical_rtts": 11,
+  "critical_net_ms": 550,
+  "critical_timer_ms": 78,
+  "critical_local_ms": 2,
+  "critical_wait_ms": 0,
+  "publish_to_media_ms": 585,
+  "subscribe_to_media_ms": 630
+}
