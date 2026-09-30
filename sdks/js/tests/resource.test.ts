@@ -63,6 +63,29 @@ describe("the agent handle", () => {
 
     assert.equal(await api.agent("docs").config(), undefined);
   });
+
+  it("updates a config by sending only what changed, so the rest of it is kept", async () => {
+    router.serve("GET", "/v1/agents/configs", { body: [{ id: "config-1", name: "docs" }] });
+    router.serve("PATCH", "/v1/agents/configs/config-1", {
+      body: { id: "config-1", name: "docs", guardrail: "Only Acme.", instructions: "Be brief." },
+    });
+
+    const updated = await api.agent("docs").updateConfig({ guardrail: "Only Acme." });
+
+    assert.equal(updated.instructions, "Be brief.");
+    assert.deepEqual(router.requestsTo("PATCH", "/v1/agents/configs/config-1")[0]?.body, {
+      guardrail: "Only Acme.",
+    });
+  });
+
+  it("refuses to update an agent nothing is configured under", async () => {
+    router.serve("GET", "/v1/agents/configs", { body: [] });
+
+    await assert.rejects(
+      () => api.agent("docs").updateConfig({ guardrail: "Only Acme." }),
+      ConfigurationError,
+    );
+  });
 });
 
 describe("sessions", () => {

@@ -433,7 +433,13 @@ export type paths = {
         readonly delete: operations["deleteAgentConfig"];
         readonly options?: never;
         readonly head?: never;
-        readonly patch?: never;
+        /**
+         * Change some of an agent config
+         * @description Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly patch: operations["patchAgentConfig"];
         readonly trace?: never;
     };
     readonly "/v1/agents/configs/{id}/plugins": {
@@ -875,13 +881,18 @@ export type paths = {
         };
         /**
          * One session
-         * @description Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+         * @description Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
          */
         readonly get: operations["getSession"];
         readonly put?: never;
         readonly post?: never;
-        /** Leave the call and end the session */
-        readonly delete: operations["closeSession"];
+        /**
+         * Delete a session
+         * @description Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+         *
+         *     To end a call and keep the conversation, stop the session instead.
+         */
+        readonly delete: operations["deleteSession"];
         readonly options?: never;
         readonly head?: never;
         /**
@@ -1174,6 +1185,28 @@ export type paths = {
          *     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
          */
         readonly patch: operations["setSessionSettings"];
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Stop a running session
+         * @description The agent leaves the call and the session stops running. Everything it recorded is kept: it can still be read back, renamed and forked, and what it remembered carries into the next conversation. Deleting a session is what takes those away.
+         *
+         *     A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
+         */
+        readonly post: operations["stopSession"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
         readonly trace?: never;
     };
     readonly "/v1/agents/sessions/query": {
@@ -2251,6 +2284,32 @@ export type components = {
             readonly tts?: string;
             /** Format: date-time */
             readonly updated_at: string;
+            readonly video?: components["schemas"]["SessionVideo"];
+            readonly voice?: string;
+        };
+        /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
+        readonly AgentConfigPatch: {
+            readonly greeting?: string;
+            /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
+            readonly guardrail?: string;
+            readonly instructions?: string;
+            readonly keyterms?: readonly string[];
+            readonly knowledge_namespace?: string;
+            readonly llm?: string;
+            readonly mode?: components["schemas"]["AgentMode"];
+            /** @description What the config is called, which is unique among the customer's own. */
+            readonly name?: string;
+            readonly plugins?: readonly string[];
+            readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly search?: string;
+            readonly skills?: readonly string[];
+            readonly sts?: string;
+            readonly stt?: string;
+            readonly subagent?: string;
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+            readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
             readonly voice?: string;
         };
@@ -5680,6 +5739,46 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly patchAgentConfig: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The config, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentConfigPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description The config as it now is */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentConfig"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     readonly listConfigPlugins: {
         readonly parameters: {
             readonly query?: never;
@@ -6418,27 +6517,37 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
-    readonly closeSession: {
+    readonly deleteSession: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The agent has left */
+            /** @description The session is deleted */
             readonly 204: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly updateSession: {
@@ -6923,6 +7032,39 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly stopSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The agent has left */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly querySessions: {
