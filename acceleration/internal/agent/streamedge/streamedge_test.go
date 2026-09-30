@@ -33,6 +33,8 @@ func (s *StreamEdgeSuite) SetupTest() {
 	s.T().Setenv("STREAM_API_KEY", "")
 	s.T().Setenv("STREAM_API_SECRET", "")
 	s.T().Setenv("STREAM_USER_TOKEN", "")
+	s.T().Setenv("STREAM_BASE_URL", "")
+	s.T().Setenv("STREAM_WS_URL", "")
 }
 
 // speech returns a tone at the given rate, which is what a voice provider hands over.
@@ -119,6 +121,42 @@ func (s *StreamEdgeSuite) TestTheRegionComesFromTheEnvironment() {
 
 	s.Require().NoError(err)
 	s.Equal("AMS", edge.location)
+}
+
+func (s *StreamEdgeSuite) TestWithoutABaseURLTheSDKsDefaultIsJoined() {
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
+
+	s.Require().NoError(err)
+	s.Empty(edge.options.BaseURL)
+	s.Empty(edge.options.WSURL)
+}
+
+func (s *StreamEdgeSuite) TestTheWebsocketFollowsTheBaseURL() {
+	s.T().Setenv("STREAM_BASE_URL", "https://chat-edge-us-east1-ce1.gcp.stream-io-api.com/")
+
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
+
+	s.Require().NoError(err)
+	s.Equal("https://chat-edge-us-east1-ce1.gcp.stream-io-api.com/", edge.options.BaseURL)
+	s.Equal("wss://chat-edge-us-east1-ce1.gcp.stream-io-api.com/api/v2/connect", edge.options.WSURL)
+}
+
+func (s *StreamEdgeSuite) TestAWebsocketOnItsOwnPortComesFromTheEnvironment() {
+	// The local stack serves its websocket on another port than its REST API.
+	s.T().Setenv("STREAM_BASE_URL", "http://127.0.0.1:3030")
+	s.T().Setenv("STREAM_WS_URL", "ws://127.0.0.1:8800/api/v2/connect")
+
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
+
+	s.Require().NoError(err)
+	s.Equal("ws://127.0.0.1:8800/api/v2/connect", edge.options.WSURL)
+}
+
+func (s *StreamEdgeSuite) TestABaseURLMustBeHTTP() {
+	_, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret",
+		BaseURL: "ftp://example.com"})
+
+	s.ErrorContains(err, "want http or https")
 }
 
 func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {

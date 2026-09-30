@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/audio/opus"
 	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
+	"github.com/GetStream/getstream-go-webrtc/coordinator"
 	"github.com/GetStream/getstream-go-webrtc/jointrace"
 	"github.com/GetStream/getstream-go-webrtc/track"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
@@ -40,6 +42,8 @@ const (
 	apiSecretEnvVar = "STREAM_API_SECRET"
 	userTokenEnvVar = "STREAM_USER_TOKEN"
 	regionEnvVar    = "STREAM_REGION"
+	baseURLEnvVar   = "STREAM_BASE_URL"
+	wsURLEnvVar     = "STREAM_WS_URL"
 )
 
 // defaultCallType is the call type an agent joins under.
@@ -77,7 +81,18 @@ type Options struct {
 	// near it; without one, near the address the agent connects from.
 	Region string
 
+	// BaseURL is the coordinator to join through. It defaults to STREAM_BASE_URL, which the
+	// rest of the service's Stream clients also read, and then to Stream's production API.
+	BaseURL string
+	// WSURL is the coordinator's websocket. It defaults to STREAM_WS_URL, and then to
+	// BaseURL's /api/v2/connect.
+	WSURL string
+
 	Logger *slog.Logger
+
+	// clientOptions are passed to the SDK client as they are, so a test can add a network
+	// delay.
+	clientOptions []rtc.Option
 }
 
 // User is who the agent is in the call.
@@ -155,6 +170,19 @@ func New(options Options) (*Edge, error) {
 	location, known := locationFor(options.Region)
 	if !known {
 		options.Logger.Warn("streamedge: unknown region, placing the agent by its address", "region", options.Region)
+	}
+	if options.BaseURL == "" {
+		options.BaseURL = os.Getenv(baseURLEnvVar)
+	}
+	if options.WSURL == "" {
+		options.WSURL = os.Getenv(wsURLEnvVar)
+	}
+	if options.WSURL == "" && options.BaseURL != "" {
+		wsURL, err := websocketURL(options.BaseURL)
+		if err != nil {
+			return nil, err
+		}
+		options.WSURL = wsURL
 	}
 
 	return &Edge{
@@ -332,20 +360,47 @@ func (e *Edge) connect() (*rtc.Client, error) {
 	if user.Name == "" {
 		user.Name = user.ID
 	}
+	options := slices.Clone(e.options.clientOptions)
+	if e.options.BaseURL != "" {
+		options = append(options, rtc.WithCoordinatorOptions(
+			coordinator.ApiURL(e.options.BaseURL), coordinator.WithWsURL(e.options.WSURL)))
+	}
 
 	if e.options.UserToken != "" {
-		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken))
+		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken), options...)
 		if err != nil {
 			return nil, fmt.Errorf("streamedge: connect: %w", err)
 		}
 		return client, nil
 	}
 
-	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, rtc.WithUser(user))
+	clientOptions := []rtc.ClientOption{rtc.WithUser(user)}
+	for _, option := range options {
+		clientOptions = append(clientOptions, option)
+	}
+	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, clientOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("streamedge: connect: %w", err)
 	}
 	return client, nil
+}
+
+// websocketURL is the coordinator websocket that goes with a coordinator base URL.
+func websocketURL(base string) (string, error) {
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("streamedge: %s %q: %w", baseURLEnvVar, base, err)
+	}
+	switch parsed.Scheme {
+	case "https":
+		parsed.Scheme = "wss"
+	case "http":
+		parsed.Scheme = "ws"
+	default:
+		return "", fmt.Errorf("streamedge: %s %q: want http or https", baseURLEnvVar, base)
+	}
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/api/v2/connect"
+	return parsed.String(), nil
 }
 
 // publish adds the agent's Opus track. The track starts pulling frames from the speaker as
