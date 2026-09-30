@@ -39,6 +39,7 @@ const (
 	apiKeyEnvVar    = "STREAM_API_KEY"
 	apiSecretEnvVar = "STREAM_API_SECRET"
 	userTokenEnvVar = "STREAM_USER_TOKEN"
+	regionEnvVar    = "STREAM_REGION"
 )
 
 // defaultCallType is the call type an agent joins under.
@@ -71,6 +72,11 @@ type Options struct {
 	// UserToken defaults to STREAM_USER_TOKEN and is used in preference to a secret.
 	UserToken string
 
+	// Region is where the agent runs: a GCP or AWS region ("us-east1", "eu-west-1") or an
+	// airport code. It defaults to STREAM_REGION. The coordinator puts the agent on an SFU
+	// near it; without one, near the address the agent connects from.
+	Region string
+
 	Logger *slog.Logger
 }
 
@@ -84,6 +90,8 @@ type User struct {
 type Edge struct {
 	options Options
 	logger  *slog.Logger
+	// location is what the agent tells the coordinator about where it is (Options.Region).
+	location string
 
 	// inbound carries every participant's speech, already decoded to what the
 	// speech-to-text providers accept.
@@ -141,10 +149,18 @@ func New(options Options) (*Edge, error) {
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
+	if options.Region == "" {
+		options.Region = os.Getenv(regionEnvVar)
+	}
+	location, known := locationFor(options.Region)
+	if !known {
+		options.Logger.Warn("streamedge: unknown region, placing the agent by its address", "region", options.Region)
+	}
 
 	return &Edge{
 		options:   options,
 		logger:    options.Logger.With("call", options.CallType+":"+options.CallID),
+		location:  location,
 		inbound:   emit.New[agent.InboundAudio](audioBuffer),
 		attending: emit.New[agent.Attendance](attendanceBuffer),
 		tracing:   emit.New[agent.JoinTrace](1),
@@ -170,7 +186,7 @@ func (e *Edge) Join(ctx context.Context) error {
 	// Set before Join, which starts the trace.
 	call.OnJoinTrace(e.onJoinTrace)
 	signalingStarted := time.Now()
-	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
+	joined, err := call.Join(ctx, rtc.WithLocation(e.location), rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		e.listen(remote)
 	})))
 	if err != nil {

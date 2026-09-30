@@ -88,6 +88,39 @@ func (s *StreamEdgeSuite) TestCredentialsComeFromTheEnvironment() {
 	s.Equal("agent", edge.options.CallType, "the call type an agent joins unless one is named")
 }
 
+func (s *StreamEdgeSuite) TestWithoutARegionTheCoordinatorPlacesTheAgent() {
+	s.T().Setenv("STREAM_REGION", "")
+
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
+
+	s.Require().NoError(err)
+	s.Equal("auto", edge.location)
+}
+
+func (s *StreamEdgeSuite) TestTheRegionBecomesTheNearestAirport() {
+	for region, want := range map[string]string{
+		"us-east1":  "CHS",
+		"us-east-1": "IAD",
+		"eu-west-1": "DUB",
+		"ams":       "AMS",
+		"mars-1":    "auto",
+	} {
+		edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret", Region: region})
+
+		s.Require().NoError(err)
+		s.Equal(want, edge.location, region)
+	}
+}
+
+func (s *StreamEdgeSuite) TestTheRegionComesFromTheEnvironment() {
+	s.T().Setenv("STREAM_REGION", "europe-west4")
+
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
+
+	s.Require().NoError(err)
+	s.Equal("AMS", edge.location)
+}
+
 func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {
 	s.T().Setenv("STREAM_API_KEY", "key")
 	s.T().Setenv("STREAM_API_SECRET", "secret")
