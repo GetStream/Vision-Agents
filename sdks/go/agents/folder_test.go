@@ -3,6 +3,7 @@ package agents
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -314,6 +315,87 @@ func TestADirectoryHashesTheWayThePythonSDKHashesIt(t *testing.T) {
 	}
 	if declared.Hash() == folder.Hash() {
 		t.Error("declaring a page did not change the fingerprint")
+	}
+}
+
+func TestEachSimulationFileIsAListReadInFileOrder(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "simulations/lunch.yaml", `- name: change of order
+  scenario: Order a club, then swap it for a wrap.
+  assertion: The final order is one wrap.
+  variations: 3
+- name: off the menu
+  scenario: Ask for a milkshake.
+  assertion: The agent says there is no milkshake.
+  mode: audio
+`)
+	write(t, root, "simulations/allergies.yml", `- name: peanut allergy
+  scenario: Ask whether the wrap has nuts.
+  assertion: The agent does not guess.
+`)
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var names []string
+	for _, simulation := range folder.Simulations {
+		names = append(names, simulation.Name)
+	}
+	if strings.Join(names, ", ") != "peanut allergy, change of order, off the menu" {
+		t.Errorf("read %v", names)
+	}
+	if folder.Simulations[1].Variations != 3 || folder.Simulations[2].Mode != "audio" {
+		t.Errorf("the lunch simulations are %+v", folder.Simulations[1:])
+	}
+}
+
+func TestASimulationNameTwoFilesShareIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	simulation := "- name: change of order\n  scenario: Swap the club.\n  assertion: One wrap.\n"
+	write(t, root, "simulations/a.yaml", simulation)
+	write(t, root, "simulations/b.yaml", simulation)
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "also declared in a.yaml") {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+func TestASimulationKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "simulations/lunch.yaml", "- name: order\n  scenario: Order.\n  assertion: Ordered.\n  asertion: typo\n")
+
+	if _, err := Load(root); err == nil {
+		t.Fatal("a misspelt key was accepted")
+	}
+}
+
+func TestAnEmptySimulationsDirectoryIsNotTheSameAsNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	without, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, SimulationsDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if without.Simulations != nil || empty.Simulations == nil {
+		t.Errorf("without is %v and empty is %v", without.Simulations, empty.Simulations)
+	}
+	if without.Hash() == empty.Hash() {
+		t.Error("emptying simulations/ would not sync, so the stored ones would never be deleted")
 	}
 }
 

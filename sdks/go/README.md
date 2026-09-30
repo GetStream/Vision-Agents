@@ -316,6 +316,7 @@ agents/jean/
   skills/think.md       frontmatter (name, description, deadline) and a body
   knowledge/*.md        what the agent may look things up in
   knowledge/urls.yaml   pages to keep that filled from, as urls or url/title/description
+  simulations/*.yaml    each a list of simulations (name, scenario, assertion, variations, ...)
   .agent_sync           written by Sync: the hash last synced and when
 ```
 
@@ -325,9 +326,12 @@ agent.Sync(ctx)
 ```
 
 `Sync` sends the whole directory in one request: the skills, the files and pages for a
-knowledge base named after the agent, and what `agent.yaml` declares. A key `agent.yaml`
-does not know is refused. The request carries a hash of the directory, the same one the
-Python SDK takes, and `.agent_sync` records it, so running `Sync` again on an unchanged
+knowledge base named after the agent, the simulations, and what `agent.yaml` declares. A key
+`agent.yaml` or a simulation file does not know is refused. The simulations in `simulations/`
+are the whole of the agent's: one taken out is deleted on the next sync, and a directory
+without `simulations/` leaves the stored ones alone. The request carries a hash of the
+directory, the same one the Python SDK takes for a directory without simulations, and
+`.agent_sync` records it, so running `Sync` again on an unchanged
 directory only reads the config back. What is written in code wins over what the directory
 says, so a directory is a starting point rather than an override.
 

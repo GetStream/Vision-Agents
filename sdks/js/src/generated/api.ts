@@ -1422,10 +1422,13 @@ export type paths = {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Store an agent directory's instructions, skills, knowledge and settings
-         * @description Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+         * Store an agent directory's instructions, skills, knowledge, simulations and settings
+         * @description Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+         *
          *     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-         *     knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+         *
+         *     knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+         *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["syncAgent"];
@@ -4050,6 +4053,38 @@ export type components = {
             /** @description What in the conversation decided it. */
             readonly verdict?: string;
         };
+        /** @description A simulation an agent directory declares in simulations/*.yaml. It runs against the agent being synced. */
+        readonly SimulationDeclaration: {
+            /** @description What has to be true at the end for a run to have passed. */
+            readonly assertion: string;
+            readonly caller_stt?: string;
+            readonly caller_target?: string;
+            readonly caller_tts?: string;
+            readonly caller_voice?: string;
+            readonly judge_target?: string;
+            /**
+             * Format: int64
+             * @description How many times the caller may speak. Twelve when left out.
+             */
+            readonly max_turns?: number;
+            /**
+             * @description Text when left out.
+             * @enum {string}
+             */
+            readonly mode?: "text" | "audio";
+            /** @description Unique among the agent's simulations, and what a sync finds it again by. */
+            readonly name: string;
+            /** @description What the caller wants, in your own words and over as many turns as it takes. */
+            readonly scenario: string;
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Format: int64
+             * @description How many ways of asking the same thing one run tries.
+             */
+            readonly variations?: number;
+        };
         readonly SimulationLine: {
             /** Format: date-time */
             readonly at?: string;
@@ -4407,7 +4442,7 @@ export type components = {
             /** @description Word-level timestamps. Recording only. */
             readonly words?: boolean;
         };
-        /** @description An agent directory as it is on disk. Everything after the knowledge is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
+        /** @description An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
             readonly greeting?: string;
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
@@ -4426,6 +4461,8 @@ export type components = {
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly search?: string;
+            /** @description The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone. */
+            readonly simulations?: readonly components["schemas"]["SimulationDeclaration"][];
             readonly skills?: readonly components["schemas"]["SkillRequest"][];
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
@@ -7504,6 +7541,15 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly truncateMemories: {

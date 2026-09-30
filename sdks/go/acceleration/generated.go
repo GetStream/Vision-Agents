@@ -1100,6 +1100,24 @@ func (e SimulationCaseState) Valid() bool {
 	}
 }
 
+// Defines values for SimulationDeclarationMode.
+const (
+	SimulationDeclarationModeAudio SimulationDeclarationMode = "audio"
+	SimulationDeclarationModeText  SimulationDeclarationMode = "text"
+)
+
+// Valid indicates whether the value is a known member of the SimulationDeclarationMode enum.
+func (e SimulationDeclarationMode) Valid() bool {
+	switch e {
+	case SimulationDeclarationModeAudio:
+		return true
+	case SimulationDeclarationModeText:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SimulationRequestMode.
 const (
 	SimulationRequestModeAudio SimulationRequestMode = "audio"
@@ -3499,6 +3517,36 @@ type SimulationCaseEnded string
 // SimulationCaseState defines model for SimulationCase.State.
 type SimulationCaseState string
 
+// SimulationDeclaration A simulation an agent directory declares in simulations/*.yaml. It runs against the agent being synced.
+type SimulationDeclaration struct {
+	// Assertion What has to be true at the end for a run to have passed.
+	Assertion    string  `json:"assertion"`
+	CallerStt    *string `json:"caller_stt,omitempty"`
+	CallerTarget *string `json:"caller_target,omitempty"`
+	CallerTts    *string `json:"caller_tts,omitempty"`
+	CallerVoice  *string `json:"caller_voice,omitempty"`
+	JudgeTarget  *string `json:"judge_target,omitempty"`
+
+	// MaxTurns How many times the caller may speak. Twelve when left out.
+	MaxTurns *int64 `json:"max_turns,omitempty"`
+
+	// Mode Text when left out.
+	Mode *SimulationDeclarationMode `json:"mode,omitempty"`
+
+	// Name Unique among the agent's simulations, and what a sync finds it again by.
+	Name string `json:"name"`
+
+	// Scenario What the caller wants, in your own words and over as many turns as it takes.
+	Scenario string             `json:"scenario"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+
+	// Variations How many ways of asking the same thing one run tries.
+	Variations *int64 `json:"variations,omitempty"`
+}
+
+// SimulationDeclarationMode Text when left out.
+type SimulationDeclarationMode string
+
 // SimulationLine defines model for SimulationLine.
 type SimulationLine struct {
 	At *time.Time `json:"at,omitempty"`
@@ -3877,7 +3925,7 @@ type SttOptions struct {
 	Words *bool `json:"words,omitempty"`
 }
 
-// SyncAgentRequest An agent directory as it is on disk. Everything after the knowledge is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
+// SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
 	Greeting *string `json:"greeting,omitempty"`
 
@@ -3902,9 +3950,12 @@ type SyncAgentRequest struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox        `json:"sandbox,omitempty"`
-	Search  *string         `json:"search,omitempty"`
-	Skills  *[]SkillRequest `json:"skills,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+	Search  *string  `json:"search,omitempty"`
+
+	// Simulations The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone.
+	Simulations *[]SimulationDeclaration `json:"simulations,omitempty"`
+	Skills      *[]SkillRequest          `json:"skills,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string            `json:"sts,omitempty"`
@@ -5993,11 +6044,14 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
 	UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SyncAgentWithBody Store an agent directory's instructions, skills, knowledge and settings
+	// SyncAgentWithBody Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
-	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	//
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+	//
+	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -6005,11 +6059,14 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SyncAgent Store an agent directory's instructions, skills, knowledge and settings
+	// SyncAgent Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
-	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	//
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+	//
+	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
@@ -8520,11 +8577,14 @@ func (c *Client) UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkil
 	return c.Client.Do(req)
 }
 
-// SyncAgentWithBody Store an agent directory's instructions, skills, knowledge and settings
+// SyncAgentWithBody Store an agent directory's instructions, skills, knowledge, simulations and settings
 //
-// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+//
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+//
+// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -8542,11 +8602,14 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 	return c.Client.Do(req)
 }
 
-// SyncAgent Store an agent directory's instructions, skills, knowledge and settings
+// SyncAgent Store an agent directory's instructions, skills, knowledge, simulations and settings
 //
-// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+//
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+//
+// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
@@ -16871,11 +16934,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
 	UpdateSkillWithResponse(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error)
 
-	// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills, knowledge and settings
+	// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
-	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	//
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+	//
+	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -16883,11 +16949,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
 
-	// SyncAgentWithResponse Store an agent directory's instructions, skills, knowledge and settings
+	// SyncAgentWithResponse Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
-	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	//
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+	//
+	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -22553,6 +22622,8 @@ type SyncAgentResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -22573,6 +22644,11 @@ func (r SyncAgentResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r SyncAgentResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SyncAgentResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27504,11 +27580,14 @@ func (c *ClientWithResponses) UpdateSkillWithResponse(ctx context.Context, id Re
 	return ParseUpdateSkillResponse(rsp)
 }
 
-// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills, knowledge and settings
+// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills, knowledge, simulations and settings
 //
-// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+//
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+//
+// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -27522,11 +27601,14 @@ func (c *ClientWithResponses) SyncAgentWithBodyWithResponse(ctx context.Context,
 	return ParseSyncAgentResponse(rsp)
 }
 
-// SyncAgentWithResponse Store an agent directory's instructions, skills, knowledge and settings
+// SyncAgentWithResponse Store an agent directory's instructions, skills, knowledge, simulations and settings
 //
-// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+//
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+//
+// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -32534,6 +32616,13 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

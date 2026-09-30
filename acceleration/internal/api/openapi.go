@@ -141,7 +141,9 @@ func namedEnum(registry huma.Registry, name, description string, values ...strin
 	for _, value := range values {
 		enum = append(enum, value)
 	}
-	registry.Map()[name] = &huma.Schema{Type: huma.TypeString, Description: description, Enum: enum}
+	schema := &huma.Schema{Type: huma.TypeString, Description: description, Enum: enum}
+	schema.PrecomputeMessages()
+	registry.Map()[name] = schema
 	return &huma.Schema{Ref: "#/components/schemas/" + name}
 }
 
@@ -189,6 +191,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerSessionDelete(api)
 	s.registerMemories(api)
 	s.registerConfigPatch(api)
+	s.registerSync(api)
 	return api
 }
 

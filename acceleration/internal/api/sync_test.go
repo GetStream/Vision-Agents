@@ -25,7 +25,7 @@ func (s *SyncSuite) TestSyncingAnAgentStoresItsInstructionsAndSkills() {
 	declaration := map[string]any{
 		"name": "support", "hash": "v1", "instructions": "Be brief.",
 		"skills": []map[string]string{
-			{"name": "refund", "description": "work out a refund", "instructions": "Read the policy."},
+			{"config_id": "", "name": "refund", "description": "work out a refund", "instructions": "Read the policy."},
 		},
 	}
 	first := s.sync(declaration)
@@ -138,6 +138,63 @@ func (s *SyncSuite) TestASyncedDirectorysPagesAreReadIntoItsKnowledge() {
 	s.Equal("What a call costs", value(listed[0].Title))
 }
 
+func (s *SyncSuite) TestASyncedDirectorysSimulationsAreFoundByNameAndForgottenWhenTakenOut() {
+	first := s.sync(map[string]any{
+		"name": "deli", "hash": "v1",
+		"simulations": []map[string]any{
+			{"name": "change of order", "scenario": "Swap the club for a wrap.", "assertion": "One wrap.", "variations": 3},
+			{"name": "off the menu", "scenario": "Ask for a milkshake.", "assertion": "No milkshake."},
+		},
+	})
+	stored := s.simulations(first.Config.Id)
+	s.Require().Len(stored, 2)
+	changed := stored["change of order"]
+	s.Equal(3, changed.Variations)
+	s.Equal(SimulationModeText, changed.Mode)
+
+	s.sync(map[string]any{
+		"name": "deli", "hash": "v2",
+		"simulations": []map[string]any{
+			{"name": "change of order", "scenario": "Swap the club for a wrap.", "assertion": "One wrap, no fries.", "mode": "audio"},
+		},
+	})
+	stored = s.simulations(first.Config.Id)
+	s.Require().Len(stored, 1, "a simulation no longer declared is deleted")
+	s.Equal(changed.Id, stored["change of order"].Id, "found by name, so its runs stay attached")
+	s.Equal("One wrap, no fries.", stored["change of order"].Assertion)
+	s.Equal(SimulationModeAudio, stored["change of order"].Mode)
+
+	s.sync(map[string]any{"name": "deli", "hash": "v3"})
+	s.Len(s.simulations(first.Config.Id), 1, "a directory with no simulations/ leaves them alone")
+
+	s.sync(map[string]any{"name": "deli", "hash": "v4", "simulations": []map[string]any{}})
+	s.Empty(s.simulations(first.Config.Id), "an empty simulations/ holds none")
+}
+
+func (s *SyncSuite) TestASyncDeclaringTwoSimulationsWithOneNameIsRefused() {
+	simulation := map[string]any{"name": "order", "scenario": "Order lunch.", "assertion": "Ordered."}
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "deli", "hash": "v1", "simulations": []map[string]any{simulation, simulation},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "order")
+	s.Empty(s.configsNamed("deli"), "nothing is written when a simulation is refused")
+}
+
+func (s *SyncSuite) TestASyncDeclaringASimulationWithTooManyVariationsIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "deli", "hash": "v1",
+		"simulations": []map[string]any{
+			{"name": "order", "scenario": "Order lunch.", "assertion": "Ordered.", "variations": 11},
+		},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "variations")
+	s.Empty(s.configsNamed("deli"))
+}
+
 func (s *SyncSuite) TestOnlyTheAppsOwnBackendMaySyncAnAgent() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		return as.do(http.MethodPost, "/v1/agents/sync",
@@ -151,6 +208,28 @@ func (s *SyncSuite) sync(declaration map[string]any) SyncAgentResult {
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodPost, "/v1/agents/sync", declaration, &result))
 	return result
+}
+
+// simulations are the app's simulations of one config, by name.
+func (s *SyncSuite) simulations(configID string) map[string]Simulation {
+	var listed []Simulation
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/simulations", nil, &listed))
+	named := map[string]Simulation{}
+	for _, simulation := range listed {
+		if simulation.ConfigId == configID {
+			named[simulation.Name] = simulation
+		}
+	}
+	return named
+}
+
+// configsNamed lists the app's configs called name.
+func (s *SyncSuite) configsNamed(name string) []AgentConfig {
+	var listed []AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs?name="+name, nil, &listed))
+	return listed
 }
 
 // documents lists what one of the app's knowledge bases holds.
