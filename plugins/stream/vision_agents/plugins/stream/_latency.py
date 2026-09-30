@@ -84,12 +84,14 @@ def render_connection(frame: dict[str, Any]) -> str:
     One row per step in start order, with what it waited for, when it started, how long it
     took in ms and in round trips of its peer, and a timeline that shows which steps ran in
     parallel. Critical-path steps are marked with "*" and drawn with "="; detail spans (TCP,
-    TLS, first byte) sit under their step.
+    TLS, first byte) sit under their step. The heading names the flow the join took, "fast"
+    or "legacy", when the router says.
     """
     trace = frame.get("trace") or {}
     spans = trace.get("spans") or []
     rtt = trace.get("rtt_ms") or {}
-    heading = "join DAG (webrtc)"
+    flow = frame.get("flow")
+    heading = f"join DAG (webrtc, {flow} join)" if flow else "join DAG (webrtc)"
     if rtt:
         heading += " " + ", ".join(
             f"RTT {peer} {ms:,.1f} ms" for peer, ms in sorted(rtt.items())

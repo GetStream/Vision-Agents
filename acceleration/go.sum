@@ -22,10 +22,14 @@ cloud.google.com/go/trace v1.11.7 h1:kDNDX8JkaAG3R2nq1lIdkb7FCSi1rCmsEtKVsty7p+U
 cloud.google.com/go/trace v1.11.7/go.mod h1:TNn9d5V3fQVf6s4SCveVMIBS2LJUqo73GACmq/Tky0s=
 github.com/GetStream/getstream-go-webrtc v0.0.0-20260930193009-4d08f7e2cd82 h1:Q/NAdOM4joaJhOmQk2O3oSg2xgXQHsj3JlwltjCGG70=
 github.com/GetStream/getstream-go-webrtc v0.0.0-20260930193009-4d08f7e2cd82/go.mod h1:EGW80e9f/EEfD3zklz+0odOLST4rmlJTPFkmrLJ9oTY=
+github.com/GetStream/getstream-go-webrtc v0.0.0-20260930232025-8dea8e5e34a3 h1:rHy+APlzf9ulKyO9kQZQB5ns9T8tzlV0Dy/Cl0+KuGQ=
+github.com/GetStream/getstream-go-webrtc v0.0.0-20260930232025-8dea8e5e34a3/go.mod h1:tllQlNisN97ipDmx0OHYeyWXE46or1uceEsiAE8QzCA=
 github.com/GetStream/getstream-go/v5 v5.2.0 h1:nrZkIL0mzHtByMeAeNFD4jpGIT5XPa0P3ItFL9bCIr8=
 github.com/GetStream/getstream-go/v5 v5.2.0/go.mod h1:qnod4MVOSwxfpqtXLpxjbMo7lDcepOlg8X2GrpBs/cw=
 github.com/GetStream/protocol v1.49.0 h1:AzTRH6+PRNHjFjBlcymbjZsVE+wZBp/wPG6w+/9FCw4=
 github.com/GetStream/protocol v1.49.0/go.mod h1:jZALur2IoWnpcLnFzLtnFomgItt4SBHj+U1TjPYC114=
+github.com/GetStream/protocol v1.50.0-3rtt.1 h1:kqsE1ZBf3gpO47lc2JLkyNVhVR9JNGFRYUtn83nLgIo=
+github.com/GetStream/protocol v1.50.0-3rtt.1/go.mod h1:jZALur2IoWnpcLnFzLtnFomgItt4SBHj+U1TjPYC114=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 h1:l7+6kwRMJNwdCvYdDl7Eax+wzEYHSnNY7zrrfbhDdTA=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0/go.mod h1:pJTkW8hEUIIi3Pf65lPZOnn4Y81yCllX6IWk2jNXdkM=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.55.0 h1:UnDZ/zFfG1JhH/DqxIZYU/1CUAlTUScoXD/LcM2Ykk8=

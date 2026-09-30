@@ -187,9 +187,10 @@ func (s *StreamEdgeIntegrationSuite) TestAnotherInstanceOfTheAgentIsNotHeard() {
 }
 
 func (s *StreamEdgeIntegrationSuite) TestTheAgentsJoinReachesMediaWithinItsRoundTripBudget() {
-	// Against the 3RTT local stack, with every connection of the agent's given a real
-	// network's round trip, so its join is counted in round trips as it would be against a
-	// remote deployment.
+	// Against the 3RTT local stack with fast join (a coordinator with fast_join and SFUs
+	// with FastJoin), with every connection of the agent's given a real network's round
+	// trip, so its join is counted in round trips as it would be against a remote
+	// deployment.
 	if os.Getenv("LOCAL_STACK") == "" {
 		s.T().Skip(`needs the 3RTT local stack: eval "$(local-stack.sh env)"`)
 	}
@@ -208,6 +209,13 @@ func (s *StreamEdgeIntegrationSuite) TestTheAgentsJoinReachesMediaWithinItsRound
 	rtt := median(measured, func(m joinMeasurement) float64 { return m.RTTMs["sfu"] })
 	s.T().Logf("median of %d cold joins at %s: publish to media %.0f ms (%.1f RTT), subscribe to media %.0f ms (%.1f RTT), RTT_s %.1f ms",
 		joinRuns, joinRTT, publish, publish/rtt, subscribe, subscribe/rtt, rtt)
+
+	for _, m := range measured {
+		s.Equal(string(rtc.JoinFlowFast), m.Flow, "run %d fell back to the legacy join", m.Run)
+	}
+	budget := joinBudgetRTTs*float64(joinRTT.Milliseconds()) + 30
+	s.LessOrEqual(publish, budget, "the agent's audio reaches the SFU within %.1f RTT", joinBudgetRTTs)
+	s.LessOrEqual(subscribe, budget, "the caller's audio reaches the agent within %.1f RTT", joinBudgetRTTs)
 }
 
 // joinRTT is the round trip the measured agent's connections are given, as in the 3RTT
@@ -217,10 +225,15 @@ const joinRTT = 100 * time.Millisecond
 // joinRuns is how many joins a measurement takes the median of.
 const joinRuns = 10
 
+// joinBudgetRTTs bounds the median time to media both ways of a cold agent join, in round
+// trips, plus 30 ms. The legacy join took about 14.5.
+const joinBudgetRTTs = 12.5
+
 // joinMeasurement is one measured join of the agent: the SDK's join trace, and how long
 // Edge.Join took.
 type joinMeasurement struct {
 	Run                int                `json:"run"`
+	Flow               string             `json:"flow"`
 	JoinMs             float64            `json:"join_ms"`
 	PublishToMediaMs   float64            `json:"publish_to_media_ms"`
 	SubscribeToMediaMs float64            `json:"subscribe_to_media_ms"`
@@ -269,6 +282,7 @@ func (s *StreamEdgeIntegrationSuite) measureJoin(run int) joinMeasurement {
 	s.Equal("go-edge-caller", s.hear(agentEdge).Participant.UserID)
 	return joinMeasurement{
 		Run:                run,
+		Flow:               joined.Flow,
 		JoinMs:             joinMs,
 		PublishToMediaMs:   *report.PublishToMediaMs,
 		SubscribeToMediaMs: *report.SubscribeToMediaMs,
