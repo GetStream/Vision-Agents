@@ -307,9 +307,10 @@ func joinTrace(trace jointrace.Trace) (agent.JoinTrace, error) {
 
 // connect builds the SDK client, preferring a token over a secret.
 //
-// The coordinator websocket stays on even though the agent reads none of its events: it is
-// what registers the agent as a user, and the coordinator refuses to let a user it has never
-// seen join a call.
+// The coordinator websocket stays on even though the agent reads none of its events: its
+// connect is what registers the agent as a user, and the coordinator refuses to let a user it
+// has never seen join a call. The SDK connects it in the background and the join does not wait
+// for it, except the very first join of a new agent user.
 func (e *Edge) connect() (*rtc.Client, error) {
 	user := rtc.User{ID: e.options.User.ID, Name: e.options.User.Name}
 	if user.Name == "" {
