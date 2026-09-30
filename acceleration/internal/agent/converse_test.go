@@ -334,6 +334,43 @@ func (s *ConverseSuite) TestASettledTurnWaitsOnAnOverlapAskInFlight() {
 	s.Equal(ready.ID, action.Candidate.ID)
 }
 
+func (s *ConverseSuite) TestAQueuedTurnIsDroppedOnceTheSameWordsAreAnsweredInFull() {
+	// The caller was still talking when their first words settled, so those were queued.
+	// Everything they went on to say is answered, and the queued part must not be answered
+	// again, late, once the agent stops.
+	s.build(DuplexOptions{})
+	s.overhears("okay wait make it six", s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+
+	ready := s.settle("okay wait make it six people please", s.quiet())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(answered))
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the queued words were answered as part of the longer turn")
+}
+
+func (s *ConverseSuite) TestAQueuedTurnSurvivesDifferentWordsBeingAnswered() {
+	// A transcriber that sends only what is new would make the later turn the only copy of
+	// its own words, not of the queued ones, so those are still owed.
+	s.build(DuplexOptions{})
+	s.overhears("okay wait make it six", s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+
+	ready := s.settle("what time do you close", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(queued.Candidate.ID, action.Candidate.ID)
+}
+
 func (s *ConverseSuite) TestAfterAProvisionalStopTheSettledWordsAreAnsweredOnce() {
 	asked := s.overhears("actually wait", s.talking())
 	stopped := s.converse.Ruled(harness.Decided{

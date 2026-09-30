@@ -577,6 +577,10 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		answer.Reason = clarified
 	}
 
+	c.mu.Lock()
+	c.forgetQueuedRevisedByLocked(ready)
+	c.mu.Unlock()
+
 	if state.Quiet {
 		return []Action{c.decide(answer)}
 	}
@@ -892,6 +896,25 @@ func (c *converse) patient(ready candidate) bool {
 
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who
 // has said two more things while being talked over is owed an answer to the last of them.
+// forgetQueuedRevisedByLocked drops the turn queued behind a reply when the words being dealt
+// with now are the same run of speech, restated or grown. A caller who kept talking after a
+// turn was queued is answered on everything they said, and answering the queued part again
+// once the agent stops is answering them twice, late, to less than they asked. Words that are
+// not a revision of it leave it queued: they may be the only copy of what it said. The caller
+// holds the lock.
+func (c *converse) forgetQueuedRevisedByLocked(ready candidate) {
+	held := c.queued
+	if held == nil || held.candidate.ID == ready.ID || held.candidate.Participant.ID != ready.Participant.ID {
+		return
+	}
+	if !revisesTranscript(held.candidate.Text, ready.Text) {
+		return
+	}
+	c.logger.Debug("dropping a queued turn the caller has since said again in full",
+		"candidate", held.candidate.ID, "text", held.candidate.Text, "answered", ready.Text)
+	c.queued = nil
+}
+
 func (c *converse) hold(ready candidate, clarify string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
