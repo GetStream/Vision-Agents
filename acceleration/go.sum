@@ -354,8 +354,8 @@ github.com/stretchr/testify v1.4.0/go.mod h1:j7eGeouHqKxXV5pUuKE4zz7dFj8WfuZ+81P
 github.com/stretchr/testify v1.5.1/go.mod h1:5W2xD1RspED5o8YsWQXVCued0rvSQ+mT+I5cxcmMvtA=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/thesyncim/gopus v0.1.1 h1:SM58S7VZGnEZ3ZR0pX5AoC33//LBxJhKkvm15MbBmik=
-github.com/thesyncim/gopus v0.1.1/go.mod h1:orRqwrGs5gqYRRnhqwI0Y3liqQTeDkreUpra+Kv9bQc=
+github.com/thesyncim/gopus v0.1.2 h1:owP6CIQ+RvoFDVwKkedHIGb77gnnCbH50d9oBOTxs7M=
+github.com/thesyncim/gopus v0.1.2/go.mod h1:orRqwrGs5gqYRRnhqwI0Y3liqQTeDkreUpra+Kv9bQc=
 github.com/thesyncim/skipset v0.19.0 h1:3cez3tbzy73aR8kNjwHUHX2281KuEfuvBj/XstGqP1U=
 github.com/thesyncim/skipset v0.19.0/go.mod h1:Bb+Cbcv5tszKGz4PdZB82UFWjM+xjC5R1nI2yGJVHZE=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=

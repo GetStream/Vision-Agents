@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -27,6 +28,7 @@ type stubLLM struct {
 	scripts []*llmtest.Script
 	// capabilities is what this stub claims to accept.
 	capabilities llm.Capabilities
+	createDelay  time.Duration
 }
 
 func newStubLLM() *stubLLM { return &stubLLM{} }
@@ -34,6 +36,9 @@ func newStubLLM() *stubLLM { return &stubLLM{} }
 func (s *stubLLM) Start(context.Context) error { return nil }
 
 func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	if s.createDelay > 0 {
+		time.Sleep(s.createDelay)
+	}
 	s.asked = append(s.asked, params)
 
 	script := llmtest.New(llm.StreamOptions{
@@ -259,6 +264,7 @@ func (s *LLMRouterSuite) TestSessionForwardsEveryProviderEvent() {
 
 func (s *LLMRouterSuite) TestEachProviderResponseReportsItsOwnTiming() {
 	session, provider := s.newSession()
+	provider.createDelay = 25 * time.Millisecond
 	var timings []llm.CallTiming
 	stream, err := session.Create(s.ctx, llm.ResponseParams{
 		ID: "flow-1", Purpose: "flow", TurnID: "turn-1", Input: prompt(),
@@ -276,6 +282,9 @@ func (s *LLMRouterSuite) TestEachProviderResponseReportsItsOwnTiming() {
 	s.Equal("stub-model", timings[0].Model)
 	s.True(timings[0].Success)
 	s.Positive(timings[0].DurationMs)
+	s.GreaterOrEqual(timings[0].TTFTMs, 25.0,
+		"time waiting for response headers must be included in the model call")
+	s.GreaterOrEqual(timings[0].DurationMs, timings[0].TTFTMs)
 }
 
 func (s *LLMRouterSuite) TestSessionIdentityComesFromTheRoutingConfig() {

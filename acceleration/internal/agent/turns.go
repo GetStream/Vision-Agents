@@ -36,6 +36,7 @@ type openTurn struct {
 	participant  stt.Participant
 	transcriptAt time.Time
 	readyAt      time.Time
+	decisionAt   time.Time
 	modelAt      time.Time
 	firstTextAt  time.Time
 	ttsAt        time.Time
@@ -82,8 +83,16 @@ func (t *turnTracker) begin(turnID string, participant stt.Participant, readyAt,
 func (t *turnTracker) modelStarted(turnID string, at time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if current := t.open[turnID]; current != nil && current.modelAt.IsZero() {
+	if current := t.open[turnID]; current != nil {
 		current.modelAt = at
+	}
+}
+
+func (t *turnTracker) decided(turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil && current.decisionAt.IsZero() {
+		current.decisionAt = at
 	}
 }
 
@@ -93,6 +102,16 @@ func (t *turnTracker) firstText(turnID string, at time.Time) {
 	if current := t.open[turnID]; current != nil && current.firstTextAt.IsZero() {
 		current.firstTextAt = at
 	}
+}
+
+func (t *turnTracker) modelTiming(turnID string, ttftMs float64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.llmTTFTMs = ttftMs
+		return true
+	}
+	return false
 }
 
 func (t *turnTracker) ttsStarted(turnID string, at time.Time) {
@@ -162,7 +181,9 @@ func (t *turnTracker) completed(turnID string, timeToFirstTokenMs float64, synth
 		t.mu.Unlock()
 		return
 	}
-	current.llmTTFTMs = timeToFirstTokenMs
+	if current.llmTTFTMs == 0 {
+		current.llmTTFTMs = timeToFirstTokenMs
+	}
 	current.modelDone = true
 	current.expected = syntheses
 	finished := t.settleLocked(turnID, current)
@@ -205,14 +226,22 @@ func (t *turnTracker) report(finished *Turn) {
 }
 
 func measure(turnID string, current *openTurn) Turn {
+	decidedAt := current.decisionAt
+	if decidedAt.IsZero() {
+		decidedAt = current.modelAt
+	}
+	textWaitAt := current.modelAt
+	if decidedAt.After(textWaitAt) {
+		textWaitAt = decidedAt
+	}
 	return Turn{
 		TurnID:             turnID,
 		Participant:        current.participant,
 		StartedAt:          current.transcriptAt,
 		STTLatencyMs:       current.sttLatencyMs,
 		CadenceMs:          leg(current.transcriptAt, current.readyAt),
-		DecisionMs:         leg(current.readyAt, current.modelAt),
-		ModelToFirstTextMs: leg(current.modelAt, current.firstTextAt),
+		DecisionMs:         leg(current.readyAt, decidedAt),
+		ModelToFirstTextMs: leg(textWaitAt, current.firstTextAt),
 		TextToTTSMs:        leg(current.firstTextAt, current.ttsAt),
 		TTSToAudioMs:       leg(current.ttsAt, current.firstAudioAt),
 		LLMTTFTMs:          current.llmTTFTMs,

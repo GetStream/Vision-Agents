@@ -4,6 +4,8 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -98,28 +100,65 @@ type flowCase struct {
 	Unfinished    bool   `json:"unfinished"`
 	// Expect is what the agent should do, which is what is graded.
 	Expect flowOutcome `json:"expect"`
+	// Source is where in a corpus a case was taken from, empty for one written by hand.
+	Source string `json:"source,omitempty"`
 }
 
 // flowSet is the labelled set.
 type flowSet struct {
-	Version   int               `json:"version"`
+	Version int `json:"version"`
+	// Source is the corpus the cases were taken from and its licence, empty when they were
+	// written by hand.
+	Source    string            `json:"source,omitempty"`
 	Contracts map[string]string `json:"contracts"`
 	Cases     []flowCase        `json:"cases"`
 }
 
-//go:embed testdata/flowbench.json
+//go:generate go run ./testdata/ami/extract.go -out testdata/flowbench-ami.json
+//go:embed testdata/flowbench.json testdata/flowbench-ami.json
 var flowBenchFS embed.FS
 
-// loadFlowSet reads the labelled set and refuses one that would score something other than
+// The labelled sets. The written one covers every state a model is asked about, on calls
+// like the ones the agent takes. The AMI one is real people in real meetings, labelled with
+// what they did: it covers the four states a human's own timing can settle, and nothing in
+// it was written to be easy or hard.
+const (
+	writtenSet = "written"
+	amiSet     = "ami"
+)
+
+// flowSetFiles says where each set lives, in the order a report reads best.
+var flowSetFiles = map[string]string{
+	writtenSet: "testdata/flowbench.json",
+	amiSet:     "testdata/flowbench-ami.json",
+}
+
+// loadFlowSet reads a labelled set and refuses one that would score something other than
 // what it claims to.
-func loadFlowSet() (flowSet, error) {
-	raw, err := flowBenchFS.ReadFile("testdata/flowbench.json")
+func loadFlowSet(name string) (flowSet, error) {
+	raw, err := flowBenchFS.ReadFile(flowSetFiles[name])
 	if err != nil {
-		return flowSet{}, fmt.Errorf("harness: read the flow set: %w", err)
+		return flowSet{}, fmt.Errorf("harness: read the %s flow set: %w", name, err)
 	}
 	var set flowSet
 	if err := json.Unmarshal(raw, &set); err != nil {
 		return flowSet{}, fmt.Errorf("harness: decode the flow set: %w", err)
+	}
+	return set, set.validate()
+}
+
+// loadNamedSet reads one of the embedded sets by name, or a set file by its path.
+func loadNamedSet(name string) (flowSet, error) {
+	if _, known := flowSetFiles[name]; known {
+		return loadFlowSet(name)
+	}
+	raw, err := os.ReadFile(name)
+	if err != nil {
+		return flowSet{}, err
+	}
+	var set flowSet
+	if err := json.Unmarshal(raw, &set); err != nil {
+		return flowSet{}, fmt.Errorf("harness: decode %s: %w", name, err)
 	}
 	return set, set.validate()
 }
@@ -182,6 +221,32 @@ func (s flowSet) expected(state flowState) flowOutcome {
 	default:
 		return outcomeContinue
 	}
+}
+
+// sample keeps a fraction of each state, spread evenly through it and never less than one
+// case, so a small sample still asks about every state. It depends on nothing but the set,
+// which is what makes models run on the same sample comparable.
+func (s flowSet) sample(fraction float64) flowSet {
+	if fraction <= 0 || fraction >= 1 {
+		return s
+	}
+	byState := map[flowState][]flowCase{}
+	for _, one := range s.Cases {
+		byState[one.State] = append(byState[one.State], one)
+	}
+	kept := s
+	kept.Cases = nil
+	for _, state := range flowStates {
+		cases := byState[state]
+		if len(cases) == 0 {
+			continue
+		}
+		want := max(1, int(math.Round(fraction*float64(len(cases)))))
+		for i := range want {
+			kept.Cases = append(kept.Cases, cases[i*len(cases)/want])
+		}
+	}
+	return kept
 }
 
 // counts says how many cases each state has, so a report can say what a percentage is of.
@@ -317,6 +382,7 @@ func percentile(measured []float64, fraction float64) float64 {
 type FlowSetSuite struct {
 	suite.Suite
 	set flowSet
+	ami flowSet
 }
 
 func TestFlowSetSuite(t *testing.T) {
@@ -324,9 +390,13 @@ func TestFlowSetSuite(t *testing.T) {
 }
 
 func (s *FlowSetSuite) SetupSuite() {
-	set, err := loadFlowSet()
+	set, err := loadFlowSet(writtenSet)
 	s.Require().NoError(err)
 	s.set = set
+
+	ami, err := loadFlowSet(amiSet)
+	s.Require().NoError(err)
+	s.ami = ami
 }
 
 func (s *FlowSetSuite) TestEveryStateIsRepresentedEnoughToMeanSomething() {
@@ -336,6 +406,53 @@ func (s *FlowSetSuite) TestEveryStateIsRepresentedEnoughToMeanSomething() {
 		s.GreaterOrEqual(counts[state], 10, "state %q is thinly covered", state)
 	}
 	s.Len(counts, len(flowStates), "the set covers states the benchmark does not name")
+}
+
+func (s *FlowSetSuite) TestEveryCorpusCaseSaysWhereItCameFrom() {
+	// CC BY asks for attribution, and a surprising label is only worth arguing with if the
+	// moment it came from can be found and listened to.
+	s.Contains(s.ami.Source, "CC BY 4.0")
+	for _, one := range s.ami.Cases {
+		s.Regexp(`^AMI [A-Z]{2}\d{4}[a-d] \d+\.\d{2}s$`, one.Source, "%q is untraceable", one.ID)
+	}
+}
+
+func (s *FlowSetSuite) TestTheCorpusSetWeighsEachOfItsStatesAlike() {
+	counts := s.ami.counts()
+	s.Equal(map[flowState]int{
+		stateRespond: 40, stateWait: 40, stateStop: 40, stateContinueAck: 40,
+	}, counts)
+}
+
+func (s *FlowSetSuite) TestNoCorpusBackchannelIsCaughtBeforeTheModel() {
+	for _, one := range s.ami.Cases {
+		if one.State == stateContinueAck {
+			s.False(caughtBeforeTheModel(one.Heard), "%q never reaches a model", one.ID)
+		}
+	}
+}
+
+func (s *FlowSetSuite) TestASampleIsTheSameCasesEveryTime() {
+	ids := func(set flowSet) []string {
+		var named []string
+		for _, one := range set.Cases {
+			named = append(named, one.ID)
+		}
+		return named
+	}
+	s.Equal(ids(s.ami.sample(0.05)), ids(s.ami.sample(0.05)))
+	s.Equal(ids(s.set.sample(0.05)), ids(s.set.sample(0.05)))
+}
+
+func (s *FlowSetSuite) TestASmallSampleStillAsksAboutEveryState() {
+	small := s.set.sample(0.05)
+
+	s.Len(small.Cases, len(flowStates), "one case per state")
+	s.Len(small.counts(), len(flowStates))
+	s.Equal(map[flowState]int{
+		stateRespond: 2, stateWait: 2, stateStop: 2, stateContinueAck: 2,
+	}, s.ami.sample(0.05).counts())
+	s.Equal(s.set.Cases, s.set.sample(1).Cases, "a whole sample is the set")
 }
 
 func (s *FlowSetSuite) TestTheNoiseCasesAreOnesTheModelActuallyDecides() {
@@ -420,20 +537,22 @@ func (s *FlowSetSuite) TestALabelThatDisagreesWithItsStateIsRefused() {
 func (s *FlowSetSuite) TestTheProductionQuestionCarriesWhatTheModelNeedsToDecide() {
 	// The overlap states are only decidable if the model is told what the agent is in the
 	// middle of saying, and the ignore states only if it is told about the second voice.
-	for _, one := range s.set.Cases {
-		asked := flowQuestion(one.turn(one.ID, s.set.Contracts))
-		s.Contains(asked, one.Heard, "%q does not put the words to the model", one.ID)
-		if one.AgentSaid != "" {
-			s.Contains(asked, one.AgentSaid,
-				"%q does not say what the agent is in the middle of", one.ID)
-		}
-		if one.AnotherVoice {
-			s.Contains(asked, "different voice",
-				"%q does not mention the second voice", one.ID)
-		}
-		if one.Unfinished {
-			s.Contains(asked, "Decide only the floor",
-				"%q is provisional but asks for a disposition too", one.ID)
+	for _, set := range []flowSet{s.set, s.ami} {
+		for _, one := range set.Cases {
+			asked := flowQuestion(one.turn(one.ID, set.Contracts))
+			s.Contains(asked, one.Heard, "%q does not put the words to the model", one.ID)
+			if one.AgentSaid != "" {
+				s.Contains(asked, one.AgentSaid,
+					"%q does not say what the agent is in the middle of", one.ID)
+			}
+			if one.AnotherVoice {
+				s.Contains(asked, "different voice",
+					"%q does not mention the second voice", one.ID)
+			}
+			if one.Unfinished {
+				s.Contains(asked, "Decide only the floor",
+					"%q is provisional but asks for a disposition too", one.ID)
+			}
 		}
 	}
 }

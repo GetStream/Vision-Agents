@@ -308,6 +308,81 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	}.Overwrite(overwrites))
 }
 
+// Preview starts an ordinary reply while the floor controller is deciding whether the
+// caller has finished. It reads the prompt state without consuming notes or changing
+// provider resumption state. A turn with pending delegated findings needs Respond instead.
+func (h *Harness) Preview(ctx context.Context, turn Turn) (*llm.Stream, error) {
+	h.mu.Lock()
+	if h.options.Model == nil || len(h.notes) != 0 {
+		h.mu.Unlock()
+		return nil, errors.New("harness: reply cannot be previewed")
+	}
+	session := h.options.Model
+	// With no notes, instructions only resets state left by the preceding reply.
+	// Preview must leave that state alone until the controller accepts this turn.
+	parts := []string{}
+	if turn.Instructions != "" {
+		parts = append(parts, turn.Instructions)
+	}
+	if h.tasks != nil {
+		index := h.options.Skills.Prompt()
+		if h.options.Text {
+			index = h.options.Skills.TextPrompt()
+		}
+		if index != "" {
+			parts = append(parts, index)
+		}
+	}
+	if turn.Note != "" {
+		parts = append(parts, turn.Note)
+	}
+	instructions := strings.Join(parts, "\n\n")
+	input := answerable(turn.History)
+	previous := ""
+	if model := session.Capabilities(); model.Store && h.stored.responseID != "" &&
+		h.stored.identity == session.Provider()+"/"+session.Model() &&
+		h.stored.instructions == instructions && appendsTo(h.stored.sent, input) {
+		input, previous = input[len(h.stored.sent):], h.stored.responseID
+	}
+	params := llm.ResponseParams{
+		ID: turn.ID, Purpose: "reply", TurnID: turn.ID,
+		OnTiming:        h.options.OnModelCall,
+		Instructions:       instructions,
+		Input:              input,
+		MaxOutputTokens: h.options.MaxTokens,
+		Tools:           h.options.Tools.Requests(),
+		Store:           session.Capabilities().Store,
+		PreviousResponseID: previous,
+		PromptCacheKey:  h.options.CacheKey,
+	}.Overwrite(h.options.Overwrites)
+	h.mu.Unlock()
+	return session.Create(ctx, params)
+}
+
+// AdoptPreview commits only the prompt state of a preview whose ruling was accepted.
+// A finding or model switch that arrived meanwhile invalidates the preview; the caller
+// then gets a normal reply with the new context instead.
+func (h *Harness) AdoptPreview(turn Turn, model *llmrouter.Session) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.options.Model != model || len(h.notes) != 0 {
+		return false
+	}
+	h.history = append([]llm.Message(nil), turn.History...)
+	instructions := h.instructions(turn.Instructions, turn.Note)
+	h.stored = stored{instructions: instructions, sent: answerable(turn.History)}
+	return true
+}
+
+func (h *Harness) PreviewModel() *llmrouter.Session {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.notes) != 0 {
+		return nil
+	}
+	return h.options.Model
+}
+
 // SetModel moves the conversation, and the flow controller when one is given, onto other
 // sessions from the next turn. The new model has read nothing, so the next turn sends the
 // whole conversation. The caller still owns and closes the model it replaced; a replaced
