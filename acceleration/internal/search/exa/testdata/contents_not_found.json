@@ -1,0 +1,5 @@
+{
+	"results":[],
+	"statuses":[{"id":"https://example.com/gone","status":"error",
+		"error":{"tag":"CRAWL_NOT_FOUND","httpStatusCode":404}}]
+}

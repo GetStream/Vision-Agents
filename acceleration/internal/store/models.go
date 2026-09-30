@@ -1067,6 +1067,14 @@ const (
 	SessionClosed = "closed"
 )
 
+// How the user took part in a session. It only moves up: a session that has seen video
+// stays video.
+const (
+	ModalityText  = "text"
+	ModalityVoice = "voice"
+	ModalityVideo = "video"
+)
+
 // ModelOverwrites is what a caller asked to change about the models for one session.
 //
 // It is one object rather than a dozen top-level fields because it is one idea: everything
@@ -1135,10 +1143,12 @@ type AgentSession struct {
 	CallID          string          `bun:"call_id,nullzero"`
 	CallType        string          `bun:"call_type,nullzero"`
 	// ForkedFrom is the session this one continued from, empty for one opened fresh.
-	ForkedFrom string    `bun:"forked_from,nullzero"`
-	State      string    `bun:"state,notnull"`
-	CreatedAt  time.Time `bun:"created_at,notnull"`
-	UpdatedAt  time.Time `bun:"updated_at,notnull"`
+	ForkedFrom string `bun:"forked_from,nullzero"`
+	State      string `bun:"state,notnull"`
+	// Modality is ModalityText, ModalityVoice or ModalityVideo.
+	Modality  string    `bun:"modality,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
 	// ClosedAt is nil while the session is still running.
 	ClosedAt       *time.Time `bun:"closed_at"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
@@ -1148,7 +1158,7 @@ type AgentSession struct {
 
 // SessionPosition is the last session of a page, by every key the list is sorted on.
 type SessionPosition struct {
-	CreatedAt time.Time `json:"t"`
+	UpdatedAt time.Time `json:"u"`
 	ID        string    `json:"id"`
 	Rank      float32   `json:"r,omitempty"`
 }
@@ -1173,18 +1183,10 @@ type ItemPosition struct {
 // filter at all.
 type SessionFilter struct {
 	UserID    string
-	ConfigID  string
 	AgentName string
 	Project   string
-	// State is running or closed. Empty is both.
-	State string
-	// Custom matches sessions whose custom object contains every one of these pairs, which
-	// is what makes custom worth writing: a caller that labelled a session can find it
-	// again by the label.
-	Custom map[string]string
-	Before time.Time
-	After  time.Time
-	Limit  int
+	Modality  string
+	Limit     int
 	// Cursor starts the page after this session. Nil is the first page.
 	Cursor *SessionPosition
 }

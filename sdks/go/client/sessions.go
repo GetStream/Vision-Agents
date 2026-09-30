@@ -2,12 +2,10 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
@@ -28,9 +26,9 @@ type SessionOptions struct {
 	// searched.
 	Title       string
 	Description string
-	// Project groups conversations, and is carried as a cost label too.
-	Project string
-	// Custom is the caller's own labels, which a query can match on.
+	// ProjectID groups conversations, and is carried as a cost label too.
+	ProjectID string
+	// Custom is the caller's own labels.
 	Custom map[string]any
 	// Incognito holds the conversation and keeps nothing: no row, no turns, no transcript.
 	// It cannot be searched for, listed or forked afterwards, which is the point of it.
@@ -59,18 +57,12 @@ type SessionOptions struct {
 
 // Query is which of an agent's conversations to list.
 type Query struct {
-	// Project narrows to one project's.
-	Project string
-	// UserID narrows to one user's, which only a server-side caller may ask for: anybody
-	// else is narrowed to their own whatever they send.
+	// ProjectID narrows to one project's. A search covers every project, so Search refuses it.
+	ProjectID string
+	// UserID narrows to one user's, which only a server-side caller may ask for.
 	UserID string
-	// State is "running" or "closed". Empty is both.
-	State string
-	// Custom are labels a conversation must carry, all of them.
-	Custom map[string]any
-	// After and Before bound when the conversation was opened. Zero is unbounded.
-	After  time.Time
-	Before time.Time
+	// Modality narrows to how the user took part: "text", "voice" or "video".
+	Modality string
 	// Limit is up to 200. Zero is 25.
 	Limit int
 	// Cursor is the NextCursor of the page before, with the same filters. Empty is the
@@ -111,8 +103,8 @@ func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session
 	return newSession(s.client, s.agent, pipeline, created), nil
 }
 
-// Query returns a page of the agent's conversations, newest first, the ones that ended
-// included. Pass the page's NextCursor as Query.Cursor for the next one.
+// Query returns a page of the agent's conversations, most recently updated first, the ones
+// that ended included. Pass the page's NextCursor as Query.Cursor for the next one.
 //
 // What comes back are the rows rather than live handles: reading a conversation back is not
 // the same as holding one, and most of these are over.
@@ -122,15 +114,7 @@ func (s *Sessions) Query(ctx context.Context, query Query) (*acceleration.Sessio
 		return nil, err
 	}
 
-	params := acceleration.ListSessionsParams{Agent: pointer(s.agent.name)}
-	narrow(query, &params.UserId, &params.Project, &params.Custom,
-		&params.CreatedAfter, &params.CreatedBefore, &params.Limit, &params.Cursor)
-	if query.State != "" {
-		state := acceleration.ListSessionsParamsState(query.State)
-		params.State = &state
-	}
-
-	listed, err := api.ListSessionsWithResponse(ctx, &params)
+	listed, err := api.QuerySessionsWithResponse(ctx, s.queryOf("", query))
 	if err != nil {
 		return nil, fmt.Errorf("client: listing the sessions of %s: %w", s.agent.name, err)
 	}
@@ -141,7 +125,7 @@ func (s *Sessions) Query(ctx context.Context, query Query) (*acceleration.Sessio
 	return listed.JSON200, nil
 }
 
-// Search finds a conversation by what it was called.
+// Search finds a conversation by what it was called, best match first.
 //
 // It reads the title, the description and the opening question, which is what a person
 // remembers a conversation by. An incognito conversation is never found: nothing about it was
@@ -152,15 +136,7 @@ func (s *Sessions) Search(ctx context.Context, text string, query Query) (*accel
 		return nil, err
 	}
 
-	params := acceleration.SearchSessionsParams{Agent: pointer(s.agent.name), Q: pointer(text)}
-	narrow(query, &params.UserId, &params.Project, &params.Custom,
-		&params.CreatedAfter, &params.CreatedBefore, &params.Limit, &params.Cursor)
-	if query.State != "" {
-		state := acceleration.SearchSessionsParamsState(query.State)
-		params.State = &state
-	}
-
-	found, err := api.SearchSessionsWithResponse(ctx, &params)
+	found, err := api.QuerySessionsWithResponse(ctx, s.queryOf(text, query))
 	if err != nil {
 		return nil, fmt.Errorf("client: searching the sessions of %s: %w", s.agent.name, err)
 	}
@@ -212,6 +188,25 @@ func (s *Sessions) Update(ctx context.Context, id string, update SessionUpdate) 
 	return updated.JSON200, nil
 }
 
+// Delete deletes a conversation, running or ended: it is stopped, and its turns and what it
+// remembered are deleted with it. The user's other memories are kept.
+func (s *Sessions) Delete(ctx context.Context, id string) error {
+	api, err := s.client.api()
+	if err != nil {
+		return err
+	}
+
+	deleted, err := api.DeleteSessionWithResponse(ctx, id)
+	if err != nil {
+		return fmt.Errorf("client: deleting session %s: %w", id, err)
+	}
+	if deleted.StatusCode() != http.StatusNoContent {
+		return failure("deleting session "+id, deleted.Status(),
+			deleted.JSON400, deleted.JSON401, deleted.JSON404)
+	}
+	return nil
+}
+
 // DeleteMemories deletes what one conversation remembered, running or ended, and leaves the
 // rest of the user's memories alone. Only a backend may ask.
 func (s *Sessions) DeleteMemories(ctx context.Context, id string) error {
@@ -246,7 +241,7 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 		Agent:           pointer(s.agent.name),
 		Title:           pointer(options.Title),
 		Description:     pointer(options.Description),
-		Project:         pointer(options.Project),
+		ProjectId:       pointer(options.ProjectID),
 		Incognito:       pointer(options.Incognito),
 		ModelOverwrites: options.ModelOverwrites,
 		CallId:          pointer(options.CallID),
@@ -267,37 +262,38 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 	return request
 }
 
-// narrow fills in the filters the listing and the search share.
+// queryOf renders the query the listing and the search share, narrowed to this agent. Text
+// makes it a search.
 //
 // One function rather than two, so the two cannot drift apart in what they honour: a filter
 // respected by one and forgotten by the other would be a surprise at best, and at worst a
 // list somebody reads another user's conversations out of.
-func narrow(
-	query Query,
-	userID, project, custom **string,
-	after, before **time.Time,
-	limit **int, cursor **string,
-) {
-	*userID = pointer(query.UserID)
-	*project = pointer(query.Project)
-	if len(query.Custom) > 0 {
-		// Whatever will not encode is left off rather than sent broken: a label that cannot
-		// be written down was never going to match anything, and a failed request would tell
-		// the caller less than a list without it.
-		if encoded, err := json.Marshal(query.Custom); err == nil {
-			*custom = pointer(string(encoded))
-		}
+func (s *Sessions) queryOf(text string, query Query) acceleration.SessionQuery {
+	filter := acceleration.SessionFilter{
+		Agent:     equals(s.agent.name),
+		ProjectId: equals(query.ProjectID),
+		UserId:    equals(query.UserID),
+		Modality:  equals(query.Modality),
 	}
-	if !query.After.IsZero() {
-		at := query.After
-		*after = &at
+	if text != "" {
+		filter.Text = &acceleration.TextMatch{Q: text}
 	}
-	if !query.Before.IsZero() {
-		at := query.Before
-		*before = &at
+	return acceleration.SessionQuery{
+		Filter: &filter,
+		Limit:  pointer(int64(query.Limit)),
+		Cursor: pointer(query.Cursor),
 	}
-	*limit = pointer(query.Limit)
-	*cursor = pointer(query.Cursor)
+}
+
+// equals is a filter field matching value exactly, or nil to leave the field out.
+func equals(value string) *acceleration.Equals {
+	if value == "" {
+		return nil
+	}
+	var matched acceleration.Equals
+	// A string always encodes.
+	_ = matched.FromEquals0(value)
+	return &matched
 }
 
 // Session is one conversation being held in the backend.
@@ -392,9 +388,14 @@ func (s *Session) SetInstructions(instructions string) error {
 	return s.pipeline.SetInstructions(instructions)
 }
 
-// Close ends the conversation. Safe to call after it has already ended. What it remembered
-// is kept for the next one; DeleteMemories takes it back.
+// Close stops the conversation. Safe to call after it has already ended. What it recorded
+// and remembered is kept; Delete takes it away.
 func (s *Session) Close(ctx context.Context) error { return s.pipeline.Leave(ctx) }
+
+// Delete deletes this conversation. See Sessions.Delete.
+func (s *Session) Delete(ctx context.Context) error {
+	return s.agent.Sessions.Delete(ctx, s.ID())
+}
 
 // DeleteMemories deletes what this conversation remembered. See Sessions.DeleteMemories.
 func (s *Session) DeleteMemories(ctx context.Context) error {
@@ -418,7 +419,7 @@ type ForkOptions struct {
 	Agent           string
 	Title           string
 	Description     string
-	Project         string
+	ProjectID       string
 	Custom          map[string]any
 	Instructions    string
 	Incognito       bool
@@ -457,7 +458,7 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 		Agent:           pointer(options.Agent),
 		Title:           pointer(options.Title),
 		Description:     pointer(options.Description),
-		Project:         pointer(options.Project),
+		ProjectId:       pointer(options.ProjectID),
 		Instructions:    pointer(options.Instructions),
 		Incognito:       pointer(options.Incognito),
 		ModelOverwrites: options.ModelOverwrites,

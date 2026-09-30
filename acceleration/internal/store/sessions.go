@@ -67,6 +67,12 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 	if session.State == "" {
 		session.State = SessionRunning
 	}
+	if session.Modality == "" {
+		session.Modality = ModalityVoice
+		if session.CallID == "" {
+			session.Modality = ModalityText
+		}
+	}
 	if session.Custom == nil {
 		session.Custom = map[string]any{}
 	}
@@ -105,6 +111,24 @@ func (s *Store) CloseSession(ctx context.Context, id string, at time.Time) error
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: close session: %w", err)
+	}
+	return nil
+}
+
+// SawVideo records that the agent saw the user's video on a session. The session's clock is
+// left alone: the turn that looked at the video moves it.
+func (s *Store) SawVideo(ctx context.Context, id string) error {
+	if id == "" {
+		return errors.New("store: a session id is required")
+	}
+
+	_, err := s.db.NewUpdate().Model((*AgentSession)(nil)).
+		Set("modality = ?", ModalityVideo).
+		Where("id = ?", id).
+		Where("modality <> ?", ModalityVideo).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: saw video: %w", err)
 	}
 	return nil
 }
@@ -171,11 +195,29 @@ func (s *Store) StoredSession(ctx context.Context, customerID, id string) (Agent
 	return session, nil
 }
 
-// QuerySessions returns a customer's sessions, newest first, narrowed by the filter.
+// DeleteSession deletes one of a customer's sessions, and its turns and their items with it.
+// A session that is not there is not an error: a retried delete has nothing left to do.
+func (s *Store) DeleteSession(ctx context.Context, customerID, id string) error {
+	if customerID == "" || id == "" {
+		return errors.New("store: a customer and a session id are required")
+	}
+
+	_, err := s.db.NewDelete().Model((*AgentSession)(nil)).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: delete session: %w", err)
+	}
+	return nil
+}
+
+// QuerySessions returns a customer's sessions, most recently updated first, narrowed by the
+// filter.
 //
 // This is the structured half of finding an old conversation: everything here is an exact
-// match or a range, so the answer is the same every time and a page can hold a cursor into
-// it. SearchSessions is the other half, for when what the caller has is words rather than a
+// match, so the answer is the same every time and a page can hold a cursor into it.
+// SearchSessions is the other half, for when what the caller has is words rather than a
 // filter.
 func (s *Store) QuerySessions(ctx context.Context, customerID string, filter SessionFilter) ([]AgentSession, error) {
 	if customerID == "" {
@@ -184,9 +226,9 @@ func (s *Store) QuerySessions(ctx context.Context, customerID string, filter Ses
 
 	query := s.db.NewSelect().Model((*AgentSession)(nil)).
 		Where("customer_id = ?", customerID).
-		Order("created_at DESC", "id DESC")
+		Order("updated_at DESC", "id DESC")
 	if after := filter.Cursor; after != nil {
-		query = query.Where("(created_at, id) < (?, ?)", after.CreatedAt, after.ID)
+		query = query.Where("(updated_at, id) < (?, ?)", after.UpdatedAt, after.ID)
 	}
 	query = narrowSessions(query, filter)
 
@@ -226,10 +268,10 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 		ColumnExpr(rank+" AS rank", text).
 		Where("customer_id = ?", customerID).
 		Where("searchable @@ websearch_to_tsquery('english', ?)", text).
-		Order("rank DESC", "created_at DESC", "id DESC")
+		Order("rank DESC", "updated_at DESC", "id DESC")
 	if after := filter.Cursor; after != nil {
-		query = query.Where("("+rank+", created_at, id) < (?::real, ?, ?)",
-			text, after.Rank, after.CreatedAt, after.ID)
+		query = query.Where("("+rank+", updated_at, id) < (?::real, ?, ?)",
+			text, after.Rank, after.UpdatedAt, after.ID)
 	}
 	query = narrowSessions(query, filter)
 
@@ -250,31 +292,14 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
 	}
-	if filter.ConfigID != "" {
-		query = query.Where("config_id = ?", filter.ConfigID)
-	}
 	if filter.AgentName != "" {
 		query = query.Where("agent_name = ?", filter.AgentName)
 	}
 	if filter.Project != "" {
 		query = query.Where("project = ?", filter.Project)
 	}
-	switch filter.State {
-	case SessionRunning:
-		query = query.Where("closed_at IS NULL")
-	case SessionClosed:
-		query = query.Where("closed_at IS NOT NULL")
-	}
-	if len(filter.Custom) > 0 {
-		// Containment rather than a key at a time, so the GIN index on custom is usable
-		// and a caller asking for two labels gets the sessions carrying both.
-		query = query.Where("custom @> ?::jsonb", jsonbOf(filter.Custom))
-	}
-	if !filter.After.IsZero() {
-		query = query.Where("created_at >= ?", filter.After)
-	}
-	if !filter.Before.IsZero() {
-		query = query.Where("created_at < ?", filter.Before)
+	if filter.Modality != "" {
+		query = query.Where("modality = ?", filter.Modality)
 	}
 	return query
 }

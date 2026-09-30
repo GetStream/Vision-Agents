@@ -666,6 +666,9 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", nil)
 }
 
+// VideoFramesTool is the caller's tool the agent reads frames of the user's video through.
+const VideoFramesTool = "get_video_frames"
+
 func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest) ([]llm.ContentPart, error) {
 	if a.options.ToolRunner == nil {
 		return nil, errors.New("agent: no video source is connected")
@@ -684,7 +687,7 @@ func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest
 	if err != nil {
 		return nil, err
 	}
-	return a.options.ToolRunner.Run(ctx, llm.ToolCall{ID: request.TaskID + "-capture", Name: "get_video_frames", Arguments: string(arguments)})
+	return a.options.ToolRunner.Run(ctx, llm.ToolCall{ID: request.TaskID + "-capture", Name: VideoFramesTool, Arguments: string(arguments)})
 }
 
 // Ask answers a piece of text in writing and says none of it.

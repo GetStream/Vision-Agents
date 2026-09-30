@@ -70,9 +70,9 @@ api, _ := client.New(stream.Backend{})
 docs := api.Agent("docs")
 
 session, _ := docs.Sessions.Create(ctx, client.SessionOptions{
-    Title:   "Is Stream better than Sendbird?",
-    Project: "docs",
-    Custom:  map[string]any{"ticket": "4721"},
+    Title:     "Is Stream better than Sendbird?",
+    ProjectID: "docs",
+    Custom:    map[string]any{"ticket": "4721"},
 })
 defer session.Close(ctx)
 
@@ -92,10 +92,11 @@ finished, because a model takes seconds. `Items` is what the backend wrote down,
 the same during the conversation and a week after it ended; `session.Events()` is still the
 live view, and the two answer different questions.
 
-Old conversations are found by filter or by phrase:
+Old conversations are listed most recently updated first, or found by phrase, best match
+first:
 
 ```go
-recent, _ := docs.Sessions.Query(ctx, client.Query{Project: "docs", Limit: 20})
+recent, _ := docs.Sessions.Query(ctx, client.Query{ProjectID: "docs", Limit: 20})
 found, _ := docs.Sessions.Search(ctx, "sendbird comparison", client.Query{})
 ```
 

@@ -2,6 +2,32 @@
 
 ## Breaking Changes
 
+### Deleting a session deletes it; stopping one is `POST .../stop`
+
+`DELETE /v1/agents/sessions/{id}` used to end a session and keep everything. It now deletes
+the session: a running one is stopped first, then its turns, their items and what it taught
+memory are deleted. The user's memories from other sessions are kept. To end a call and keep
+the conversation, use the new `POST /v1/agents/sessions/{id}/stop`. Both answer 204 and are
+open to the device holding the session.
+
+In Go, `Session.Close` stops, and `Sessions.Delete` and `Session.Delete` delete. SDKs that
+still close with `DELETE` now delete the conversation until they move to `stop`.
+
+### Sessions are listed and searched with `querySessions`, and `project` is `project_id`
+
+`GET /v1/agents/sessions` and `GET /v1/agents/sessions/search` are replaced by
+`POST /v1/agents/sessions/query`, which takes `{filter, sort, limit, cursor}` in the body.
+It answers three queries: every session, most recently updated first; a text search
+(`{"text": {"$q": "..."}}`), best match first; and one project's sessions
+(`{"project_id": "..."}`), most recently updated first. `agent` and `user_id` narrow any of
+them. The `config_id`, `state`, `custom`, `created_after` and `created_before` filters are
+gone, and a field or operator outside these is a 400. `project` is now `project_id` on
+session create, fork and the session itself.
+
+In Go, `Sessions.Query` and `Sessions.Search` call the new endpoint, and `Query` keeps only
+`ProjectID`, `UserID`, `Limit` and `Cursor`. `SessionOptions.Project`, `ForkOptions.Project`
+and `stream.Call.Project` are now `ProjectID`. Other SDKs follow.
+
 ### Session, response and item lists page by cursor instead of offset
 
 `GET /v1/agents/sessions`, `/v1/agents/sessions/search`, `/v1/agents/sessions/{id}/responses`
@@ -402,6 +428,15 @@ trips one after the other. With `ROUTER_SPECULATIVE_REPLIES=true` the reply is a
 beside the ruling and held until it comes back: an answer for the same words speaks it, and
 anything else drops it unheard. It is off by default, because a dropped reply is still paid
 for, and on a pause-heavy call most of them are dropped.
+
+### A session says whether the user wrote, spoke or showed video
+
+Every session now has a `modality`: `text` for a conversation held in writing, `voice` for a
+call, and `video` once the agent has seen the user's video, either as frames from the SDK's
+`get_video_frames` tool or as clips sent with `responses.create`. It only moves up, so a
+call that showed video once stays `video`. `querySessions` takes it as a filter,
+`{"modality": "video"}`, and in Go it is `Query.Modality`. Sessions recorded before this
+are `text` without a call and `voice` with one.
 
 ### Choose a session's id when creating it
 

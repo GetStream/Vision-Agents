@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/agents"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
@@ -270,7 +271,7 @@ func TestASessionIsRecordedAndCanBeReadBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listed, err := client.ListSessionsWithResponse(t.Context(), nil)
+	listed, err := client.QuerySessionsWithResponse(t.Context(), acceleration.SessionQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}

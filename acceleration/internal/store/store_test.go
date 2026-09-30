@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // DSNEnvVar is where the tests look for a Postgres to run against.
@@ -35,7 +35,9 @@ func (s *StoreSuite) SetupSuite() {
 		s.T().Skipf("%s not set", DSNEnvVar)
 	}
 
-	store, err := Open(dsn)
+	// A database of this suite's own: it drops the schema and empties tables between
+	// tests, which is not something to do to a database another package is reading.
+	store, err := Open(testenv.Database(dsn, "store"))
 	s.Require().NoError(err)
 	s.store = store
 	s.ctx = context.Background()

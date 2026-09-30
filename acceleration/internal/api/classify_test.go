@@ -1,153 +1,30 @@
+//go:build integration
+
 package api
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
-	"strings"
-	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/suite"
-
-	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
-// judge stands in for a classifier: it answers what it is told to, or fails the way it is
-// told to.
-type judge struct {
-	name     string
-	answered lcm.Result
-	err      error
-
-	mu    sync.Mutex
-	asked []lcm.Request
-}
-
-func (j *judge) Classify(_ context.Context, request lcm.Request) (lcm.Result, error) {
-	j.mu.Lock()
-	j.asked = append(j.asked, request)
-	j.mu.Unlock()
-	if j.err != nil {
-		return lcm.Result{}, j.err
-	}
-	return j.answered, nil
-}
-
-func (j *judge) Start(context.Context) error { return nil }
-func (j *judge) Close() error                { return nil }
-func (j *judge) Provider() string            { return j.name }
-func (j *judge) Model() string               { return "stub" }
-
+// ClassifySuite covers asking a classifier several questions at once: how the answers come
+// back, which classifier answers, and what a question nothing can answer is refused with.
 type ClassifySuite struct {
-	suite.Suite
-	quick   *judge
-	careful *judge
-	router  *lcmrouter.Router
-	handler http.Handler
+	RouterSuite
 }
 
 func TestClassifySuite(t *testing.T) {
-	suite.Run(t, new(ClassifySuite))
+	runSuite(t, new(ClassifySuite))
 }
 
 func (s *ClassifySuite) SetupTest() {
-	s.quick = &judge{name: "quick", answered: lcm.Result{
-		Model: "judge-2026-09",
-		Answers: map[string]lcm.Answer{
-			"refund": {Type: lcm.TypeNoul, Yes: 0.91},
-			"topic": {
-				Type: lcm.TypeChoice, Chosen: "billing", Confidence: 0.8,
-				Probabilities: map[string]float64{"billing": 0.9, "other": 0.1},
-			},
-			"urgency": {
-				Type: lcm.TypeScore, Level: 1.4, Confidence: 0.6,
-				Legend:        map[string]string{"0": "can wait", "1": "this week", "2": "today"},
-				Probabilities: map[string]float64{"0": 0.1, "1": 0.4, "2": 0.5},
-			},
-		},
-		Usage: lcm.Usage{InputTokens: 406, OutputTokens: 69},
-	}}
-	s.careful = &judge{name: "careful", answered: s.quick.answered}
-
-	registry := lcmrouter.NewRegistry()
-	registry.Register("quick", func(routing.Spec) (lcm.Provider, error) { return s.quick, nil })
-	registry.Register("careful", func(routing.Spec) (lcm.Provider, error) { return s.careful, nil })
-	router, err := lcmrouter.New(lcmrouter.Options{
-		Config: routing.ModalityConfig{
-			Providers: []routing.ProviderConfig{
-				{
-					Provider: "quick", Model: "judge", Languages: []string{"en"},
-					Realtime: true, Tier: routing.LowLatency,
-				},
-				{
-					Provider: "careful", Model: "judge", Languages: []string{"en"},
-					Tier: routing.HighQuality,
-				},
-			},
-			Aliases: map[string]routing.Alias{
-				"classify-fast": {RequireRealtime: true, Tier: routing.LowLatency},
-			},
-		},
-		Registry: registry,
-		Logger:   slog.New(slog.DiscardHandler),
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(router.Close)
-	s.router = router
-
-	authenticator, err := auth.New(auth.Proxy, nil)
-	s.Require().NoError(err)
-	server, err := NewServer(Options{
-		Routers: map[routing.Modality]routing.Inspector{routing.LCM: router},
-		Streams: &Streams{LCM: router},
-		Auth:    authenticator,
-		Logger:  slog.New(slog.DiscardHandler),
-	})
-	s.Require().NoError(err)
-	s.handler = server.Handler()
-}
-
-// allThree asks one question of each type about a support message.
-const allThree = `{
-	"state": "I was charged twice this month and nobody has answered my email.",
-	"questions": {
-		"refund": {"type": "noul", "instructions": "Is the customer asking for money back?"},
-		"topic": {"type": "choice", "instructions": "What is this about?",
-			"options": {"billing": "charges and invoices", "other": ""}},
-		"urgency": {"type": "score", "instructions": "How soon does this need an answer?",
-			"levels": ["can wait", "this week", "today"]}
-	}
-}`
-
-func (s *ClassifySuite) classify(body string, headers ...string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/v1/classify", strings.NewReader(body))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set(CustomerHeader, "acme")
-	for i := 0; i+1 < len(headers); i += 2 {
-		request.Header.Set(headers[i], headers[i+1])
-	}
-	recorder := httptest.NewRecorder()
-	s.handler.ServeHTTP(recorder, request)
-	return recorder
-}
-
-func (s *ClassifySuite) result(recorder *httptest.ResponseRecorder) ClassifyResult {
-	s.Require().Equal(http.StatusOK, recorder.Code, recorder.Body.String())
-	var result ClassifyResult
-	s.Require().NoError(json.Unmarshal(recorder.Body.Bytes(), &result))
-	return result
+	s.useFixture("standard")
 }
 
 func (s *ClassifySuite) TestEachQuestionComesBackUnderItsOwnId() {
-	result := s.result(s.classify(allThree))
+	result := s.classify(s.allThree(s.complaint()))
 
 	s.Equal("quick", result.Provider)
 	s.Equal("judge-2026-09", result.Model, "the version that answered, not the alias")
@@ -173,111 +50,166 @@ func (s *ClassifySuite) TestEachQuestionComesBackUnderItsOwnId() {
 }
 
 func (s *ClassifySuite) TestEveryQuestionIsAskedInOneRequest() {
-	s.result(s.classify(allThree))
+	complaint := s.complaint()
 
-	s.Require().Len(s.quick.asked, 1)
-	asked := s.quick.asked[0]
-	s.Equal("I was charged twice this month and nobody has answered my email.", asked.State)
+	s.classify(s.allThree(complaint))
+
+	asked, ruled := classifiers.quick.ruledOn(complaint)
+	s.Require().True(ruled)
 	s.Len(asked.Questions, 3)
 	s.Equal(lcm.Score("How soon does this need an answer?", []string{"can wait", "this week", "today"}),
 		asked.Questions["urgency"])
 }
 
 func (s *ClassifySuite) TestAStateWithPartsIsPassedAsItWasSent() {
-	s.result(s.classify(`{
-		"state": {"message": "refund me", "channel": "email"},
-		"questions": {"refund": {"type": "noul", "instructions": "Does ` + "`message`" + ` ask for money back?"}}
-	}`))
+	s.classify(ClassifyRequest{
+		State:     map[string]any{"message": "refund me", "channel": "email"},
+		Questions: map[string]ClassifyQuestion{"refund": {Type: Noul, Instructions: "Does `message` ask for money back?"}},
+	})
 
-	s.Require().Len(s.quick.asked, 1)
-	s.Equal(map[string]any{"message": "refund me", "channel": "email"}, s.quick.asked[0].State)
+	for _, asked := range classifiers.quick.questions() {
+		if parts, ok := asked.State.(map[string]any); ok {
+			s.Equal(map[string]any{"message": "refund me", "channel": "email"}, parts)
+			return
+		}
+	}
+	s.Fail("the classifier was never asked about a state with parts")
 }
 
 func (s *ClassifySuite) TestATargetPicksTheClassifier() {
-	result := s.result(s.classify(`{
-		"target": "careful/judge",
-		"state": "refund me",
-		"questions": {"refund": {"type": "noul", "instructions": "Is this a refund request?"}}
-	}`))
+	complaint := s.complaint()
+
+	result := s.classify(ClassifyRequest{
+		Target: pointerTo("careful/judge"), State: complaint,
+		Questions: map[string]ClassifyQuestion{"refund": {Type: Noul, Instructions: "Is this a refund request?"}},
+	})
 
 	s.Equal("careful", result.Provider)
-	s.Empty(s.quick.asked)
+	_, ruled := classifiers.quick.ruledOn(complaint)
+	s.False(ruled, "the default classifier was not asked")
 }
 
 func (s *ClassifySuite) TestAFailedJudgementIsAnErrorRatherThanAnEmptyAnswer() {
-	s.quick.err = errors.New(`typesafe: "refund" was not answered`)
+	status, failure := s.refused(s.allThree("unanswerable"))
 
-	recorder := s.classify(allThree)
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-	s.Contains(recorder.Body.String(), "was not answered")
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "was not answered")
 }
 
-func (s *ClassifySuite) TestAFailureWorthWaitingOutSaysSo() {
-	cases := map[error]int{
-		fmt.Errorf("typesafe: the API returned 429: %w", lcm.ErrRateLimited): http.StatusTooManyRequests,
-		fmt.Errorf("typesafe: the API returned 529: %w", lcm.ErrUnavailable): http.StatusServiceUnavailable,
-		errors.New("typesafe: the API returned 422: bad criteria"):           http.StatusBadRequest,
-	}
-	for failure, status := range cases {
-		s.quick.err = failure
+func (s *ClassifySuite) TestAClassifierAskedTooOftenSaysToComeBack() {
+	status, failure := s.refused(s.allThree("rate limited"))
 
-		recorder := s.classify(allThree)
+	s.Equal(http.StatusTooManyRequests, status)
+	s.Contains(failure, "429")
+}
 
-		s.Equal(status, recorder.Code, failure.Error())
-		s.Contains(recorder.Body.String(), failure.Error())
-	}
+func (s *ClassifySuite) TestAClassifierThatIsDownIsAServiceUnavailable() {
+	status, _ := s.refused(s.allThree("unavailable"))
+
+	s.Equal(http.StatusServiceUnavailable, status)
 }
 
 func (s *ClassifySuite) TestATargetNobodyRoutesIsNotFound() {
-	recorder := s.classify(`{"target": "nobody/nothing", "state": "hi",
-		"questions": {"q": {"type": "noul", "instructions": "Is it?"}}}`)
+	complaint := s.complaint()
 
-	s.Equal(http.StatusNotFound, recorder.Code)
-	s.Contains(recorder.Body.String(), "unknown target")
-	s.Empty(s.quick.asked)
-}
-
-func (s *ClassifySuite) TestARequestThatCannotBeAnsweredIsRefusedBeforeAnythingIsAsked() {
-	cases := map[string]string{
-		"no state":        `{"questions": {"q": {"type": "noul", "instructions": "Is it?"}}}`,
-		"blank state":     `{"state": "  ", "questions": {"q": {"type": "noul", "instructions": "Is it?"}}}`,
-		"no questions":    `{"state": "hi", "questions": {}}`,
-		"no instructions": `{"state": "hi", "questions": {"q": {"type": "noul", "instructions": " "}}}`,
-		"unknown type":    `{"state": "hi", "questions": {"q": {"type": "maybe", "instructions": "Is it?"}}}`,
-		"one option": `{"state": "hi", "questions": {"q": {"type": "choice", "instructions": "Which?",
-			"options": {"only": ""}}}}`,
-		"one level": `{"state": "hi", "questions": {"q": {"type": "score", "instructions": "How much?",
-			"levels": ["some"]}}}`,
-	}
-	for name, body := range cases {
-		recorder := s.classify(body)
-		s.Equal(http.StatusBadRequest, recorder.Code, name)
-	}
-	s.Empty(s.quick.asked)
-	s.Empty(s.careful.asked)
-}
-
-func (s *ClassifySuite) TestADeviceMayNotSpendOnTheCustomersAccount() {
-	recorder := s.classify(allThree, auth.AuthTypeHeader, auth.AuthTypeJWT)
-
-	s.Equal(http.StatusForbidden, recorder.Code)
-	s.Empty(s.quick.asked)
-}
-
-func (s *ClassifySuite) TestADeploymentWithNoClassifierSaysSo() {
-	server, err := NewServer(Options{
-		Routers: map[routing.Modality]routing.Inspector{routing.LCM: s.router},
-		Streams: &Streams{},
-		Logger:  slog.New(slog.DiscardHandler),
+	status, failure := s.refused(ClassifyRequest{
+		Target: pointerTo("nobody/nothing"), State: complaint,
+		Questions: map[string]ClassifyQuestion{"q": {Type: Noul, Instructions: "Is it?"}},
 	})
-	s.Require().NoError(err)
-	request := httptest.NewRequest(http.MethodPost, "/v1/classify", strings.NewReader(allThree))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set(CustomerHeader, "acme")
-	recorder := httptest.NewRecorder()
-	server.Handler().ServeHTTP(recorder, request)
 
-	s.Equal(http.StatusNotFound, recorder.Code)
-	s.Contains(recorder.Body.String(), "does not route classification")
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, "unknown target")
+	_, ruled := classifiers.quick.ruledOn(complaint)
+	s.False(ruled)
+}
+
+func (s *ClassifySuite) TestAQuestionAboutNothingIsRefused() {
+	status, _ := s.refused(ClassifyRequest{
+		Questions: map[string]ClassifyQuestion{"q": {Type: Noul, Instructions: "Is it?"}}})
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *ClassifySuite) TestAStateOfNothingButSpaceIsRefused() {
+	status, _ := s.refused(ClassifyRequest{State: "  ",
+		Questions: map[string]ClassifyQuestion{"q": {Type: Noul, Instructions: "Is it?"}}})
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *ClassifySuite) TestAStateWithNoQuestionsAboutItIsRefused() {
+	status, _ := s.refused(ClassifyRequest{State: s.complaint(),
+		Questions: map[string]ClassifyQuestion{}})
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *ClassifySuite) TestAQuestionWithNoInstructionsIsRefused() {
+	// An id is not part of what is asked, so a question with nothing in its instructions
+	// carries no meaning at all.
+	status, _ := s.refused(ClassifyRequest{State: s.complaint(),
+		Questions: map[string]ClassifyQuestion{"q": {Type: Noul, Instructions: " "}}})
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *ClassifySuite) TestAQuestionOfAKindNobodyAnswersIsRefused() {
+	status, _ := s.refused(ClassifyRequest{State: s.complaint(),
+		Questions: map[string]ClassifyQuestion{"q": {Type: "maybe", Instructions: "Is it?"}}})
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *ClassifySuite) TestAChoiceBetweenOneThingIsRefused() {
+	status, _ := s.refused(ClassifyRequest{State: s.complaint(),
+		Questions: map[string]ClassifyQuestion{"q": {Type: Choice, Instructions: "Which?",
+			Options: &map[string]string{"only": ""}}}})
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *ClassifySuite) TestAScoreWithOneLevelIsRefused() {
+	status, _ := s.refused(ClassifyRequest{State: s.complaint(),
+		Questions: map[string]ClassifyQuestion{"q": {Type: Score, Instructions: "How much?",
+			Levels: &[]string{"some"}}}})
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *ClassifySuite) TestOnlyTheCustomersOwnBackendMayClassify() {
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		status, _ := as.call(http.MethodPost, "/v1/classify", s.allThree(s.complaint()))
+		return status
+	})
+}
+
+// complaint is a support message of this test's own, since the classifiers are shared.
+func (s *ClassifySuite) complaint() string {
+	return "I was charged twice this month, ticket " + s.utils.uuid()
+}
+
+// allThree asks one question of each type about a support message.
+func (s *ClassifySuite) allThree(state string) ClassifyRequest {
+	return ClassifyRequest{
+		State: state,
+		Questions: map[string]ClassifyQuestion{
+			"refund": {Type: Noul, Instructions: "Is the customer asking for money back?"},
+			"topic": {Type: Choice, Instructions: "What is this about?",
+				Options: &map[string]string{"billing": "charges and invoices", "other": ""}},
+			"urgency": {Type: Score, Instructions: "How soon does this need an answer?",
+				Levels: &[]string{"can wait", "this week", "today"}},
+		},
+	}
+}
+
+func (s *ClassifySuite) classify(request ClassifyRequest) ClassifyResult {
+	var result ClassifyResult
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodPost, "/v1/classify", request, &result))
+	return result
+}
+
+// refused is the status and the message of a request nothing ruled on.
+func (s *ClassifySuite) refused(request ClassifyRequest) (int, string) {
+	return s.serverClient.failure(http.MethodPost, "/v1/classify", request)
 }

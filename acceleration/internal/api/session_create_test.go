@@ -4,12 +4,10 @@ package api
 
 import (
 	"net/http"
-	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/suite"
 )
 
 type SessionCreateSuite struct {
@@ -17,26 +15,29 @@ type SessionCreateSuite struct {
 }
 
 func TestSessionCreateSuite(t *testing.T) {
-	suite.Run(t, new(SessionCreateSuite))
+	runSuite(t, new(SessionCreateSuite))
 }
 
-func (s *SessionCreateSuite) TestASessionIsHeldByTheIdTheCallerChose() {
-	for name, as := range map[string]testClient{"client": s.client, "server": s.backend} {
-		s.Run(name, func() {
-			id := uuid.Must(uuid.NewV7()).String()
+func (s *SessionCreateSuite) SetupTest() {
+	s.useFixture("standard")
+}
 
-			created := s.createSession(as, textSession(&id))
-			s.Equal(id, created.Id)
+func (s *SessionCreateSuite) TestASessionIsHeldByTheIdTheDeviceChose() {
+	id := s.utils.uuid()
 
-			var read Session
-			s.Require().Equal(http.StatusOK, as.do(http.MethodGet, "/v1/agents/sessions/"+id, nil, &read))
-			s.Equal(id, read.Id)
-		})
-	}
+	s.Equal(id, s.client.createSession(textSession(&id)).Id)
+	s.Equal(id, s.client.getSession(id).Id)
+}
+
+func (s *SessionCreateSuite) TestASessionIsHeldByTheIdTheBackendChose() {
+	id := s.utils.uuid()
+
+	s.Equal(id, s.serverClient.createSession(textSession(&id)).Id)
+	s.Equal(id, s.serverClient.getSession(id).Id)
 }
 
 func (s *SessionCreateSuite) TestASessionWithoutAnIdIsGivenAUUIDv7() {
-	created := s.createSession(s.backend, textSession(nil))
+	created := s.client.createSession(textSession(nil))
 
 	parsed, err := uuid.Parse(created.Id)
 	s.Require().NoError(err)
@@ -46,53 +47,71 @@ func (s *SessionCreateSuite) TestASessionWithoutAnIdIsGivenAUUIDv7() {
 func (s *SessionCreateSuite) TestAnIdThatIsNotAUUIDIsRefused() {
 	id := "my-session"
 
-	s.Equal(http.StatusBadRequest, s.backend.do(http.MethodPost, "/v1/agents/sessions", textSession(&id), nil))
+	s.Equal(http.StatusBadRequest, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(&id), nil))
 }
 
 func (s *SessionCreateSuite) TestAnIdAnotherSessionHasIsRefused() {
-	id := uuid.Must(uuid.NewV7()).String()
-	s.createSession(s.backend, textSession(&id))
+	id, project := s.utils.uuid(), s.utils.uuid()
+	request := textSession(&id)
+	request.ProjectId = &project
+	s.client.createSession(request)
 
-	s.Equal(http.StatusConflict, s.backend.do(http.MethodPost, "/v1/agents/sessions", textSession(&id), nil),
+	s.Equal(http.StatusConflict, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(&id), nil),
 		"the session is running")
 
-	s.Require().Equal(http.StatusNoContent, s.backend.do(http.MethodDelete, "/v1/agents/sessions/"+id, nil, nil))
+	s.client.stopSession(id)
 	s.Require().Eventually(func() bool {
-		return slices.Contains(ids(s.listSessions(s.backend, "?state=closed").Items), id)
+		for _, one := range s.client.querySessions(inProject(project)).Items {
+			if one.Id == id {
+				return one.ClosedAt != nil
+			}
+		}
+		return false
 	}, 5*time.Second, 20*time.Millisecond, "the closed session was never written down")
 
-	s.Equal(http.StatusConflict, s.backend.do(http.MethodPost, "/v1/agents/sessions", textSession(&id), nil),
+	s.Equal(http.StatusConflict, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(&id), nil),
 		"the session has ended and its row still holds the id")
 }
 
 func (s *SessionCreateSuite) TestASessionIsCreatedListedUpdatedAndRead() {
-	id := uuid.Must(uuid.NewV7()).String()
+	id, project, title := s.utils.uuid(), s.utils.uuid(), "Refunds"
 	request := textSession(&id)
-	title := "Refunds"
-	request.Title = &title
-	created := s.createSession(s.backend, request)
-	s.Equal("Refunds", value(created.Title))
+	request.Title, request.ProjectId = &title, &project
+	s.Equal(title, value(s.serverClient.createSession(request).Title))
 
-	s.Contains(ids(s.listSessions(s.backend, "").Items), id)
+	s.Equal([]string{id}, ids(s.serverClient.querySessions(inProject(project)).Items))
 
 	renamed, description := "Refunds, resolved", "The customer was owed two pennies."
-	var updated Session
-	s.Require().Equal(http.StatusOK, s.backend.do(http.MethodPatch, "/v1/agents/sessions/"+id,
-		UpdateSessionRequest{Title: &renamed, Description: &description}, &updated))
+	updated := s.serverClient.updateSession(id, UpdateSessionRequest{Title: &renamed, Description: &description})
 	s.Equal(renamed, value(updated.Title))
 	s.Equal(description, value(updated.Description))
 
-	var read Session
-	s.Require().Equal(http.StatusOK, s.backend.do(http.MethodGet, "/v1/agents/sessions/"+id, nil, &read))
-	s.Equal(id, read.Id)
+	read := s.serverClient.getSession(id)
 	s.Equal(renamed, value(read.Title))
 	s.Equal(description, value(read.Description))
 	s.Equal(Live, read.State)
 }
 
-func (s *SessionCreateSuite) TestSessionsAreCreatedFromTheClientAndTheServerButNotAnonymously() {
-	s.createSession(s.client, textSession(nil))
-	s.createSession(s.backend, textSession(nil))
+func (s *SessionCreateSuite) TestAnyoneHoldingTheAppsKeyMayCreateASession() {
+	s.assertPosture(anyAppCaller, func(as *testClient) int {
+		return as.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil)
+	})
+}
 
-	s.Equal(http.StatusUnauthorized, s.anonymous.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil))
+func (s *SessionCreateSuite) TestASessionBelongsToTheUserWhoCreatedIt() {
+	for _, owner := range []*testClient{s.client, s.guestClient, s.anonymousClient} {
+		s.Run(string(owner.kind), func() {
+			s.assertOwnedBy(owner.createSession(textSession(nil)).Id, owner)
+		})
+	}
+}
+
+func (s *SessionCreateSuite) TestABackendCreatesASessionForTheUserItNames() {
+	owner := s.data.createUser()
+
+	s.assertOwnedBy(s.serverClient.actingFor(owner).createSession(textSession(nil)).Id, owner)
+}
+
+func (s *SessionCreateSuite) TestABackendNamingNobodyCreatesASessionNoUserOwns() {
+	s.assertOwnedByNobody(s.serverClient.createSession(textSession(nil)).Id)
 }

@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun/driver/pgdriver"
 
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // DataMoveSuite has two databases rather than one, because a move is between two
@@ -39,8 +39,8 @@ func (s *DataMoveSuite) SetupSuite() {
 		s.T().Skipf("%s not set", DSNEnvVar)
 	}
 	s.ctx = context.Background()
-	s.source = s.open(dsn)
-	s.destination = s.open(elsewhere(dsn))
+	s.source = s.open(elsewhere(dsn, "leaving"))
+	s.destination = s.open(elsewhere(dsn, "moved"))
 }
 
 // open connects to a database, creating it if this is the first run, and brings the
@@ -69,10 +69,11 @@ func (s *DataMoveSuite) open(dsn string) *Store {
 	return store
 }
 
-// elsewhere is the other deployment's database, which is this one's name with a word in
-// front of the suffix that keeps it a test database.
-func elsewhere(dsn string) string {
-	return strings.Replace(dsn, "_test", "_moved_test", 1)
+// elsewhere is a deployment's database, which is the configured name with a word in front
+// of the suffix that keeps it a test database. Both ends belong to this suite, which
+// empties them between tests.
+func elsewhere(dsn, deployment string) string {
+	return testenv.Database(dsn, deployment)
 }
 
 func (s *DataMoveSuite) TearDownSuite() {

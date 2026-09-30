@@ -19,7 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // dsnEnvVar is where the tests look for a Postgres to run against.
@@ -145,7 +145,8 @@ func (s *URLsSuite) SetupSuite() {
 	s.ctx = context.Background()
 	s.redis = asynq.RedisClientOpt{Addr: address, DB: redisDB}
 
-	opened, err := store.Open(dsn)
+	// A database of this suite's own, since it empties the queued urls between tests.
+	opened, err := store.Open(testenv.Database(dsn, "knowledge"))
 	s.Require().NoError(err)
 	s.store = opened
 	s.Require().NoError(opened.Migrate(s.ctx))

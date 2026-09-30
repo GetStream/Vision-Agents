@@ -66,12 +66,7 @@ func newRouter(t *testing.T) *router {
 		})
 	})
 
-	mux.HandleFunc("GET /v1/agents/sessions", func(w http.ResponseWriter, r *http.Request) {
-		backend.record(r)
-		answer(w, http.StatusOK, acceleration.SessionPage{Items: backend.stored()})
-	})
-
-	mux.HandleFunc("GET /v1/agents/sessions/search", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/agents/sessions/query", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusOK, acceleration.SessionPage{Items: backend.stored()})
 	})
@@ -127,6 +122,15 @@ func newRouter(t *testing.T) *router {
 		if r.PathValue("id") == "persistent" {
 			answer(w, http.StatusBadRequest, acceleration.Error{
 				Error: "a persistent conversation keeps its transcript in Chat"})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") == "someone-elses" {
+			answer(w, http.StatusNotFound, acceleration.Error{Error: "unknown session"})
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -294,7 +298,7 @@ func TestASessionIsOpenedAgainstTheAgentByName(t *testing.T) {
 	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
 		Title:       "Is Stream better?",
 		Description: "The comparison question, again",
-		Project:     "docs",
+		ProjectID:   "docs",
 		Custom:      map[string]any{"ticket": "4721"},
 		ModelOverwrites: &acceleration.ModelOverwrites{
 			Thinking: thinking("high"),
@@ -309,7 +313,7 @@ func TestASessionIsOpenedAgainstTheAgentByName(t *testing.T) {
 	if body["agent"] != "docs" {
 		t.Errorf("the session was opened against %v", body["agent"])
 	}
-	if body["title"] != "Is Stream better?" || body["project"] != "docs" {
+	if body["title"] != "Is Stream better?" || body["project_id"] != "docs" {
 		t.Errorf("the labels went over as %v", body)
 	}
 	if body["text"] != true {
@@ -345,12 +349,10 @@ func TestQueryingNarrowsToTheAgentAndTheFiltersGiven(t *testing.T) {
 	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed"}}
 
 	listed, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{
-		Project: "docs",
-		UserID:  "jean",
-		State:   "closed",
-		Custom:  map[string]any{"ticket": "4721"},
-		After:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		Limit:   50,
+		ProjectID: "docs",
+		UserID:    "jean",
+		Modality:  "video",
+		Limit:     50,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -359,24 +361,26 @@ func TestQueryingNarrowsToTheAgentAndTheFiltersGiven(t *testing.T) {
 		t.Fatalf("the list came back as %v", listed)
 	}
 
-	query := backend.query(t, "GET", "/v1/agents/sessions")
+	body := backend.body(t, "POST", "/v1/agents/sessions/query")
+	filter, _ := body["filter"].(map[string]any)
 	for field, want := range map[string]string{
-		"agent":   "docs",
-		"project": "docs",
-		"user_id": "jean",
-		"state":   "closed",
-		"custom":  `{"ticket":"4721"}`,
-		"limit":   "50",
+		"agent":      "docs",
+		"project_id": "docs",
+		"user_id":    "jean",
+		"modality":   "video",
 	} {
-		if got := query.Get(field); got != want {
-			t.Errorf("%s went over as %q rather than %q", field, got, want)
+		if got := filter[field]; got != want {
+			t.Errorf("%s went over as %v rather than %q", field, got, want)
 		}
 	}
-	if query.Get("created_after") == "" {
-		t.Error("created_after was not sent")
+	if _, sent := filter["text"]; sent {
+		t.Error("a listing was sent as a search")
+	}
+	if body["limit"] != float64(50) {
+		t.Errorf("the limit went over as %v", body["limit"])
 	}
 	// The first page is asked for without a cursor rather than with an empty one.
-	if _, sent := query["cursor"]; sent {
+	if _, sent := body["cursor"]; sent {
 		t.Error("a cursor nobody asked for was sent")
 	}
 }
@@ -390,8 +394,8 @@ func TestQueryingTheNextPageSendsTheCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := backend.query(t, "GET", "/v1/agents/sessions").Get("cursor"); got != "next-page" {
-		t.Errorf("the cursor went over as %q", got)
+	if got := backend.body(t, "POST", "/v1/agents/sessions/query")["cursor"]; got != "next-page" {
+		t.Errorf("the cursor went over as %v", got)
 	}
 }
 
@@ -400,16 +404,17 @@ func TestSearchingCarriesThePhraseAlongsideTheFilters(t *testing.T) {
 	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed"}}
 
 	if _, err := backend.client(t).Agent("docs").Sessions.Search(t.Context(),
-		"sendbird comparison", Query{Project: "docs"}); err != nil {
+		"sendbird comparison", Query{UserID: "jean"}); err != nil {
 		t.Fatal(err)
 	}
 
-	query := backend.query(t, "GET", "/v1/agents/sessions/search")
-	if query.Get("q") != "sendbird comparison" {
-		t.Errorf("the phrase went over as %q", query.Get("q"))
+	filter, _ := backend.body(t, "POST", "/v1/agents/sessions/query")["filter"].(map[string]any)
+	text, _ := filter["text"].(map[string]any)
+	if text["$q"] != "sendbird comparison" {
+		t.Errorf("the phrase went over as %v", filter["text"])
 	}
-	if query.Get("agent") != "docs" || query.Get("project") != "docs" {
-		t.Errorf("the filters went over as %v", query)
+	if filter["agent"] != "docs" || filter["user_id"] != "jean" {
+		t.Errorf("the filters went over as %v", filter)
 	}
 }
 
@@ -621,6 +626,27 @@ func TestDeletingASessionsMemoriesAsksForThatSessionsAlone(t *testing.T) {
 	}
 	if asked := backend.requests("DELETE", "/v1/agents/sessions/session-1"); asked != 0 {
 		t.Error("deleting what a session remembered must not end it")
+	}
+}
+
+func TestDeletingASessionAsksTheRouterToDeleteIt(t *testing.T) {
+	backend := newRouter(t)
+	session := onCall(t, backend)
+
+	if err := session.Delete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if asked := backend.requests("DELETE", "/v1/agents/sessions/session-1"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+}
+
+func TestAnotherCustomersSessionIsNotDeleted(t *testing.T) {
+	backend := newRouter(t)
+
+	err := backend.client(t).Agent("docs").Sessions.Delete(t.Context(), "someone-elses")
+	if err == nil || !strings.Contains(err.Error(), "unknown session") {
+		t.Fatalf("the refusal came back as %v", err)
 	}
 }
 

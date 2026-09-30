@@ -288,7 +288,7 @@ Anonymous is left out of that, since an anonymous name is a claim nobody checked
 allowing it would make guessing whose a session was enough to read it.
 
 `internal/session` enforces all of this rather than the handlers, so `getSession`,
-`closeSession`, the events socket, the call token and the session actions cannot each be
+`stopSession`, `deleteSession`, the events socket, the call token and the session actions cannot each be
 wrong in their own way.
 
 Not built yet, in the order [.factory/features/auth.md](../.factory/features/auth.md) puts

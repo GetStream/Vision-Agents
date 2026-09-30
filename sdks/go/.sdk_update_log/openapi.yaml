@@ -60,42 +60,6 @@ components:
       required: false
       schema:
         type: string
-    SessionAgent:
-      description: The agent name the session was opened against.
-      in: query
-      name: agent
-      required: false
-      schema:
-        type: string
-    SessionConfigID:
-      in: query
-      name: config_id
-      required: false
-      schema:
-        type: string
-    SessionCreatedAfter:
-      in: query
-      name: created_after
-      required: false
-      schema:
-        format: date-time
-        type: string
-    SessionCreatedBefore:
-      in: query
-      name: created_before
-      required: false
-      schema:
-        format: date-time
-        type: string
-    SessionCustom:
-      description: |
-        Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-      example: '{"tenant":"acme"}'
-      in: query
-      name: custom
-      required: false
-      schema:
-        type: string
     SessionID:
       description: The session, as returned when it was created.
       in: path
@@ -112,38 +76,6 @@ components:
         maximum: 200
         minimum: 1
         type: integer
-    SessionProject:
-      in: query
-      name: project
-      required: false
-      schema:
-        type: string
-    SessionSearchText:
-      description: |
-        What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error.
-      in: query
-      name: q
-      required: false
-      schema:
-        type: string
-    SessionStateFilter:
-      description: Omitted is both.
-      in: query
-      name: state
-      required: false
-      schema:
-        enum:
-          - running
-          - closed
-        type: string
-    SessionUserID:
-      description: |
-        Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
-      in: query
-      name: user_id
-      required: false
-      schema:
-        type: string
   responses:
     BadRequest:
       content:
@@ -1333,7 +1265,7 @@ components:
           type: boolean
         phone:
           $ref: '#/components/schemas/SessionPhone'
-        project:
+        project_id:
           description: |
             What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
           type: string
@@ -1518,6 +1450,17 @@ components:
         - silence
         - semantic
       type: string
+    Equals:
+      description: 'Matches one value exactly: "value" is short for {"$eq": "value"}.'
+      oneOf:
+        - type: string
+        - additionalProperties: false
+          properties:
+            $eq:
+              type: string
+          required:
+            - $eq
+          type: object
     Error:
       properties:
         error:
@@ -1555,7 +1498,7 @@ components:
           type: boolean
         model_overwrites:
           $ref: '#/components/schemas/ModelOverwrites'
-        project:
+        project_id:
           type: string
         response_id:
           description: |
@@ -2917,11 +2860,13 @@ components:
         llm:
           description: The provider and model answering, once routing has picked one.
           type: string
+        modality:
+          $ref: '#/components/schemas/SessionModality'
         mode:
           $ref: '#/components/schemas/SessionMode'
         model_overwrites:
           $ref: '#/components/schemas/ModelOverwrites'
-        project:
+        project_id:
           type: string
         state:
           $ref: '#/components/schemas/SessionState'
@@ -2957,7 +2902,27 @@ components:
         - user_id
         - agent_id
         - state
+        - modality
         - created_at
+      type: object
+    SessionFilter:
+      additionalProperties: false
+      description: Which sessions to list. A field not listed here is refused rather than ignored.
+      properties:
+        agent:
+          $ref: '#/components/schemas/Equals'
+          description: The agent name the session was opened against.
+        modality:
+          $ref: '#/components/schemas/Equals'
+          description: 'text, voice or video: how the user took part.'
+        project_id:
+          $ref: '#/components/schemas/Equals'
+        text:
+          $ref: '#/components/schemas/TextMatch'
+          description: Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id.
+        user_id:
+          $ref: '#/components/schemas/Equals'
+          description: 'Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for.'
       type: object
     SessionMemory:
       description: |
@@ -2976,6 +2941,14 @@ components:
           description: Who the memories belong to. Empty means the customer.
           type: string
       type: object
+    SessionModality:
+      description: |
+        How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.
+      enum:
+        - text
+        - voice
+        - video
+      type: string
     SessionMode:
       description: |
         How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
@@ -3014,6 +2987,28 @@ components:
           type: string
       required:
         - number
+      type: object
+    SessionQuery:
+      additionalProperties: false
+      properties:
+        cursor:
+          description: The next_cursor of the previous page, sent with the same filter and sort. Omitted is the first page.
+          type: string
+        filter:
+          $ref: '#/components/schemas/SessionFilter'
+        limit:
+          description: Up to 200. Omitted is 25.
+          format: int64
+          maximum: 200
+          minimum: 1
+          type: integer
+        sort:
+          description: Omitted is updated_at, or relevance for a text search.
+          items:
+            $ref: '#/components/schemas/SessionSort'
+          maxItems: 1
+          nullable: true
+          type: array
       type: object
     SessionRespondCommand:
       properties:
@@ -3105,6 +3100,27 @@ components:
         - description
         - instructions
       type: object
+    SessionSort:
+      additionalProperties: false
+      properties:
+        direction:
+          default: -1
+          description: -1, descending. Ascending is not offered.
+          enum:
+            - -1
+          format: int64
+          type: integer
+        field:
+          $ref: '#/components/schemas/SessionSortField'
+      required:
+        - field
+      type: object
+    SessionSortField:
+      description: updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+      enum:
+        - updated_at
+        - relevance
+      type: string
     SessionState:
       description: Whether the agent is still in the call.
       enum:
@@ -4020,6 +4036,16 @@ components:
         - type
         - text
       type: object
+    TextMatch:
+      additionalProperties: false
+      properties:
+        $q:
+          description: Quoted phrases and bare words both work, and punctuation is taken rather than refused.
+          minLength: 1
+          type: string
+      required:
+        - $q
+      type: object
     Tier:
       description: What the model optimises for.
       enum:
@@ -4677,7 +4703,7 @@ info:
   description: |
     Routes speech-to-text and text-to-speech traffic across providers and reports what it cost. Every path is scoped by modality, so the same provider serving two modalities is reported on separately. Who the caller is depends on ROUTER_AUTH_MODE: `api_key`, the default, wants an API key and a token signed with its secret; `proxy` believes the X-Stream- headers something in front of the router set; `noauth` reads a trusted X-Customer-Id header and takes every caller for that customer's own backend.
 
-    Every operation is server-side only unless it is marked `x-client-accessible`, and six are: `createSession`, `listSessions`, `getSession`, `closeSession`, the session events socket and `search`. Those are the whole of holding a conversation and looking something up, which is all an end user's device has any business doing. Everything else is refused with a 403 unless the caller is a process the customer runs, because a device holding a token its own backend minted may hold a conversation and may not rewrite the agent holding it. A server-side caller sends `Stream-Auth-Type: server` and a token carrying `server: true` and no `user_id` claim. Both are required, and the token is what proves it, since nothing signs the header.
+    Every operation is server-side only unless it is marked `x-client-accessible`, and six are: `createSession`, `querySessions`, `getSession`, `closeSession`, the session events socket and `search`. Those are the whole of holding a conversation and looking something up, which is all an end user's device has any business doing. Everything else is refused with a 403 unless the caller is a process the customer runs, because a device holding a token its own backend minted may hold a conversation and may not rewrite the agent holding it. A server-side caller sends `Stream-Auth-Type: server` and a token carrying `server: true` and no `user_id` claim. Both are required, and the token is what proves it, since nothing signs the header.
 
     The default is that way round because the cost of forgetting is asymmetric. An operation left unmarked is one nobody decided to open, and refusing it is a bug report; opening it silently is a breach.
 
@@ -6111,36 +6137,6 @@ paths:
       security: []
       summary: Finish a plugin login
   /v1/agents/sessions:
-    get:
-      description: |
-        Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
-        A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
-      operationId: listSessions
-      parameters:
-        - $ref: '#/components/parameters/SessionAgent'
-        - $ref: '#/components/parameters/SessionConfigID'
-        - $ref: '#/components/parameters/SessionUserID'
-        - $ref: '#/components/parameters/SessionProject'
-        - $ref: '#/components/parameters/SessionStateFilter'
-        - $ref: '#/components/parameters/SessionCustom'
-        - $ref: '#/components/parameters/SessionCreatedAfter'
-        - $ref: '#/components/parameters/SessionCreatedBefore'
-        - $ref: '#/components/parameters/SessionLimit'
-        - $ref: '#/components/parameters/Cursor'
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SessionPage'
-          description: |
-            The customer's sessions, newest first. There is no total: counting every conversation a busy customer ever had costs more than the page itself.
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-      summary: The sessions the calling customer is running
-      x-client-accessible: true
     post:
       description: |
         The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -6649,37 +6645,42 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
       summary: Change the models and voice of one running session
-  /v1/agents/sessions/search:
-    get:
-      description: |
-        Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
-        What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
-        The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
-      operationId: searchSessions
-      parameters:
-        - $ref: '#/components/parameters/SessionSearchText'
-        - $ref: '#/components/parameters/SessionAgent'
-        - $ref: '#/components/parameters/SessionConfigID'
-        - $ref: '#/components/parameters/SessionUserID'
-        - $ref: '#/components/parameters/SessionProject'
-        - $ref: '#/components/parameters/SessionStateFilter'
-        - $ref: '#/components/parameters/SessionCustom'
-        - $ref: '#/components/parameters/SessionCreatedAfter'
-        - $ref: '#/components/parameters/SessionCreatedBefore'
-        - $ref: '#/components/parameters/SessionLimit'
-        - $ref: '#/components/parameters/Cursor'
+  /v1/agents/sessions/query:
+    post:
+      description: |-
+        Three queries are supported, each over the sessions still running and the ones that ended:
+
+        - every session, sorted by `updated_at`
+        - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+        - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+
+        `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+
+        The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+      operationId: querySessions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionQuery'
       responses:
         "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SessionPage'
-          description: The matching sessions, best match first
+          description: A page of sessions
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
-      summary: Find a conversation by what it was called
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: List or search the caller's sessions
       x-client-accessible: true
   /v1/agents/simulation-runs:
     get:

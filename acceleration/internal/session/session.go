@@ -125,6 +125,7 @@ type Session struct {
 	watchers    map[uint64]*watcher
 	nextWatcher uint64
 	state       State
+	modality    string
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so
@@ -196,6 +197,26 @@ func (s *Session) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state
+}
+
+// Modality is how the user has taken part so far: store.ModalityText, ModalityVoice or
+// ModalityVideo.
+func (s *Session) Modality() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.modality
+}
+
+// SawVideo records that the agent has seen the user's video, which makes the session a video
+// one for good.
+func (s *Session) SawVideo() {
+	s.mu.Lock()
+	seen := s.modality == store.ModalityVideo
+	s.modality = store.ModalityVideo
+	s.mu.Unlock()
+	if !seen && s.records != nil {
+		s.records.SawVideo(s.id)
+	}
 }
 
 // Provider names the model answering and the voice speaking, which are only known once the

@@ -80,6 +80,9 @@ func (s *Server) CreateResponse(ctx context.Context, request CreateResponseReque
 	if err != nil {
 		return CreateResponse400JSONResponse{badRequest(err.Error())}, nil
 	}
+	if len(videos) > 0 {
+		found.SawVideo()
+	}
 	if responseID == "" {
 		// The turn is being answered, it just has no name. A session that records nothing
 		// has no row to hand back, and a native one lets the model decide what a turn is.
