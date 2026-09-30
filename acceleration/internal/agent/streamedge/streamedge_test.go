@@ -3,6 +3,7 @@ package streamedge
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"math"
 	"net/url"
@@ -10,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	rtc "github.com/GetStream/getstream-go-webrtc"
+	"github.com/GetStream/getstream-go-webrtc/jointrace"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -361,115 +362,73 @@ func (s *StreamEdgeSuite) TestPublishingAfterLeavingFails() {
 	s.NoError(talker.Close(), "closing twice is safe")
 }
 
-// joinTimeline is a first join where every step happened, 10 ms apart unless stated.
-func joinTimeline(started time.Time) rtc.ConnectionTiming {
-	at := func(ms int) time.Time { return started.Add(time.Duration(ms) * time.Millisecond) }
-	return rtc.ConnectionTiming{
-		JoinStarted:        at(5),
-		CoordinatorStarted: at(5),
-		CoordinatorDone:    at(405),
-		SFUConnected:       at(455),
-		SFUJoined:          at(505),
-		Publisher: rtc.PeerTiming{
-			Offer: at(540), SignalSent: at(541), SignalDone: at(620),
-			ICEChecking: at(621), ICEConnected: at(660), DTLSConnected: at(720), Connected: at(721),
-			FirstRTP: at(730),
-		},
-		Subscriber: rtc.PeerTiming{
-			Offer: at(3000), SignalSent: at(3010), SignalDone: at(3080),
-			// ICE finishes before the SFU acknowledges the answer.
-			ICEChecking: at(3015), ICEConnected: at(3060), DTLSConnected: at(3120),
-		},
+// joinTimeline is a first join as the SDK records it: the coordinator, the SFU, then the
+// publish and subscribe branches in parallel, at 50 ms to every peer.
+func joinTimeline(started time.Time) jointrace.Trace {
+	at := func(ms float64) time.Time { return started.Add(time.Duration(ms * float64(time.Millisecond))) }
+	rec := jointrace.NewRecorder(started)
+	rec.SetRTT(jointrace.PeerCoordinator, 50*time.Millisecond)
+	rec.SetRTT(jointrace.PeerSFU, 50*time.Millisecond)
+	rec.SetRTT(jointrace.PeerUDP, 50*time.Millisecond)
+	step := func(name string, after []string, from, to float64, kind jointrace.Kind, peer jointrace.Peer) {
+		rec.Add(jointrace.Span{Name: name, After: after, Start: at(from), End: at(to), Kind: kind, Peer: peer})
 	}
+	step(jointrace.CoordJoin, nil, 0, 200, jointrace.KindNet, jointrace.PeerCoordinator)
+	step(jointrace.PCsCreate, []string{jointrace.CoordJoin}, 200, 202, jointrace.KindLocal, jointrace.PeerLocal)
+	step(jointrace.SFUWSDial, []string{jointrace.PCsCreate}, 202, 352, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.SFUJoin, []string{jointrace.SFUWSDial}, 352, 402, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.PubDebounce, []string{jointrace.SFUJoin}, 402, 403, jointrace.KindTimer, jointrace.PeerLocal)
+	step(jointrace.PubOffer, []string{jointrace.PubDebounce}, 403, 405, jointrace.KindLocal, jointrace.PeerLocal)
+	step(jointrace.PubSetPublisher, []string{jointrace.PubOffer}, 405, 455, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.PubICE, []string{jointrace.PubSetPublisher}, 456, 506, jointrace.KindNet, jointrace.PeerUDP)
+	step(jointrace.PubDTLS, []string{jointrace.PubICE}, 506, 556, jointrace.KindNet, jointrace.PeerUDP)
+	step(jointrace.PubRTP, []string{jointrace.PubDTLS}, 556, 560, jointrace.KindLocal, jointrace.PeerLocal)
+	step(jointrace.SubDebounce, []string{jointrace.SFUJoin}, 402, 480, jointrace.KindTimer, jointrace.PeerSFU)
+	step(jointrace.SubOffer, []string{jointrace.SubDebounce}, 480, 505, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.SubSendAnswer, []string{jointrace.SubOffer}, 505, 556, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.SubICE, []string{jointrace.SubSendAnswer}, 507, 557, jointrace.KindNet, jointrace.PeerUDP)
+	step(jointrace.SubDTLS, []string{jointrace.SubICE}, 557, 607, jointrace.KindNet, jointrace.PeerUDP)
+	step(jointrace.SubRTP, []string{jointrace.SubDTLS}, 607, 630, jointrace.KindNet, jointrace.PeerUDP)
+	trace := rec.Trace()
+	trace.JoinAt = started
+	return trace
 }
 
-func (s *StreamEdgeSuite) TestConnectionTimingLaysOutTheSharedStepsThenThePublishers() {
-	started := time.Now()
+func (s *StreamEdgeSuite) TestTheJoinTraceIsTheSDKsReportUnchanged() {
+	trace := joinTimeline(time.Now())
 
-	layout := connectionTiming(publisherPath, started, joinTimeline(started), joinTimeline(started).Publisher)
+	joined, err := joinTrace(trace)
+	s.Require().NoError(err)
 
-	names := make([]string, 0, len(layout.Steps))
-	for _, step := range layout.Steps {
-		names = append(names, step.Name)
-	}
-	s.Equal([]string{"coordinator websocket", "coordinator join", "SFU websocket", "SFU join",
-		"offer created", "SetPublisher", "ICE start", "ICE checks", "DTLS", "first RTP"}, names)
-	s.Equal(400.0, layout.Steps[1].Ms, "the coordinator join is its own step")
-	s.Equal(80.0, layout.Steps[5].Ms, "signaling is offer to answer")
-	s.Equal(39.0, layout.Steps[7].Ms, "ICE checks run from the first check to a working pair")
-	s.Equal(60.0, layout.Steps[8].Ms, "DTLS runs from ICE connected to the handshake finishing")
-	s.Equal(720.0, layout.TotalMs)
-	s.Equal(730.0, layout.FirstMediaMs)
-	s.Equal(layout.TotalMs, layout.Steps[8].AtMs, "the total ends at DTLS")
-	s.Equal(10.0, layout.Steps[9].Ms, "first RTP is measured from DTLS finishing")
+	want, err := json.Marshal(trace)
+	s.Require().NoError(err)
+	s.JSONEq(string(want), string(joined.Trace), "the agent forwards what the SDK recorded")
+	s.Equal("coord.join > pcs.create > sfu.ws.dial > sfu.join > sub.debounce > sub.offer > "+
+		"sub.sendanswer > sub.ice > sub.dtls > sub.rtp", joined.CriticalPath,
+		"the subscriber finishes last, so its branch is the critical path")
+	s.Equal(630.0, joined.CriticalMs)
+	s.InDelta(4+3+1+0.5+1.02+0.02+1+0.46, joined.CriticalRTTs, 0.01)
 }
 
-func (s *StreamEdgeSuite) TestConnectionTimingOrdersASubscribersStepsByWhenTheyHappened() {
-	started := time.Now()
-	timeline := joinTimeline(started)
-
-	layout := connectionTiming(subscriberPath, started, timeline, timeline.Subscriber)
-
-	own := layout.Steps[4:]
-	s.Equal("SFU offer received", own[0].Name)
-	s.Equal(2495.0, own[0].Ms, "the subscriber waits for the SFU's offer")
-	s.Equal("ICE start", own[1].Name, "ICE started before SendAnswer came back")
-	s.Equal("ICE checks", own[2].Name, "and finished before it too")
-	s.Equal("SendAnswer", own[3].Name)
-	s.Equal("DTLS", own[4].Name)
-	for _, step := range layout.Steps {
-		s.GreaterOrEqual(step.Ms, 0.0, "no step is negative")
-	}
-	s.Zero(layout.FirstMediaMs, "nothing received yet")
-}
-
-func (s *StreamEdgeSuite) TestConnectionTimingLeavesOutStepsThatDidNotHappen() {
-	started := time.Now()
-	timeline := joinTimeline(started)
-	timeline.CoordinatorStarted, timeline.CoordinatorDone = time.Time{}, time.Time{}
-
-	layout := connectionTiming(publisherPath, started, timeline, timeline.Publisher)
-
-	for _, step := range layout.Steps {
-		s.NotEqual("coordinator join", step.Name)
-	}
-	s.Equal(450.0, layout.Steps[1].Ms, "the SFU websocket step runs from the previous step that happened")
-}
-
-func (s *StreamEdgeSuite) TestEachMediaPathIsReportedOnceWhenItConnects() {
+func (s *StreamEdgeSuite) TestTheJoinTraceIsReportedOnce() {
 	s.T().Setenv("STREAM_API_KEY", "key")
 	s.T().Setenv("STREAM_API_SECRET", "secret")
 	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
 	s.Require().NoError(err)
-	started := time.Now()
-	edge.joinStarted = started
-	edge.mediaWait = 10 * time.Millisecond
-	timeline := joinTimeline(started)
 
-	pending := timeline
-	pending.Publisher.DTLSConnected = time.Time{}
-	pending.Subscriber = rtc.PeerTiming{}
-	edge.onConnectionTiming(pending)
+	go edge.onJoinTrace(joinTimeline(time.Now()))
 
-	published := timeline
-	published.Subscriber = rtc.PeerTiming{}
-	edge.onConnectionTiming(published)
-	edge.onConnectionTiming(published)
-	edge.onConnectionTiming(timeline)
-
-	var peers []string
-	for range 2 {
-		select {
-		case layout := <-edge.Connections():
-			peers = append(peers, layout.Peer)
-		case <-time.After(time.Second):
-			s.FailNow("a connected path was not reported")
-		}
-	}
-	s.ElementsMatch([]string{publisherPath, subscriberPath}, peers)
 	select {
-	case layout := <-edge.Connections():
-		s.Failf("reported twice", "%s was reported again", layout.Peer)
-	case <-time.After(50 * time.Millisecond):
+	case joined := <-edge.JoinTraces():
+		var report jointrace.Report
+		s.Require().NoError(json.Unmarshal(joined.Trace, &report))
+		s.Len(report.Spans, 16)
+		s.Equal(jointrace.SubRTP, report.CriticalPath[len(report.CriticalPath)-1])
+	case <-time.After(time.Second):
+		s.FailNow("the join trace was not reported")
 	}
+
+	s.Require().NoError(edge.Leave())
+	_, open := <-edge.JoinTraces()
+	s.False(open, "leaving closes the channel")
 }

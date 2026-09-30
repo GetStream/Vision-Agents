@@ -124,8 +124,8 @@ type Responded struct {
 
 func (Responded) isAgentEvent() {}
 
-// Connection reports how long one of the call's media paths took to connect.
-type Connection struct{ ConnectionTiming }
+// Connection reports how the agent joined the call.
+type Connection struct{ JoinTrace }
 
 func (Connection) isAgentEvent() {}
 

@@ -16,8 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -126,11 +124,11 @@ type Session struct {
 	// disturbing the others.
 	watchers    map[uint64]*watcher
 	nextWatcher uint64
-	// connections holds the latest connection timing per media path. It is state rather
-	// than conversation, so unlike everything else it is replayed to a watcher that
-	// attaches late: the path usually connects before the caller's socket is open.
-	connections map[string]agent.Connection
-	state       State
+	// connection is how the agent joined the call. It is state rather than conversation, so
+	// unlike everything else it is replayed to a watcher that attaches late: the join
+	// usually finishes before the caller's socket is open.
+	connection *agent.Connection
+	state      State
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so
@@ -334,8 +332,8 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 			attached.send(pending)
 		}
 	}
-	for _, peer := range slices.Sorted(maps.Keys(s.connections)) {
-		attached.send(s.connections[peer])
+	if s.connection != nil {
+		attached.send(*s.connection)
 	}
 	s.mu.Unlock()
 
@@ -779,10 +777,7 @@ func (s *Session) consume() {
 	for event := range s.voiceAgent.Events() {
 		if connected, ok := event.(agent.Connection); ok {
 			s.mu.Lock()
-			if s.connections == nil {
-				s.connections = map[string]agent.Connection{}
-			}
-			s.connections[connected.Peer] = connected
+			s.connection = &connected
 			s.mu.Unlock()
 		}
 		if s.persisted != nil {

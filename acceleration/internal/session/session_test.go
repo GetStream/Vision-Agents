@@ -34,8 +34,8 @@ const settleFor = 3 * time.Second
 // needs from an edge is only that joining and leaving work.
 type quietEdge struct {
 	inbound chan agent.InboundAudio
-	// connections is how a test reports a media path connecting, as a real edge does.
-	connections chan agent.ConnectionTiming
+	// traces is how a test reports the edge having joined, as a real edge does.
+	traces chan agent.JoinTrace
 
 	mu     sync.Mutex
 	joined bool
@@ -47,8 +47,8 @@ type quietEdge struct {
 
 func newQuietEdge() *quietEdge {
 	return &quietEdge{
-		inbound:     make(chan agent.InboundAudio, 4),
-		connections: make(chan agent.ConnectionTiming, 2),
+		inbound: make(chan agent.InboundAudio, 4),
+		traces:  make(chan agent.JoinTrace, 1),
 	}
 }
 
@@ -61,7 +61,7 @@ func (e *quietEdge) Join(context.Context) error {
 
 func (e *quietEdge) Audio() <-chan agent.InboundAudio { return e.inbound }
 
-func (e *quietEdge) Connections() <-chan agent.ConnectionTiming { return e.connections }
+func (e *quietEdge) JoinTraces() <-chan agent.JoinTrace { return e.traces }
 
 func (e *quietEdge) PublishAudio(audio.PcmData) error { return nil }
 
@@ -93,7 +93,7 @@ func (e *quietEdge) Leave() error {
 	}
 	e.left = true
 	close(e.inbound)
-	close(e.connections)
+	close(e.traces)
 	return nil
 }
 
@@ -1105,14 +1105,13 @@ func (s *SessionSuite) TestAWatcherThatAttachesLateStillSeesHowTheCallConnected(
 	early, detachEarly := created.Watch()
 	defer detachEarly()
 
-	s.edges[0].connections <- agent.ConnectionTiming{Peer: "publisher", TotalMs: 42}
-	s.Equal(42.0, s.awaitConnection(early).TotalMs, "a watcher already attached sees it as it happens")
+	s.edges[0].traces <- agent.JoinTrace{Trace: []byte(`{"critical_ms":42}`), CriticalMs: 42}
+	s.Equal(42.0, s.awaitConnection(early).CriticalMs, "a watcher already attached sees it as it happens")
 
 	late, detachLate := created.Watch()
 	defer detachLate()
 	replayed := s.awaitConnection(late)
-	s.Equal("publisher", replayed.Peer, "connection timing is state, so it is replayed")
-	s.Equal(42.0, replayed.TotalMs)
+	s.JSONEq(`{"critical_ms":42}`, string(replayed.Trace), "how the call was joined is state, so it is replayed")
 }
 
 func (s *SessionSuite) TestAWatcherSeesTheConversationAndStopsWhenItDetaches() {

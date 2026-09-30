@@ -1077,13 +1077,16 @@ decision before the reply model, first reply text, TTS submission and first audi
 edge. Its `model_calls` list keeps flow, reply and subagent requests separate, with TTFT
 and full duration for each attempt. `speech_end_to_audio_ms` estimates the delay from the
 last input audio using provider STT processing time; it cannot include network transit
-or browser playback. The router logs call join and each ICE peer connection
-independently; the subscriber can stay idle until someone publishes a track. The Python
+or browser playback. The router logs how it joined the call as the Go SDK's join DAG:
+every step (coordinator and SFU sockets and joins, offer and answer, ICE, DTLS, first RTP
+both ways) with what it waited for, its time in ms and in round trips of its peer, and
+the critical path. It is reported once media flows both ways, or after ten seconds with
+what was recorded, since the subscriber stays idle until someone publishes. The Python
 accelerated agent records join duration. Set `log_latency=True` on `stream.Accelerated`
 (or `VOICE_LATENCY_DAG=1` for `simple_voice_ai`) to print per-model timing and a console
-DAG for each turn, for the agent's join, and for each WebRTC media path: SFU join, offer
-and answer, ICE, DTLS and the first RTP packet, streamed as a `connection` frame on the
-session socket. The router records metrics regardless of this logging flag.
+DAG for each turn, for the agent's join, and for the router's WebRTC join, which arrives
+unchanged from the SDK as the `trace` of a `connection` frame on the session socket. The
+router records metrics regardless of this logging flag.
 Model-call durations annotate the stages they overlap and are not added to the
 speech-to-audio path.
 

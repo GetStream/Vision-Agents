@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -32,29 +33,19 @@ type Edge interface {
 	Leave() error
 }
 
-// ConnectionStep is one step of connecting to a call.
-type ConnectionStep struct {
-	// Name says what the step was, for example "SFU join" or "DTLS".
-	Name string
-	// Ms is how long the step took.
-	Ms float64
-	// AtMs is when the step ended, measured from the start of the join.
-	AtMs float64
-}
-
-// ConnectionTiming is how long one of an edge's media paths took to connect, step by step,
-// from the moment the edge started joining.
-type ConnectionTiming struct {
-	// Peer names the path: "publisher" for what the agent sends, "subscriber" for what it
-	// receives. They are reported apart because a subscriber can wait for somebody to publish.
-	Peer string
-	// Steps are the join steps both paths share followed by this path's own, in order.
-	Steps []ConnectionStep
-	// TotalMs is from the start of the join to this path's DTLS handshake finishing.
-	TotalMs float64
-	// FirstMediaMs is from the start of the join to the path's first RTP packet, or zero if
-	// there was none yet when the path connected.
-	FirstMediaMs float64
+// JoinTrace is how an edge joined its call, step by step, as its transport recorded it.
+type JoinTrace struct {
+	// Trace is the transport's own record as JSON, passed through unchanged. For a Stream
+	// call it is the SDK's join DAG (jointrace.Report): every step with what it waited for,
+	// its kind and peer, its times and round trips, and the critical path.
+	Trace json.RawMessage
+	// CriticalPath names the critical path's steps, for logs, for example
+	// "sfu.ws.dial > sfu.join > pub.offer".
+	CriticalPath string
+	// CriticalMs and CriticalRTTs are the critical path's length, and its network part in
+	// round trips.
+	CriticalMs   float64
+	CriticalRTTs float64
 }
 
 // Connector is an edge that can say how long it took to connect.
@@ -62,9 +53,8 @@ type ConnectionTiming struct {
 // Separate from Edge rather than a fifth method on it, because only a transport that
 // negotiates media has steps worth reporting; a loopback connects instantly.
 type Connector interface {
-	// Connections reports each media path once, when it has connected. The channel closes
-	// when the edge leaves.
-	Connections() <-chan ConnectionTiming
+	// JoinTraces reports how the edge joined, once. The channel closes when the edge leaves.
+	JoinTraces() <-chan JoinTrace
 }
 
 // Attendance is somebody arriving in or leaving the call.

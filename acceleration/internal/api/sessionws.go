@@ -423,14 +423,8 @@ func frameOf(event session.Event) (frame, bool) {
 		}, true
 
 	case agent.Connection:
-		steps := make([]map[string]any, 0, len(typed.Steps))
-		for _, step := range typed.Steps {
-			steps = append(steps, map[string]any{"name": step.Name, "ms": step.Ms, "at_ms": step.AtMs})
-		}
-		return frame{
-			"type": "connection", "peer": typed.Peer, "steps": steps,
-			"total_ms": typed.TotalMs, "first_media_ms": typed.FirstMediaMs,
-		}, true
+		// The transport's trace goes out as it recorded it.
+		return frame{"type": "connection", "trace": typed.Trace}, true
 
 	case agent.ModelCall:
 		return frame{
