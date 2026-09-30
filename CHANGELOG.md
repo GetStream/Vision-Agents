@@ -432,6 +432,17 @@ SDK sends them with `client.Clip{URL, MaxFrames}` or `client.ClipFile(path)`.
 yours instead of connecting a second one, and `interrupt({ commandId })` names the turn it
 stops.
 
+### The voice latency DAG covers joining the call and connecting its media
+
+With `log_latency=True` on `stream.Accelerated` (`VOICE_LATENCY_DAG=1` for
+`simple_voice_ai`), an agent also prints how it joined: creating the call, starting its
+components, the chat conversation, the router session and the event socket. The router
+then streams a `connection` frame on the session socket for each media path, publisher and
+subscriber, with every step from the start of its join: the coordinator and SFU sockets and
+joins, the offer and answer, ICE, DTLS and the first RTP packet. A watcher that attaches
+after a path connected is sent its latest timing. `RemoteCall.join_steps` carries the
+agent's own steps to the pipeline.
+
 ### A dispatch worker can run tools for every session under an agent id
 
 A worker on `/v1/dispatch` can send `host_tools` naming an `agent_id` and the tools it runs

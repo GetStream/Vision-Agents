@@ -610,6 +610,10 @@ func (a *Agent) Join(ctx context.Context) error {
 			a.running.Add(1)
 			go a.consumeRoster(roster)
 		}
+		if connector, ok := a.options.Edge.(Connector); ok {
+			a.running.Add(1)
+			go a.consumeConnections(connector)
+		}
 	}
 
 	changed := a.modelsChanged()
@@ -1005,6 +1009,27 @@ func (a *Agent) consumeEdge() {
 			a.fail(err, "stt")
 		}
 	}
+}
+
+// consumeConnections reports how long each media path took to connect.
+func (a *Agent) consumeConnections(connector Connector) {
+	defer a.running.Done()
+
+	for timing := range connector.Connections() {
+		a.logger.Info("webrtc connection timing", "peer", timing.Peer,
+			"total_ms", timing.TotalMs, "first_media_ms", timing.FirstMediaMs,
+			"steps", connectionStepsString(timing.Steps))
+		a.emitter.Send(Connection{ConnectionTiming: timing})
+	}
+}
+
+// connectionStepsString renders steps for a log line, for example "SFU join=42.1ms, DTLS=60.0ms".
+func connectionStepsString(steps []ConnectionStep) string {
+	parts := make([]string, 0, len(steps))
+	for _, step := range steps {
+		parts = append(parts, fmt.Sprintf("%s=%.1fms", step.Name, step.Ms))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // consumeRoster turns who comes and goes into events a watcher can wait on.

@@ -38,6 +38,7 @@ from ..llm import events as llm_events
 from ..llm.llm import LLM, AudioLLM, VideoLLM, ImageContent
 from ..llm.realtime import Realtime
 from ..llm.remote import (
+    JoinStep,
     KnowledgeBase,
     RemoteCall,
     RemoteEvent,
@@ -662,6 +663,7 @@ class Agent:
 
         """
         join_started = time.perf_counter()
+        join_steps: list[JoinStep] = []
         if isinstance(call, str):
             # One name is a call of the default `agent` type; two are the type and the id,
             # which is how a call of some other type is joined.
@@ -670,6 +672,9 @@ class Agent:
                 if call_id
                 else await self.create_call("agent", call)
             )
+            join_steps.append(
+                JoinStep("create call (coordinator)", _ms_since(join_started))
+            )
         elif isinstance(call, InboundCall):
             if not call.call_id:
                 raise ValueError(
@@ -677,6 +682,9 @@ class Agent:
                 )
             inbound = call
             call = await self.create_call(inbound.call_type or "agent", inbound.call_id)
+            join_steps.append(
+                JoinStep("create call (coordinator)", _ms_since(join_started))
+            )
             inbound._joined = self
             if participant_wait_timeout == 10.0:
                 participant_wait_timeout = 0.0
@@ -690,7 +698,7 @@ class Agent:
             self.conversation = None
 
             if isinstance(self.llm, RemotePipeline):
-                await self._join_remote(self.llm, call, join_started)
+                await self._join_remote(self.llm, call, join_started, join_steps)
                 if participant_wait_timeout != 0:
                     await self.wait_for_participant(timeout=participant_wait_timeout)
                 yield
@@ -1080,7 +1088,11 @@ class Agent:
             yield span
 
     async def _join_remote(
-        self, pipeline: RemotePipeline, call: Call, join_started: float
+        self,
+        pipeline: RemotePipeline,
+        call: Call,
+        join_started: float,
+        join_steps: list[JoinStep],
     ) -> None:
         """Hand the call to an LLM that is really a pipeline running elsewhere.
 
@@ -1089,20 +1101,26 @@ class Agent:
         process also joins the call as a video worker so it can subscribe to
         participant video, run the processors, and publish an annotated track.
         """
+        step_started = time.perf_counter()
         await self._start_components()
 
         if self.mcp_manager:
             with self.span("mcp_manager.connect_all"):
                 await self.mcp_manager.connect_all()
+        join_steps.append(JoinStep("start components", _ms_since(step_started)))
 
+        step_started = time.perf_counter()
         await self.authenticate()
         self.conversation = await self.edge.create_conversation(
             call, self.agent_user, self.instructions.full_reference
         )
         self.llm.set_conversation(self.conversation)
+        join_steps.append(JoinStep("chat conversation", _ms_since(step_started)))
 
         with self.span("llm.join_remote"):
-            await pipeline.join_remote(self._remote_call(call.id))
+            await pipeline.join_remote(
+                self._remote_call(call.id, join_steps=join_steps)
+            )
         if self.video_processors or self.llm.uses_video_observations:
             await self._join_video_worker(call)
         self.logger.info(f"🤖 Agent joined call remotely: {call.id}")
@@ -1117,9 +1135,15 @@ class Agent:
             self._consume_remote_events(pipeline)
         )
 
-    def _remote_call(self, call_id: str, agent_id: str = "") -> RemoteCall:
+    def _remote_call(
+        self,
+        call_id: str,
+        agent_id: str = "",
+        join_steps: Optional[list[JoinStep]] = None,
+    ) -> RemoteCall:
         """What the remote pipeline is told to run, on a call or in writing."""
         return RemoteCall(
+            join_steps=list(join_steps or []),
             call_type=self._call_type,
             call_id=call_id,
             agent_user_id=self._agent_user_id,
@@ -2049,3 +2073,8 @@ class _AgentLoggerAdapter(logging.LoggerAdapter):
         if self.extra:
             return "[Agent: %s] | %s" % (self.extra["agent_id"], msg), kwargs
         return super(_AgentLoggerAdapter, self).process(msg, kwargs)
+
+
+def _ms_since(started: float) -> float:
+    """Milliseconds elapsed since a `time.perf_counter()` reading."""
+    return (time.perf_counter() - started) * 1000

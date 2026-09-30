@@ -34,6 +34,8 @@ const settleFor = 3 * time.Second
 // needs from an edge is only that joining and leaving work.
 type quietEdge struct {
 	inbound chan agent.InboundAudio
+	// connections is how a test reports a media path connecting, as a real edge does.
+	connections chan agent.ConnectionTiming
 
 	mu     sync.Mutex
 	joined bool
@@ -44,7 +46,10 @@ type quietEdge struct {
 }
 
 func newQuietEdge() *quietEdge {
-	return &quietEdge{inbound: make(chan agent.InboundAudio, 4)}
+	return &quietEdge{
+		inbound:     make(chan agent.InboundAudio, 4),
+		connections: make(chan agent.ConnectionTiming, 2),
+	}
 }
 
 func (e *quietEdge) Join(context.Context) error {
@@ -55,6 +60,8 @@ func (e *quietEdge) Join(context.Context) error {
 }
 
 func (e *quietEdge) Audio() <-chan agent.InboundAudio { return e.inbound }
+
+func (e *quietEdge) Connections() <-chan agent.ConnectionTiming { return e.connections }
 
 func (e *quietEdge) PublishAudio(audio.PcmData) error { return nil }
 
@@ -86,6 +93,7 @@ func (e *quietEdge) Leave() error {
 	}
 	e.left = true
 	close(e.inbound)
+	close(e.connections)
 	return nil
 }
 
@@ -1073,6 +1081,38 @@ func (s *SessionSuite) TestAGreetingIsSpokenWithoutGoingThroughTheModel() {
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nothing was said")
 	s.Equal("Hi, I'm listening.", s.voice.spoken()[0].Text)
 	s.Empty(s.model.requests(), "a greeting the caller wrote does not need a model")
+}
+
+// awaitConnection returns the first connection timing a watcher sees, or fails.
+func (s *SessionSuite) awaitConnection(events <-chan Event) agent.Connection {
+	deadline := time.After(settleFor)
+	for {
+		select {
+		case event := <-events:
+			if connected, ok := event.(agent.Connection); ok {
+				return connected
+			}
+		case <-deadline:
+			s.FailNow("no connection timing reached the watcher")
+			return agent.Connection{}
+		}
+	}
+}
+
+func (s *SessionSuite) TestAWatcherThatAttachesLateStillSeesHowTheCallConnected() {
+	s.manages()
+	created := s.joins(Spec{})
+	early, detachEarly := created.Watch()
+	defer detachEarly()
+
+	s.edges[0].connections <- agent.ConnectionTiming{Peer: "publisher", TotalMs: 42}
+	s.Equal(42.0, s.awaitConnection(early).TotalMs, "a watcher already attached sees it as it happens")
+
+	late, detachLate := created.Watch()
+	defer detachLate()
+	replayed := s.awaitConnection(late)
+	s.Equal("publisher", replayed.Peer, "connection timing is state, so it is replayed")
+	s.Equal(42.0, replayed.TotalMs)
 }
 
 func (s *SessionSuite) TestAWatcherSeesTheConversationAndStopsWhenItDetaches() {

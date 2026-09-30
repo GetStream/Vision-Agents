@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from vision_agents.core.llm.remote import JoinStep
+
 
 def render_turn(frame: dict[str, Any], calls: list[dict[str, Any]]) -> str:
     """Show dependencies without adding overlapping model work to the critical path."""
@@ -55,3 +57,38 @@ def _calls(calls: list[dict[str, Any]], purposes: set[str] | None) -> list[str]:
         status = "" if call.get("success", True) else " FAILED"
         lines.append(f"       +-- {purpose} {name}: {timing}{status}")
     return lines
+
+
+def render_join(call_id: str, steps: list[JoinStep]) -> str:
+    """Show the agent's own path to the call, one step after another."""
+    total = sum(step.ms for step in steps)
+    lines = [
+        f"join DAG call={call_id} | join start -> in the call ~{total:,.0f} ms",
+        "  [join start]",
+    ]
+    for step in steps:
+        lines.extend(("       |", "       v", f"  [{step.name} {step.ms:,.0f} ms]"))
+        if step.name == "router session":
+            lines.append(
+                "       +-- the router joins the call here; its WebRTC connection DAG follows"
+            )
+    return "\n".join(lines)
+
+
+def render_connection(frame: dict[str, Any]) -> str:
+    """Show how one media path connected, from the router starting to join to DTLS done."""
+    peer = frame.get("peer", "")
+    total = frame.get("total_ms") or 0
+    lines = [
+        f"webrtc connection DAG peer={peer} | edge join start -> DTLS connected ~{total:,.0f} ms",
+        "  [edge join start]",
+    ]
+    for step in frame.get("steps") or []:
+        duration = step.get("ms") or 0
+        lines.extend(
+            ("       |", "       v", f"  [{step.get('name', '')} {duration:,.0f} ms]")
+        )
+    first_media = frame.get("first_media_ms") or 0
+    if first_media:
+        lines.append(f"       +-- first RTP at ~{first_media:,.0f} ms")
+    return "\n".join(lines)
