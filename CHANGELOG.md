@@ -437,11 +437,12 @@ stops.
 With `log_latency=True` on `stream.Accelerated` (`VOICE_LATENCY_DAG=1` for
 `simple_voice_ai`), an agent also prints how it joined: creating the call, starting its
 components, the chat conversation, the router session and the event socket. The router
-then streams a `connection` frame on the session socket for each media path, publisher and
-subscriber, with every step from the start of its join: the coordinator and SFU sockets and
-joins, the offer and answer, ICE, DTLS and the first RTP packet. A watcher that attaches
-after a path connected is sent its latest timing. `RemoteCall.join_steps` carries the
-agent's own steps to the pipeline.
+then streams one `connection` frame on the session socket whose `trace` is the Go SDK's
+join DAG, unchanged: every step with what it waited for (the coordinator and SFU sockets
+and joins, the offer and answer, ICE, DTLS and the first RTP packet both ways), its time in
+ms and in round trips of its peer, and the critical path. The console view draws it with
+the parallel branches side by side. A watcher that attaches after the join is sent it too.
+`RemoteCall.join_steps` carries the agent's own steps to the pipeline.
 
 ### A dispatch worker can run tools for every session under an agent id
 

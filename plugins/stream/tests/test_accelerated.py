@@ -6,6 +6,7 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestServer
 import time
+from pathlib import Path
 
 import av
 from PIL import Image
@@ -144,6 +145,25 @@ class TestAccelerated:
             cost_tracking={"project": "moderation", "environment": "dev"},
             memory_filter={"user_id": "222", "company_id": "12312"},
         )
+
+    @pytest.fixture
+    def join_trace(self) -> dict[str, Any]:
+        """A join as the SDK reports it, with one TCP connect shown under its step."""
+        trace = json.loads((Path(__file__).parent / "join_trace.json").read_text())
+        trace["spans"].insert(
+            3,
+            {
+                "name": "sfu.ws.dial.tcp",
+                "parent": "sfu.ws.dial",
+                "kind": "net",
+                "peer": "sfu",
+                "start_ms": 202,
+                "end_ms": 252,
+                "ms": 50,
+                "rtts": 1,
+            },
+        )
+        return trace
 
     @pytest.fixture
     async def joined(
@@ -329,7 +349,54 @@ class TestAccelerated:
         finally:
             await pipeline.leave_remote()
 
-    async def test_a_connection_frame_prints_how_the_media_path_connected(
+    async def test_a_connection_frame_prints_the_join_dag(
+        self,
+        router: Router,
+        joined: stream.Accelerated,
+        join_trace: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ):
+        joined.log_latency = True
+        caplog.set_level("INFO")
+        await router.send({"type": "connection", "trace": join_trace})
+
+        async def printed() -> None:
+            while "critical path:" not in caplog.text:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(printed(), SETTLE)
+        text = caplog.text
+        assert (
+            "join DAG (webrtc) RTT coordinator 50.0 ms, RTT sfu 50.0 ms, RTT udp 50.0 ms"
+            in text
+        )
+        rows = {
+            line.split()[1] if line.startswith("*") else line.split()[0]: line
+            for line in text.splitlines()
+            if line[:1] in ("*", " ") and "|" in line
+        }
+        assert rows["sfu.ws.dial"].startswith("* sfu.ws.dial"), "on the critical path"
+        assert " 150.0   3.00  |" in rows["sfu.ws.dial"], "150 ms is 3 RTT"
+        assert rows["pub.setpublisher"].startswith("  pub.setpublisher"), (
+            "a side branch"
+        )
+        assert "pub.offer" in rows["pub.setpublisher"], "it shows what it waited for"
+        assert "|" + " " * 12 + "=" * 10 + " " * 18 + "|" in rows["sfu.ws.dial"], (
+            "the timeline places it by its start and end"
+        )
+        assert "    .tcp" in text, "a detail span sits under its step"
+        assert (
+            "critical path: coord.join > pcs.create > sfu.ws.dial > sfu.join > "
+            "sub.debounce > sub.offer > sub.sendanswer > sub.ice > sub.dtls > sub.rtp"
+        ) in text
+        assert (
+            "630.0 ms = 11.00 RTT (550.0 ms network) + 78.0 ms timers + 2.0 ms local;"
+            " 0.0 ms unaccounted waiting"
+        ) in text
+        assert "publish to media: 585.0 ms from Join" in text
+        assert "subscribe to media: 630.0 ms from Join" in text
+
+    async def test_a_connection_frame_without_steps_says_so(
         self,
         router: Router,
         joined: stream.Accelerated,
@@ -337,49 +404,28 @@ class TestAccelerated:
     ):
         joined.log_latency = True
         caplog.set_level("INFO")
-        await router.send(
-            {
-                "type": "connection",
-                "peer": "publisher",
-                "total_ms": 720,
-                "first_media_ms": 730,
-                "steps": [
-                    {"name": "coordinator join", "ms": 400, "at_ms": 405},
-                    {"name": "SFU join", "ms": 50, "at_ms": 505},
-                    {"name": "SetPublisher", "ms": 80, "at_ms": 620},
-                    {"name": "ICE", "ms": 40, "at_ms": 660},
-                    {"name": "DTLS", "ms": 60, "at_ms": 720},
-                ],
-            }
-        )
+        await router.send({"type": "connection", "trace": {"spans": []}})
 
         async def printed() -> None:
-            while "[DTLS 60 ms]" not in caplog.text:
+            while "no steps recorded" not in caplog.text:
                 await asyncio.sleep(0.01)
 
         await asyncio.wait_for(printed(), SETTLE)
-        assert (
-            "webrtc connection DAG peer=publisher | edge join start -> DTLS connected ~720 ms"
-            in caplog.text
-        )
-        assert "[coordinator join 400 ms]" in caplog.text
-        assert "[SetPublisher 80 ms]" in caplog.text
-        assert "[ICE 40 ms]" in caplog.text
-        assert "+-- first RTP at ~730 ms" in caplog.text
 
     async def test_connection_frames_are_quiet_by_default(
         self,
         router: Router,
         joined: stream.Accelerated,
+        join_trace: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
     ):
         caplog.set_level("INFO")
         events = joined.remote_events()
-        await router.send({"type": "connection", "peer": "publisher", "steps": []})
+        await router.send({"type": "connection", "trace": join_trace})
         await router.send({"type": "turn", "turn_id": "turn-9", "roundtrip_ms": 10})
         await asyncio.wait_for(anext(events), SETTLE)
 
-        assert "webrtc connection DAG" not in caplog.text
+        assert "join DAG (webrtc)" not in caplog.text
 
     async def test_latency_logging_is_quiet_by_default(
         self,
