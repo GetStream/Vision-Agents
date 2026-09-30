@@ -118,13 +118,10 @@ type operation struct {
 	Message Message
 	Create  bool
 	Author  string `json:",omitempty"`
-	// thinking rides only on a live update. It is unexported so it never reaches the
+	// reasoning rides only on a live update. It is unexported so it never reaches the
 	// outbox on disk or a stored message.
-	thinking string
+	reasoning *reasoningWindow
 }
-
-// maxThinking bounds the live reasoning sent with each update to its most recent part.
-const maxThinking = 4000
 
 type Service struct {
 	lock   *os.File
@@ -147,9 +144,11 @@ type Conversation struct {
 	dirty    bool
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
-	reasoning string
-	// indicated is the last AI indicator sent to watchers. Only run touches it.
+	reasoning liveReasoning
+	// indicated is the last AI indicator sent to watchers, and lived when the last live
+	// update went out. Only run touches them.
 	indicated indication
+	lived     time.Time
 	stopped   chan struct{}
 	done      chan struct{}
 }
@@ -785,7 +784,7 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 	}
 	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner}
 	c.data.Current = &a
-	c.reasoning = ""
+	c.reasoning = liveReasoning{}
 	c.data.Pending = append(c.data.Pending,
 		operation{Message: u, Create: true, Author: c.userAuthor()},
 		operation{Message: a, Create: true})
@@ -893,6 +892,7 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		c.state("thinking")
+		c.reasoning.round()
 		if m.Text != "" && !strings.HasSuffix(m.Text, "\n\n") {
 			m.Text += "\n\n"
 		}
@@ -909,7 +909,10 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !c.acceptTurn(e.TurnID, false) {
 			return
 		}
-		c.reasoning = tail(c.reasoning+e.Text, maxThinking)
+		// Thinking is not part of the message, so nothing is republished or checkpointed:
+		// the next live update carries it.
+		c.reasoning.add(e.Text, time.Now())
+		return
 	case agent.Responded:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -931,6 +934,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		}
 		m.TextLayout = 1
 		m.AnswerStart = utf8.RuneCountInString(m.Text)
+		c.reasoning.round()
 		m.Tools = append(m.Tools, Tool{Type: "tool_calling", Product: e.Product, SDK: e.SDK, ID: e.ID, Name: e.Tool, Title: title(e.Tool), Status: "running", Phase: "running", StartedAt: e.StartedAt})
 		c.state("tools")
 		persist = true
@@ -1311,18 +1315,6 @@ func (c *Conversation) checkpoint() {
 	}
 }
 
-// tail keeps the last limit bytes of text without splitting a UTF-8 character.
-func tail(text string, limit int) string {
-	if len(text) <= limit {
-		return text
-	}
-	cut := len(text) - limit
-	for cut < len(text) && !utf8.RuneStart(text[cut]) {
-		cut++
-	}
-	return text[cut:]
-}
-
 func (c *Conversation) save() {
 	m := c.data.Current
 	m.Saved = false
@@ -1387,8 +1379,8 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 		return err
 	}
 	if ephemeral {
-		if op.thinking != "" {
-			fields["reasoning"] = op.thinking
+		if op.reasoning != nil {
+			fields["reasoning"] = op.reasoning
 		}
 		_, err := c.service.client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
 		return err
@@ -1458,8 +1450,7 @@ func (c *Conversation) flush() bool {
 }
 func (c *Conversation) run() {
 	defer close(c.done)
-	// Stream's guidance for streamed replies is a live update at most every 50 to 100 ms.
-	tick := time.NewTicker(100 * time.Millisecond)
+	tick := time.NewTicker(liveTick)
 	defer tick.Stop()
 	retry := time.Time{}
 	for {
@@ -1479,9 +1470,21 @@ func (c *Conversation) run() {
 			}
 			c.mu.Lock()
 			m := c.data.Current
-			thinking := c.reasoning
+			now := time.Now()
 			created := m != nil && c.created[m.ID]
 			dirty := c.dirty && created
+			// Thinking alone goes out at a gentler pace than the answer. A finished reply's
+			// last thoughts go out once its final text is stored, which it is by now.
+			// Ticks run a little early or late, so the pace allows half a tick either way.
+			thinking := created && m.Role == "assistant" && c.reasoning.pending() &&
+				(m.FinishedAt != nil || now.Sub(c.lived) >= reasoningEvery-liveTick/2)
+			live := dirty && m.FinishedAt == nil || thinking
+			var window *reasoningWindow
+			if live && m.Role == "assistant" {
+				if w, ok := c.reasoning.window(now); ok {
+					window = &w
+				}
+			}
 			if m != nil {
 				copy := *m
 				copy.Tools = append([]Tool{}, m.Tools...)
@@ -1499,25 +1502,28 @@ func (c *Conversation) run() {
 			} else {
 				c.indicate(nil)
 			}
-			if dirty && m != nil && m.FinishedAt == nil {
+			if live {
+				c.lived = now
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := c.send(ctx, operation{Message: *m, thinking: thinking}, true)
+				err := c.send(ctx, operation{Message: *m, reasoning: window}, true)
 				cancel()
-				if err != nil {
-					c.mu.Lock()
+				c.mu.Lock()
+				current := c.data.Current != nil && c.data.Current.ID == m.ID
+				// A settled reply's thinking is best effort, like its indicator: it is
+				// not retried, so a failing Stream cannot keep the loop sending it.
+				if window != nil && current && (err == nil || m.FinishedAt != nil) {
+					c.reasoning.delivered(*window, now)
+				}
+				if err != nil && m.FinishedAt == nil {
 					if c.data.Current != nil {
 						c.data.Current.Error = "Live Stream Chat update failed; final writes remain queued"
 						c.dirty = true
 						c.publish(*c.data.Current)
 					}
-					c.mu.Unlock()
-				} else {
-					c.mu.Lock()
-					if c.data.Current != nil && c.data.Current.ID == m.ID {
-						c.data.Current.Error = ""
-					}
-					c.mu.Unlock()
+				} else if err == nil && current {
+					c.data.Current.Error = ""
 				}
+				c.mu.Unlock()
 			}
 		}
 	}

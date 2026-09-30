@@ -15,6 +15,8 @@
 
 - Follow Stream's AI message protocol in persistent conversations: assistant replies carry `ai_generated: true`, live updates go out every 100 ms, and `ai_indicator.update` (thinking, checking external sources, generating) and `ai_indicator.clear` track each reply.
 
+- Stream a persistent conversation's live thinking in windows instead of repeating its latest 4,000 bytes on every update. The ephemeral `reasoning` field is now `{id, offset, text, length, duration_ms}`: `text` is the thinking from `offset` to `length` (Unicode scalars) that clients append, at most 2,000 bytes per update, with the last 1,500 bytes repeated every 3 s for watchers who joined late. Thinking alone is sent at most every 200 ms, model rounds start new paragraphs, the last thoughts arrive after the reply settles, and thinking is still never stored.
+
 ## Breaking Changes
 
 ### `ROUTER_AUTH_MODE` defaults to `api_key`, and `noauth` has been split in two

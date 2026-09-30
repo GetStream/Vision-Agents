@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -1123,6 +1124,73 @@ func TestProgressIsLiveUntilTheReplySettles(t *testing.T) {
 	require.NotContains(t, string(stored), "Weighing the two options.")
 	c.Release()
 	s.Close()
+}
+
+// TestThinkingStreamsInWindows covers the cost of showing thinking live: it is sent in
+// windows a watcher appends, thinking alone goes out at the gentler pace, the reply is
+// not republished for it, and the last thoughts still arrive once the reply settles.
+func TestThinkingStreamsInWindows(t *testing.T) {
+	db, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	require.Eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.created[id] }, 3*time.Second, 20*time.Millisecond)
+	sequence := current(c).Sequence
+
+	var thinking strings.Builder
+	begun := time.Now()
+	for i := 0; time.Since(begun) < time.Second; i++ {
+		piece := fmt.Sprintf("thought %d. ", i)
+		thinking.WriteString(piece)
+		c.Observe(agent.ReasoningDelta{Text: piece})
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.Equal(t, sequence, current(c).Sequence, "thinking republished the reply")
+	c.Observe(agent.ReasoningDelta{Text: "Last thought."})
+	thinking.WriteString("Last thought.")
+	c.Observe(agent.ResponseDelta{Text: "The answer."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	windows := func() []reasoningWindow {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		var all []reasoningWindow
+		for _, patch := range db.patches {
+			if raw, ok := patch["reasoning"]; ok {
+				var w reasoningWindow
+				b, _ := json.Marshal(raw)
+				require.NoError(t, json.Unmarshal(b, &w))
+				all = append(all, w)
+			}
+		}
+		return all
+	}
+	require.Eventually(t, func() bool {
+		all := windows()
+		return len(all) > 0 && all[len(all)-1].Length == utf8.RuneCountInString(thinking.String())
+	}, 3*time.Second, 20*time.Millisecond, "the last thoughts never arrived")
+
+	var w watcher
+	sent := 0
+	for _, window := range windows() {
+		w.apply(window)
+		sent += len(window.Text)
+	}
+	require.Equal(t, thinking.String(), w.text)
+	// About five updates a second while only thinking, plus the settled reply's last one.
+	require.LessOrEqual(t, len(windows()), 9, "thinking alone was sent at the answer's pace")
+	require.Less(t, sent, 2*thinking.Len(), "windows repeated thinking already sent")
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	stored, _ := json.Marshal(db.messages[id])
+	require.NotContains(t, string(stored), "Last thought.")
+	require.NotContains(t, string(stored), "thought 1.")
 }
 
 // TestRepliesFollowStreamAIProtocol covers what Stream's AI components need from a reply:
