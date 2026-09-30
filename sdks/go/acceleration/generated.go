@@ -737,6 +737,24 @@ func (e SessionState) Valid() bool {
 	}
 }
 
+// Defines values for SessionToolExecutor.
+const (
+	SessionToolExecutorClient SessionToolExecutor = "client"
+	SessionToolExecutorServer SessionToolExecutor = "server"
+)
+
+// Valid indicates whether the value is a known member of the SessionToolExecutor enum.
+func (e SessionToolExecutor) Valid() bool {
+	switch e {
+	case SessionToolExecutorClient:
+		return true
+	case SessionToolExecutorServer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SimulationMode.
 const (
 	SimulationModeAudio SimulationMode = "audio"
@@ -2200,6 +2218,9 @@ type RecordingStatus string
 
 // RespondRequest defines model for RespondRequest.
 type RespondRequest struct {
+	// ClientId The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
+	ClientId *string `json:"client_id,omitempty"`
+
 	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
 	CommandId *string `json:"command_id,omitempty"`
 	Text      string  `json:"text"`
@@ -2487,11 +2508,20 @@ type SessionState string
 type SessionTool struct {
 	// Description What the model is told the tool does, which is the whole of how it decides when to reach for one.
 	Description string `json:"description"`
-	Name        string `json:"name"`
+
+	// DisplayTitle What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment.
+	DisplayTitle *string `json:"display_title,omitempty"`
+
+	// Executor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+	Executor *SessionToolExecutor `json:"executor,omitempty"`
+	Name     string               `json:"name"`
 
 	// Parameters A JSON Schema object describing the arguments.
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
 }
+
+// SessionToolExecutor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+type SessionToolExecutor string
 
 // SessionVideo defines model for SessionVideo.
 type SessionVideo struct {
@@ -3555,6 +3585,11 @@ type ListSkillsParams struct {
 	ConfigId *string `form:"config_id,omitempty" json:"config_id,omitempty"`
 }
 
+// GenerateImageJSONBody defines parameters for GenerateImage.
+type GenerateImageJSONBody struct {
+	Prompt string `json:"prompt"`
+}
+
 // ListPhoneNumbersParams defines parameters for ListPhoneNumbers.
 type ListPhoneNumbersParams struct {
 	// IncludeReleased Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill.
@@ -3711,6 +3746,9 @@ type PrepareVoiceJSONRequestBody = PrepareVoiceRequest
 
 // AddVoiceSampleJSONRequestBody defines body for AddVoiceSample for application/json ContentType.
 type AddVoiceSampleJSONRequestBody = VoiceSampleRequest
+
+// GenerateImageJSONRequestBody defines body for GenerateImage for application/json ContentType.
+type GenerateImageJSONRequestBody GenerateImageJSONBody
 
 // PlacePhoneCallJSONRequestBody defines body for PlacePhoneCall for application/json ContentType.
 type PlacePhoneCallJSONRequestBody = PlaceCallRequest
@@ -4779,6 +4817,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GenerateImageWithBody Generate one image with the configured server-side image provider
+	//
+	// Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/images/generate (the `GenerateImage` operationId).
+	GenerateImageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GenerateImage Generate one image with the configured server-side image provider
+	//
+	// Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/images/generate (the `GenerateImage` operationId).
+	GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PlacePhoneCallWithBody Place an outbound call and bridge it into a Stream call
 	//
@@ -6901,6 +6957,44 @@ func (c *Client) AddVoiceSampleWithBody(ctx context.Context, id ResourceID, cont
 // Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 func (c *Client) AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddVoiceSampleRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GenerateImageWithBody Generate one image with the configured server-side image provider
+//
+// Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/images/generate (the `GenerateImage` operationId).
+func (c *Client) GenerateImageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGenerateImageRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GenerateImage Generate one image with the configured server-side image provider
+//
+// Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/images/generate (the `GenerateImage` operationId).
+func (c *Client) GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGenerateImageRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11315,6 +11409,46 @@ func NewAddVoiceSampleRequestWithBody(server string, id ResourceID, contentType 
 	return req, nil
 }
 
+// NewGenerateImageRequest calls the generic GenerateImage builder with application/json body
+func NewGenerateImageRequest(server string, body GenerateImageJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGenerateImageRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewGenerateImageRequestWithBody constructs an http.Request for the GenerateImage method, with any body, and a specified content type
+func NewGenerateImageRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/images/generate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPlacePhoneCallRequest calls the generic PlacePhoneCall builder with application/json body
 func NewPlacePhoneCallRequest(server string, body PlacePhoneCallJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -13548,6 +13682,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSampleWithResponse(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
+
+	// GenerateImageWithBodyWithResponse Generate one image with the configured server-side image provider
+	//
+	// Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/images/generate (the `GenerateImage` operationId).
+	GenerateImageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error)
+
+	// GenerateImageWithResponse Generate one image with the configured server-side image provider
+	//
+	// Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/images/generate (the `GenerateImage` operationId).
+	GenerateImageWithResponse(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error)
 
 	// PlacePhoneCallWithBodyWithResponse Place an outbound call and bridge it into a Stream call
 	//
@@ -18651,6 +18803,89 @@ func (r AddVoiceSampleResponse) ContentType() string {
 	return ""
 }
 
+type GenerateImageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *struct {
+		// Data Base64-encoded PNG or JPEG, at most 10 MiB decoded.
+		Data      string `json:"data"`
+		MediaType string `json:"media_type"`
+		Model     string `json:"model"`
+	}
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON502 the response for an HTTP 502 `application/json` response
+	JSON502 *struct {
+		Error string `json:"error"`
+	}
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GenerateImageResponse) GetJSON200() *struct {
+	// Data Base64-encoded PNG or JPEG, at most 10 MiB decoded.
+	Data      string `json:"data"`
+	MediaType string `json:"media_type"`
+	Model     string `json:"model"`
+} {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GenerateImageResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GenerateImageResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GenerateImageResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON502 returns the response for an HTTP 502 `application/json` response
+func (r GenerateImageResponse) GetJSON502() *struct {
+	Error string `json:"error"`
+} {
+	return r.JSON502
+}
+
+// GetBody returns the raw response body bytes
+func (r GenerateImageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GenerateImageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GenerateImageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GenerateImageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PlacePhoneCallResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21824,6 +22059,36 @@ func (c *ClientWithResponses) AddVoiceSampleWithResponse(ctx context.Context, id
 		return nil, err
 	}
 	return ParseAddVoiceSampleResponse(rsp)
+}
+
+// GenerateImageWithBodyWithResponse Generate one image with the configured server-side image provider
+//
+// Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/images/generate (the `GenerateImage` operationId).
+func (c *ClientWithResponses) GenerateImageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error) {
+	rsp, err := c.GenerateImageWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGenerateImageResponse(rsp)
+}
+
+// GenerateImageWithResponse Generate one image with the configured server-side image provider
+//
+// Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/images/generate (the `GenerateImage` operationId).
+func (c *ClientWithResponses) GenerateImageWithResponse(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error) {
+	rsp, err := c.GenerateImage(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGenerateImageResponse(rsp)
 }
 
 // PlacePhoneCallWithBodyWithResponse Place an outbound call and bridge it into a Stream call
@@ -26045,6 +26310,67 @@ func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGenerateImageResponse parses an HTTP response from a GenerateImageWithResponse call
+func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GenerateImageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data Base64-encoded PNG or JPEG, at most 10 MiB decoded.
+			Data      string `json:"data"`
+			MediaType string `json:"media_type"`
+			Model     string `json:"model"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
 
 	}
 

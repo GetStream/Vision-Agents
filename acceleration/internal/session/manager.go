@@ -208,6 +208,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		spec.ConversationID = conv.CID()
 		spec.ContextTruncated = truncated
+		displays := map[string]persistent.ToolDisplay{}
+		for _, tool := range spec.Tools {
+			displays[tool.Name] = persistent.ToolDisplay{Title: tool.DisplayTitle, Client: tool.Client}
+		}
+		conv.DescribeTools(displays)
 		// A fork opens an empty channel of its own and then reads the parent's, so the model
 		// carries on from what was said while the transcripts stay separate. The parent's
 		// half goes first because it happened first.

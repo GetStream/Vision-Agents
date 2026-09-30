@@ -3663,6 +3663,24 @@ components:
           type: object
           additionalProperties: true
           description: A JSON Schema object describing the arguments.
+        executor:
+          type: string
+          enum: [server, client]
+          # Without these the generated constants are named Server and Client, which clash
+          # with the package's own Server.
+          x-enum-varnames: [SessionToolExecutorServer, SessionToolExecutorClient]
+          description: >
+            Who runs it. A client tool runs on a person's device: in a persistent conversation
+            its call is shown as awaiting the device of the person whose command it answers
+            (their user and the command's client_id), with its arguments, which every
+            channel member can read. The caller still answers it over the events socket,
+            once the device has reported. Defaults to server.
+        display_title:
+          type: string
+          maxLength: 80
+          description: >
+            What a call is doing, in words for the people in the conversation, such as
+            "Checking your location". Shown on the reply's ai_tool_call attachment.
 
     SessionSkill:
       type: object
@@ -6320,6 +6338,12 @@ components:
           type: string
           pattern: '^[A-Za-z0-9_-]{1,128}$'
           description: Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+        client_id:
+          type: string
+          pattern: '^[A-Za-z0-9_.:-]{1,128}$'
+          description: >
+            The install the command came from. It is written on the person's message as
+            client_id, and a client tool called while answering is addressed to it.
     CommandReceipt:
       type: object
       required: [command_id, user_message_id, assistant_message_id, state, duplicate]

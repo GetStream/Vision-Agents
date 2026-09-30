@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// watcher applies windows the way Athena's clients do: it appends what it does not
-// have, ignores what it has, marks a gap it cannot fill, and starts a new paragraph
-// when the thinking starts over under another ID.
+// watcher applies one reasoning step's windows the way Athena's clients do: it appends
+// what it does not have, ignores what it has and marks a gap it cannot fill. Windows of
+// another step are another step's.
 type watcher struct {
 	id   string
 	have int
@@ -19,11 +19,11 @@ type watcher struct {
 }
 
 func (w *watcher) apply(r reasoningWindow) {
+	if w.id == "" {
+		w.id = r.ID
+	}
 	if r.ID != w.id {
-		if w.text != "" {
-			w.text += "\n\n"
-		}
-		w.id, w.have = r.ID, 0
+		return
 	}
 	if r.Length <= w.have {
 		return
@@ -56,7 +56,7 @@ func drain(t *testing.T, r *liveReasoning, now time.Time, w *watcher) []reasonin
 }
 
 func TestReasoningWindowsCarryOnlyNewThinking(t *testing.T) {
-	var r liveReasoning
+	r := liveReasoning{id: "r1"}
 	var w watcher
 	start := time.Now()
 	_, ok := r.window(start)
@@ -64,22 +64,22 @@ func TestReasoningWindowsCarryOnlyNewThinking(t *testing.T) {
 
 	r.add("Weighing", start)
 	first := drain(t, &r, start, &w)
-	require.Equal(t, []reasoningWindow{{ID: r.id, Offset: 0, Text: "Weighing", Length: 8, key: true}}, first)
+	require.Equal(t, []reasoningWindow{{ID: "r1", Offset: 0, Text: "Weighing", Length: 8, key: true}}, first)
 
 	r.add(" the options.", start.Add(1500*time.Millisecond))
 	next := drain(t, &r, start.Add(1500*time.Millisecond), &w)
 	require.Len(t, next, 1)
 	require.Equal(t, 8, next[0].Offset)
 	require.Equal(t, " the options.", next[0].Text, "an update repeated thinking already sent")
-	require.EqualValues(t, 1500, next[0].DurationMS)
 	require.Equal(t, "Weighing the options.", w.text)
+	require.EqualValues(t, 1500, r.snapshot().durationMS)
 
 	_, ok = r.window(start.Add(2 * time.Second))
 	require.False(t, ok, "nothing new and no keyframe due")
 }
 
 func TestReasoningKeyframeLetsLateWatchersCatchUp(t *testing.T) {
-	var r liveReasoning
+	r := liveReasoning{id: "r1"}
 	var inSync, late watcher
 	start := time.Now()
 	thinking := strings.Repeat("considering ", 300)
@@ -105,7 +105,7 @@ func TestReasoningKeyframeLetsLateWatchersCatchUp(t *testing.T) {
 }
 
 func TestReasoningBacklogGoesOutInOrder(t *testing.T) {
-	var r liveReasoning
+	r := liveReasoning{id: "r1"}
 	var w watcher
 	now := time.Now()
 	thinking := strings.Repeat("é🙂 naïve ", 400)
@@ -115,20 +115,8 @@ func TestReasoningBacklogGoesOutInOrder(t *testing.T) {
 	require.Equal(t, thinking, w.text)
 }
 
-func TestReasoningRoundsStartParagraphs(t *testing.T) {
-	var r liveReasoning
-	var w watcher
-	now := time.Now()
-	r.round()
-	r.add("First look.", now)
-	r.round()
-	r.add("After the search.", now)
-	drain(t, &r, now, &w)
-	require.Equal(t, "First look.\n\nAfter the search.", w.text)
-}
-
 func TestReasoningBacklogBeyondTheBufferSkipsAhead(t *testing.T) {
-	var r liveReasoning
+	r := liveReasoning{id: "r1"}
 	var w watcher
 	now := time.Now()
 	r.add("start ", now)
@@ -141,16 +129,15 @@ func TestReasoningBacklogBeyondTheBufferSkipsAhead(t *testing.T) {
 	require.Equal(t, r.total, w.have)
 }
 
-func TestReasoningThatStartsOverIsANewParagraph(t *testing.T) {
-	var before, after liveReasoning
-	var w watcher
+func TestReasoningKeepsOnlyTheOpeningOfARound(t *testing.T) {
+	r := liveReasoning{id: "r1"}
 	now := time.Now()
-	before.add("Before the restart.", now)
-	old, _ := before.window(now)
-	w.apply(old)
-	after.add("Resumed.", now)
-	after.delivered(old, now)
-	require.Zero(t, after.sent, "a window of other thinking does not count as delivered")
-	drain(t, &after, now, &w)
-	require.Equal(t, "Before the restart.\n\nResumed.", w.text)
+	r.add(strings.Repeat("é", maxHead), now)
+	require.LessOrEqual(t, len(r.head), maxHead)
+	require.True(t, utf8.ValidString(r.head), "the opening split a character")
+	other := liveReasoning{id: "r2"}
+	other.add("Resumed.", now)
+	old, _ := r.window(now)
+	other.delivered(old, now)
+	require.Zero(t, other.sent, "a window of another step does not count as delivered")
 }

@@ -15,7 +15,11 @@
 
 - Follow Stream's AI message protocol in persistent conversations: assistant replies carry `ai_generated: true`, live updates go out every 100 ms, and `ai_indicator.update` (thinking, checking external sources, generating) and `ai_indicator.clear` track each reply.
 
-- Stream a persistent conversation's live thinking in windows instead of repeating its latest 4,000 bytes on every update. The ephemeral `reasoning` field is now `{id, offset, text, length, duration_ms}`: `text` is the thinking from `offset` to `length` (Unicode scalars) that clients append, at most 2,000 bytes per update, with the last 1,500 bytes repeated every 3 s for watchers who joined late. Thinking alone is sent at most every 200 ms, model rounds start new paragraphs, the last thoughts arrive after the reply settles, and thinking is still never stored.
+- Stream a persistent conversation's live thinking in windows instead of repeating its latest 4,000 bytes on every update. The ephemeral `reasoning` field is now `{id, offset, text, length}` for the reasoning step `id`: `text` is the thinking from `offset` to `length` (Unicode scalars) that clients append, at most 2,000 bytes per update, with the last 1,500 bytes repeated every 3 s for watchers who joined late. Thinking alone is sent at most every 200 ms, and the last thoughts arrive after the reply settles.
+
+- Show a persistent reply's steps as Stream attachments, in order: each round of thinking as `ai_reasoning` (`id`, `status`, `summary`, `preview`, `duration_ms`) and each visible tool call as `ai_tool_call` (`id` is the provider's call ID, `name`, `display_title`, `status`, `executor`, timings). They ride on live updates and are stored with the settled reply, within Stream's 30-attachment, 5 KB limit: artifacts are kept whole and older steps' previews and summaries give way first. A round stores only its first sentence (summary) and its first 500 characters (preview); the rest of the thinking is still only shown live.
+
+- Let a caller declare client tools (`SessionTool.executor: client`, with an optional `display_title`) and say which install a command came from (`RespondRequest.client_id`, written on the person's message as `client_id`). A client tool's call is shown as `awaiting_client`, addressed to the command's initiator and install, with its arguments; the caller answers it over the events socket once the device reports, and a `summary` in its result is shown on the step.
 
 ## Breaking Changes
 

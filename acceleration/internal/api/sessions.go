@@ -280,7 +280,7 @@ func (s *Server) RespondSession(ctx context.Context, request RespondSessionReque
 	}
 
 	if id := value(request.Body.CommandId); id != "" {
-		receipt, err := found.RespondCommand(ctx, id, request.Body.Text)
+		receipt, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId))
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return RespondSession409JSONResponse{Error: err.Error()}, nil
 		}
@@ -659,9 +659,12 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 	if request.Tools != nil {
 		for _, tool := range *request.Tools {
-			declared := harness.Tool{Name: tool.Name, Description: tool.Description}
+			declared := harness.Tool{Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle)}
 			if tool.Parameters != nil {
 				declared.Parameters = *tool.Parameters
+			}
+			if tool.Executor != nil && *tool.Executor == SessionToolExecutorClient {
+				declared.Client = true
 			}
 			spec.Tools = append(spec.Tools, declared)
 		}

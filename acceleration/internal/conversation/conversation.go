@@ -48,25 +48,29 @@ type Source struct {
 }
 type Message struct {
 	// AnswerStart is a Unicode code-point offset separating public progress from the answer.
-	TextLayout     int                  `json:"text_layout,omitempty"`
-	AnswerStart    int                  `json:"answer_start,omitempty"`
-	CommandID      string               `json:"command_id,omitempty"`
-	TurnID         string               `json:"turn_id,omitempty"`
-	ID             string               `json:"id"`
-	QuestionID     string               `json:"question_id,omitempty"`
-	Role           string               `json:"role"`
-	Text           string               `json:"text"`
-	State          string               `json:"state"`
-	StartedAt      time.Time            `json:"response_started_at"`
-	StateStartedAt time.Time            `json:"state_started_at"`
-	FinishedAt     *time.Time           `json:"finished_at,omitempty"`
-	DurationMS     int64                `json:"duration_ms"`
-	Sequence       int                  `json:"sequence"`
-	Tools          []Tool               `json:"attachments"`
-	Sources        []Source             `json:"sources,omitempty"`
-	Artifacts      []ArtifactAttachment `json:"artifacts,omitempty"`
-	Saved          bool                 `json:"saved"`
-	Error          string               `json:"persistence_error,omitempty"`
+	TextLayout     int        `json:"text_layout,omitempty"`
+	AnswerStart    int        `json:"answer_start,omitempty"`
+	CommandID      string     `json:"command_id,omitempty"`
+	TurnID         string     `json:"turn_id,omitempty"`
+	ID             string     `json:"id"`
+	QuestionID     string     `json:"question_id,omitempty"`
+	Role           string     `json:"role"`
+	Text           string     `json:"text"`
+	State          string     `json:"state"`
+	StartedAt      time.Time  `json:"response_started_at"`
+	StateStartedAt time.Time  `json:"state_started_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	DurationMS     int64      `json:"duration_ms"`
+	Sequence       int        `json:"sequence"`
+	Tools          []Tool     `json:"attachments"`
+	// Parts are the reply's steps as its Stream attachments show them (parts.go).
+	Parts   []Part   `json:"parts,omitempty"`
+	Sources []Source `json:"sources,omitempty"`
+	// ClientID is the install a person's command came from, written on their message.
+	ClientID  string               `json:"client_id,omitempty"`
+	Artifacts []ArtifactAttachment `json:"artifacts,omitempty"`
+	Saved     bool                 `json:"saved"`
+	Error     string               `json:"persistence_error,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
@@ -96,12 +100,15 @@ type commandRecord struct {
 	CommandReceipt
 	Digest    string
 	Initiator string `json:",omitempty"`
+	// ClientID is the install the command came from; a client tool call is addressed to it.
+	ClientID string `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
 
 var ErrCommandConflict = errors.New("command ID was already used with different content")
 var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+var validClientID = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
 type disk struct {
 	OutboxVersion int
@@ -118,9 +125,10 @@ type operation struct {
 	Message Message
 	Create  bool
 	Author  string `json:",omitempty"`
-	// reasoning rides only on a live update. It is unexported so it never reaches the
-	// outbox on disk or a stored message.
+	// reasoning and live ride only on a live update. They are unexported so they never
+	// reach the outbox on disk or a stored message.
 	reasoning *reasoningWindow
+	live      *liveSnapshot
 }
 
 type Service struct {
@@ -142,6 +150,9 @@ type Conversation struct {
 	created  map[string]bool
 	emit     func(Updated)
 	dirty    bool
+	// tools describes the caller's tools for this session: titles, and which a person's
+	// device runs.
+	tools map[string]ToolDisplay
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning liveReasoning
@@ -723,7 +734,7 @@ func (c *Conversation) Release() {
 	c.emit = nil
 }
 func (c *Conversation) Begin(text string) error {
-	_, err := c.beginCommand(uuid.NewString(), text, true)
+	_, err := c.beginCommand(uuid.NewString(), text, "", true)
 	return err
 }
 
@@ -745,10 +756,11 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 
 // BeginCommand atomically records command ownership and both initial Chat writes.
 // A recorded command is never automatically executed again, including after a crash.
-func (c *Conversation) BeginCommand(id, text string) (CommandReceipt, error) {
-	return c.beginCommand(id, text, false)
+// clientID names the install the command came from; an invalid one is ignored.
+func (c *Conversation) BeginCommand(id, text, clientID string) (CommandReceipt, error) {
+	return c.beginCommand(id, text, clientID, false)
 }
-func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceipt, error) {
+func (c *Conversation) beginCommand(id, text, clientID string, legacy bool) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
@@ -776,13 +788,16 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 		return CommandReceipt{}, errors.New("a response is already running")
 	}
 	now := time.Now().UTC()
-	u := Message{ID: uuid.NewString(), CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}}
+	if !validClientID.MatchString(clientID) {
+		clientID = ""
+	}
+	u := Message{ID: uuid.NewString(), CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}, ClientID: clientID}
 	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", TextLayout: 1, QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
 	receipt := CommandReceipt{CommandID: id, UserMessageID: u.ID, AssistantMessageID: a.ID, State: a.State}
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
 	}
-	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner}
+	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
 	c.data.Current = &a
 	c.reasoning = liveReasoning{}
 	c.data.Pending = append(c.data.Pending,
@@ -892,7 +907,7 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		c.state("thinking")
-		c.reasoning.round()
+		c.settleThinking(m, time.Now())
 		if m.Text != "" && !strings.HasSuffix(m.Text, "\n\n") {
 			m.Text += "\n\n"
 		}
@@ -903,16 +918,19 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		c.state("writing")
+		c.settleThinking(m, time.Now())
 		m.Text += e.Text
 		m.Saved = false
 	case agent.ReasoningDelta:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
 		}
-		// Thinking is not part of the message, so nothing is republished or checkpointed:
-		// the next live update carries it.
-		c.reasoning.add(e.Text, time.Now())
-		return
+		// Only a new reasoning step changes the reply. The thinking itself is not part of
+		// the message, so nothing is republished or checkpointed for it: the next live
+		// update carries it.
+		if !c.thought(m, e.Text, time.Now()) {
+			return
+		}
 	case agent.Responded:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -934,8 +952,9 @@ func (c *Conversation) Observe(event agent.Event) {
 		}
 		m.TextLayout = 1
 		m.AnswerStart = utf8.RuneCountInString(m.Text)
-		c.reasoning.round()
+		c.settleThinking(m, time.Now())
 		m.Tools = append(m.Tools, Tool{Type: "tool_calling", Product: e.Product, SDK: e.SDK, ID: e.ID, Name: e.Tool, Title: title(e.Tool), Status: "running", Phase: "running", StartedAt: e.StartedAt})
+		c.called(m, toolCall{id: e.ID, name: e.Tool, arguments: e.Arguments, startedAt: e.StartedAt})
 		c.state("tools")
 		persist = true
 	case agent.ToolRan:
@@ -976,6 +995,11 @@ func (c *Conversation) Observe(event agent.Event) {
 				m.Sources = mergeSources(m.Sources, sourcesOf(e.Tool, e.Result))
 				m.Artifacts = mergeArtifacts(m.Artifacts, artifactsOf(e.Result))
 			}
+			failure := ""
+			if e.Err != nil {
+				failure = e.Err.Error()
+			}
+			ran(m, t.ID, t.Status, e.Result, failure, now)
 			changed = true
 		}
 		if !changed {
@@ -1167,6 +1191,7 @@ func (c *Conversation) finish(state string) {
 	}
 	now := time.Now().UTC()
 	c.state(state)
+	c.stopParts(m, now)
 	m.FinishedAt = &now
 	m.DurationMS = now.Sub(m.StartedAt).Milliseconds()
 	for i := range m.Tools {
@@ -1353,12 +1378,19 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 		"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent",
 		"support_message": metadata, "support_runtime": runtime,
 	}
-	if attachments := streamAttachments(m.Artifacts); len(attachments) > 0 {
+	parts := m.Parts
+	if op.live != nil {
+		parts = liveParts(parts, *op.live)
+	}
+	if attachments := messageAttachments(parts, streamAttachments(m.Artifacts)); len(attachments) > 0 {
 		fields["attachments"] = attachments
 	}
 	if op.Create {
 		custom := map[string]any{"source": "agent", "generating": m.FinishedAt == nil,
 			"support_message": metadata, "support_runtime": runtime}
+		if m.ClientID != "" {
+			custom["client_id"] = m.ClientID
+		}
 		// ai_generated is how Stream's AI components tell a streamed reply from the rest.
 		// User messages are written as the agent too, so it goes on assistant replies only.
 		if m.Role == "assistant" {
@@ -1480,6 +1512,7 @@ func (c *Conversation) run() {
 				(m.FinishedAt != nil || now.Sub(c.lived) >= reasoningEvery-liveTick/2)
 			live := dirty && m.FinishedAt == nil || thinking
 			var window *reasoningWindow
+			snapshot := c.reasoning.snapshot()
 			if live && m.Role == "assistant" {
 				if w, ok := c.reasoning.window(now); ok {
 					window = &w
@@ -1505,7 +1538,7 @@ func (c *Conversation) run() {
 			if live {
 				c.lived = now
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := c.send(ctx, operation{Message: *m, reasoning: window}, true)
+				err := c.send(ctx, operation{Message: *m, reasoning: window, live: &snapshot}, true)
 				cancel()
 				c.mu.Lock()
 				current := c.data.Current != nil && c.data.Current.ID == m.ID

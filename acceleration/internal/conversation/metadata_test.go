@@ -75,7 +75,7 @@ func TestActivityRevisionsIgnoreDuplicateLateAndCrossCommandEvents(t *testing.T)
 		context.Background(), "customer", "athena", "", "employee",
 	)
 	require.NoError(t, err)
-	_, err = conversation.BeginCommand("command-a", "First question")
+	_, err = conversation.BeginCommand("command-a", "First question", "")
 	require.NoError(t, err)
 	conversation.BindTurn("command-a", "turn-a")
 
@@ -111,7 +111,7 @@ func TestActivityRevisionsIgnoreDuplicateLateAndCrossCommandEvents(t *testing.T)
 	conversation.Observe(agent.ResponseDelta{TurnID: "turn-a", Text: "late output"})
 	require.Equal(t, cancelled, current(conversation))
 
-	_, err = conversation.BeginCommand("command-b", "Second question")
+	_, err = conversation.BeginCommand("command-b", "Second question", "")
 	require.NoError(t, err)
 	conversation.BindTurn("command-b", "turn-b")
 	next := current(conversation)
@@ -143,7 +143,7 @@ func TestStreamSnapshotsCarrySchemaV1AndStableCommandTurnIdentity(t *testing.T) 
 		context.Background(), "customer", "athena", "", "employee",
 	)
 	require.NoError(t, err)
-	receipt, err := conversation.BeginCommand("command-a", "Inspect this conversation")
+	receipt, err := conversation.BeginCommand("command-a", "Inspect this conversation", "")
 	require.NoError(t, err)
 	conversation.BindTurn("command-a", "turn-a")
 	require.Eventually(t, func() bool {

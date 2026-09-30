@@ -3,15 +3,14 @@ package conversation
 import (
 	"time"
 	"unicode/utf8"
-
-	"github.com/google/uuid"
 )
 
-// Thinking is shown to people watching a reply live, and only through ephemeral
-// updates. It can run to tens of kilobytes, so rather than repeat all of it on every
-// update, each update carries a window: the thinking from where the last delivered
-// window ended. Positions count Unicode scalars (as answer_start does), so a client
-// never counts or splits what it already has.
+// The whole of the model's thinking is shown to people watching a reply live, and only
+// through ephemeral updates. A round of it can run to tens of kilobytes, so rather than
+// repeat all of it on every update, each update carries a window of the streaming
+// reasoning step: its thinking from where the last delivered window ended. Positions count
+// Unicode scalars (as answer_start does), so a client never counts or splits what it
+// already has.
 const (
 	// maxReasoningBuffer bounds the thinking kept to send. A backlog longer than this
 	// (Stream unreachable for a while) skips ahead, and watchers see a gap.
@@ -32,33 +31,28 @@ const (
 )
 
 // reasoningWindow is the "reasoning" field of an ephemeral update: text holds the
-// thinking from offset up to length. A client appends what it does not have yet.
+// thinking of reasoning step id from offset up to length. A client appends what it does
+// not have yet.
 type reasoningWindow struct {
-	// ID names this reply's thinking, so a client can tell it from thinking that
-	// started over (the runtime restarted and the reply resumed).
 	ID     string `json:"id"`
 	Offset int    `json:"offset"`
 	Text   string `json:"text"`
 	Length int    `json:"length"`
-	// DurationMS is how long the model has been thinking, from its first thought to
-	// its latest.
-	DurationMS int64 `json:"duration_ms"`
 	// key says the window repeats recent thinking for watchers who missed it.
 	key bool
 }
 
-// liveReasoning is the model's thinking for the reply being written. It is never
-// persisted: not in the outbox, the ledger or the settled message.
+// liveReasoning is the thinking of the reasoning step being streamed. Only its opening
+// (head), as the step's summary and preview, is ever stored.
 type liveReasoning struct {
 	id string
 	// buf is the most recent thinking, starting at scalar position start.
 	buf   string
 	start int
+	head  string
 	// total is how long the whole thinking is, and sent how much of it was delivered.
-	total int
-	sent  int
-	// paragraph says a new model round began, so its thinking starts a paragraph.
-	paragraph   bool
+	total       int
+	sent        int
 	first, last time.Time
 	keyed       time.Time
 }
@@ -68,14 +62,12 @@ func (r *liveReasoning) add(text string, now time.Time) {
 	if text == "" {
 		return
 	}
-	if r.id == "" {
-		r.id = uuid.NewString()[:8]
+	if r.total == 0 {
 		r.first = now
 	}
-	if r.paragraph && r.total > 0 {
-		text = "\n\n" + text
+	if len(r.head) < maxHead {
+		r.head += text[:boundaryBefore(text, min(len(text), maxHead-len(r.head)))]
 	}
-	r.paragraph = false
 	r.buf += text
 	r.total += utf8.RuneCountInString(text)
 	r.last = now
@@ -85,10 +77,6 @@ func (r *liveReasoning) add(text string, now time.Time) {
 		r.buf = r.buf[cut:]
 	}
 }
-
-// round marks the start of a model round (after a tool, say), so thinking already
-// shown stays its own paragraph.
-func (r *liveReasoning) round() { r.paragraph = true }
 
 // pending reports thinking watchers have not been sent.
 func (r *liveReasoning) pending() bool { return r.total > r.sent }
@@ -112,10 +100,7 @@ func (r *liveReasoning) window(now time.Time) (reasoningWindow, bool) {
 		j = boundaryBefore(r.buf, i+maxReasoningWindow)
 	}
 	text := r.buf[i:j]
-	return reasoningWindow{
-		ID: r.id, Offset: from, Text: text, Length: from + utf8.RuneCountInString(text),
-		DurationMS: r.last.Sub(r.first).Milliseconds(), key: key,
-	}, true
+	return reasoningWindow{ID: r.id, Offset: from, Text: text, Length: from + utf8.RuneCountInString(text), key: key}, true
 }
 
 // delivered records a window Stream accepted.
