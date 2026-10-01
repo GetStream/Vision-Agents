@@ -93,6 +93,9 @@ type Options struct {
 	// clientOptions are passed to the SDK client as they are, so a test can add a network
 	// delay.
 	clientOptions []rtc.Option
+	// coordinatorOptions are added to BaseURL's coordinator options, so a test can pin the
+	// SFU. The SDK keeps only the last rtc.WithCoordinatorOptions, so clientOptions cannot.
+	coordinatorOptions []coordinator.Option
 }
 
 // User is who the agent is in the call.
@@ -362,8 +365,9 @@ func (e *Edge) connect() (*rtc.Client, error) {
 	}
 	options := slices.Clone(e.options.clientOptions)
 	if e.options.BaseURL != "" {
-		options = append(options, rtc.WithCoordinatorOptions(
-			coordinator.ApiURL(e.options.BaseURL), coordinator.WithWsURL(e.options.WSURL)))
+		coordinatorOptions := append([]coordinator.Option{
+			coordinator.ApiURL(e.options.BaseURL), coordinator.WithWsURL(e.options.WSURL)}, e.options.coordinatorOptions...)
+		options = append(options, rtc.WithCoordinatorOptions(coordinatorOptions...))
 	}
 
 	if e.options.UserToken != "" {
