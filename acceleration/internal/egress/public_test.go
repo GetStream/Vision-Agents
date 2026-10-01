@@ -202,6 +202,36 @@ func (s *EgressSuite) TestANameThatRebindsToLoopbackAfterValidationIsRefused() {
 	s.Zero(hits.Load())
 }
 
+// The socket goes to the address that was checked, never back to the name, which a second
+// lookup at connect time could answer differently.
+func (s *EgressSuite) TestTheClientDialsTheCheckedAddressNotTheName() {
+	for target, want := range map[string]string{
+		"https://api.example.com/mcp":      "8.8.8.8:443",
+		"https://api.example.com:8443/mcp": "8.8.8.8:8443",
+	} {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		policy := testPolicy(server, publicAnswers())
+		var mu sync.Mutex
+		var dialed []string
+		connect := policy.dial
+		policy.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+			mu.Lock()
+			dialed = append(dialed, address)
+			mu.Unlock()
+			return connect(ctx, network, address)
+		}
+
+		response, err := policy.client(5*time.Second, nil).Get(target)
+		s.Require().NoErrorf(err, "%s should be reached", target)
+		_ = response.Body.Close()
+
+		mu.Lock()
+		s.Equalf([]string{want}, dialed, "%s should dial the checked address", target)
+		mu.Unlock()
+		server.Close()
+	}
+}
+
 // The URL is refused before the scheme's wrapper runs, so no credential is applied to it.
 func (s *EgressSuite) TestTheClientRefusesPlainHTTPBeforeTheWrapperRuns() {
 	var hits, wrapped atomic.Int32
