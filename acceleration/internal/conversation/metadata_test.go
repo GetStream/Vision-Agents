@@ -348,8 +348,10 @@ func (s *DisplaySuite) TestAVisibleToolsStoredArtifactIsAttachedToTheReplyAndRes
 		Attachments []map[string]any `json:"attachments"`
 	}
 	s.Require().NoError(json.Unmarshal([]byte(raw), &reply))
-	s.Require().Len(reply.Attachments, 1)
-	s.Equal(map[string]any{"artifact_id": "canvas_01", "revision": float64(1)}, reply.Attachments[0]["custom"])
+	s.Require().NotEmpty(reply.Attachments)
+	canvas := reply.Attachments[len(reply.Attachments)-1]
+	s.Equal("canvas", canvas["type"], "artifacts come after the reply's steps")
+	s.Equal(map[string]any{"artifact_id": "canvas_01", "revision": float64(1)}, canvas["custom"])
 	c.Release()
 	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "athena", c.CID(), "", "employee")
 	s.Require().NoError(err)
