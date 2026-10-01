@@ -82,6 +82,20 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			db.messages[id] = message
 		}
 		result["message"] = db.messages[id]
+	case strings.Contains(r.URL.Path, "/messages/") && r.Method == http.MethodDelete:
+		id := parts[len(parts)-1]
+		result["message"] = db.messages[id]
+		if r.URL.Query().Get("hard") == "true" {
+			delete(db.messages, id)
+			for i, ordered := range db.order {
+				if ordered == id {
+					db.order = append(db.order[:i], db.order[i+1:]...)
+					break
+				}
+			}
+		} else if stored := db.messages[id]; stored != nil {
+			stored["type"] = "deleted"
+		}
 	case strings.Contains(r.URL.Path, "/messages/"):
 		id := parts[len(parts)-1]
 		// An ephemeral patch is what a reply streaming into the channel looks like, and
