@@ -343,11 +343,16 @@ type AgentConfig struct {
 	Plugins []string `bun:"plugins,type:jsonb"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
+	// VisibleTools names the tools whose steps end users see on a persistent conversation's
+	// replies, as names or path.Match patterns. Empty shows search and web_search.
+	VisibleTools []string `bun:"visible_tools,type:jsonb"`
 	// KnowledgeNamespace is what the agent may look things up in.
 	KnowledgeNamespace string `bun:"knowledge_namespace,notnull"`
 	// Sandbox is where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none.
-	Sandbox string            `bun:"sandbox,notnull"`
+	Sandbox string `bun:"sandbox,notnull"`
+	// Harness is which harness the agent's sessions run, "default" being the one there is.
+	Harness string            `bun:"harness,notnull"`
 	Tags    map[string]string `bun:"tags,type:jsonb"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
@@ -542,9 +547,11 @@ type KnowledgeURL struct {
 	Passages int `bun:"passages,notnull"`
 	// LastIndexedAt is when it was last read successfully. Nil means never.
 	LastIndexedAt *time.Time `bun:"last_indexed_at"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
-	DeletedAt     *time.Time `bun:"deleted_at"`
+	// RefreshHours is how often the page is read again on its own. Zero is never.
+	RefreshHours int        `bun:"refresh_hours,notnull"`
+	CreatedAt    time.Time  `bun:"created_at,notnull"`
+	UpdatedAt    time.Time  `bun:"updated_at,notnull"`
+	DeletedAt    *time.Time `bun:"deleted_at"`
 }
 
 // KnowledgeDocument is a document a knowledge base was filled with, posted or synced
@@ -1097,12 +1104,11 @@ const (
 // resolves; Thinking, Temperature and MaxOutputTokens are folded into the LLM options the
 // same way the router's own overrides are.
 type ModelOverwrites struct {
-	LLM      string `json:"llm,omitempty"`
-	STT      string `json:"stt,omitempty"`
-	TTS      string `json:"tts,omitempty"`
-	STS      string `json:"sts,omitempty"`
-	Subagent string `json:"subagent,omitempty"`
-	Search   string `json:"search,omitempty"`
+	LLM    string `json:"llm,omitempty"`
+	STT    string `json:"stt,omitempty"`
+	TTS    string `json:"tts,omitempty"`
+	STS    string `json:"sts,omitempty"`
+	Search string `json:"search,omitempty"`
 	// Thinking is how hard to reason: off, low, medium or high. It becomes the reasoning
 	// effort on the LLM options, which is what the providers that support one are sent.
 	Thinking        string   `json:"thinking,omitempty"`
@@ -1197,9 +1203,12 @@ type ItemPosition struct {
 type SessionFilter struct {
 	UserID    string
 	AgentName string
+	AgentID   string
 	Project   string
 	Modality  string
-	Limit     int
+	// State is SessionRunning or SessionClosed.
+	State string
+	Limit int
 	// Cursor starts the page after this session. Nil is the first page.
 	Cursor *SessionPosition
 }

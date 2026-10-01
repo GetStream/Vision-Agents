@@ -129,7 +129,73 @@ func (s *SessionListSuite) TestAStoppedSessionIsListedWithWhenItEnded() {
 	}, 5*time.Second, 20*time.Millisecond, "the closed session was never listed as closed")
 }
 
+func (s *SessionListSuite) TestAStateNarrowsTheListToTheLiveOrTheEnded() {
+	running := s.serverClient.createSession(textSession(nil))
+	closing := s.serverClient.createSession(textSession(nil))
+	s.serverClient.stopSession(closing.Id)
+
+	live, ended := Equals("live"), Equals("ended")
+	s.Require().Eventually(func() bool {
+		found := s.serverClient.querySessions(SessionQuery{Filter: &SessionFilter{State: &ended}}).Items
+		return slices.Equal([]string{closing.Id}, ids(found)) && found[0].State == Ended
+	}, 5*time.Second, 20*time.Millisecond, "the stopped session was never listed as ended")
+	listed := s.serverClient.querySessions(SessionQuery{Filter: &SessionFilter{State: &live}}).Items
+	s.Require().Equal([]string{running.Id}, ids(listed))
+	s.Equal(Live, listed[0].State)
+}
+
+func (s *SessionListSuite) TestAUserAskingForLiveSessionsIsListedOnlyTheirOwn() {
+	mine := s.client.createSession(textSession(nil))
+	s.data.createUser().createSession(textSession(nil))
+	s.serverClient.createSession(textSession(nil))
+
+	live := Equals("live")
+	s.Equal([]string{mine.Id}, ids(s.client.querySessions(SessionQuery{Filter: &SessionFilter{State: &live}}).Items))
+}
+
+func (s *SessionListSuite) TestLiveSessionsPageToTheEndWithoutRepeatsOrGaps() {
+	var created []string
+	for range 3 {
+		created = append(created, s.serverClient.createSession(textSession(nil)).Id)
+	}
+	slices.Reverse(created)
+	closing := s.serverClient.createSession(textSession(nil))
+	s.serverClient.stopSession(closing.Id)
+
+	live := Equals("live")
+	var listed []string
+	query := SessionQuery{Filter: &SessionFilter{State: &live}, Limit: 1}
+	for {
+		page := s.serverClient.querySessions(query)
+		listed = append(listed, ids(page.Items)...)
+		if !page.HasMore {
+			break
+		}
+		s.Require().NotNil(page.NextCursor)
+		query.Cursor = *page.NextCursor
+	}
+
+	s.Equal(created, listed)
+}
+
+func (s *SessionListSuite) TestAnAgentIdNarrowsTheList() {
+	agentID := s.utils.uuid()
+	named := textSession(nil)
+	named.AgentId = &agentID
+	wanted := s.serverClient.createSession(named)
+	s.serverClient.createSession(textSession(nil))
+
+	equals := Equals(agentID)
+	listed := s.serverClient.querySessions(SessionQuery{Filter: &SessionFilter{AgentID: &equals}}).Items
+	s.Require().Equal([]string{wanted.Id}, ids(listed))
+	s.Equal(agentID, listed[0].AgentId)
+}
+
 func (s *SessionListSuite) TestAFieldNobodyMayFilterOnIsRefused() {
+	s.assertRefused(map[string]any{"filter": map[string]any{"call_id": "abc"}})
+}
+
+func (s *SessionListSuite) TestAStateThereIsNotIsRefused() {
 	s.assertRefused(map[string]any{"filter": map[string]any{"state": "closed"}})
 }
 

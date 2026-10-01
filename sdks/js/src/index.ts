@@ -40,6 +40,8 @@ export { AgentHandle } from "./handle.js";
 
 export { Memories } from "./memories.js";
 
+export { SimulationRuns, Simulations, type SimulationRunQuery } from "./simulations.js";
+
 export {
   Sessions,
   timestamp,

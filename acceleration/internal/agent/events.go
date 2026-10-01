@@ -112,6 +112,15 @@ type ResponseDelta struct {
 
 func (ResponseDelta) isAgentEvent() {}
 
+// ReasoningDelta is a piece of the model's thinking while it works on a written reply.
+// It is never the reply: it is only shown live to people watching the conversation.
+type ReasoningDelta struct {
+	TurnID string
+	Text   string
+}
+
+func (ReasoningDelta) isAgentEvent() {}
+
 // Responded means the model finished. The reply may still be being spoken.
 type Responded struct {
 	// PendingWork says this model reply is followed by tools or delegated work.
@@ -247,11 +256,13 @@ func (TaskCancelled) isAgentEvent() {}
 // reported whether or not it worked, because a tool that failed still changed what the
 // agent goes on to say.
 type ToolStarted struct {
-	Product   string
-	SDK       string
-	ID        string
-	TurnID    string
-	Tool      string
+	Product string
+	SDK     string
+	ID      string
+	TurnID  string
+	Tool    string
+	// Arguments are the model's, as JSON. Only a tool a person's device runs shows them.
+	Arguments string
 	StartedAt time.Time
 }
 

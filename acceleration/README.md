@@ -724,7 +724,14 @@ flowchart LR
 
 A skill is a name, a line telling the fast model what it is for, and the instructions the
 subagent answers under. `skills.yaml` is embedded, and `HARNESS_SKILLS` or `-skills`
-replaces it, the same way `router.yaml` and `phone.yaml` already work.
+replaces it, the same way `router.yaml` and `phone.yaml` already work. An agent config's own
+skills are offered by name and description only, and their instructions are read from the store
+when one is used, so an edit reaches the next use rather than the next session.
+
+The harness is agent config, never session config: `harness` (only `default` today),
+`subagent`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
+`createSession` does not take them. A client that wants a sandbox of its own declares it as a
+tool instead.
 
 - **The model asks for help mid-sentence.** It writes `<ask skill="think">…</ask>` into its
   reply. A streaming filter takes it back out before the reply reaches the voice, so the
@@ -745,15 +752,16 @@ replaces it, the same way `router.yaml` and `phone.yaml` already work.
 Subagent completions go through `llmrouter` like anything else, so what the thinking costs
 lands in `requests` with the same failover and cost tags as the talking.
 
-A session that asks for a sandbox gives the subagent one tool, `run_code`, and the model
+An agent whose config names a sandbox gives the subagent one tool, `run_code`, and the model
 holding the conversation none: running code takes seconds that a conversation does not
 have, and the subagent has already left the live path. Code the subagent writes runs in
 Daytona, its output comes back as a tool result, and the same task is put again, up to four
 rounds and always inside the skill's own deadline. One sandbox is created the first time
 code actually runs and released when the session ends.
 
-Long histories are compacted privately on the thinking session only when the prompt is large
-and the provider's reported cached-token ratio has fallen below half. The result replaces
+Long histories are compacted privately on the thinking session when the prompt is large and
+either it has filled 80% of the conversation model's `context_window` in `router.yaml`, or the
+provider's reported cached-token ratio has fallen below half. The result replaces
 only the unchanged old prefix; recent turns stay verbatim and a late summary cannot overwrite
 newer conversation.
 
@@ -835,8 +843,6 @@ curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
     "call_id": "demo-1",
     "instructions": "Keep your replies short.",
     "llm": "llm-fast",
-    "subagent": "llm-smart",
-    "sandbox": "daytona",
     "tags": {"project": "support"},
     "memory": {"user_id": "222"}
   }'
@@ -945,7 +951,7 @@ retried three times before the page is marked `failed`.
 ```bash
 curl -X POST localhost:8080/v1/agents/knowledge/urls \
   -H "X-Customer-Id: acme" -H "Content-Type: application/json" \
-  -d '{"namespace":"docs","url":"https://example.com/pricing"}'
+  -d '{"namespace":"docs","url":"https://example.com/pricing","refresh_hours":24}'
 ```
 
 Each row records when the page was last read successfully, what it was called and how many
@@ -955,8 +961,11 @@ re-reading a page that got shorter leaves no orphans behind. A page that could n
 fetched is still stored, in the `failed` state with the reason on it, rather than refused
 and forgotten.
 
-Nothing re-crawls on a schedule. `POST /v1/agents/knowledge/urls/{id}/index` queues one to
-be read again, and `last_indexed_at` is what a caller with its own schedule decides from.
+A page with `refresh_hours` is read again once that many hours have passed since its last
+read, failed or not. Every router looks once a minute for pages that are due and queues them;
+the task id is the page, so two routers queuing one read it once. Without `refresh_hours` a
+page is only read again when asked: `POST /v1/agents/knowledge/urls/{id}/index` queues a
+read, and so does adding the page again.
 
 `cmd/knowledge` fills one from files:
 

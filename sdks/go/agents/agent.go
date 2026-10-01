@@ -257,8 +257,6 @@ func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.Se
 			remote.Memory = memoryOf(chosen.MemoryFilter)
 		}
 	}
-	a.options.Harness.apply(&remote)
-
 	backend, err := a.options.LLM.Backend()
 	if err != nil {
 		return nil, err

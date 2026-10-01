@@ -99,6 +99,10 @@ func (s *Session) Capabilities() llm.Capabilities { return s.provider.Capabiliti
 // reaching for the router's config.
 func (s *Session) Price() routing.Price { return s.config.Price }
 
+// ContextWindow is how many tokens of prompt this session's model takes, or zero when
+// its config does not say.
+func (s *Session) ContextWindow() int64 { return s.config.ContextWindow }
+
 // LLM exposes the underlying provider so callers can reach provider-specific features.
 func (s *Session) LLM() llm.LLM { return s.provider }
 

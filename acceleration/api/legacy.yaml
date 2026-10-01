@@ -4098,34 +4098,24 @@ components:
           type: object
           additionalProperties: true
           description: A JSON Schema object describing the arguments.
-
-    SessionSkill:
-      type: object
-      required: [name, description, instructions]
-      description: >
-        A kind of work worth handing to the slower model. There is nothing behind a skill
-        but a better model: what it declares is the instructions that model answers under.
-      properties:
-        name:
+        executor:
           type: string
-        revision:
-          type: integer
-          format: int64
-          minimum: 1
-          description: Immutable skill revision selected by the application's authorized registry.
-        description:
+          enum: [server, client]
+          # Without these the generated constants are named Server and Client, which clash
+          # with the package's own Server.
+          x-enum-varnames: [SessionToolExecutorServer, SessionToolExecutorClient]
+          description: >
+            Who runs it. A client tool runs on a person's device: in a persistent conversation
+            its call is shown as awaiting the device of the person whose command it answers
+            (their user and the command's client_id), with its arguments, which every
+            channel member can read. The caller still answers it over the events socket,
+            once the device has reported. Defaults to server.
+        display_title:
           type: string
-          description: The one line the fast model sees.
-        capture_video:
-          type: boolean
-          description: Capture task-scoped visual evidence before reasoning.
-        instructions:
-          type: string
-          description: The full prompt, which only the subagent sees.
-        deadline_ms:
-          type: integer
-          format: int64
-          description: How long the work may run before it is abandoned. Zero is the default.
+          maxLength: 80
+          description: >
+            What a call is doing, in words for the people in the conversation, such as
+            "Checking your location". Shown on the reply's ai_tool_call attachment.
 
     SessionMemory:
       type: object
@@ -4181,6 +4171,14 @@ components:
         Where the subagent may run code it writes. Only the subagent is offered it:
         running code takes seconds, and the model holding the conversation has none to
         spare. Omit it and the subagent works everything out in its head.
+
+    Harness:
+      type: string
+      enum: [default]
+      description: >
+        Which harness the agent's sessions run: what hands work to the subagent, loads
+        skills, compacts the conversation and starts the sandbox. Set on the agent, never
+        on a session. Omit it for the default, the only one there is.
 
     AgentConfigRequest:
       type: object
@@ -4263,6 +4261,19 @@ components:
             Business-specific words the transcriber would otherwise get wrong, such as
             product or company names. Up to 100 terms, and providers that cannot be told
             about vocabulary ignore them.
+        visible_tools:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            maxLength: 128
+          description: >
+            Tools whose steps end users see on a persistent conversation's replies, as
+            tool names or path.Match patterns such as athena_*. Only a step's name, status
+            and timing are shown, never its arguments or result. A shown tool whose result
+            is exactly {"status":"answered","citations":[{"id","title","url","citation"}]}
+            also adds those citations to the reply's sources. Empty shows search and
+            web_search.
         knowledge_namespace:
           type: string
           description: >
@@ -4270,6 +4281,8 @@ components:
             told.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
+        harness:
+          $ref: "#/components/schemas/Harness"
         tags:
           type: object
           additionalProperties:
@@ -4327,10 +4340,16 @@ components:
           type: array
           items:
             type: string
+        visible_tools:
+          type: array
+          items:
+            type: string
         knowledge_namespace:
           type: string
         sandbox:
           $ref: "#/components/schemas/Sandbox"
+        harness:
+          $ref: "#/components/schemas/Harness"
         tags:
           type: object
           additionalProperties:
@@ -5886,6 +5905,14 @@ components:
             What the page is, for a reader of the subscription. Optional, and kept as
             written: it says why this page is subscribed to, which a crawler cannot know.
           example: What each plan includes and where the limits are.
+        refresh_hours:
+          type: integer
+          minimum: 0
+          description: >
+            How often the page is read again on its own, in hours. Omit it, or send zero,
+            and the page is read when it is added and when it is re-indexed, never on a
+            schedule. Adding the page again replaces it.
+          example: 24
 
     KnowledgeUrlState:
       type: string
@@ -5920,6 +5947,9 @@ components:
         passages:
           type: integer
           description: How many passages the page was last cut into.
+        refresh_hours:
+          type: integer
+          description: How often the page is read again on its own, in hours. Absent means never.
         last_indexed_at:
           type: string
           format: date-time
@@ -6772,11 +6802,6 @@ components:
             A speech-to-speech target. Naming one makes this a native session: the model
             hears and speaks for itself, so no transcriber, conversation model or voice is
             opened. Omit it and the config decides.
-        subagent:
-          type: string
-          description: >
-            The model that does the thinking. Empty means the voice model answers
-            everything itself, and skills mean nothing.
         search:
           type: string
           description: >
@@ -6798,11 +6823,6 @@ components:
             terms, and providers that cannot be told about vocabulary ignore them.
         max_tokens:
           type: integer
-        tasks:
-          type: integer
-          description: How much delegated work may run at once.
-        sandbox:
-          $ref: "#/components/schemas/Sandbox"
         backchannel:
           type: boolean
           default: false
@@ -6813,19 +6833,6 @@ components:
           description: >
             How sure the transcriber must be before the agent answers rather than checks
             what was meant.
-        skills:
-          type: array
-          items:
-            $ref: "#/components/schemas/SessionSkill"
-          description: Omit for the built-in set of think, recall and explain.
-        skill_names:
-          type: array
-          items:
-            type: string
-          description: >
-            Skills to look up rather than spell out: the customer's own, or one of the
-            built-in think, recall and explain. Ignored when skills are given in full,
-            and a name nothing defines is refused rather than dropped.
         tools:
           type: array
           items:
@@ -6870,10 +6877,6 @@ components:
           description: >
             A speech-to-speech target. Naming one here makes the session native even if the
             config did not, which means no transcriber, model or voice is opened.
-        subagent:
-          type: string
-          description: >
-            The model delegated work runs on, in place of the config's.
         search:
           type: string
         thinking:
@@ -7330,6 +7333,12 @@ components:
           type: string
           pattern: '^[A-Za-z0-9_-]{1,128}$'
           description: Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+        client_id:
+          type: string
+          pattern: '^[A-Za-z0-9_.:-]{1,128}$'
+          description: >
+            The install the command came from. It is written on the person's message as
+            client_id, and a client tool called while answering is addressed to it.
     CommandReceipt:
       type: object
       required: [command_id, user_message_id, assistant_message_id, state, duplicate]
@@ -7378,8 +7387,6 @@ components:
           description: >
             A speech-to-speech target, which makes the session native. Empty makes it a
             cascade again.
-        subagent:
-          type: string
         voice:
           type: string
           description: >
@@ -7427,8 +7434,6 @@ components:
           description: >
             A speech-to-speech target, which makes the session native. Empty makes it a
             cascade again.
-        subagent:
-          type: string
         voice:
           type: string
           description: >

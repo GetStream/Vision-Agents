@@ -157,6 +157,8 @@ components:
           type: string
         guardrail:
           type: string
+        harness:
+          $ref: '#/components/schemas/Harness'
         id:
           type: string
         instructions:
@@ -211,6 +213,10 @@ components:
           type: string
         video:
           $ref: '#/components/schemas/SessionVideo'
+        visible_tools:
+          items:
+            type: string
+          type: array
         voice:
           type: string
       required:
@@ -229,6 +235,8 @@ components:
         guardrail:
           description: 'A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.'
           type: string
+        harness:
+          $ref: '#/components/schemas/Harness'
         instructions:
           type: string
         keyterms:
@@ -276,6 +284,12 @@ components:
           type: string
         video:
           $ref: '#/components/schemas/SessionVideo'
+        visible_tools:
+          description: Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
+          items:
+            type: string
+          maxItems: 64
+          type: array
         voice:
           type: string
       type: object
@@ -287,6 +301,8 @@ components:
           description: |
             A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
           type: string
+        harness:
+          $ref: '#/components/schemas/Harness'
         instructions:
           type: string
         keyterms:
@@ -353,6 +369,14 @@ components:
           type: string
         video:
           $ref: '#/components/schemas/SessionVideo'
+        visible_tools:
+          description: |
+            Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
+          items:
+            maxLength: 128
+            type: string
+          maxItems: 64
+          type: array
         voice:
           description: Provider-specific voice id.
           type: string
@@ -1338,23 +1362,10 @@ components:
           description: |
             What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
           type: string
-        sandbox:
-          $ref: '#/components/schemas/Sandbox'
         search:
           description: |
             Omit it and the config decides, or search-fast when there is no config.
           type: string
-        skill_names:
-          description: |
-            Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped.
-          items:
-            type: string
-          type: array
-        skills:
-          description: Omit for the built-in set of think, recall and explain.
-          items:
-            $ref: '#/components/schemas/SessionSkill'
-          type: array
         sts:
           description: |
             A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
@@ -1363,18 +1374,11 @@ components:
           description: |
             Omit it and the config decides, or en-low-latency when there is no config.
           type: string
-        subagent:
-          description: |
-            The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
-          type: string
         tags:
           additionalProperties:
             type: string
           description: Cost labels, carried onto every request the session makes.
           type: object
-        tasks:
-          description: How much delegated work may run at once.
-          type: integer
         text:
           default: false
           description: |
@@ -1642,6 +1646,12 @@ components:
           description: What to call them, for a transcript a person reads later.
           type: string
       type: object
+    Harness:
+      description: |
+        Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+      enum:
+        - default
+      type: string
     HealthStatus:
       properties:
         dependencies:
@@ -1927,6 +1937,9 @@ components:
         passages:
           description: How many passages the page was last cut into.
           type: integer
+        refresh_hours:
+          description: How often the page is read again on its own, in hours. Absent means never.
+          type: integer
         state:
           $ref: '#/components/schemas/KnowledgeUrlState'
         title:
@@ -1952,6 +1965,12 @@ components:
       properties:
         description:
           type: string
+        refresh_hours:
+          description: How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule.
+          example: 24
+          format: int64
+          minimum: 1
+          type: integer
         title:
           example: Pricing
           type: string
@@ -1973,6 +1992,12 @@ components:
             The knowledge base to fill, which is what a config's knowledge_namespace names.
           example: docs
           type: string
+        refresh_hours:
+          description: |
+            How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it.
+          example: 24
+          minimum: 0
+          type: integer
         title:
           description: |
             What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
@@ -2185,10 +2210,6 @@ components:
             A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.
           type: string
         stt:
-          type: string
-        subagent:
-          description: |
-            The model delegated work runs on, in place of the config's.
           type: string
         temperature:
           description: |
@@ -2644,6 +2665,11 @@ components:
       type: string
     RespondRequest:
       properties:
+        client_id:
+          description: |
+            The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+          type: string
         command_id:
           description: Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
           pattern: ^[A-Za-z0-9_-]{1,128}$
@@ -2995,11 +3021,17 @@ components:
         agent:
           $ref: '#/components/schemas/Equals'
           description: The agent name the session was opened against.
+        agent_id:
+          $ref: '#/components/schemas/Equals'
+          description: The agent id the session was created with, which names its transcript channel.
         modality:
           $ref: '#/components/schemas/Equals'
           description: 'text, voice or video: how the user took part.'
         project_id:
           $ref: '#/components/schemas/Equals'
+        state:
+          $ref: '#/components/schemas/Equals'
+          description: live or ended, as each session reports its state.
         text:
           $ref: '#/components/schemas/TextMatch'
           description: Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id.
@@ -3128,8 +3160,6 @@ components:
           type: string
         stt:
           type: string
-        subagent:
-          type: string
         temperature:
           format: double
           type: number
@@ -3153,35 +3183,6 @@ components:
           description: |
             The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
           type: string
-      type: object
-    SessionSkill:
-      description: |
-        A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under.
-      properties:
-        capture_video:
-          description: Capture task-scoped visual evidence before reasoning.
-          type: boolean
-        deadline_ms:
-          description: How long the work may run before it is abandoned. Zero is the default.
-          format: int64
-          type: integer
-        description:
-          description: The one line the fast model sees.
-          type: string
-        instructions:
-          description: The full prompt, which only the subagent sees.
-          type: string
-        name:
-          type: string
-        revision:
-          description: Immutable skill revision selected by the application's authorized registry.
-          format: int64
-          minimum: 1
-          type: integer
-      required:
-        - name
-        - description
-        - instructions
       type: object
     SessionSort:
       additionalProperties: false
@@ -3218,6 +3219,21 @@ components:
           description: |
             What the model is told the tool does, which is the whole of how it decides when to reach for one.
           type: string
+        display_title:
+          description: |
+            What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment.
+          maxLength: 80
+          type: string
+        executor:
+          description: |
+            Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+          enum:
+            - server
+            - client
+          type: string
+          x-enum-varnames:
+            - SessionToolExecutorServer
+            - SessionToolExecutorClient
         name:
           type: string
         parameters:
@@ -3965,6 +3981,8 @@ components:
         guardrail:
           description: 'The directory''s guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.'
           type: string
+        harness:
+          $ref: '#/components/schemas/Harness'
         hash:
           description: A fingerprint of the directory. A second sync with the same hash does nothing.
           type: string
@@ -4631,8 +4649,6 @@ components:
             A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
           type: string
         stt:
-          type: string
-        subagent:
           type: string
         temperature:
           format: double
@@ -6886,7 +6902,7 @@ paths:
         - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
         - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 
-        `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+        `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 
         The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
       operationId: querySessions

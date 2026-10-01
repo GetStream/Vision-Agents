@@ -246,9 +246,12 @@ Leaving one empty takes the backend's default.
 
 ```go
 llm := stream.Accelerated(stream.Config{
-    TTS: "sonic_36", STT: "parakeet", LLM: "gemma-4-E2B-it", Subagent: "openai/gpt-5.6-sol",
+    Agent: "jean", TTS: "sonic_36", STT: "parakeet", LLM: "gemma-4-E2B-it",
 })
-agent, _ := agents.New(agents.Options{Name: "jean", LLM: llm})
+agent, _ := agents.New(agents.Options{Name: "jean", LLM: llm, Harness: &agents.Harness{
+    Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
+}})
+agent.Sync(ctx) // the harness is stored on the agent's config, which the call runs under
 
 number, _ := agent.PurchaseAnyNumber(ctx, agents.NumberSearch{Vendor: "twilio", Country: "US"})
 

@@ -47,6 +47,7 @@ func main() {
 
 func run(ctx context.Context, number, dial string, buy bool, greeting string) error {
 	llm := stream.Accelerated(stream.Config{
+		Agent:    "jean",
 		STT:      "deepgram/flux-general-en",
 		TTS:      "cartesia/sonic-preview",
 		LLM:      "gemini/gemini-3.8-flash",
@@ -60,13 +61,16 @@ func run(ctx context.Context, number, dial string, buy bool, greeting string) er
 		// Flash-Lite keeps the conversation quick but is not the model to work an
 		// arithmetic or multi-step question out on. A subagent is what turns the
 		// built-in think, recall and explain skills on: Jean hands the hard ones to Sol
-		// and keeps talking while it reasons.
+		// and keeps talking while it reasons. The harness is part of the stored config,
+		// which Sync writes and the session starts from.
 		Harness: &agents.Harness{
-			UseSkills: true,
 			Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
 		},
 	})
 	if err != nil {
+		return err
+	}
+	if _, err := agent.Sync(ctx); err != nil {
 		return err
 	}
 	if err := agent.Tools().Add(GetWeather{}); err != nil {

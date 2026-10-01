@@ -37,7 +37,8 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	wanted := acceleration.AgentConfigRequest{Name: a.options.Name}
 	setString(&wanted.Instructions, a.options.Instructions)
 	setString(&wanted.Guardrail, a.options.Guardrail)
-	setString(&wanted.Subagent, a.options.Harness.Subagent())
+	harness, subagent, sandbox := a.options.Harness.stored()
+	wanted.Harness, wanted.Subagent, wanted.Sandbox = harness, subagent, sandbox
 	if len(a.options.CostTracking) > 0 {
 		tags := a.options.CostTracking
 		wanted.Tags = &tags
@@ -60,9 +61,10 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 	skills := a.syncedSkills()
 	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
 		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations)
-	subagent := a.options.Harness.Subagent()
-	if subagent != "" || len(a.options.CostTracking) > 0 {
-		hash = fingerprint(hash, subagent, fmt.Sprint(a.options.CostTracking), nil, nil, nil, nil)
+	harness, subagent, sandbox := a.options.Harness.stored()
+	if harness != nil || subagent != nil || sandbox != nil || len(a.options.CostTracking) > 0 {
+		hash = fingerprint(hash, fmt.Sprint(deref(harness), deref(subagent), deref(sandbox)),
+			fmt.Sprint(a.options.CostTracking), nil, nil, nil, nil)
 	}
 
 	if ReadStamp(folder.Path) == hash {
@@ -94,6 +96,10 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 			declared := acceleration.KnowledgeUrlDeclaration{Url: page.URL}
 			setString(&declared.Title, page.Title)
 			setString(&declared.Description, page.Description)
+			if page.RefreshHours > 0 {
+				hours := int64(page.RefreshHours)
+				declared.RefreshHours = &hours
+			}
 			pages = append(pages, declared)
 		}
 		body.KnowledgeUrls = &pages
@@ -106,7 +112,15 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 		body.Simulations = &declared
 	}
 	declareSettings(&body, folder.Settings)
-	setString(&body.Subagent, subagent)
+	if harness != nil {
+		body.Harness = harness
+	}
+	if subagent != nil {
+		body.Subagent = subagent
+	}
+	if sandbox != nil {
+		body.Sandbox = sandbox
+	}
 	if len(a.options.CostTracking) > 0 {
 		tags := map[string]string{}
 		if body.Tags != nil {
@@ -147,6 +161,10 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		body.Speed = &settings.Speed
 	}
 	setString(&body.Llm, settings.LLM)
+	if settings.Harness != "" {
+		harness := acceleration.Harness(settings.Harness)
+		body.Harness = &harness
+	}
 	setString(&body.Subagent, settings.Subagent)
 	setString(&body.Search, settings.Search)
 	setString(&body.Greeting, settings.Greeting)
@@ -368,6 +386,9 @@ func SubscribeKnowledgeURLs(
 		body := acceleration.KnowledgeUrlRequest{Namespace: namespace, Url: page.URL}
 		setString(&body.Title, page.Title)
 		setString(&body.Description, page.Description)
+		if page.RefreshHours > 0 {
+			body.RefreshHours = &page.RefreshHours
+		}
 
 		added, err := client.AddKnowledgeUrlWithResponse(ctx, body)
 		if err != nil {
@@ -391,6 +412,15 @@ func answer[T any](ok *T, bad, unauthorized, missing *acceleration.Error, status
 		}
 	}
 	return nil, fmt.Errorf("agents: the router answered %s", status)
+}
+
+// deref is what a field holds, or its zero value when it holds nothing.
+func deref[T any](field *T) T {
+	var zero T
+	if field == nil {
+		return zero
+	}
+	return *field
 }
 
 func setString(field **string, value string) {
