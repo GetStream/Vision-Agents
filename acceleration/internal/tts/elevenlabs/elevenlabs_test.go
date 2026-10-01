@@ -202,6 +202,41 @@ func (s *ElevenLabsSuite) TestNewRejectsASampleRateTheOutputFormatCannotCarry() 
 	s.ErrorContains(err, "sample rate 12345 is not one of")
 }
 
+func (s *ElevenLabsSuite) TestASpeedOutsideTheVendorsRangeIsRefused() {
+	_, err := New(Options{APIKey: "k", Speed: 1.5})
+	s.ErrorContains(err, "speed 1.5 is outside 0.7 to 1.2")
+
+	_, err = New(Options{APIKey: "k", Speed: 0.5})
+	s.ErrorContains(err, "speed 0.5 is outside 0.7 to 1.2")
+}
+
+func (s *ElevenLabsSuite) TestEveryContextIsOpenedAtTheSpeedAskedFor() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{VoiceID: "v1", Speed: 0.9})
+	defer provider.Close()
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "hello", Final: true}))
+
+	opened := s.clientMessages(conn, 1)[0]
+	s.Require().NotNil(opened.VoiceSettings)
+	s.Equal(0.9, opened.VoiceSettings.Speed)
+}
+
+func (s *ElevenLabsSuite) TestNoSpeedIsSentWhenNoneWasAskedFor() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{VoiceID: "v1"})
+	defer provider.Close()
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "hello", Final: true}))
+
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, raw, err := conn.ReadMessage()
+	s.Require().NoError(err)
+	s.NotContains(string(raw), `"speed"`, "the voice keeps its own pace unless told otherwise")
+}
+
 func (s *ElevenLabsSuite) TestTheEndpointCarriesTheVoiceModelAndFormat() {
 	url := s.newTTS(Options{VoiceID: "v1", SampleRate: 16_000}).url()
 

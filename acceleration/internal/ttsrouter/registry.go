@@ -31,6 +31,7 @@ func DefaultRegistry() *Registry {
 			Model:    spec.Model,
 			VoiceID:  voiceOr(settings.VoiceID, spec.Voice),
 			Language: firstLanguage(spec.LanguageHints),
+			Speed:    number(spec.TTS.Speed),
 			Logger:   spec.Logger,
 		}
 		// The v3 models are served on a different socket, so which endpoint to open is
