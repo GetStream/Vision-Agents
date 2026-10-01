@@ -1,6 +1,6 @@
 # internal/connectors/core
 
-The contracts every connector adapter implements: `Scheme`, `Source`, `Runtime`, `Backend`, `Resolver`, `Verifier`, `Hook`, the `Registry`, and the value types they pass. No implementation lives here. `doc.go` states the rule the rest of this file expands on: adapters import `core`, `core` imports no adapter.
+The contracts every connector adapter implements: `Scheme`, `Source`, `Runtime`, `Backend`, `Resolver`, `Verifier`, `Hook`, the `Registry`, and the value types they pass, plus the provider manifest model (`manifest.go`): parsing, validation, endpoint templates, and the capture and identity rules, all pure functions. No adapter implementation lives here. `doc.go` states the rule the rest of this file expands on: adapters import `core`, `core` imports no adapter.
 
 ## Rules
 
@@ -10,7 +10,10 @@ The contracts every connector adapter implements: `Scheme`, `Source`, `Runtime`,
 - **Secrets never print.** `Credential` keeps its secret unexported and redacts it in `String` and `GoString`. `Material` redacts `Payload` in `String`, `GoString` and `LogValue`. A new type that carries a secret does the same, with a test in `scheme_test.go` covering `%v`, `%+v`, `%#v`, `%s` and both slog handlers.
 - **`Scheme.Wrap` sits on top of egress.** The `base` a scheme wraps is the transport from `egress.NewClient(timeout, scheme.Wrap)`, so the scheme sees the final request and the egress address check runs under it, at dial. Build connector clients no other way.
 - **Every hardcoded value says where it comes from**, in a comment next to it, as `deniedNames` does.
+- **A manifest is substitution and lookup, never a language.** Endpoints are `{name}` templates over inputs, `vars` and `{metadata.<capture>}`; values are read by a JSON path of member names or a callback query key. What that cannot say is a named hook at one of the three points in `hook.go` (architecture doc, «Risks» items 1 and 3). Do not add conditionals, functions or string operations to templates or paths.
+- **Untrusted values cannot steer a request.** An input or a captured value goes into a template only as unreserved characters (RFC 3986 §2.3), or as a whole https origin at the start of a template; a callback query value can never be that origin. Every input has an enum or a pattern. A resolved endpoint is https with no userinfo, query or fragment. An `id_token` is read only from the token response, never from a callback.
+- **Manifest enums are closed and say where their values come from.** A new `from`, `auth_method`, `per`, `alg`, separator or hook point is a change to `manifest.go` with its source beside it, and fixtures in `testdata/manifests/` follow the same rule per field. Scheme and source names are not enums here: they are registry names, checked by whoever holds the `Registry`.
 
 ## Tests
 
-From `acceleration/`: `go test ./internal/connectors/...`. Testify suites, no mocks (`.claude/skills/go-testing/SKILL.md`). The guard tests parse this package's source with `go/parser`, so a provider name fails before anything uses it.
+From `acceleration/`: `go test ./internal/connectors/...`. `testdata/manifests/` holds the 12 stress-test manifests and `testdata/recorded/` their synthetic token responses and callbacks; never put a real token there. Testify suites, no mocks (`.claude/skills/go-testing/SKILL.md`). The guard tests parse this package's source with `go/parser`, so a provider name fails before anything uses it.

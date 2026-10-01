@@ -1,0 +1,22 @@
+# Stress-test row 12 (REST without MCP: the Linq iMessage API, a customer's own CRM) of
+# «Stress test: 12 awkward providers» in acceleration/docs/connectors/architecture.md on
+# connectors/planning. No Linq page is in the doc's «Sources and evidence», so this is the
+# customer's CRM, under the custom_ prefix T6 reserves for custom definitions
+# (acceleration/docs/connectors/subtasks.md, T6 acceptance).
+id: custom_crm
+revision: 1
+name: A customer's own CRM
+inputs:
+  # The customer's host, as RFC 1123 labels joined by dots. The egress policy still refuses
+  # a private address at dial (internal/egress).
+  - name: host
+    pattern: "[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+"
+endpoints:
+  api_base: https://{host}
+# A static key: row 12.
+schemes: [api_key]
+# Operations are reviewed, digest-pinned data of the http source (row 12; T25), not this
+# schema.
+sources:
+  - kind: http
+    endpoint: api_base

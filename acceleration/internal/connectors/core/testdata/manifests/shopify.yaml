@@ -1,0 +1,52 @@
+# Stress-test row 4 (Shopify) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning. Vendor sources, both
+# opened October 1, 2026:
+#   [grant]  https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/authorization-code-grant
+#   [limits] https://shopify.dev/docs/api/admin-rest/usage/rate-limits
+id: shopify
+revision: 1
+name: Shopify
+inputs:
+  # The shop host pattern, as [grant] writes it: /^[a-zA-Z0-9][a-zA-Z0-9\-]*\.myshopify\.com$/
+  - name: shop
+    pattern: ^[a-zA-Z0-9][a-zA-Z0-9\-]*\.myshopify\.com$
+endpoints:
+  # [grant]: https://{shop}/admin/oauth/authorize and https://{shop}/admin/oauth/access_token
+  authorize: https://{shop}/admin/oauth/authorize
+  token: https://{shop}/admin/oauth/access_token
+  # The Admin API lives on the shop host: [grant]. The exact API path and version are
+  # chosen by the source, not here.
+  api_base: https://{shop}/admin
+# oauth2_code for public apps; api_key for custom apps: row 4.
+schemes: [oauth2_code, api_key]
+# expiring=1 asks for an expiring offline token. Row 4 puts it in authorize_params; [grant]
+# sends it in the token request body (expiring: '1'), so it is a token parameter here.
+token_params:
+  expiring: "1"
+scopes:
+  # Comma-separated: row 4; [grant] example read_products,write_orders.
+  list: [read_products, write_orders]
+  separator: ","
+capture:
+  # The shop is the account for an offline token: row 4 («Shopify shop domain», axis 6).
+  # Not verify: the before_complete hook checks the callback's HMAC, shop included.
+  - name: shop
+    from: callback_query
+    key: shop
+identity: [shop]
+refresh:
+  # Rotating, refresh token for 90 days: row 4; [grant] refresh_token_expires_in 7776000
+  # seconds, which is 2160h.
+  rotating: true
+  refresh_ttl: 2160h
+rate_limit:
+  # Per app and store, bucket 40, leak 2 per second (Plus: 400 and 20): [limits]; row 4.
+  per: tenant
+  bucket: 40
+  leak: 2
+sources:
+  - kind: http
+    endpoint: api_base
+hooks:
+  # The callback HMAC check: the one hook in the stress test, row 4.
+  before_complete: shopify.callback_hmac

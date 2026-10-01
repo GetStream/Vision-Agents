@@ -1,0 +1,59 @@
+# Stress-test row 3 (Zoho) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning. Vendor sources, both
+# opened October 1, 2026:
+#   [multidc] https://www.zoho.com/accounts/protocol/oauth/multi-dc.html
+#   [authz]   https://www.zoho.com/accounts/protocol/oauth/web-apps/authorization.html
+id: zoho
+revision: 1
+name: Zoho
+inputs:
+  # The eight data centers of [multidc], by the code in its region labels: «United States
+  # (US)», «Europe (EU)» and so on, lowercased. [multidc] shows location=in for India; that
+  # the other location values are the same codes is unverified.
+  - name: region
+    enum: [us, eu, in, au, jp, ca, sa, uk]
+vars:
+  accounts_host:
+    from: region
+    values:
+      # [multidc], the accounts server per data center; row 3.
+      us: accounts.zoho.com
+      eu: accounts.zoho.eu
+      in: accounts.zoho.in
+      au: accounts.zoho.com.au
+      jp: accounts.zoho.jp
+      ca: accounts.zohocloud.ca
+      sa: accounts.zoho.sa
+      uk: accounts.zoho.uk
+endpoints:
+  # /oauth/v2/auth: [authz] «GET {accounts-server-url}/oauth/v2/auth».
+  authorize: https://{accounts_host}/oauth/v2/auth
+  # /oauth/v2/token: [multidc] example https://accounts.zoho.eu/oauth/v2/token.
+  token: https://{accounts_host}/oauth/v2/token
+  # api_domain is «where you will need to make the service API requests»: [multidc]; row 3.
+  api_base: "{metadata.api_domain}"
+schemes: [oauth2_code]
+# access_type=offline returns a refresh token: [authz].
+authorize_params:
+  access_type: offline
+scopes:
+  # Scopes are per Zoho product (CRM, Desk, ...) and picked by a real manifest; none here.
+  # The separator is not on either page and is left at the default. # unverified
+  list: []
+capture:
+  - name: api_domain
+    from: token_response
+    path: $.api_domain
+  # location and accounts-server arrive on the callback: row 3; [multidc]. Verify: the
+  # browser sends them, and accounts_server must agree with the region's host.
+  - name: location
+    from: callback_query
+    key: location
+    verify: true
+  - name: accounts_server
+    from: callback_query
+    key: accounts-server
+    verify: true
+sources:
+  - kind: http
+    endpoint: api_base
