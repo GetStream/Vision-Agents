@@ -256,11 +256,13 @@ func (TaskCancelled) isAgentEvent() {}
 // reported whether or not it worked, because a tool that failed still changed what the
 // agent goes on to say.
 type ToolStarted struct {
-	Product   string
-	SDK       string
-	ID        string
-	TurnID    string
-	Tool      string
+	Product string
+	SDK     string
+	ID      string
+	TurnID  string
+	Tool    string
+	// Arguments are the model's, as JSON. Only a tool a person's device runs shows them.
+	Arguments string
 	StartedAt time.Time
 }
 

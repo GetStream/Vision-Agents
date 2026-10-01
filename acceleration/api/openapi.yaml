@@ -2662,6 +2662,11 @@ components:
       type: string
     RespondRequest:
       properties:
+        client_id:
+          description: |
+            The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+          type: string
         command_id:
           description: Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
           pattern: ^[A-Za-z0-9_-]{1,128}$
@@ -3236,6 +3241,21 @@ components:
           description: |
             What the model is told the tool does, which is the whole of how it decides when to reach for one.
           type: string
+        display_title:
+          description: |
+            What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment.
+          maxLength: 80
+          type: string
+        executor:
+          description: |
+            Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+          enum:
+            - server
+            - client
+          type: string
+          x-enum-varnames:
+            - SessionToolExecutorServer
+            - SessionToolExecutorClient
         name:
           type: string
         parameters:

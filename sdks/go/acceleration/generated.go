@@ -1028,6 +1028,24 @@ func (e SessionState) Valid() bool {
 	}
 }
 
+// Defines values for SessionToolExecutor.
+const (
+	SessionToolExecutorClient SessionToolExecutor = "client"
+	SessionToolExecutorServer SessionToolExecutor = "server"
+)
+
+// Valid indicates whether the value is a known member of the SessionToolExecutor enum.
+func (e SessionToolExecutor) Valid() bool {
+	switch e {
+	case SessionToolExecutorClient:
+		return true
+	case SessionToolExecutorServer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SimulationMode.
 const (
 	SimulationModeAudio SimulationMode = "audio"
@@ -3071,6 +3089,9 @@ type RecordingStatus string
 
 // RespondRequest defines model for RespondRequest.
 type RespondRequest struct {
+	// ClientId The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
+	ClientId *string `json:"client_id,omitempty"`
+
 	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
 	CommandId *string `json:"command_id,omitempty"`
 	Text      string  `json:"text"`
@@ -3467,11 +3488,20 @@ type SessionState string
 type SessionTool struct {
 	// Description What the model is told the tool does, which is the whole of how it decides when to reach for one.
 	Description string `json:"description"`
-	Name        string `json:"name"`
+
+	// DisplayTitle What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment.
+	DisplayTitle *string `json:"display_title,omitempty"`
+
+	// Executor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+	Executor *SessionToolExecutor `json:"executor,omitempty"`
+	Name     string               `json:"name"`
 
 	// Parameters A JSON Schema object describing the arguments.
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
 }
+
+// SessionToolExecutor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+type SessionToolExecutor string
 
 // SessionVideo defines model for SessionVideo.
 type SessionVideo struct {

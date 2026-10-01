@@ -172,7 +172,7 @@ func (s *DisplaySuite) TestOnlyAStrictCitationResultCitesSources() {
 func (s *DisplaySuite) TestAVisibleToolsCitationsReachChatAndAHiddenOnesDoNot() {
 	c := s.open("athena")
 	c.ShowTools([]string{"search_*"})
-	receipt, err := c.BeginCommand("command-a", "Look it up")
+	receipt, err := c.BeginCommand("command-a", "Look it up", "")
 	s.Require().NoError(err)
 	cited := `{"status":"answered","citations":[{"id":"%s","title":"Reference","url":"https://docs.example.com/%s"}]}`
 
@@ -196,7 +196,7 @@ func (s *DisplaySuite) TestAVisibleToolsCitationsReachChatAndAHiddenOnesDoNot() 
 
 func (s *DisplaySuite) TestRevisionsIgnoreDuplicateLateAndCrossCommandEvents() {
 	c := s.open("athena")
-	_, err := c.BeginCommand("command-a", "First question")
+	_, err := c.BeginCommand("command-a", "First question", "")
 	s.Require().NoError(err)
 	c.BindTurn("command-a", "turn-a")
 
@@ -222,7 +222,7 @@ func (s *DisplaySuite) TestRevisionsIgnoreDuplicateLateAndCrossCommandEvents() {
 	c.Observe(agent.ResponseDelta{TurnID: "turn-a", Text: "late output"})
 	s.Equal(cancelled, current(c))
 
-	_, err = c.BeginCommand("command-b", "Second question")
+	_, err = c.BeginCommand("command-b", "Second question", "")
 	s.Require().NoError(err)
 	c.BindTurn("command-b", "turn-b")
 	next := current(c)
@@ -234,7 +234,7 @@ func (s *DisplaySuite) TestRevisionsIgnoreDuplicateLateAndCrossCommandEvents() {
 
 func (s *DisplaySuite) TestSnapshotsCarrySchemaV1AndAStableCommandAndTurn() {
 	c := s.open("athena")
-	receipt, err := c.BeginCommand("command-a", "Inspect this conversation")
+	receipt, err := c.BeginCommand("command-a", "Inspect this conversation", "")
 	s.Require().NoError(err)
 	c.BindTurn("command-a", "turn-a")
 	s.Require().Eventually(func() bool {
@@ -326,7 +326,7 @@ func (s *DisplaySuite) TestOnlyAStrictStoredReceiptStoresAnArtifact() {
 func (s *DisplaySuite) TestAVisibleToolsStoredArtifactIsAttachedToTheReplyAndRestored() {
 	c := s.open("athena")
 	c.ShowTools([]string{"save_*"})
-	receipt, err := c.BeginCommand("command-a", "Save a canvas")
+	receipt, err := c.BeginCommand("command-a", "Save a canvas", "")
 	s.Require().NoError(err)
 	stored := `{"schema_version":1,"status":"stored","attachment":{"type":"canvas","artifact_id":"%s","revision":1,"title":"Analysis","sha256":"not-for-chat"},"publication":"pending"}`
 

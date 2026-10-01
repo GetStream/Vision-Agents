@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,25 +49,29 @@ type Source struct {
 }
 type Message struct {
 	// AnswerStart is a Unicode code-point offset separating public progress from the answer.
-	TextLayout     int                  `json:"text_layout,omitempty"`
-	AnswerStart    int                  `json:"answer_start,omitempty"`
-	CommandID      string               `json:"command_id,omitempty"`
-	TurnID         string               `json:"turn_id,omitempty"`
-	ID             string               `json:"id"`
-	QuestionID     string               `json:"question_id,omitempty"`
-	Role           string               `json:"role"`
-	Text           string               `json:"text"`
-	State          string               `json:"state"`
-	StartedAt      time.Time            `json:"response_started_at"`
-	StateStartedAt time.Time            `json:"state_started_at"`
-	FinishedAt     *time.Time           `json:"finished_at,omitempty"`
-	DurationMS     int64                `json:"duration_ms"`
-	Sequence       int                  `json:"sequence"`
-	Tools          []Tool               `json:"attachments"`
-	Sources        []Source             `json:"sources,omitempty"`
-	Artifacts      []ArtifactAttachment `json:"artifacts,omitempty"`
-	Saved          bool                 `json:"saved"`
-	Error          string               `json:"persistence_error,omitempty"`
+	TextLayout     int        `json:"text_layout,omitempty"`
+	AnswerStart    int        `json:"answer_start,omitempty"`
+	CommandID      string     `json:"command_id,omitempty"`
+	TurnID         string     `json:"turn_id,omitempty"`
+	ID             string     `json:"id"`
+	QuestionID     string     `json:"question_id,omitempty"`
+	Role           string     `json:"role"`
+	Text           string     `json:"text"`
+	State          string     `json:"state"`
+	StartedAt      time.Time  `json:"response_started_at"`
+	StateStartedAt time.Time  `json:"state_started_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	DurationMS     int64      `json:"duration_ms"`
+	Sequence       int        `json:"sequence"`
+	Tools          []Tool     `json:"attachments"`
+	// Parts are the reply's steps as its Stream attachments show them (parts.go).
+	Parts   []Part   `json:"parts,omitempty"`
+	Sources []Source `json:"sources,omitempty"`
+	// ClientID is the install a person's command came from, written on their message.
+	ClientID  string               `json:"client_id,omitempty"`
+	Artifacts []ArtifactAttachment `json:"artifacts,omitempty"`
+	Saved     bool                 `json:"saved"`
+	Error     string               `json:"persistence_error,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
@@ -97,6 +102,8 @@ type commandRecord struct {
 	CommandReceipt
 	Digest    string
 	Initiator string `json:",omitempty"`
+	// ClientID is the install the command came from; a client tool call is addressed to it.
+	ClientID string `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
@@ -104,6 +111,7 @@ var ErrCommandNotFound = errors.New("command not found")
 var ErrCommandConflict = errors.New("command ID was already used with different content")
 var validAuthorID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+var validClientID = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
 type disk struct {
 	OutboxVersion int
@@ -123,13 +131,11 @@ type operation struct {
 	Message Message
 	Create  bool
 	Author  string `json:",omitempty"`
-	// thinking rides only on a live update. It is unexported so it never reaches the
-	// outbox on disk or a stored message.
-	thinking string
+	// reasoning and live ride only on a live update. They are unexported so they never
+	// reach the outbox on disk or a stored message.
+	reasoning *reasoningWindow
+	live      *liveSnapshot
 }
-
-// maxThinking bounds the live reasoning sent with each update to its most recent part.
-const maxThinking = 4000
 
 type Service struct {
 	lock   *os.File
@@ -150,13 +156,22 @@ type Conversation struct {
 	created  map[string]bool
 	emit     func(Updated)
 	dirty    bool
+	// tools describes the caller's tools for this session: titles, and which a person's
+	// device runs.
+	tools map[string]ToolDisplay
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
-	reasoning string
-	// indicated is the last AI indicator sent to watchers. Only run touches it.
+	reasoning liveReasoning
+	// indicated is the last AI indicator sent to watchers, and lived when the last live
+	// update went out. Only run touches them.
 	indicated indication
-	stopped   chan struct{}
-	done      chan struct{}
+	lived     time.Time
+	// liveRetry is when live updates may go out again after one failed, and
+	// liveFailures how many have failed in a row.
+	liveRetry    time.Time
+	liveFailures int
+	stopped      chan struct{}
+	done         chan struct{}
 }
 
 // indication is the Stream AI indicator a reply last showed: which message, in which state.
@@ -796,7 +811,7 @@ func (c *Conversation) Release() {
 	c.emit = nil
 }
 func (c *Conversation) Begin(text string) error {
-	_, err := c.beginCommand(uuid.NewString(), text, true)
+	_, err := c.beginCommand(uuid.NewString(), text, "", true)
 	return err
 }
 
@@ -818,10 +833,11 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 
 // BeginCommand atomically records command ownership and both initial Chat writes.
 // A recorded command is never automatically executed again, including after a crash.
-func (c *Conversation) BeginCommand(id, text string) (CommandReceipt, error) {
-	return c.beginCommand(id, text, false)
+// clientID names the install the command came from; an invalid one is ignored.
+func (c *Conversation) BeginCommand(id, text, clientID string) (CommandReceipt, error) {
+	return c.beginCommand(id, text, clientID, false)
 }
-func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceipt, error) {
+func (c *Conversation) beginCommand(id, text, clientID string, legacy bool) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
@@ -849,18 +865,21 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 		return CommandReceipt{}, errors.New("a response is already running")
 	}
 	now := time.Now().UTC()
+	if !validClientID.MatchString(clientID) {
+		clientID = ""
+	}
 	// The user's message is stored under the command ID, so a client that shows the
 	// message before it is delivered (an optimistic send) sees Stream's copy replace
 	// its own instead of a duplicate.
-	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}}
+	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}, ClientID: clientID}
 	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", TextLayout: 1, QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
 	receipt := CommandReceipt{CommandID: id, UserMessageID: u.ID, AssistantMessageID: a.ID, State: a.State}
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
 	}
-	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner}
+	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
 	c.data.Current = &a
-	c.reasoning = ""
+	c.reasoning = liveReasoning{}
 	c.data.Pending = append(c.data.Pending,
 		operation{Message: u, Create: true, Author: c.userAuthor()},
 		operation{Message: a, Create: true})
@@ -968,6 +987,7 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		c.state("thinking")
+		c.settleThinking(m, time.Now())
 		if m.Text != "" && !strings.HasSuffix(m.Text, "\n\n") {
 			m.Text += "\n\n"
 		}
@@ -978,13 +998,19 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		c.state("writing")
+		c.settleThinking(m, time.Now())
 		m.Text += e.Text
 		m.Saved = false
 	case agent.ReasoningDelta:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
 		}
-		c.reasoning = tail(c.reasoning+e.Text, maxThinking)
+		// Only a new reasoning step changes the reply. The thinking itself is not part of
+		// the message, so nothing is republished or checkpointed for it: the next live
+		// update carries it.
+		if !c.thought(m, e.Text, time.Now()) {
+			return
+		}
 	case agent.Responded:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -1006,7 +1032,9 @@ func (c *Conversation) Observe(event agent.Event) {
 		}
 		m.TextLayout = 1
 		m.AnswerStart = utf8.RuneCountInString(m.Text)
+		c.settleThinking(m, time.Now())
 		m.Tools = append(m.Tools, Tool{Type: "tool_calling", Product: e.Product, SDK: e.SDK, ID: e.ID, Name: e.Tool, Title: title(e.Tool), Status: "running", Phase: "running", StartedAt: e.StartedAt})
+		c.called(m, toolCall{id: e.ID, name: e.Tool, arguments: e.Arguments, startedAt: e.StartedAt})
 		c.state("tools")
 		persist = true
 	case agent.ToolRan:
@@ -1048,6 +1076,11 @@ func (c *Conversation) Observe(event agent.Event) {
 				m.Sources = mergeSources(m.Sources, sourcesOf(e.Result))
 				m.Artifacts = mergeArtifacts(m.Artifacts, StoredArtifacts(e.Result))
 			}
+			failure := ""
+			if e.Err != nil {
+				failure = e.Err.Error()
+			}
+			ran(m, t.ID, t.Status, e.Result, failure, now)
 			changed = true
 		}
 		if !changed {
@@ -1239,6 +1272,7 @@ func (c *Conversation) finish(state string) {
 	}
 	now := time.Now().UTC()
 	c.state(state)
+	c.stopParts(m, now)
 	m.FinishedAt = &now
 	m.DurationMS = now.Sub(m.StartedAt).Milliseconds()
 	for i := range m.Tools {
@@ -1258,6 +1292,7 @@ func (c *Conversation) finish(state string) {
 func (c *Conversation) publish(m Message) {
 	if c.emit != nil {
 		m.Tools = append([]Tool{}, m.Tools...)
+		m.Parts = append([]Part{}, m.Parts...)
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
@@ -1367,6 +1402,7 @@ func (c *Conversation) persist() error {
 }
 func (c *Conversation) enqueue(m Message, create bool) error {
 	m.Tools = append([]Tool{}, m.Tools...)
+	m.Parts = append([]Part{}, m.Parts...)
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	op := operation{Message: m, Create: create}
@@ -1386,18 +1422,6 @@ func (c *Conversation) checkpoint() {
 	if err := c.persist(); err != nil {
 		m.Error = "Could not save retry record: " + err.Error()
 	}
-}
-
-// tail keeps the last limit bytes of text without splitting a UTF-8 character.
-func tail(text string, limit int) string {
-	if len(text) <= limit {
-		return text
-	}
-	cut := len(text) - limit
-	for cut < len(text) && !utf8.RuneStart(text[cut]) {
-		cut++
-	}
-	return text[cut:]
 }
 
 func (c *Conversation) save() {
@@ -1434,12 +1458,19 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 	}
 	runtime := runtimeOf(m)
 	fields := map[string]any{"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
-	if len(m.Artifacts) > 0 {
-		fields["attachments"] = partialAttachments(m.Artifacts)
+	parts := m.Parts
+	if op.live != nil {
+		parts = liveParts(parts, *op.live)
+	}
+	if attachments := messageAttachments(parts, partialAttachments(m.Artifacts)); len(attachments) > 0 {
+		fields["attachments"] = attachments
 	}
 	if op.Create {
 		custom := map[string]any{"source": "agent", "generating": m.FinishedAt == nil,
 			"support_message": metadata, "support_runtime": runtime}
+		if m.ClientID != "" {
+			custom["client_id"] = m.ClientID
+		}
 		// ai_generated is how Stream's AI components tell a streamed reply from the rest.
 		// User messages are written as the agent too, so it goes on assistant replies only.
 		if m.Role == "assistant" {
@@ -1460,8 +1491,8 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 		return err
 	}
 	if ephemeral {
-		if op.thinking != "" {
-			fields["reasoning"] = op.thinking
+		if op.reasoning != nil {
+			fields["reasoning"] = op.reasoning
 		}
 		_, err := c.service.client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
 		return err
@@ -1532,8 +1563,7 @@ func (c *Conversation) flush() bool {
 }
 func (c *Conversation) run() {
 	defer close(c.done)
-	// Stream's guidance for streamed replies is a live update at most every 50 to 100 ms.
-	tick := time.NewTicker(100 * time.Millisecond)
+	tick := time.NewTicker(liveTick)
 	defer tick.Stop()
 	retry := time.Time{}
 	for {
@@ -1554,17 +1584,36 @@ func (c *Conversation) run() {
 			c.mu.Lock()
 			m := c.data.Current
 			visible := c.data.VisibleTools
-			thinking := c.reasoning
+			now := time.Now()
 			created := m != nil && c.created[m.ID]
 			dirty := c.dirty && created
+			// After a failed live update the next waits (liveBackoff); stored writes keep
+			// their own retry above. Ticks run a little early or late, so each pace allows
+			// half a tick either way.
+			ready := !now.Before(c.liveRetry)
+			changed := dirty && m.FinishedAt == nil && ready && now.Sub(c.lived) >= answerEvery-liveTick/2
+			// Thinking alone goes out at a gentler pace than the answer. A finished reply's
+			// last thoughts go out once its final text is stored, which it is by now.
+			thinking := created && m.Role == "assistant" && c.reasoning.pending() && ready &&
+				(m.FinishedAt != nil || now.Sub(c.lived) >= reasoningEvery-liveTick/2)
+			live := changed || thinking
+			var window *reasoningWindow
+			snapshot := c.reasoning.snapshot()
+			if live && m.Role == "assistant" {
+				if w, ok := c.reasoning.window(now); ok {
+					window = &w
+				}
+			}
 			if m != nil {
 				copy := *m
 				copy.Tools = append([]Tool{}, m.Tools...)
+				copy.Parts = append([]Part{}, m.Parts...)
 				copy.Sources = append([]Source{}, m.Sources...)
 				copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 				m = &copy
 			}
-			if dirty {
+			// A change not sent yet waits for the next update; a settled reply's is stored.
+			if dirty && (live || m.FinishedAt != nil) {
 				c.dirty = false
 			}
 			c.mu.Unlock()
@@ -1575,28 +1624,56 @@ func (c *Conversation) run() {
 			} else {
 				c.indicate(nil)
 			}
-			if dirty && m != nil && m.FinishedAt == nil {
+			if live {
+				c.lived = now
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := c.send(ctx, operation{Message: *m, thinking: thinking}, true, visible)
+				err := c.send(ctx, operation{Message: *m, reasoning: window, live: &snapshot}, true, visible)
 				cancel()
+				c.mu.Lock()
+				current := c.data.Current != nil && c.data.Current.ID == m.ID
+				// A settled reply's thinking is best effort, like its indicator: it is
+				// not retried, so a failing Stream cannot keep the loop sending it.
+				if window != nil && current && (err == nil || m.FinishedAt != nil) {
+					c.reasoning.delivered(*window, now)
+				}
 				if err != nil {
-					c.mu.Lock()
+					c.liveFailures++
+					c.liveRetry = now.Add(liveBackoff(err, c.liveFailures, now))
+				} else {
+					c.liveFailures = 0
+				}
+				if err != nil && m.FinishedAt == nil {
 					if c.data.Current != nil {
 						c.data.Current.Error = "Live Stream Chat update failed; final writes remain queued"
 						c.dirty = true
 						c.publish(*c.data.Current)
 					}
-					c.mu.Unlock()
-				} else {
-					c.mu.Lock()
-					if c.data.Current != nil && c.data.Current.ID == m.ID {
-						c.data.Current.Error = ""
-					}
-					c.mu.Unlock()
+				} else if err == nil && current {
+					c.data.Current.Error = ""
 				}
+				c.mu.Unlock()
 			}
 		}
 	}
+}
+
+// liveBackoff is how long live updates pause after the failures-th in a row. On a 429
+// Stream says how long: its Retry-After, or else the end of its rate-limit window. Other
+// failures back off from a second, doubling to eight. A refused update is not lost: the
+// next one carries the reply as it is by then, and any thinking it did not deliver.
+func liveBackoff(err error, failures int, now time.Time) time.Duration {
+	var refused *getstream.StreamError
+	if errors.As(err, &refused) && refused.StatusCode == http.StatusTooManyRequests {
+		if refused.RetryAfter > 0 {
+			return min(refused.RetryAfter, maxLivePause)
+		}
+		if refused.RateLimit != nil && refused.RateLimit.Reset > 0 {
+			if wait := time.Unix(refused.RateLimit.Reset, 0).Sub(now); wait > 0 {
+				return min(wait, maxLivePause)
+			}
+		}
+	}
+	return time.Second << min(max(failures, 1)-1, 3)
 }
 
 // indicate tells watchers what a live reply is doing with Stream's AI indicator events,

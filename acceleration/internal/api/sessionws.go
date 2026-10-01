@@ -241,7 +241,7 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 					found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
 					continue
 				}
-				if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text); err != nil {
+				if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, ""); err != nil {
 					found.Report(err, "llm")
 				}
 				continue

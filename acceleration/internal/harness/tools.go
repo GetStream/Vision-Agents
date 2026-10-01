@@ -32,6 +32,11 @@ type Tool struct {
 	// Parameters is a JSON Schema object describing the arguments. It is untyped because
 	// a schema is untyped: the shape is whatever the tool accepts.
 	Parameters map[string]any `yaml:"parameters"`
+	// Client says a person's device runs the tool rather than the caller. The model never
+	// sees it; a persistent conversation shows the call as awaiting that device.
+	Client bool `yaml:"-"`
+	// DisplayTitle is what a call is doing, in words for the people in the conversation.
+	DisplayTitle string `yaml:"-"`
 }
 
 // Tools is the set a harness was configured with.
