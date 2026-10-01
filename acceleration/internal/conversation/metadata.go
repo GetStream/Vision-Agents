@@ -9,9 +9,12 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	getstream "github.com/GetStream/getstream-go/v5"
 )
 
 const (
@@ -32,9 +35,9 @@ func ValidVisibleTool(pattern string) bool {
 	return err == nil && pattern != "" && len(pattern) <= 128
 }
 
-// visibleTool reports whether a tool's name and outcome may reach chat clients. Anything a
+// ToolVisible reports whether a tool's name and outcome may reach chat clients. Anything a
 // config does not name, connector operations and arbitrary skills above all, stays hidden.
-func visibleTool(patterns []string, name string) bool {
+func ToolVisible(patterns []string, name string) bool {
 	if len(patterns) == 0 {
 		patterns = DefaultVisibleTools
 	}
@@ -108,7 +111,7 @@ func metadataOf(message Message, visible []string) (supportMessage, error) {
 		return supportMessage{}, errors.New("invalid observable message state")
 	}
 	for _, tool := range message.Tools {
-		if !visibleTool(visible, tool.Name) {
+		if !ToolVisible(visible, tool.Name) {
 			continue
 		}
 		display, ok := displayToolOf(tool)
@@ -309,6 +312,119 @@ func mergeSources(existing, additions []Source) []Source {
 		merged = append(merged, source)
 	}
 	return merged
+}
+
+var (
+	artifactID   = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
+	artifactType = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+)
+
+const maxArtifactAttachments = 32
+
+// ArtifactAttachment is a stored artifact a reply links to. It reaches Chat as an attachment
+// whose type, title and custom artifact_id, revision and alt a client opens it by.
+type ArtifactAttachment struct {
+	Type       string `json:"type"`
+	ArtifactID string `json:"artifact_id"`
+	Revision   int    `json:"revision"`
+	Title      string `json:"title"`
+	Alt        string `json:"alt,omitempty"`
+}
+
+// StoredArtifacts reads the artifact a tool result says it stored, never model prose. The
+// convention is a result that is exactly {"schema_version":1,"status":"stored",
+// "publication":"pending","attachment":{"type","artifact_id","revision","title","alt",
+// "sha256"}}, publication and alt and sha256 being optional: a type of lowercase letters,
+// digits and "_", an artifact_id of at most 80 letters, digits, "_" or "-", a positive
+// revision, a title of at most 200 characters and alt text of at most 500. The sha256 is
+// accepted and never shown. Anything else in the result stores nothing.
+func StoredArtifacts(result string) []ArtifactAttachment {
+	if result == "" || len(result) > maxSupportMessageBytes {
+		return nil
+	}
+	var payload struct {
+		SchemaVersion int    `json:"schema_version"`
+		Status        string `json:"status"`
+		Publication   string `json:"publication"`
+		Attachment    struct {
+			Type       string `json:"type"`
+			ArtifactID string `json:"artifact_id"`
+			Revision   int    `json:"revision"`
+			Title      string `json:"title"`
+			Alt        string `json:"alt"`
+			SHA256     string `json:"sha256"`
+		} `json:"attachment"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(result))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&payload) != nil || !errors.Is(decoder.Decode(&struct{}{}), io.EOF) ||
+		payload.SchemaVersion != 1 || payload.Status != "stored" ||
+		payload.Publication != "" && payload.Publication != "pending" {
+		return nil
+	}
+	artifact := ArtifactAttachment{
+		Type: payload.Attachment.Type, ArtifactID: payload.Attachment.ArtifactID,
+		Revision: payload.Attachment.Revision, Title: payload.Attachment.Title,
+		Alt: payload.Attachment.Alt,
+	}
+	if !validArtifact(artifact) {
+		return nil
+	}
+	return []ArtifactAttachment{artifact}
+}
+
+func validArtifact(artifact ArtifactAttachment) bool {
+	return artifactType.MatchString(artifact.Type) && artifactID.MatchString(artifact.ArtifactID) &&
+		artifact.Revision >= 1 && artifact.Revision <= 2147483647 &&
+		boundedDisplayText(artifact.Title, 200) && boundedOptionalText(artifact.Alt, 500)
+}
+
+func mergeArtifacts(existing, additions []ArtifactAttachment) []ArtifactAttachment {
+	merged := append([]ArtifactAttachment{}, existing...)
+	seen := map[string]struct{}{}
+	for _, artifact := range merged {
+		seen[artifact.ArtifactID+":"+strconv.Itoa(artifact.Revision)] = struct{}{}
+	}
+	for _, artifact := range additions {
+		if len(merged) == maxArtifactAttachments {
+			break
+		}
+		key := artifact.ArtifactID + ":" + strconv.Itoa(artifact.Revision)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, artifact)
+	}
+	return merged
+}
+
+// ChatAttachments is how artifacts are written onto a Chat message.
+func ChatAttachments(artifacts []ArtifactAttachment) []getstream.Attachment {
+	attachments := make([]getstream.Attachment, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		custom := map[string]any{"artifact_id": artifact.ArtifactID, "revision": artifact.Revision}
+		if artifact.Alt != "" {
+			custom["alt"] = artifact.Alt
+		}
+		attachments = append(attachments, getstream.Attachment{Type: &artifact.Type, Title: &artifact.Title, Custom: custom})
+	}
+	return attachments
+}
+
+// partialAttachments are artifacts as a partial update sets them. Chat stores a partial
+// update's attachments as sent, so an artifact's fields go on the attachment itself, where
+// clients read them, rather than under a "custom" key that would only be stored as one more field.
+func partialAttachments(artifacts []ArtifactAttachment) []map[string]any {
+	attachments := make([]map[string]any, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		attachment := map[string]any{"type": artifact.Type, "title": artifact.Title, "artifact_id": artifact.ArtifactID, "revision": artifact.Revision}
+		if artifact.Alt != "" {
+			attachment["alt"] = artifact.Alt
+		}
+		attachments = append(attachments, attachment)
+	}
+	return attachments
 }
 
 func runtimeOf(message Message) runtimeMessage {
