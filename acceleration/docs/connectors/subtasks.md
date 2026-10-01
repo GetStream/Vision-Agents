@@ -139,11 +139,12 @@ Three PRs. After them a connection with a grant can be turned into an authorized
 
 ### T13. Transport composition and the wrapping order · [AI-845](https://linear.app/stream/issue/AI-845)
 
-- **Description.** `core.Bound.Transport`: builds the outbound `http.RoundTripper` as egress policy, then `Scheme.Wrap` (and `tls_scheme` when set), then the base transport. One transport per connection, cached, closed on disconnect. A `RoundTrip` test proves a signing scheme sees the final headers and body and that a private destination is refused before any credential is applied.
+- **Description.** `core.Bound.Transport`: builds the outbound client with `egress.NewClient(timeout, scheme.Wrap)`. `Scheme.Wrap` (and `tls_scheme` when set) is the outer layer and sees the final request; the egress transport sits under it, checks the URL and dials only a checked public IP. Egress is last on purpose: it must judge the request that actually leaves, after the scheme has finished with it. One transport per connection, cached, closed on disconnect. A `RoundTrip` test proves a signing scheme sees the final headers and body and that a private destination is refused before anything leaves the router.
+- **Egress (from [AI-829](https://linear.app/stream/issue/AI-829), PR #707).** Build every connector client with `egress.NewClient(timeout, scheme.Wrap)` and nothing else; never replace the returned client's `Transport`. It owns the redirect policy (same origin only, no method change), the URL check before and after `wrap`, and the dial-time public-IP check, so the order is fixed by construction. Close a connection's client with `CloseIdleConnections`, which reaches the inner transport through the wrapper. The dial-time check runs after `wrap`, so a scheme that mints or refreshes a token per request does so before a name that resolves to a private address is refused; the token never leaves the process. If minting itself must not happen, call `egress.ValidatePublicHTTPSURL` on the endpoint first.
 - **Scope.** `internal/connectors/core/transport.go`, tests with a recording scheme.
-- **Out of scope.** `mtls` itself (later).
+- **Out of scope.** `mtls` itself (later). Network-level egress isolation ([AI-864](https://linear.app/stream/issue/AI-864)).
 - **Dependencies.** T12, T2.
-- **Acceptance.** Order is enforced by construction: a source cannot obtain a transport without egress; a test with a fake signing scheme sees `Content-Length` and the body hash of the final request.
+- **Acceptance.** Order is enforced by construction: a source cannot obtain a transport without egress; a test with a fake signing scheme sees `Content-Length` and the body hash of the final request; a cross-host redirect never carries the scheme's credential.
 
 ### T14. Source mcp · [AI-849](https://linear.app/stream/issue/AI-849)
 
