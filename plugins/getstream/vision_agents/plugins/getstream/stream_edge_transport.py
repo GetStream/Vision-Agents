@@ -161,7 +161,11 @@ class StreamEdge(EdgeTransport[StreamCall]):
         # Initialize Stream client
         super().__init__()
         version = get_vision_agents_version()
-        self.client = AsyncStream(user_agent=f"stream-vision-agents-{version}")
+        # base_url=None is what makes the client read STREAM_BASE_URL; its default is
+        # production, whatever the environment says.
+        self.client = AsyncStream(
+            base_url=None, user_agent=f"stream-vision-agents-{version}"
+        )
         # self.events is inherited from EdgeTransport (with required events already registered)
         self.events.register_events_from_module(sfu_events)
         self.events.register_events_from_module(getstream.models, "call.")

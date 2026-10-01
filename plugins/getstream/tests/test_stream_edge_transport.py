@@ -109,6 +109,26 @@ class TestStreamEdge:
         with pytest.raises(RuntimeError, match="not authenticated"):
             await stream_edge.create_call(call_id="call-1")
 
+    async def test_client_uses_the_base_url_from_the_environment(self, monkeypatch):
+        monkeypatch.setenv("STREAM_API_KEY", "test-key")
+        monkeypatch.setenv("STREAM_API_SECRET", "test-secret")
+        monkeypatch.setenv("STREAM_BASE_URL", "http://127.0.0.1:3030")
+
+        edge = StreamEdge()
+
+        assert edge.client.base_url == "http://127.0.0.1:3030"
+        await edge.close()
+
+    async def test_client_defaults_to_production(self, monkeypatch):
+        monkeypatch.setenv("STREAM_API_KEY", "test-key")
+        monkeypatch.setenv("STREAM_API_SECRET", "test-secret")
+        monkeypatch.delenv("STREAM_BASE_URL", raising=False)
+
+        edge = StreamEdge()
+
+        assert edge.client.base_url == "https://chat.stream-io-api.com"
+        await edge.close()
+
     async def test_close_releases_client_resources(self, stream_edge: StreamEdge):
         stream_edge._real_connection = AsyncMock()
         real_connection = stream_edge._real_connection
