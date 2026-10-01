@@ -13,6 +13,13 @@ Every resource gets a clean, named API: `client.simulations.create(...)`, `clien
 underneath, not the public API. Users, examples and docs never write `client.post("/v1/agents/simulations", ...)`,
 call generated operation functions (`CreateSimulationWithResponse`), or import generated modules.
 
+```js
+// never
+const simulation = await client.post("/v1/agents/simulations", { body });
+// always
+const simulation = await client.simulations.create(body);
+```
+
 * Group by resource, and nest sub-resources: `simulations.runs.list()`, `agent.sessions.create()`.
 * Use the standard verbs: `create`, `get`, `list`, `update`, `delete`, plus actions named after the endpoint (`run`, `cancel`, `fork`).
 * Take keyword arguments or the language's options struct, and return the typed model.
@@ -207,6 +214,8 @@ async def inbound_message(message: acceleration.InboundMessage):
 
 Sandbox
 
+Call it the sandbox, never the VM: in method and type names, parameters, comments, logs, errors, READMEs and docs.
+
 ```
 agent = Agent(config="chat_support", sandbox=Daytona())
 ```
@@ -255,7 +264,7 @@ Memory can be deleted. `truncateMemories` (`DELETE /v1/agents/users/{user_id}/me
 
 An agent config can be changed in part. `patchAgentConfig` (`PATCH /v1/agents/configs/{id}`) takes an `AgentConfigPatch` and writes only the fields sent, so a guardrail or instructions can be set without restating everything else; `updateAgentConfig` (PUT) and `syncAgent` still replace instructions, guardrail, skills and knowledge. Server-side only. Name it `updateConfig` on the agent handle, spelled the way the language spells it: look the config up by the agent's name, then patch it. Go (`client.Agent.UpdateConfig`) and JavaScript (`AgentHandle.updateConfig`) have moved. Python (`plugins/stream`), .NET, Ruby, Rust and PHP need their generated clients regenerated and the method added.
 
-Simulations need resource methods (see "Resource methods, never raw requests"): `simulations.create/get/list/update/delete/run` and `simulations.runs.get/list/cancel`. Go is first. No SDK has them yet: JavaScript only has `client.post(...)`, Go only has the generated `CreateSimulationWithResponse`, Rust has the flat `create_simulation`, and Python (`plugins/stream`) has only `_generated`. The Python example in the simulations docs already uses `api.simulations.create`, `api.simulations.run` and `api.simulations.runs.get`, so Python needs them to match. Swift, Kotlin, Dart, .NET, Ruby and PHP follow.
+Simulations need resource methods (see "Resource methods, never raw requests"): `simulations.create/get/list/update/delete/run` and `simulations.runs.get/list/cancel`. JavaScript has moved (`client.simulations`, `client.simulations.runs`). Go only has the generated `CreateSimulationWithResponse`, Rust has the flat `create_simulation`, and Python (`plugins/stream`) has only `_generated`. The Python example in the simulations docs already uses `api.simulations.create`, `api.simulations.run` and `api.simulations.runs.get`, so Python needs them to match. Swift, Kotlin, Dart, .NET, Ruby and PHP follow.
 
 An agent folder can declare simulations in `simulations/*.yaml`. Each file is a list, so related simulations can share a file, and names must be unique across files. `syncAgent` (now declared in Go with Huma) takes them as `simulations: [SimulationDeclaration]`. When the field is sent, the router makes the config's simulations exactly that list: each is found by name and updated in place, so its runs stay attached, and one no longer declared is deleted. When the field is left out, the stored ones are left alone. So send `simulations` only when the folder has a `simulations/` directory, and send an empty list when that directory is empty. Refuse unknown keys, as with `agent.yaml`. The fingerprint appends `"\nsimulations:"` and then each simulation's JSON (field order as in the Go `agents.Simulation`), only when `simulations/` exists, so folders without one keep their current hash. Go has moved (`agents.Folder.Simulations`, sent by `Agent.Sync`). Python (`plugins/stream`), JavaScript, .NET, Ruby, Rust and PHP need their generated clients regenerated and the folder loader extended. `syncAgent` now validates its body, so a skill must carry `config_id` (every SDK already sends `""`).
 
