@@ -22,12 +22,15 @@ const (
 	// watcher who opened the conversation midway, or reconnected, catches up.
 	reasoningKeyframe      = 1500
 	reasoningKeyframeEvery = 3 * time.Second
-	// reasoningEvery is how often thinking alone is worth an update. The answer keeps
-	// the live tick's cadence, and any update it sends carries new thinking too.
+	// Stream throttles message.updated to 10 a second per channel. The answer goes out at
+	// most every answerEvery, which leaves room for the channel's other updates, and
+	// thinking alone at most every reasoningEvery; any update the answer sends carries new
+	// thinking too. The loop ticks every liveTick so both paces hold closely.
+	answerEvery    = 150 * time.Millisecond
 	reasoningEvery = 200 * time.Millisecond
-	// liveTick is how often live updates may go out: Stream's guidance for streamed
-	// replies is at most every 50 to 100 ms.
-	liveTick = 100 * time.Millisecond
+	liveTick       = 50 * time.Millisecond
+	// maxLivePause bounds how long live updates wait after Stream refuses one.
+	maxLivePause = time.Minute
 )
 
 // reasoningWindow is the "reasoning" field of an ephemeral update: text holds the

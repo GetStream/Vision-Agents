@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -33,6 +34,10 @@ type chatStore struct {
 	events          []sentEvent
 	fail            bool
 	failAfterCreate bool
+	// rateLimited refuses live (ephemeral) updates with a 429, as Stream does when its
+	// throttle is spent; liveAttempts counts every live update tried.
+	rateLimited  bool
+	liveAttempts int
 }
 
 // sentEvent is a channel event as the fake received it, with the stored updates made before it.
@@ -107,6 +112,13 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 			id := parts[len(parts)-1]
 			if id == "ephemeral" {
 				id = parts[len(parts)-2]
+				db.liveAttempts++
+				if db.rateLimited {
+					w.Header().Set("Retry-After", "1")
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = w.Write([]byte(`{"code":9,"message":"Too many requests","StatusCode":429}`))
+					return
+				}
 				db.patches = append(db.patches, body["set"].(map[string]any))
 			} else if r.Method == "PUT" {
 				db.updates++
@@ -1198,6 +1210,116 @@ func TestThinkingStreamsInWindows(t *testing.T) {
 	require.Contains(t, string(stored), `"summary":"thought 0."`)
 	require.NotContains(t, string(stored), "Last thought.")
 	require.NotContains(t, string(stored), "thought 99.")
+}
+
+// TestTheAnswerStaysWithinStreamsThrottle covers the answer's live pace: Stream throttles
+// message.updated to 10 a second per channel, and the answer goes out at most every
+// answerEvery so the channel's other updates fit too.
+func TestTheAnswerStaysWithinStreamsThrottle(t *testing.T) {
+	db, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	require.Eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.created[id] }, 3*time.Second, 20*time.Millisecond)
+
+	db.mu.Lock()
+	before := len(db.patches)
+	db.mu.Unlock()
+	begun := time.Now()
+	for time.Since(begun) < time.Second {
+		c.Observe(agent.ResponseDelta{Text: "word "})
+		time.Sleep(5 * time.Millisecond)
+	}
+	db.mu.Lock()
+	sent := len(db.patches) - before
+	db.mu.Unlock()
+	require.GreaterOrEqual(t, sent, 3, "the answer stopped streaming")
+	require.LessOrEqual(t, sent, int(time.Second/answerEvery)+1, "the answer outpaced answerEvery")
+	c.Observe(agent.Responded{})
+	saved(t, c)
+}
+
+// TestLiveUpdatesWaitOutARateLimit covers Stream refusing live updates: the runtime waits
+// for its Retry-After instead of trying again every tick, then resumes with nothing lost,
+// and the stored reply is unaffected.
+func TestLiveUpdatesWaitOutARateLimit(t *testing.T) {
+	db, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	require.Eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.created[id] }, 3*time.Second, 20*time.Millisecond)
+
+	db.mu.Lock()
+	db.rateLimited = true
+	db.liveAttempts = 0
+	db.mu.Unlock()
+	var thinking strings.Builder
+	begun := time.Now()
+	for time.Since(begun) < 1500*time.Millisecond {
+		piece := "thinking it over. "
+		thinking.WriteString(piece)
+		c.Observe(agent.ReasoningDelta{Text: piece})
+		time.Sleep(10 * time.Millisecond)
+	}
+	db.mu.Lock()
+	attempts := db.liveAttempts
+	db.rateLimited = false
+	db.mu.Unlock()
+	// One refused, then a second after Retry-After, rather than one every tick.
+	require.LessOrEqual(t, attempts, 3, "live updates kept hammering a rate-limited Stream")
+	require.GreaterOrEqual(t, attempts, 1)
+
+	windows := func() []reasoningWindow {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		var all []reasoningWindow
+		for _, patch := range db.patches {
+			if raw, ok := patch["reasoning"]; ok {
+				var w reasoningWindow
+				b, _ := json.Marshal(raw)
+				require.NoError(t, json.Unmarshal(b, &w))
+				all = append(all, w)
+			}
+		}
+		return all
+	}
+	require.Eventually(t, func() bool {
+		all := windows()
+		return len(all) > 0 && all[len(all)-1].Length == utf8.RuneCountInString(thinking.String())
+	}, 5*time.Second, 20*time.Millisecond, "the thinking held back never arrived")
+	var w watcher
+	for _, window := range windows() {
+		w.apply(window)
+	}
+	require.Equal(t, thinking.String(), w.text, "thinking was lost while Stream refused updates")
+
+	c.Observe(agent.ResponseDelta{Text: "The answer."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+}
+
+func TestLiveBackoffFollowsStream(t *testing.T) {
+	now := time.Unix(1_790_000_000, 0)
+	limited := func(retryAfter time.Duration, reset int64) error {
+		return &getstream.StreamError{StatusCode: http.StatusTooManyRequests, RetryAfter: retryAfter,
+			RateLimit: &getstream.RateLimitInfo{Reset: reset}}
+	}
+	require.Equal(t, 3*time.Second, liveBackoff(limited(3*time.Second, 0), 1, now), "Retry-After first")
+	require.Equal(t, 20*time.Second, liveBackoff(limited(0, now.Add(20*time.Second).Unix()), 1, now), "then the window's reset")
+	require.Equal(t, maxLivePause, liveBackoff(limited(0, now.Add(10*time.Minute).Unix()), 1, now), "never past a minute")
+	other := errors.New("connection reset")
+	require.Equal(t, time.Second, liveBackoff(other, 1, now))
+	require.Equal(t, 2*time.Second, liveBackoff(other, 2, now))
+	require.Equal(t, 8*time.Second, liveBackoff(other, 4, now))
+	require.Equal(t, 8*time.Second, liveBackoff(other, 12, now))
 }
 
 // TestRepliesFollowStreamAIProtocol covers what Stream's AI components need from a reply:

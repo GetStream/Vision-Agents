@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -160,8 +161,12 @@ type Conversation struct {
 	// update went out. Only run touches them.
 	indicated indication
 	lived     time.Time
-	stopped   chan struct{}
-	done      chan struct{}
+	// liveRetry is when live updates may go out again after one failed, and
+	// liveFailures how many have failed in a row.
+	liveRetry    time.Time
+	liveFailures int
+	stopped      chan struct{}
+	done         chan struct{}
 }
 
 // indication is the Stream AI indicator a reply last showed: which message, in which state.
@@ -1211,6 +1216,7 @@ func (c *Conversation) finish(state string) {
 func (c *Conversation) publish(m Message) {
 	if c.emit != nil {
 		m.Tools = append([]Tool{}, m.Tools...)
+		m.Parts = append([]Part{}, m.Parts...)
 		m.Sources = append([]Source{}, m.Sources...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
@@ -1319,6 +1325,7 @@ func (c *Conversation) persist() error {
 }
 func (c *Conversation) enqueue(m Message, create bool) error {
 	m.Tools = append([]Tool{}, m.Tools...)
+	m.Parts = append([]Part{}, m.Parts...)
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	op := operation{Message: m, Create: create}
@@ -1505,12 +1512,16 @@ func (c *Conversation) run() {
 			now := time.Now()
 			created := m != nil && c.created[m.ID]
 			dirty := c.dirty && created
+			// After a failed live update the next waits (liveBackoff); stored writes keep
+			// their own retry above. Ticks run a little early or late, so each pace allows
+			// half a tick either way.
+			ready := !now.Before(c.liveRetry)
+			changed := dirty && m.FinishedAt == nil && ready && now.Sub(c.lived) >= answerEvery-liveTick/2
 			// Thinking alone goes out at a gentler pace than the answer. A finished reply's
 			// last thoughts go out once its final text is stored, which it is by now.
-			// Ticks run a little early or late, so the pace allows half a tick either way.
-			thinking := created && m.Role == "assistant" && c.reasoning.pending() &&
+			thinking := created && m.Role == "assistant" && c.reasoning.pending() && ready &&
 				(m.FinishedAt != nil || now.Sub(c.lived) >= reasoningEvery-liveTick/2)
-			live := dirty && m.FinishedAt == nil || thinking
+			live := changed || thinking
 			var window *reasoningWindow
 			snapshot := c.reasoning.snapshot()
 			if live && m.Role == "assistant" {
@@ -1521,10 +1532,12 @@ func (c *Conversation) run() {
 			if m != nil {
 				copy := *m
 				copy.Tools = append([]Tool{}, m.Tools...)
+				copy.Parts = append([]Part{}, m.Parts...)
 				copy.Sources = append([]Source{}, m.Sources...)
 				m = &copy
 			}
-			if dirty {
+			// A change not sent yet waits for the next update; a settled reply's is stored.
+			if dirty && (live || m.FinishedAt != nil) {
 				c.dirty = false
 			}
 			c.mu.Unlock()
@@ -1547,6 +1560,12 @@ func (c *Conversation) run() {
 				if window != nil && current && (err == nil || m.FinishedAt != nil) {
 					c.reasoning.delivered(*window, now)
 				}
+				if err != nil {
+					c.liveFailures++
+					c.liveRetry = now.Add(liveBackoff(err, c.liveFailures, now))
+				} else {
+					c.liveFailures = 0
+				}
 				if err != nil && m.FinishedAt == nil {
 					if c.data.Current != nil {
 						c.data.Current.Error = "Live Stream Chat update failed; final writes remain queued"
@@ -1560,6 +1579,25 @@ func (c *Conversation) run() {
 			}
 		}
 	}
+}
+
+// liveBackoff is how long live updates pause after the failures-th in a row. On a 429
+// Stream says how long: its Retry-After, or else the end of its rate-limit window. Other
+// failures back off from a second, doubling to eight. A refused update is not lost: the
+// next one carries the reply as it is by then, and any thinking it did not deliver.
+func liveBackoff(err error, failures int, now time.Time) time.Duration {
+	var refused *getstream.StreamError
+	if errors.As(err, &refused) && refused.StatusCode == http.StatusTooManyRequests {
+		if refused.RetryAfter > 0 {
+			return min(refused.RetryAfter, maxLivePause)
+		}
+		if refused.RateLimit != nil && refused.RateLimit.Reset > 0 {
+			if wait := time.Unix(refused.RateLimit.Reset, 0).Sub(now); wait > 0 {
+				return min(wait, maxLivePause)
+			}
+		}
+	}
+	return time.Second << min(max(failures, 1)-1, 3)
 }
 
 // indicate tells watchers what a live reply is doing with Stream's AI indicator events,
