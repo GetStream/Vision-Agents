@@ -781,7 +781,10 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 		return CommandReceipt{}, errors.New("a response is already running")
 	}
 	now := time.Now().UTC()
-	u := Message{ID: uuid.NewString(), CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}}
+	// The user's message is stored under the command ID, so a client that shows the
+	// message before it is delivered (an optimistic send) sees Stream's copy replace
+	// its own instead of a duplicate.
+	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}}
 	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
 	receipt := CommandReceipt{CommandID: id, UserMessageID: u.ID, AssistantMessageID: a.ID, State: a.State}
 	if c.data.Commands == nil {

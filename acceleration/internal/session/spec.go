@@ -148,6 +148,7 @@ type Spec struct {
 	// simply leaves the tool unoffered.
 	SearchTarget  string
 	Voice         string
+	Speed         float64
 	LanguageHints []string
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	// A provider that cannot be told about vocabulary ignores them.
@@ -246,6 +247,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		TTSTarget:      config.TTS,
 		STSTarget:      config.STS,
 		Voice:          config.Voice,
+		Speed:          config.Speed,
 		LLMTarget:      config.LLM,
 		SubagentTarget: config.Subagent,
 		VideoSource:    config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,

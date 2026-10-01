@@ -1014,6 +1014,7 @@ tts:
         ]
       realtime: true
       tier: low-latency
+      supports: [speed]
       # Self-serve accounts are opted in: ElevenLabs "don't train on any data from our
       # Enterprise customers", and everyone else shares until the Data use toggle is off.
       # History is kept by default with no published window, and Zero Retention Mode -
@@ -1118,6 +1119,7 @@ tts:
         ]
       realtime: true
       tier: high-quality
+      supports: [speed]
       data_policy:
         trains_on_data: "yes"
         retention: unspecified

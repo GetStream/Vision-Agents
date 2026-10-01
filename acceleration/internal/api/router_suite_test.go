@@ -219,7 +219,8 @@ func (s *RouterSuite) SetupSuite() {
 	s.data = testData{suite: s}
 
 	limiter := s.quota(liveClient, logger)
-	streams := s.routers(limiter, logger)
+	policies := s.policies(logger)
+	streams := s.routers(limiter, policies, logger)
 	sessions := s.sessionManager(streams, logger)
 	s.dispatch = dispatch.NewPool()
 
@@ -257,7 +258,7 @@ func (s *RouterSuite) SetupSuite() {
 		Voices:           s.voiceService(),
 		VoiceLibrary:     voices.NewCatalogue(),
 		Dispatch:         s.dispatch,
-		Policies:         s.policies(logger),
+		Policies:         policies,
 		Quota:            limiter,
 		StreamKey:        suiteStreamKey,
 		StreamSecret:     suiteStreamSecret,
@@ -277,12 +278,12 @@ func (s *RouterSuite) SetupSuite() {
 // routers builds every modality against stubs that answer in process. What a real vendor
 // makes of real audio is that provider package's own suite; what is under test here is the
 // HTTP surface in front of it.
-func (s *RouterSuite) routers(limiter *quota.Limiter, logger *slog.Logger) *Streams {
+func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger *slog.Logger) *Streams {
 	s.ears = &quietSTT{emitter: stt.NewEmitter(64)}
 	hearing := sttrouter.NewRegistry()
 	hearing.Register("stub", func(routing.Spec) (stt.STT, error) { return s.ears, nil })
 	transcriber, err := sttrouter.New(sttrouter.Options{
-		Config: routableConfig(), Registry: hearing, Store: s.store, Live: s.live, Logger: logger,
+		Config: routableConfig(), Registry: hearing, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriber.Close)
@@ -320,7 +321,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, logger *slog.Logger) *Stre
 	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
-		Quota: limiter, Logger: logger,
+		Quota: limiter, Gate: gate, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
@@ -329,7 +330,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, logger *slog.Logger) *Stre
 	speaking := ttsrouter.NewRegistry()
 	speaking.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
 	speaker, err := ttsrouter.New(ttsrouter.Options{
-		Config: routableConfig(), Registry: speaking, Store: s.store, Live: s.live, Logger: logger,
+		Config: routableConfig(), Registry: speaking, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
@@ -355,7 +356,8 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, logger *slog.Logger) *Stre
 	s.T().Cleanup(recordings.Close)
 
 	finding, err := searchrouter.New(searchrouter.Options{
-		Config: routableConfig(), Registry: searchRegistry(), Logger: logger,
+		Config: routableConfig(), Registry: searchRegistry(), Store: s.store, Live: s.live, Gate: gate,
+		Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(finding.Close)
@@ -367,7 +369,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, logger *slog.Logger) *Stre
 	s.T().Cleanup(judging.Close)
 
 	imaging, err := imagerouter.New(imagerouter.Options{
-		Config: imageConfig(), Registry: painterRegistry(), Logger: logger,
+		Config: imageConfig(), Registry: painterRegistry(), Gate: gate, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(imaging.Close)

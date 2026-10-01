@@ -1,9 +1,10 @@
 // Package policy enforces what an organization and its apps have decided about spend, data
-// handling and prompt injection.
+// handling, prompt injection, which models may be used and how usage is labelled.
 //
 // An organization's policy is a floor its apps can tighten and cannot loosen: both budgets
-// apply, a data policy is the stricter of the two, and prompt injection is screened if
-// either turns it on. That is the only reading under which an organization's setting means
+// apply, a data policy is the stricter of the two, prompt injection is screened if either
+// turns it on, only a model both allow may be routed to, and the organization's tags win
+// over the app's. That is the only reading under which an organization's setting means
 // anything, since an app that could switch it off would make it a suggestion.
 //
 // Decisions are cached per customer for a few seconds, because Admit is asked before every
@@ -16,10 +17,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -53,6 +56,8 @@ type Enforcer struct {
 type decision struct {
 	refusal error
 	floor   options.DataPolicy
+	models  []string
+	tags    routing.Tags
 	screen  bool
 	expires time.Time
 }
@@ -68,14 +73,14 @@ func New(db *store.Store, logger *slog.Logger) (*Enforcer, error) {
 	return &Enforcer{store: db, logger: logger, decisions: map[string]decision{}}, nil
 }
 
-// Admit refuses a customer whose app or organization has spent its budget, and otherwise
-// returns the data policy every one of their requests is held to.
-func (e *Enforcer) Admit(ctx context.Context, customerID string) (options.DataPolicy, error) {
+// Admit refuses a customer whose app or organization has spent its budget, and says what
+// every one of their requests is held to. The admission is returned with a refusal too.
+func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admission, error) {
 	if e == nil || customerID == "" {
-		return options.DataPolicy{}, nil
+		return routing.Admission{}, nil
 	}
 	decided := e.decide(ctx, customerID)
-	return decided.floor, decided.refusal
+	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, decided.refusal
 }
 
 // Join records that an app was seen under an organization, which is what an organization's
@@ -169,6 +174,9 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 
 	decided := decision{
 		floor:  organization.DataPolicy.Stricter(app.DataPolicy),
+		models: allowedByBoth(organization.AllowedModels, app.AllowedModels),
+		// The organization's tags are laid over the app's, as both are over the request's.
+		tags:   routing.Admission{Tags: organization.Tags}.Labelled(app.Tags),
 		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),
 	}
 	if organization.Budget != nil {
@@ -207,3 +215,23 @@ func (e *Enforcer) forget(customerID string) {
 }
 
 func enabled(flag *bool) bool { return flag != nil && *flag }
+
+// allowedByBoth is the models both scopes allow: nil where neither has a list, the one
+// list where only one has, and what is on both where both have.
+func allowedByBoth(organization, app *[]string) []string {
+	switch {
+	case organization == nil && app == nil:
+		return nil
+	case organization == nil:
+		return append([]string{}, *app...)
+	case app == nil:
+		return append([]string{}, *organization...)
+	}
+	both := []string{}
+	for _, model := range *app {
+		if slices.Contains(*organization, model) {
+			both = append(both, model)
+		}
+	}
+	return both
+}

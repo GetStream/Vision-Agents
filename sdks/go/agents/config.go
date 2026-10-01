@@ -143,6 +143,9 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	setString(&body.Tts, settings.TTS)
 	body.Sts = settings.STS
 	setString(&body.Voice, settings.Voice)
+	if settings.Speed != 0 {
+		body.Speed = &settings.Speed
+	}
 	setString(&body.Llm, settings.LLM)
 	setString(&body.Subagent, settings.Subagent)
 	setString(&body.Search, settings.Search)

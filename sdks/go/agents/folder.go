@@ -140,6 +140,7 @@ type Settings struct {
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
 	STS        *string            `yaml:"sts"`
 	Voice      string             `yaml:"voice"`
+	Speed      float64            `yaml:"speed"`
 	LLM        string             `yaml:"llm"`
 	Subagent   string             `yaml:"subagent"`
 	Search     string             `yaml:"search"`

@@ -154,6 +154,9 @@ type Options struct {
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
+	// Speed is the voice's rate of delivery, 1 being its own. Zero leaves it there, and a
+	// voice that cannot be sped up is not routed to when it is set.
+	Speed float64
 	// LanguageHints narrow the candidates in every modality.
 	LanguageHints []string
 	// Keyterms are the business-specific words the transcriber should expect. A provider

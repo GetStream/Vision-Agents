@@ -1640,6 +1640,7 @@ type AgentConfig struct {
 	Sandbox *Sandbox  `json:"sandbox,omitempty"`
 	Search  *string   `json:"search,omitempty"`
 	Skills  *[]string `json:"skills,omitempty"`
+	Speed   *float64  `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string `json:"sts,omitempty"`
@@ -1675,9 +1676,12 @@ type AgentConfigPatch struct {
 	Name *string `json:"name,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox  *Sandbox           `json:"sandbox,omitempty"`
-	Search   *string            `json:"search,omitempty"`
-	Skills   *[]string          `json:"skills,omitempty"`
+	Sandbox *Sandbox  `json:"sandbox,omitempty"`
+	Search  *string   `json:"search,omitempty"`
+	Skills  *[]string `json:"skills,omitempty"`
+
+	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
+	Speed    *float64           `json:"speed,omitempty"`
 	Sts      *string            `json:"sts,omitempty"`
 	Stt      *string            `json:"stt,omitempty"`
 	Subagent *string            `json:"subagent,omitempty"`
@@ -1720,6 +1724,12 @@ type AgentConfigRequest struct {
 
 	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
 	Skills *[]string `json:"skills,omitempty"`
+
+	// Speed Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
+	//
+	//
+	// Example: 0.9
+	Speed *float64 `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts *string `json:"sts,omitempty"`
@@ -3222,8 +3232,13 @@ type PlacedCall struct {
 	VendorCallId string  `json:"vendor_call_id"`
 }
 
-// Policy What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and a field left out is no opinion rather than off.
+// Policy What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
 type Policy struct {
+	// AllowedModels The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one.
+	//
+	// Example: ["deepseek/DeepSeek-V4-Flash-0731"]
+	AllowedModels *[]string `json:"allowed_models,omitempty"`
+
 	// Budget A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
 	Budget *Budget `json:"budget,omitempty"`
 
@@ -3232,6 +3247,11 @@ type Policy struct {
 
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
+
+	// Tags Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
+	//
+	// Example: {"application":"support"}
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // PrepareVoiceRequest defines model for PrepareVoiceRequest.
@@ -4303,6 +4323,9 @@ type SyncAgentRequest struct {
 	// Simulations The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone.
 	Simulations *[]SimulationDeclaration `json:"simulations,omitempty"`
 	Skills      *[]SkillRequest          `json:"skills,omitempty"`
+
+	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
+	Speed *float64 `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string            `json:"sts,omitempty"`
@@ -6844,9 +6867,9 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/phone/vendors (the `ListPhoneVendors` operationId).
 	ListPhoneVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAppPolicy The calling app's budget, data policy and prompt injection setting
+	// GetAppPolicy The calling app's policy
 	//
-	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 	//
 	// Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
 	GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9951,9 +9974,9 @@ func (c *Client) ListPhoneVendors(ctx context.Context, reqEditors ...RequestEdit
 	return c.Client.Do(req)
 }
 
-// GetAppPolicy The calling app's budget, data policy and prompt injection setting
+// GetAppPolicy The calling app's policy
 //
-// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 //
 // Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
 func (c *Client) GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18309,9 +18332,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/phone/vendors (the `ListPhoneVendors` operationId).
 	ListPhoneVendorsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPhoneVendorsResponse, error)
 
-	// GetAppPolicyWithResponse The calling app's budget, data policy and prompt injection setting
+	// GetAppPolicyWithResponse The calling app's policy
 	//
-	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -29820,9 +29843,9 @@ func (c *ClientWithResponses) ListPhoneVendorsWithResponse(ctx context.Context, 
 	return ParseListPhoneVendorsResponse(rsp)
 }
 
-// GetAppPolicyWithResponse The calling app's budget, data policy and prompt injection setting
+// GetAppPolicyWithResponse The calling app's policy
 //
-// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 //
 // Returns a wrapper object for the known response body format(s).
 //

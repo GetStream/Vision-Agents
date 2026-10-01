@@ -50,6 +50,34 @@ func (s *ConfigsSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
 	s.Equal("support", value(read.Tags)["project"])
 }
 
+func (s *ConfigsSuite) TestAConfigRemembersHowFastItsVoiceSpeaks() {
+	created := s.createConfig(map[string]any{"name": "support", "voice": "aurora", "speed": 0.9})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal(0.9, value(read.Speed))
+}
+
+func (s *ConfigsSuite) TestAConfigWithANegativeSpeedIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "speed": -1})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "speed")
+}
+
+func (s *ConfigsSuite) TestPatchingASpeedKeepsTheVoice() {
+	created := s.createConfig(map[string]any{"name": "support", "voice": "aurora"})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"speed": 0.9}, &patched))
+
+	s.Equal(0.9, value(patched.Speed))
+	s.Equal("aurora", value(patched.Voice))
+}
+
 func (s *ConfigsSuite) TestAConfigRemembersWhichSearchItRoutesTo() {
 	created := s.createConfig(map[string]any{"name": "support", "search": "en-low-latency"})
 

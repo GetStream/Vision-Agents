@@ -48,6 +48,13 @@ const DefaultSampleRate = 24_000
 // defaultBaseURL is the production endpoint.
 const defaultBaseURL = "wss://api.elevenlabs.io"
 
+// minSpeed and maxSpeed bound voice_settings.speed. A speed outside them is refused rather
+// than clamped, since a caller asking for 1.5 and hearing 1.2 cannot tell it was not honoured.
+const (
+	minSpeed = 0.7
+	maxSpeed = 1.2
+)
+
 // supportedSampleRates are the rates the pcm_* output formats cover.
 var supportedSampleRates = []int{8_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000}
 
@@ -88,6 +95,9 @@ type Options struct {
 	Model   string
 	// Language is an ISO code. It is only sent for models that accept one.
 	Language string
+	// Speed is the rate of delivery, 1 being the voice's own and zero leaving it there.
+	// ElevenLabs accepts 0.7 to 1.2, and only on this socket: the dialogue models take none.
+	Speed float64
 	// SampleRate is the rate to synthesise at, one of supportedSampleRates.
 	SampleRate int
 	// BaseURL overrides the endpoint, for a proxy or a test server.
@@ -114,6 +124,7 @@ type clientMessage struct {
 type voiceSettings struct {
 	Stability       float64 `json:"stability"`
 	SimilarityBoost float64 `json:"similarity_boost"`
+	Speed           float64 `json:"speed,omitempty"`
 }
 
 // generationConf controls how much text the model waits for before generating. The first
@@ -212,6 +223,9 @@ func New(options Options) (*TTS, error) {
 	if Performs(options.Model) {
 		return nil, fmt.Errorf(
 			"elevenlabs: %s is a dialogue model, open it with NewDialogue", options.Model)
+	}
+	if options.Speed != 0 && (options.Speed < minSpeed || options.Speed > maxSpeed) {
+		return nil, fmt.Errorf("elevenlabs: speed %g is outside %g to %g", options.Speed, minSpeed, maxSpeed)
 	}
 
 	return &TTS{
@@ -433,7 +447,7 @@ func (t *TTS) openContext(id string) error {
 	message := clientMessage{
 		Text:          " ",
 		ContextID:     id,
-		VoiceSettings: &voiceSettings{Stability: 0.5, SimilarityBoost: 0.8},
+		VoiceSettings: &voiceSettings{Stability: 0.5, SimilarityBoost: 0.8, Speed: t.options.Speed},
 		// A short first threshold trades a little prosody for audio that starts sooner.
 		Generation: &generationConf{ChunkLengthSchedule: []int{50, 120, 160, 290}},
 	}

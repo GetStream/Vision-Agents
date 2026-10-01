@@ -844,15 +844,15 @@ module GetStream
           required: %w[bucket active_users sessions messages calls voice_minutes phone_minutes].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[connectors created_at greeting guardrail id instructions keyterms knowledge_namespace llm mode name sandbox search skills sts stt subagent sync_hash tags tts updated_at video voice].freeze,
+          properties: %w[connectors created_at greeting guardrail id instructions keyterms knowledge_namespace llm mode name sandbox search skills speed sts stt subagent sync_hash tags tts updated_at video voice].freeze,
           required: %w[id name mode created_at updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[connectors greeting guardrail instructions keyterms knowledge_namespace llm mode name sandbox search skills sts stt subagent tags tts video voice].freeze,
+          properties: %w[connectors greeting guardrail instructions keyterms knowledge_namespace llm mode name sandbox search skills speed sts stt subagent tags tts video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[connectors greeting guardrail instructions keyterms knowledge_namespace llm mode name sandbox search skills sts stt subagent tags tts video voice].freeze,
+          properties: %w[connectors greeting guardrail instructions keyterms knowledge_namespace llm mode name sandbox search skills speed sts stt subagent tags tts video voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
@@ -1176,7 +1176,7 @@ module GetStream
           required: %w[vendor_call_id status].freeze, open: false
         }.freeze,
         "Policy" => {
-          properties: %w[budget data_policy prompt_injection].freeze,
+          properties: %w[allowed_models budget data_policy prompt_injection tags].freeze,
           required: [].freeze, open: false
         }.freeze,
         "PrepareVoiceRequest" => {
@@ -1372,7 +1372,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[connectors greeting guardrail hash instructions keyterms knowledge knowledge_urls llm mode name sandbox search simulations skills sts stt subagent tags tts video voice].freeze,
+          properties: %w[connectors greeting guardrail hash instructions keyterms knowledge knowledge_urls llm mode name sandbox search simulations skills speed sts stt subagent tags tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
