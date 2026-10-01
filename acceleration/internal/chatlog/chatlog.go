@@ -502,12 +502,24 @@ func (w *writer) showOne(writing *reply, source string, key, id string) {
 	writing.shown = writing.text
 }
 
-// retract empties what a participant was heard saying before it settled, so words the
-// agent never took as said are not left in the channel as if they were.
+// retract removes what a participant was heard saying before it settled, so words the
+// agent never took as said are not left in the channel as if they were. Nobody sent it,
+// so it is deleted outright rather than left behind as an empty or deleted message.
 func (w *writer) retract(userID string) {
 	listening, started := w.listening[userID]
 	delete(w.listening, userID)
-	if started && listening.messageID != "" {
+	if !started || listening.messageID == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	hard := true
+	if _, err := w.log.client.Chat().DeleteMessage(ctx, listening.messageID,
+		&getstream.DeleteMessageRequest{Hard: &hard}); err != nil {
+		// Left alone it would still show the words, as if still being said. Emptied, it
+		// at least stops saying so, and clients do not show empty speech.
+		w.log.logger.Error("could not remove speech the agent did not take as said", "user", userID, "error", err)
 		w.patch(listening, "", false, SourceSpeech)
 	}
 }

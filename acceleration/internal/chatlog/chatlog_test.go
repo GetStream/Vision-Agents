@@ -357,15 +357,15 @@ func (s *ChatLogSuite) TestSpeechTheAgentIgnoredIsNotLeftInTheChannel() {
 	writer.handle(message{author: User{ID: "alice"}, text: "hang on, the door", kind: hearing, source: SourceSpeech})
 	writer.show()
 
+	s.Require().Len(s.channel(), 1, "watchers saw the words while they were heard")
+
 	writer.handle(message{author: User{ID: "alice"}, kind: ignored, source: SourceSpeech})
 
-	stored := s.channel()
-	s.Require().Len(stored, 1)
-	s.Empty(stored[0].Text)
-	s.Equal(false, stored[0].Custom[generatingField])
+	s.Empty(s.channel(), "an emptied message would read as one somebody sent")
+	s.Empty(writer.listening)
 }
 
-func (s *ChatLogSuite) TestSpeechThatNeverSettledIsClosedWhenTheCallEnds() {
+func (s *ChatLogSuite) TestSpeechThatNeverSettledIsRemovedWhenTheCallEnds() {
 	s.log.client = chattest.Client(s.T())
 	writer := newWriter(s.log)
 	writer.handle(message{author: User{ID: "alice"}, text: "and one more", kind: hearing, source: SourceSpeech})
@@ -373,9 +373,22 @@ func (s *ChatLogSuite) TestSpeechThatNeverSettledIsClosedWhenTheCallEnds() {
 
 	writer.closeOut()
 
+	s.Empty(s.channel(), "otherwise it says it is still being said forever, or is left empty")
+}
+
+func (s *ChatLogSuite) TestRetractingLeavesWhatWasSaidBefore() {
+	s.log.client = chattest.Client(s.T())
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+	writer.handle(message{author: alice, text: "What time is it?", kind: heard, source: SourceSpeech})
+	writer.handle(message{author: alice, text: "hang on", kind: hearing, source: SourceSpeech})
+	writer.show()
+
+	writer.handle(message{author: alice, kind: ignored, source: SourceSpeech})
+
 	stored := s.channel()
 	s.Require().Len(stored, 1)
-	s.Equal(false, stored[0].Custom[generatingField], "otherwise it says it is still being said forever")
+	s.Equal("What time is it?", stored[0].Text)
 }
 
 func (s *ChatLogSuite) TestAnEmptyWrittenReplyIsNotStored() {

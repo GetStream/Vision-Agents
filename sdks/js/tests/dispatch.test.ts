@@ -6,6 +6,8 @@ import {
   Client,
   ConfigurationError,
   Dispatch,
+  HostingRefusedError,
+  Tools,
   type InboundCall,
   type InboundMessage,
 } from "../src/index.js";
@@ -249,6 +251,151 @@ describe("Dispatch", () => {
     stop.abort();
 
     await running;
+  });
+
+  it("declares the tools it hosts once the router is listening, and runs the calls sent down", async () => {
+    const tools = new Tools().register<{ sdk: string }>({
+      name: "investigate_sdk",
+      description: "Read SDK source",
+      parameters: { type: "object", properties: { sdk: { type: "string" } } },
+      run: ({ sdk }) => `read ${sdk}`,
+    });
+    const dispatch = new Dispatch({ client: api }).host("stream-support", tools, {
+      timeoutMs: 60_000,
+    });
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({ type: "ready", worker_id: "worker_1" });
+
+    assert.deepEqual(await connection.next(), {
+      type: "host_tools",
+      agent_id: "stream-support",
+      tools: [
+        {
+          name: "investigate_sdk",
+          description: "Read SDK source",
+          parameters: { type: "object", properties: { sdk: { type: "string" } } },
+        },
+      ],
+      timeout_ms: 60_000,
+    });
+
+    connection.send({ type: "hosting", agent_id: "stream-support", tools: ["investigate_sdk"] });
+    connection.send({
+      type: "tool_call",
+      id: "call_1",
+      session_id: "sess_1",
+      name: "investigate_sdk",
+      arguments: '{"sdk":"android"}',
+    });
+    assert.deepEqual(await connection.next(), {
+      type: "tool_result",
+      id: "call_1",
+      output: "read android",
+    });
+
+    dispatch.stop();
+    await running;
+  });
+
+  it("declares its tools again every time the router says it is listening", async () => {
+    const tools = new Tools().register({ name: "lookup", description: "Look up", run: () => "" });
+    const dispatch = new Dispatch({ client: api }).host("stream-support", tools);
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({ type: "ready", worker_id: "worker_1" });
+    const first = await connection.next();
+    connection.send({ type: "ready", worker_id: "worker_1" });
+    const second = await connection.next();
+
+    assert.equal(first["type"], "host_tools");
+    assert.equal(first["timeout_ms"], 0, "a timeout nobody set should leave the router's default");
+    assert.deepEqual(second, first);
+
+    dispatch.stop();
+    await running;
+  });
+
+  it("keeps reading while a hosted tool runs, and counts it as work in flight", async () => {
+    const held: (() => void)[] = [];
+    const tools = new Tools().register({
+      name: "slow",
+      description: "Takes a while",
+      run: () => new Promise<string>((resolve) => held.push(() => resolve("done"))),
+    });
+    const dispatch = new Dispatch({ client: api }).host("stream-support", tools);
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({ type: "tool_call", id: "call_1", name: "slow", arguments: "" });
+    connection.send({ type: "tool_call", id: "call_2", name: "slow", arguments: "" });
+    await settle();
+
+    assert.equal(held.length, 2, "the second call was waiting behind the first");
+    assert.equal(dispatch.active, 2);
+
+    for (const finish of held) {
+      finish();
+    }
+    const answered = [await connection.next(), await connection.next()];
+    assert.deepEqual(answered.map((frame) => frame["id"]).sort(), ["call_1", "call_2"]);
+    assert.equal(answered[0]?.["output"], "done");
+
+    dispatch.stop();
+    await running;
+  });
+
+  it("tells the router a hosted tool failed, since a model is waiting on it", async () => {
+    const tools = new Tools().register({
+      name: "investigate_sdk",
+      description: "Read SDK source",
+      run: () => {
+        throw new Error("the checkout is missing");
+      },
+    });
+    const dispatch = new Dispatch({ client: api }).host("stream-support", tools);
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({ type: "tool_call", id: "call_1", name: "investigate_sdk", arguments: "{}" });
+    assert.deepEqual(await connection.next(), {
+      type: "tool_result",
+      id: "call_1",
+      error: "the checkout is missing",
+    });
+
+    connection.send({ type: "tool_call", id: "call_2", name: "deploy", arguments: "{}" });
+    assert.deepEqual(await connection.next(), {
+      type: "tool_result",
+      id: "call_2",
+      error: "this worker does not run deploy",
+    });
+
+    dispatch.stop();
+    await running;
+  });
+
+  it("stops waiting when the router refuses its tools, saying for which agent and why", async () => {
+    const tools = new Tools().register({ name: "lookup", description: "Look up", run: () => "" });
+    const dispatch = new Dispatch({ client: api }).host("stream-support", tools);
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({
+      type: "hosting_refused",
+      agent_id: "stream-support",
+      reason: "hosting no tools is not hosting",
+    });
+
+    await assert.rejects(running, (error: unknown) => {
+      assert.ok(error instanceof HostingRefusedError);
+      assert.equal(error.agentId, "stream-support");
+      assert.equal(error.reason, "hosting no tools is not hosting");
+      assert.match(error.message, /stream-support.*hosting no tools is not hosting/);
+      return true;
+    });
   });
 
   it("answers the second message on a channel from the session that answered the first", async () => {

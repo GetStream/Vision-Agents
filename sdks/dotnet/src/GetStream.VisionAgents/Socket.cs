@@ -61,6 +61,9 @@ internal sealed class Socket : IAsyncDisposable
 
     public bool Open => _socket.State == WebSocketState.Open && Volatile.Read(ref _closed) == 0;
 
+    /// <summary>What the far end said when it closed, or null if it went without saying.</summary>
+    public WebSocketCloseStatus? CloseStatus => _socket.CloseStatus;
+
     /// <summary>Dials the router, reporting what it said if it refused the upgrade.</summary>
     public static async Task<Socket> ConnectAsync(Backend backend, Uri url, CancellationToken cancellationToken)
     {

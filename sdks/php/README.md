@@ -167,6 +167,26 @@ $dispatch->run();
 A handler that throws rejects the call. SIGINT and SIGTERM stop it where pcntl is loaded;
 work still running is waited for.
 
+### Hosted tools
+
+A worker can also run tools for every session opened under an agent id, including sessions
+opened from a browser. Hosting alone is enough to `run()`.
+
+```php
+use GetStream\VisionAgents\Tools;
+
+$tools = (new Tools())->register('get_weather', 'The weather in a city', [
+    'type' => 'object',
+    'properties' => ['city' => ['type' => 'string']],
+], fn (array $args): string => weatherIn($args['city']));
+
+$dispatch->host('my-agent', $tools, timeoutMs: 0); // 0 takes the router's default
+$dispatch->run();
+```
+
+Each call runs in its own fiber. A refusal throws `HostingRefusedException`, and
+`$dispatch->hosting` lists the agent ids the router accepted.
+
 ## Guests
 
 ```php

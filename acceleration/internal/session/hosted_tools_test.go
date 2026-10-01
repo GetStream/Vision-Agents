@@ -11,7 +11,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
-type fakeHosts struct{ ran []dispatch.ToolCall }
+type fakeHosts struct {
+	ran    []dispatch.ToolCall
+	agents []string
+}
 
 func (f *fakeHosts) HostedTools(customerID, agentID string) ([]dispatch.Tool, time.Duration) {
 	if customerID != "acme" || agentID != "stream-support" {
@@ -23,8 +26,9 @@ func (f *fakeHosts) HostedTools(customerID, agentID string) ([]dispatch.Tool, ti
 	}, time.Minute
 }
 
-func (f *fakeHosts) RunHosted(_ context.Context, _, _ string, call dispatch.ToolCall) (string, error) {
+func (f *fakeHosts) RunHosted(_ context.Context, _, agentID string, call dispatch.ToolCall) (string, error) {
 	f.ran = append(f.ran, call)
+	f.agents = append(f.agents, agentID)
 	return "from the worker", nil
 }
 
@@ -58,6 +62,25 @@ func TestASessionNamingAHostedAgentIsOfferedTheWorkersTools(t *testing.T) {
 	}
 	if len(caller.ran) != 1 || caller.ran[0] != "search_docs" {
 		t.Errorf("a tool the caller declared was not left to the caller: %v", caller.ran)
+	}
+}
+
+func TestASessionOpenedByAgentNameIsOfferedTheWorkersTools(t *testing.T) {
+	hosts := &fakeHosts{}
+	m := &Manager{logger: slog.Default(), hosts: hosts}
+
+	// The shape a server SDK opens: a stored config found by name, and an agent id of its own.
+	spec := Spec{CustomerID: "acme", AgentID: "01JC-generated", ConfigID: "cfg-1", AgentName: "stream-support"}
+	tools, runner := m.hostedTools(spec, "session-1", nil, &callerTools{})
+
+	if len(tools) != 2 || tools[0].Name != "investigate_sdk" {
+		t.Fatalf("offered %+v", tools)
+	}
+	if _, err := runner.Run(context.Background(), llm.ToolCall{ID: "1", Name: "investigate_sdk"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(hosts.agents) != 1 || hosts.agents[0] != "stream-support" {
+		t.Errorf("the call went to the workers hosting %v", hosts.agents)
 	}
 }
 

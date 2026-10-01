@@ -13,10 +13,13 @@ use Closure;
 use GetStream\VisionAgents\Agent;
 use GetStream\VisionAgents\Client;
 use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\VisionAgents\Exception\HostingRefusedException;
+use GetStream\VisionAgents\Generated\SessionTool;
 use GetStream\VisionAgents\Inbound\InboundCall;
 use GetStream\VisionAgents\Inbound\InboundMessage;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Session;
+use GetStream\VisionAgents\Tools;
 use Revolt\EventLoop;
 use Throwable;
 
@@ -45,7 +48,11 @@ final class Dispatch
     public readonly Client $client;
     /** What the router calls this connection, for matching a log line here against one there. */
     public string $workerId = '';
+    /** @var list<string> the agent ids the router has said it sends this worker's tools for */
+    public array $hosting = [];
 
+    /** @var list<array{agentId: string, tools: Tools, timeoutMs: int}> */
+    private array $hosted = [];
     /** @var array<int, Future<mixed>> */
     private array $running = [];
     private int $nextJob = 0;
@@ -107,6 +114,21 @@ final class Dispatch
     }
 
     /**
+     * Runs these tools for every session opened under an agent id, whoever opened it.
+     *
+     * A session's own tools run in the process that opened it, which is no use to a conversation
+     * opened from a browser. The router offers these to each session naming the agent and sends
+     * every call here. Call before `run()`.
+     *
+     * @param int $timeoutMs how long the router gives one call; 0 takes its default
+     */
+    public function host(string $agentId, Tools $tools, int $timeoutMs = 0): self
+    {
+        $this->hosted[] = ['agentId' => $agentId, 'tools' => $tools, 'timeoutMs' => $timeoutMs];
+        return $this;
+    }
+
+    /**
      * The session answering on this message's channel, started if none is.
      *
      * A channel is one conversation, so the second message on it goes to the session that
@@ -133,18 +155,22 @@ final class Dispatch
     }
 
     /**
-     * Waits for calls and messages until the router closes the socket or `stop()` is called.
+     * Waits for calls, messages and hosted tool calls until the router closes the socket or
+     * `stop()` is called.
      *
      * Work still being handled is waited for on the way out, because dropping a call would hang
      * up on whoever is talking. Where pcntl is loaded, SIGINT and SIGTERM stop it the same way.
+     *
+     * @throws HostingRefusedException when the router refuses the hosted tools
      */
     public function run(): void
     {
-        if ($this->onCall === null && $this->onMessage === null) {
-            throw new ConfigurationException('register a handler with waitForCall or waitForMessage before running');
+        if ($this->onCall === null && $this->onMessage === null && $this->hosted === []) {
+            throw new ConfigurationException('register a handler with waitForCall or waitForMessage, or host tools, before running');
         }
         $socket = Socket::open($this->client, '/v1/dispatch', ['capacity' => $this->capacity]);
         $this->socket = $socket;
+        $this->hosting = [];
 
         $watchers = [EventLoop::repeat($this->reportEvery, fn () => $this->report())];
         if (\extension_loaded('pcntl')) {
@@ -160,7 +186,11 @@ final class Dispatch
                 match (Json::string($frame, 'type')) {
                     'call' => $this->answer(InboundCall::fromFrame($frame)),
                     'message' => $this->write(InboundMessage::fromFrame($frame)),
-                    'ready' => $this->workerId = Json::string($frame, 'worker_id'),
+                    'ready' => $this->ready(Json::string($frame, 'worker_id')),
+                    'tool_call' => $this->runHosted($frame),
+                    'hosting' => $this->hosting[] = Json::string($frame, 'agent_id'),
+                    // A worker whose tools were refused is one nobody will call.
+                    'hosting_refused' => throw new HostingRefusedException(Json::string($frame, 'agent_id'), Json::string($frame, 'reason')),
                     'pong' => $this->pong?->isComplete() === false ? $this->pong->complete(Json::float($frame, 'at')) : null,
                     default => null,
                 };
@@ -188,6 +218,56 @@ final class Dispatch
     public function active(): int
     {
         return count($this->running);
+    }
+
+    /**
+     * Tells the router what this worker hosts, once it is listening.
+     */
+    private function ready(string $workerId): void
+    {
+        $this->workerId = $workerId;
+        foreach ($this->hosted as $offer) {
+            $this->tell([
+                'type' => 'host_tools',
+                'agent_id' => $offer['agentId'],
+                'tools' => array_map(static fn (SessionTool $tool): array => $tool->toArray(), $offer['tools']->declared()),
+                'timeout_ms' => $offer['timeoutMs'],
+            ]);
+        }
+    }
+
+    /**
+     * Answers one hosted tool call in its own fiber, since the socket it arrived on also
+     * delivers the next.
+     *
+     * @param array<string, mixed> $frame
+     */
+    private function runHosted(array $frame): void
+    {
+        $id = Json::string($frame, 'id');
+        $name = Json::string($frame, 'name');
+        $tools = null;
+        foreach ($this->hosted as $offer) {
+            foreach ($offer['tools']->declared() as $tool) {
+                if ($tool->name === $name) {
+                    $tools = $offer['tools'];
+                }
+            }
+        }
+        if ($tools === null) {
+            $this->tell(['type' => 'tool_result', 'id' => $id, 'error' => "this worker does not run {$name}"]);
+            return;
+        }
+        $arguments = $frame['arguments'] ?? '';
+        $this->track(function () use ($tools, $id, $name, $arguments): void {
+            $result = ['type' => 'tool_result', 'id' => $id];
+            try {
+                $result['output'] = $tools->call($name, is_string($arguments) ? $arguments : Json::encode($arguments));
+            } catch (Throwable $failed) {
+                $result['error'] = $failed->getMessage();
+            }
+            $this->tell($result);
+        });
     }
 
     private function answer(InboundCall $call): void
