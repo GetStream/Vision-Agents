@@ -32,8 +32,10 @@ type SessionFilter struct {
 	Text      *TextMatch `json:"text,omitempty" doc:"Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id."`
 	ProjectID *Equals    `json:"project_id,omitempty"`
 	Agent     *Equals    `json:"agent,omitempty" doc:"The agent name the session was opened against."`
+	AgentID   *Equals    `json:"agent_id,omitempty" doc:"The agent id the session was created with, which names its transcript channel."`
 	UserID    *Equals    `json:"user_id,omitempty" doc:"Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for."`
 	Modality  *Equals    `json:"modality,omitempty" doc:"text, voice or video: how the user took part."`
+	State     *Equals    `json:"state,omitempty" doc:"live or ended, as each session reports its state."`
 }
 
 func (*SessionFilter) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -134,7 +136,7 @@ func (s *Server) registerSessionQuery(api huma.API) {
 			"- every session, sorted by `updated_at`\n" +
 			"- a text search, `{\"text\": {\"$q\": \"billing\"}}`, sorted by `relevance`\n" +
 			"- one project's, `{\"project_id\": \"health\"}`, sorted by `updated_at`\n\n" +
-			"`agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's " +
+			"`agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's " +
 			"sessions; an end user gets their own, whatever they ask for, and an anonymous " +
 			"caller who named nobody gets none.\n\n" +
 			"The search reads what a person named the conversation, not what was said in it. " +
@@ -207,11 +209,21 @@ func sessionQueryOf(ctx context.Context, sent SessionQuery) (sessionQuery, error
 	}
 	query.filter.Project = string(value(filter.ProjectID))
 	query.filter.AgentName = string(value(filter.Agent))
+	query.filter.AgentID = string(value(filter.AgentID))
 	query.filter.Modality = string(value(filter.Modality))
+	state := SessionState(value(filter.State))
+	switch state {
+	case Live:
+		query.filter.State = store.SessionRunning
+	case Ended:
+		query.filter.State = store.SessionClosed
+	}
 
 	switch {
 	case query.filter.Modality != "" && !SessionModality(query.filter.Modality).Valid():
 		return sessionQuery{}, errors.New("modality is text, voice or video")
+	case state != "" && !state.Valid():
+		return sessionQuery{}, errors.New("state is live or ended")
 	case query.text != "" && query.filter.Project != "":
 		return sessionQuery{}, errors.New("a text search covers every project, so it cannot be combined with project_id")
 	case len(sent.Sort) > 0 && sent.Sort[0].Field != query.sort:

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -274,11 +276,34 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if _, ok := sandboxOf(request.Sandbox); !ok {
 		return fmt.Sprintf("there is no sandbox provider called %q", *request.Sandbox), false
 	}
+	if _, ok := harnessOf(request.Harness); !ok {
+		return fmt.Sprintf("there is no harness called %q", *request.Harness), false
+	}
 	if value(request.Speed) < 0 {
 		return "a voice's speed cannot be negative", false
 	}
 	if complaint, ok := guardrailComplaint(request.Guardrail); !ok {
 		return complaint, false
+	}
+	if complaint, ok := visibleToolsComplaint(request.VisibleTools); !ok {
+		return complaint, false
+	}
+	return "", true
+}
+
+// visibleToolsComplaint reports what is wrong with the tools a config shows end users, if
+// anything. A pattern that cannot match is refused here rather than found showing nothing.
+func visibleToolsComplaint(patterns *[]string) (string, bool) {
+	if patterns == nil {
+		return "", true
+	}
+	if len(*patterns) > 64 {
+		return "a config may show at most 64 visible_tools", false
+	}
+	for _, pattern := range *patterns {
+		if !conversation.ValidVisibleTool(pattern) {
+			return fmt.Sprintf("visible_tools has %q, which is not a tool name or pattern", pattern), false
+		}
 	}
 	return "", true
 }
@@ -325,6 +350,19 @@ func sandboxOf(box *Sandbox) (string, bool) {
 	return string(*box), true
 }
 
+// harnessOf reads the harness a caller sent, which is optional and defaults to the default
+// one. An unknown one is refused rather than defaulted, since an agent asked to run one that
+// does not exist would otherwise quietly run another.
+func harnessOf(named *Harness) (string, bool) {
+	if named == nil || *named == "" {
+		return harness.Default, true
+	}
+	if !named.Valid() {
+		return "", false
+	}
+	return string(*named), true
+}
+
 // keytermsOf reads the terms a caller sent, which are optional and may be blank.
 func keytermsOf(list *[]string) []string {
 	if list == nil {
@@ -356,6 +394,7 @@ func skillComplaint(request SkillRequest) (string, bool) {
 func storedConfig(request AgentConfigRequest, customerID string) store.AgentConfig {
 	mode, _ := modeOf(request.Mode)
 	box, _ := sandboxOf(request.Sandbox)
+	named, _ := harnessOf(request.Harness)
 	config := store.AgentConfig{
 		CustomerID:         customerID,
 		Name:               strings.TrimSpace(request.Name),
@@ -373,6 +412,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Guardrail:          value(request.Guardrail),
 		KnowledgeNamespace: value(request.KnowledgeNamespace),
 		Sandbox:            box,
+		Harness:            named,
 	}
 	if request.Skills != nil {
 		config.Skills = *request.Skills
@@ -381,6 +421,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.Plugins = *request.Plugins
 	}
 	config.Keyterms = keytermsOf(request.Keyterms)
+	if request.VisibleTools != nil {
+		config.VisibleTools = *request.VisibleTools
+	}
 	if request.Tags != nil {
 		config.Tags = *request.Tags
 	}
@@ -438,6 +481,11 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		box := Sandbox(config.Sandbox)
 		rendered.Sandbox = &box
 	}
+	named := Harness(config.Harness)
+	if named == "" {
+		named = Default
+	}
+	rendered.Harness = &named
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
@@ -449,6 +497,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms
 		rendered.Keyterms = &keyterms
+	}
+	if len(config.VisibleTools) > 0 {
+		visible := config.VisibleTools
+		rendered.VisibleTools = &visible
 	}
 	if len(config.Tags) > 0 {
 		tags := config.Tags

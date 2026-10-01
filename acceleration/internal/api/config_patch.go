@@ -26,8 +26,10 @@ type AgentConfigPatch struct {
 	Skills             *[]string          `json:"skills,omitempty"`
 	Plugins            *[]string          `json:"plugins,omitempty"`
 	Keyterms           *[]string          `json:"keyterms,omitempty"`
+	VisibleTools       *[]string          `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
 	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
+	Harness            *Harness           `json:"harness,omitempty"`
 	Tags               *map[string]string `json:"tags,omitempty"`
 	Video              *SessionVideo      `json:"video,omitempty"`
 }
@@ -46,6 +48,11 @@ func (AgentMode) Schema(registry huma.Registry) *huma.Schema {
 
 func (Sandbox) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "Sandbox", "Where the subagent may run code it writes.", string(Daytona))
+}
+
+func (Harness) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "Harness", "Which harness the agent's sessions run. Set on the "+
+		"agent, never on a session.", string(Default))
 }
 
 type patchAgentConfigRequest struct {
@@ -90,12 +97,14 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 
 	patch := request.Body
 	if message, ok := configComplaint(AgentConfigRequest{
-		Name:      override(config.Name, patch.Name),
-		Mode:      patch.Mode,
-		Keyterms:  patch.Keyterms,
-		Sandbox:   patch.Sandbox,
-		Speed:     patch.Speed,
-		Guardrail: patch.Guardrail,
+		Name:         override(config.Name, patch.Name),
+		Mode:         patch.Mode,
+		Keyterms:     patch.Keyterms,
+		Sandbox:      patch.Sandbox,
+		Harness:      patch.Harness,
+		Speed:        patch.Speed,
+		Guardrail:    patch.Guardrail,
+		VisibleTools: patch.VisibleTools,
 	}); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
@@ -120,9 +129,13 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if patch.Keyterms != nil {
 		config.Keyterms = keytermsOf(patch.Keyterms)
 	}
+	config.VisibleTools = override(config.VisibleTools, patch.VisibleTools)
 	config.KnowledgeNamespace = override(config.KnowledgeNamespace, patch.KnowledgeNamespace)
 	if patch.Sandbox != nil {
 		config.Sandbox, _ = sandboxOf(patch.Sandbox)
+	}
+	if patch.Harness != nil {
+		config.Harness, _ = harnessOf(patch.Harness)
 	}
 	config.Tags = override(config.Tags, patch.Tags)
 	if patch.Video != nil {

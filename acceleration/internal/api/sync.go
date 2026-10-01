@@ -39,6 +39,7 @@ type SyncAgentRequest struct {
 	Plugins       *[]string                  `json:"plugins,omitempty"`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
+	Harness       *Harness                   `json:"harness,omitempty"`
 	Tags          *map[string]string         `json:"tags,omitempty"`
 }
 
@@ -52,9 +53,10 @@ func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *
 
 // KnowledgeUrlDeclaration is a page an agent directory declares.
 type KnowledgeUrlDeclaration struct {
-	Url         string  `json:"url" example:"https://example.com/pricing"`
-	Title       *string `json:"title,omitempty" example:"Pricing"`
-	Description *string `json:"description,omitempty"`
+	Url          string  `json:"url" example:"https://example.com/pricing"`
+	Title        *string `json:"title,omitempty" example:"Pricing"`
+	Description  *string `json:"description,omitempty"`
+	RefreshHours *int    `json:"refresh_hours,omitempty" minimum:"1" example:"24" doc:"How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule."`
 }
 
 func (*KnowledgeUrlDeclaration) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -180,6 +182,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 			wanted := urls.Subscription{Namespace: namespace, URL: page.Url}
 			wanted.Title = value(page.Title)
 			wanted.Description = value(page.Description)
+			wanted.RefreshHours = value(page.RefreshHours)
 			if _, err := s.pages.Add(ctx, customerID, wanted); err != nil {
 				return nil, huma.Error400BadRequest(err.Error())
 			}
@@ -250,6 +253,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	}
 	if _, ok := sandboxOf(body.Sandbox); !ok {
 		return fmt.Sprintf("there is no sandbox provider called %q", *body.Sandbox), false
+	}
+	if _, ok := harnessOf(body.Harness); !ok {
+		return fmt.Sprintf("there is no harness called %q", *body.Harness), false
 	}
 	// Simulations are checked here, before anything is written, since a config stored under
 	// the new hash would make the next sync skip the simulations that failed.
@@ -376,6 +382,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Sandbox != nil {
 		box, _ := sandboxOf(body.Sandbox)
 		config.Sandbox = box
+	}
+	if body.Harness != nil {
+		config.Harness, _ = harnessOf(body.Harness)
 	}
 	if body.Tags != nil {
 		config.Tags = *body.Tags

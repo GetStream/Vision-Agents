@@ -1226,7 +1226,7 @@ export type paths = {
          *     - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
          *     - one project's, `{"project_id": "health"}`, sorted by `updated_at`
          *
-         *     `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+         *     `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
          *
          *     The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
          */
@@ -2275,6 +2275,8 @@ export type components = {
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly search?: string;
             readonly skills?: readonly string[];
+            /** Format: double */
+            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;
@@ -2288,6 +2290,7 @@ export type components = {
             /** Format: date-time */
             readonly updated_at: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            readonly visible_tools?: readonly string[];
             readonly voice?: string;
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
@@ -2306,6 +2309,11 @@ export type components = {
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly search?: string;
             readonly skills?: readonly string[];
+            /**
+             * Format: double
+             * @description The voice's rate of delivery, 1 being its own. Zero leaves it there.
+             */
+            readonly speed?: number;
             readonly sts?: string;
             readonly stt?: string;
             readonly subagent?: string;
@@ -2314,6 +2322,8 @@ export type components = {
             };
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search. */
+            readonly visible_tools?: readonly string[];
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
@@ -2337,6 +2347,12 @@ export type components = {
             readonly search?: string;
             /** @description Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set. */
             readonly skills?: readonly string[];
+            /**
+             * Format: double
+             * @description Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
+             * @example 0.9
+             */
+            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             /** @description A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it. */
@@ -2349,6 +2365,8 @@ export type components = {
             };
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search. */
+            readonly visible_tools?: readonly string[];
             /** @description Provider-specific voice id. */
             readonly voice?: string;
         };
@@ -3682,6 +3700,8 @@ export type components = {
          */
         readonly RecordingStatus: "queued" | "running" | "completed" | "failed";
         readonly RespondRequest: {
+            /** @description The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it. */
+            readonly client_id?: string;
             /** @description Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference. */
             readonly command_id?: string;
             readonly text: string;
@@ -3877,9 +3897,13 @@ export type components = {
         readonly SessionFilter: {
             /** @description The agent name the session was opened against. */
             readonly agent?: components["schemas"]["Equals"];
+            /** @description The agent id the session was created with, which names its transcript channel. */
+            readonly agent_id?: components["schemas"]["Equals"];
             /** @description text, voice or video: how the user took part. */
             readonly modality?: components["schemas"]["Equals"];
             readonly project_id?: components["schemas"]["Equals"];
+            /** @description live or ended, as each session reports its state. */
+            readonly state?: components["schemas"]["Equals"];
             /** @description Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id. */
             readonly text?: components["schemas"]["TextMatch"];
             /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. */
@@ -4004,6 +4028,13 @@ export type components = {
         readonly SessionTool: {
             /** @description What the model is told the tool does, which is the whole of how it decides when to reach for one. */
             readonly description: string;
+            /** @description What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment. */
+            readonly display_title?: string;
+            /**
+             * @description Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+             * @enum {string}
+             */
+            readonly executor?: "server" | "client";
             readonly name: string;
             /** @description A JSON Schema object describing the arguments. */
             readonly parameters?: {
@@ -4480,6 +4511,11 @@ export type components = {
             /** @description The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone. */
             readonly simulations?: readonly components["schemas"]["SimulationDeclaration"][];
             readonly skills?: readonly components["schemas"]["SkillRequest"][];
+            /**
+             * Format: double
+             * @description The voice's rate of delivery, 1 being its own. Zero leaves it there.
+             */
+            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;

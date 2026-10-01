@@ -239,10 +239,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, err
 		}
 		spec.ConversationID = conv.CID()
+		conv.ShowTools(spec.VisibleTools)
 		// A resume was deliberately not given an agent id, because only the conversation
 		// knows the one its transcript was written under.
 		spec.AgentID = conv.Agent()
 		spec.ContextTruncated = truncated
+		displays := map[string]persistent.ToolDisplay{}
+		for _, tool := range spec.Tools {
+			displays[tool.Name] = persistent.ToolDisplay{Title: tool.DisplayTitle, Client: tool.Client}
+		}
+		conv.DescribeTools(displays)
 		// A fork opens an empty channel of its own and then reads the parent's, so the model
 		// carries on from what was said while the transcripts stay separate. The parent's
 		// half goes first because it happened first.
@@ -852,6 +858,11 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 	case filter.Project != "" && spec.Project != filter.Project:
 		return false
 	case filter.Modality != "" && live.Modality() != filter.Modality:
+		return false
+	case filter.AgentID != "" && spec.AgentID != filter.AgentID:
+		return false
+	case filter.State == store.SessionRunning && live.State() != Live,
+		filter.State == store.SessionClosed && live.State() != Ended:
 		return false
 	case filter.Cursor != nil && !before(live.CreatedAt(), live.ID(), *filter.Cursor):
 		return false

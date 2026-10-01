@@ -65,14 +65,32 @@ false` is deliberate: a field the spec gives a default is one the caller may lea
 generated non-nullable it would be required on the way in, so every session request would have
 to spell out the defaults it wanted.
 
-**One method per HTTP method, not one per endpoint.** The spec has 93 operations and the shapes
-are already generated, so 93 wrappers would say nothing the types do not, and a new endpoint
-would need one written before it could be called.
+**The public API is resources, never raw requests** (see "Resource methods, never raw requests"
+in the `sdk` skill). Customers, examples, the README and the docs never write this:
 
 ```ts
-const configs = await api.get("/v1/agents/configs");
-await api.delete("/v1/agents/sessions/{id}", { path: { id } });
+// never
+const simulation = await client.post("/v1/agents/simulations", { body });
 ```
+
+They write `client.simulations.create(body)`. Each resource is a small class in its own module
+(`simulations.ts`, `memories.ts`, `sessions.ts`) built on the client, hung off `Client` or a
+handle, and exported from `index.ts`:
+
+```ts
+const simulation = await client.simulations.create(body);
+let run = await client.simulations.run(simulation.id);
+run = await client.simulations.runs.get(run.id);
+```
+
+Underneath, `Client` keeps one typed method per HTTP method (`get`, `post`, `put`, `patch`,
+`delete`), typed from the spec. Resources are built on them, and they reach an endpoint no
+resource covers yet. They are plumbing, not what a snippet shows. A new endpoint is not done
+until it has a resource method, and the docs use it.
+
+A resource method takes the generated request schema (or an options object when it renames
+query parameters to camelCase, as `runs.list({ simulationId })` does) and returns the generated
+response. It adds no defaults and re-declares nothing.
 
 The type machinery in `client.ts` is load-bearing and worth reading before editing:
 
@@ -86,8 +104,7 @@ The type machinery in `client.ts` is load-bearing and worth reading before editi
   from the query string rather than sent as the word.
 - `Result` maps 204 to `void`, which is most of the ways a session is acted on.
 
-Never add a method that names one endpoint. Never re-declare a schema by hand — name it
-`Schemas["CreateSessionRequest"]`.
+Never re-declare a schema by hand — name it `Schemas["CreateSessionRequest"]`.
 
 ## Sockets
 
@@ -264,7 +281,8 @@ checked.
 Reject it if it:
 
 - adds a runtime dependency, or reaches for `node:` anything outside `folder.ts`;
-- adds a client method for a single endpoint, or re-declares a generated schema;
+- shows `client.get/post/put/patch/delete("/v1/...")` in an example, the README or the docs
+  instead of a resource method, or re-declares a generated schema;
 - copies a schema default into a request, or sends a field the caller did not set;
 - handles a tool call anywhere a caller must be iterating for it to run;
 - treats an unknown frame as fatal, or drops its payload;

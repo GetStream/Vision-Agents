@@ -177,7 +177,7 @@ func (s *URLsSuite) SetupTest() {
 	// which is what the tests about orphans and removal depend on.
 	service, err := New(Options{
 		Store: s.store, Redis: s.redis, Reader: s.reader, Writer: s.base,
-		ChunkSize: 200, CheckInterval: 10 * time.Millisecond,
+		ChunkSize: 200, CheckInterval: 10 * time.Millisecond, RefreshInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)
 	s.Require().NoError(service.Start())
@@ -242,6 +242,46 @@ func (s *URLsSuite) TestAddingAPageIndexesItAndStampsWhenItWasRead() {
 		"https://example.com/pricing#0",
 		"https://example.com/pricing#1",
 	}, s.base.ids(), "passages are keyed by the url they came from")
+}
+
+func (s *URLsSuite) TestAPageWithARefreshIntervalIsReadAgainOnceItHasPassed() {
+	refreshed := s.added(Subscription{Namespace: "docs", URL: "https://example.com/pricing", RefreshHours: 24})
+	untouched := s.added(Subscription{Namespace: "docs", URL: "https://example.com/terms"})
+	s.Equal(24, refreshed.RefreshHours)
+
+	// Both were last read two days ago, which is past the one's interval and means nothing
+	// to the other, which only says when it is read again by being asked.
+	_, err := s.store.DB().ExecContext(s.ctx,
+		"UPDATE knowledge_urls SET updated_at = now() - interval '48 hours'")
+	s.Require().NoError(err)
+	s.reader.serve("# Pricing\n\nA call costs a penny.\n\n# Support\n\nWe answer within a day.\n\n# Refunds\n\nWithin a month.\n", nil)
+
+	s.Eventually(func() bool {
+		current, err := s.service.Get(s.ctx, "acme", refreshed.ID)
+		return err == nil && current.Passages == 3
+	}, 10*time.Second, 10*time.Millisecond, "the page was never read again")
+
+	current, err := s.service.Get(s.ctx, "acme", untouched.ID)
+	s.Require().NoError(err)
+	s.Equal(2, current.Passages, "a page without an interval is read when asked, never on a schedule")
+}
+
+func (s *URLsSuite) TestAPageIsNotReadAgainBeforeItsIntervalHasPassed() {
+	page := s.added(Subscription{Namespace: "docs", URL: "https://example.com/pricing", RefreshHours: 24})
+
+	due, err := s.store.DueKnowledgeURLs(s.ctx, time.Now().UTC().Add(23*time.Hour), 10)
+	s.Require().NoError(err)
+	s.Empty(due, "read an hour short of its interval")
+
+	due, err = s.store.DueKnowledgeURLs(s.ctx, time.Now().UTC().Add(25*time.Hour), 10)
+	s.Require().NoError(err)
+	s.Require().Len(due, 1)
+	s.Equal(page.ID, due[0].ID)
+}
+
+func (s *URLsSuite) TestANegativeRefreshIntervalIsRefused() {
+	_, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing", RefreshHours: -1})
+	s.Error(err)
 }
 
 func (s *URLsSuite) TestAReadThatFailedOnceIsTriedAgain() {

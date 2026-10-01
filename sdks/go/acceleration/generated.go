@@ -389,6 +389,21 @@ func (e Granularity) Valid() bool {
 	}
 }
 
+// Defines values for Harness.
+const (
+	Default Harness = "default"
+)
+
+// Valid indicates whether the value is a known member of the Harness enum.
+func (e Harness) Valid() bool {
+	switch e {
+	case Default:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatusStatus.
 const (
 	Degraded HealthStatusStatus = "degraded"
@@ -1028,6 +1043,24 @@ func (e SessionState) Valid() bool {
 	}
 }
 
+// Defines values for SessionToolExecutor.
+const (
+	SessionToolExecutorClient SessionToolExecutor = "client"
+	SessionToolExecutorServer SessionToolExecutor = "server"
+)
+
+// Valid indicates whether the value is a known member of the SessionToolExecutor enum.
+func (e SessionToolExecutor) Valid() bool {
+	switch e {
+	case SessionToolExecutorClient:
+		return true
+	case SessionToolExecutorServer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SimulationMode.
 const (
 	SimulationModeAudio SimulationMode = "audio"
@@ -1445,9 +1478,12 @@ type ActivityGranularity string
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
-	CreatedAt          time.Time `json:"created_at"`
-	Greeting           *string   `json:"greeting,omitempty"`
-	Guardrail          *string   `json:"guardrail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Greeting  *string   `json:"greeting,omitempty"`
+	Guardrail *string   `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness            *Harness  `json:"harness,omitempty"`
 	Id                 string    `json:"id"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
@@ -1471,12 +1507,13 @@ type AgentConfig struct {
 	Subagent *string `json:"subagent,omitempty"`
 
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
-	SyncHash  *string            `json:"sync_hash,omitempty"`
-	Tags      *map[string]string `json:"tags,omitempty"`
-	Tts       *string            `json:"tts,omitempty"`
-	UpdatedAt time.Time          `json:"updated_at"`
-	Video     *SessionVideo      `json:"video,omitempty"`
-	Voice     *string            `json:"voice,omitempty"`
+	SyncHash     *string            `json:"sync_hash,omitempty"`
+	Tags         *map[string]string `json:"tags,omitempty"`
+	Tts          *string            `json:"tts,omitempty"`
+	UpdatedAt    time.Time          `json:"updated_at"`
+	Video        *SessionVideo      `json:"video,omitempty"`
+	VisibleTools *[]string          `json:"visible_tools,omitempty"`
+	Voice        *string            `json:"voice,omitempty"`
 }
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
@@ -1484,7 +1521,10 @@ type AgentConfigPatch struct {
 	Greeting *string `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
-	Guardrail          *string   `json:"guardrail,omitempty"`
+	Guardrail *string `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness            *Harness  `json:"harness,omitempty"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
@@ -1510,7 +1550,10 @@ type AgentConfigPatch struct {
 	Tags     *map[string]string `json:"tags,omitempty"`
 	Tts      *string            `json:"tts,omitempty"`
 	Video    *SessionVideo      `json:"video,omitempty"`
-	Voice    *string            `json:"voice,omitempty"`
+
+	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
+	VisibleTools *[]string `json:"visible_tools,omitempty"`
+	Voice        *string   `json:"voice,omitempty"`
 }
 
 // AgentConfigRequest defines model for AgentConfigRequest.
@@ -1518,8 +1561,11 @@ type AgentConfigRequest struct {
 	Greeting *string `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
-	Guardrail    *string `json:"guardrail,omitempty"`
-	Instructions *string `json:"instructions,omitempty"`
+	Guardrail *string `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness      *Harness `json:"harness,omitempty"`
+	Instructions *string  `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
 	Keyterms *[]string `json:"keyterms,omitempty"`
@@ -1567,6 +1613,9 @@ type AgentConfigRequest struct {
 	Tags  *map[string]string `json:"tags,omitempty"`
 	Tts   *string            `json:"tts,omitempty"`
 	Video *SessionVideo      `json:"video,omitempty"`
+
+	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
+	VisibleTools *[]string `json:"visible_tools,omitempty"`
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
@@ -2192,17 +2241,8 @@ type CreateSessionRequest struct {
 	// ProjectId What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
 	ProjectId *string `json:"project_id,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox `json:"sandbox,omitempty"`
-
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
-
-	// SkillNames Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped.
-	SkillNames *[]string `json:"skill_names,omitempty"`
-
-	// Skills Omit for the built-in set of think, recall and explain.
-	Skills *[]SessionSkill `json:"skills,omitempty"`
 
 	// Sts A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
 	Sts *string `json:"sts,omitempty"`
@@ -2210,14 +2250,8 @@ type CreateSessionRequest struct {
 	// Stt Omit it and the config decides, or en-low-latency when there is no config.
 	Stt *string `json:"stt,omitempty"`
 
-	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
-	Subagent *string `json:"subagent,omitempty"`
-
 	// Tags Cost labels, carried onto every request the session makes.
 	Tags *map[string]string `json:"tags,omitempty"`
-
-	// Tasks How much delegated work may run at once.
-	Tasks *int `json:"tasks,omitempty"`
 
 	// Text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
 	Text *bool `json:"text,omitempty"`
@@ -2392,6 +2426,9 @@ type GuestUserRequest struct {
 	// Name What to call them, for a transcript a person reads later.
 	Name *string `json:"name,omitempty"`
 }
+
+// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+type Harness string
 
 // HealthStatus defines model for HealthStatus.
 type HealthStatus struct {
@@ -2601,6 +2638,9 @@ type KnowledgeUrl struct {
 	// Passages How many passages the page was last cut into.
 	Passages int `json:"passages"`
 
+	// RefreshHours How often the page is read again on its own, in hours. Absent means never.
+	RefreshHours *int `json:"refresh_hours,omitempty"`
+
 	// State Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 	State KnowledgeUrlState `json:"state"`
 
@@ -2613,6 +2653,11 @@ type KnowledgeUrl struct {
 // KnowledgeUrlDeclaration A page an agent directory declares, in the knowledge base named after it.
 type KnowledgeUrlDeclaration struct {
 	Description *string `json:"description,omitempty"`
+
+	// RefreshHours How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule.
+	//
+	// Example: 24
+	RefreshHours *int64 `json:"refresh_hours,omitempty"`
 
 	// Title Example: Pricing
 	Title *string `json:"title,omitempty"`
@@ -2634,6 +2679,12 @@ type KnowledgeUrlRequest struct {
 	//
 	// Example: docs
 	Namespace string `json:"namespace"`
+
+	// RefreshHours How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it.
+	//
+	//
+	// Example: 24
+	RefreshHours *int `json:"refresh_hours,omitempty"`
 
 	// Title What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
 	//
@@ -2775,9 +2826,6 @@ type ModelOverwrites struct {
 	// Sts A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.
 	Sts *string `json:"sts,omitempty"`
 	Stt *string `json:"stt,omitempty"`
-
-	// Subagent The model delegated work runs on, in place of the config's.
-	Subagent *string `json:"subagent,omitempty"`
 
 	// Temperature How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
 	Temperature *float64 `json:"temperature,omitempty"`
@@ -3064,6 +3112,9 @@ type RecordingStatus string
 
 // RespondRequest defines model for RespondRequest.
 type RespondRequest struct {
+	// ClientId The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
+	ClientId *string `json:"client_id,omitempty"`
+
 	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
 	CommandId *string `json:"command_id,omitempty"`
 	Text      string  `json:"text"`
@@ -3317,12 +3368,18 @@ type SessionFilter struct {
 	// Agent Matches one value exactly: "value" is short for {"$eq": "value"}.
 	Agent *Equals `json:"agent,omitempty"`
 
+	// AgentId Matches one value exactly: "value" is short for {"$eq": "value"}.
+	AgentId *Equals `json:"agent_id,omitempty"`
+
 	// Modality Matches one value exactly: "value" is short for {"$eq": "value"}.
 	Modality *Equals `json:"modality,omitempty"`
 
 	// ProjectId Matches one value exactly: "value" is short for {"$eq": "value"}.
-	ProjectId *Equals    `json:"project_id,omitempty"`
-	Text      *TextMatch `json:"text,omitempty"`
+	ProjectId *Equals `json:"project_id,omitempty"`
+
+	// State Matches one value exactly: "value" is short for {"$eq": "value"}.
+	State *Equals    `json:"state,omitempty"`
+	Text  *TextMatch `json:"text,omitempty"`
 
 	// UserId Matches one value exactly: "value" is short for {"$eq": "value"}.
 	UserId *Equals `json:"user_id,omitempty"`
@@ -3403,7 +3460,6 @@ type SessionSettingsRequest struct {
 	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
 	Sts         *string                          `json:"sts,omitempty"`
 	Stt         *string                          `json:"stt,omitempty"`
-	Subagent    *string                          `json:"subagent,omitempty"`
 	Temperature *float64                         `json:"temperature,omitempty"`
 	Thinking    *SessionSettingsRequestThinking  `json:"thinking,omitempty"`
 	Tts         *string                          `json:"tts,omitempty"`
@@ -3418,25 +3474,6 @@ type SessionSettingsRequestThinking string
 
 // SessionSettingsRequestVerbosity defines model for SessionSettingsRequest.Verbosity.
 type SessionSettingsRequestVerbosity string
-
-// SessionSkill A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under.
-type SessionSkill struct {
-	// CaptureVideo Capture task-scoped visual evidence before reasoning.
-	CaptureVideo *bool `json:"capture_video,omitempty"`
-
-	// DeadlineMs How long the work may run before it is abandoned. Zero is the default.
-	DeadlineMs *int64 `json:"deadline_ms,omitempty"`
-
-	// Description The one line the fast model sees.
-	Description string `json:"description"`
-
-	// Instructions The full prompt, which only the subagent sees.
-	Instructions string `json:"instructions"`
-	Name         string `json:"name"`
-
-	// Revision Immutable skill revision selected by the application's authorized registry.
-	Revision *int64 `json:"revision,omitempty"`
-}
 
 // SessionSort defines model for SessionSort.
 type SessionSort struct {
@@ -3460,11 +3497,20 @@ type SessionState string
 type SessionTool struct {
 	// Description What the model is told the tool does, which is the whole of how it decides when to reach for one.
 	Description string `json:"description"`
-	Name        string `json:"name"`
+
+	// DisplayTitle What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment.
+	DisplayTitle *string `json:"display_title,omitempty"`
+
+	// Executor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+	Executor *SessionToolExecutor `json:"executor,omitempty"`
+	Name     string               `json:"name"`
 
 	// Parameters A JSON Schema object describing the arguments.
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
 }
+
+// SessionToolExecutor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+type SessionToolExecutor string
 
 // SessionVideo defines model for SessionVideo.
 type SessionVideo struct {
@@ -3952,6 +3998,9 @@ type SyncAgentRequest struct {
 	// Guardrail The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
 
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness *Harness `json:"harness,omitempty"`
+
 	// Hash A fingerprint of the directory. A second sync with the same hash does nothing.
 	Hash         string               `json:"hash"`
 	Instructions *string              `json:"instructions,omitempty"`
@@ -4350,7 +4399,6 @@ type UpdateSessionRequest struct {
 	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
 	Sts         *string                        `json:"sts,omitempty"`
 	Stt         *string                        `json:"stt,omitempty"`
-	Subagent    *string                        `json:"subagent,omitempty"`
 	Temperature *float64                       `json:"temperature,omitempty"`
 	Thinking    *UpdateSessionRequestThinking  `json:"thinking,omitempty"`
 	Title       *string                        `json:"title,omitempty"`
@@ -5667,7 +5715,7 @@ type ClientInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -5684,7 +5732,7 @@ type ClientInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -7754,7 +7802,7 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -7781,7 +7829,7 @@ func (c *Client) QuerySessionsWithBody(ctx context.Context, contentType string, 
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -16519,7 +16567,7 @@ type ClientWithResponsesInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -16536,7 +16584,7 @@ type ClientWithResponsesInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -26897,7 +26945,7 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -26920,7 +26968,7 @@ func (c *ClientWithResponses) QuerySessionsWithBodyWithResponse(ctx context.Cont
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //

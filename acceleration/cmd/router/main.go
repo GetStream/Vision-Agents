@@ -842,10 +842,11 @@ func buildSessions(
 				channel = ""
 			}
 			return chatlog.New(chatlog.Options{
-				AgentID: spec.AgentID,
-				Channel: channel,
-				Agent:   chatlog.User{ID: spec.UserID, Name: spec.UserName},
-				Logger:  logger,
+				AgentID:      spec.AgentID,
+				Channel:      channel,
+				Agent:        chatlog.User{ID: spec.UserID, Name: spec.UserName},
+				VisibleTools: spec.VisibleTools,
+				Logger:       logger,
 			})
 		},
 	})

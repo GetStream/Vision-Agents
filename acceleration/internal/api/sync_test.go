@@ -123,8 +123,8 @@ func (s *SyncSuite) TestASyncedDirectoryListsItsFilesAndForgetsTheOnesTakenOut()
 func (s *SyncSuite) TestASyncedDirectorysPagesAreReadIntoItsKnowledge() {
 	synced := s.sync(map[string]any{
 		"name": "librarian", "hash": "v1",
-		"knowledge_urls": []map[string]string{
-			{"url": "https://example.com/pricing", "title": "What a call costs"},
+		"knowledge_urls": []map[string]any{
+			{"url": "https://example.com/pricing", "title": "What a call costs", "refresh_hours": 24},
 		},
 	})
 	s.Require().NotNil(synced.Config.KnowledgeNamespace, "pages alone are still a knowledge base")
@@ -136,6 +136,7 @@ func (s *SyncSuite) TestASyncedDirectorysPagesAreReadIntoItsKnowledge() {
 	s.Require().Len(listed, 1)
 	s.Equal("https://example.com/pricing", listed[0].Url)
 	s.Equal("What a call costs", value(listed[0].Title))
+	s.Equal(24, value(listed[0].RefreshHours))
 }
 
 func (s *SyncSuite) TestASyncedDirectorysSimulationsAreFoundByNameAndForgottenWhenTakenOut() {
