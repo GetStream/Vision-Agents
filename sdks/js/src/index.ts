@@ -69,7 +69,12 @@ export {
   type GuestUserOptions,
 } from "./guests.js";
 
-export { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
+export {
+  ConfigurationError,
+  HostingRefusedError,
+  RouterError,
+  SocketClosedError,
+} from "./errors.js";
 
 export type { components, operations, paths } from "./generated/api.js";
 
@@ -127,5 +132,6 @@ export {
   Dispatch,
   type CallHandler,
   type DispatchOptions,
+  type HostOptions,
   type MessageHandler,
 } from "./dispatch.js";

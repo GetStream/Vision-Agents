@@ -169,6 +169,17 @@ agent that is already running is answered by the router from that session, becau
 agent is the one that knows what has been said. `sessionFor` keeps one conversation per
 channel for the same reason.
 
+A worker can also host tools for every session opened under an agent id, including one a
+browser opened, where the session's own process cannot reach what the tool needs:
+
+```ts
+dispatch.host("my-agent", agent.tools, { timeoutMs: 60_000 });
+```
+
+The router offers them to each session naming the agent and sends every call here. `run`
+works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
+refuses them.
+
 Server side only. A worker is offered other people's callers, so anything that can open
 that socket could answer for the whole app.
 

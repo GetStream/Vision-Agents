@@ -97,7 +97,19 @@ await dispatch.RunAsync(stopping);
 
 `GetOrCreateAgentAsync` keeps one agent per channel, so the second message on it goes to
 the agent that answered the first. `RunAsync` returns when the token is cancelled, after
-the work in hand has finished.
+the work in hand has finished. A connection the router drops is opened again.
+
+A worker can also host tools for every session opened under an agent id, including
+sessions opened from a browser. The router sends each call here. Handlers are optional:
+
+```csharp
+var tools = new Tools().Register<Weather, string>("get_weather", "Get the current weather for a city",
+    (weather, cancellationToken) => WeatherAsync(weather.City, cancellationToken));
+await new Dispatch().Host("my-agent", tools, timeout: TimeSpan.FromMinutes(1)).RunAsync(stopping);
+```
+
+If the router refuses the tools, `RunAsync` throws `InvalidOperationException` with the
+reason.
 
 ## An agent written down as a directory
 

@@ -26,6 +26,13 @@ class Socket:
         """Whether the socket can still carry a message."""
         return self._connection is not None and not self._connection.closed
 
+    @property
+    def close_code(self) -> Optional[int]:
+        """How the far side ended the socket, or None while it is open."""
+        if self._connection is None:
+            return None
+        return self._connection.close_code
+
     async def connect(self) -> None:
         """Open the socket, raising if the router refuses it."""
         self._session = aiohttp.ClientSession()

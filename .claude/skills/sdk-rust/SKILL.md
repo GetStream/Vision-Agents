@@ -104,6 +104,9 @@ returned. `close()` is idempotent.
 - `Dispatch` runs handlers in a `JoinSet` and drains it on the way out; a panicking handler is
   reported as rejected. `load` and `ping` every 15s. `get_or_create_agent` keeps one session
   per channel and closes them all when `run` ends.
+- `Dispatch::host` declares tools (`host_tools`) after every `ready`, runs each `tool_call` in
+  the same `JoinSet`, and ends `run` with `Error::Failed` on `hosting_refused`. Unlike Go, it
+  does not reconnect.
 - `Knowledge::add_url` and `Router::transcribe`/`record` poll until the job settles.
 - Speech-to-speech is not wrapped; it is reachable through `Client::socket`.
 

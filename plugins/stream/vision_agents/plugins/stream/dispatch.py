@@ -1,26 +1,47 @@
 import asyncio
+import json
 import logging
 import os
 import time
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Awaitable, Callable, Optional, Union
+from typing import Any, Awaitable, Callable, Optional, Union
 
+import aiohttp
 from vision_agents.core.agents import Agent
+from vision_agents.core.llm import FunctionRegistry
 from vision_agents.core.messaging import InboundMessage
 from vision_agents.core.telephony import InboundCall
 from vision_agents.core.utils.utils import await_or_run
 
 from ._backend import Backend
 from ._socket import Socket
+from .responses import RouterError
+from .sessions import _tools
 
 logger = logging.getLogger(__name__)
 
 DISPATCH_PATH = "/v1/dispatch"
+# FIRST_RETRY and LAST_RETRY bound the wait between attempts to reach a router that dropped
+# this worker, in seconds, doubling from one to the other. STEADY_AFTER is how long a
+# connection has to have lasted for its loss to start the wait again from FIRST_RETRY.
+FIRST_RETRY = 1.0
+LAST_RETRY = 30.0
+STEADY_AFTER = 60.0
 
 Handler = Callable[[InboundCall], Awaitable[None]]
 MessageHandler = Callable[[InboundMessage], Awaitable[None]]
 AgentFactory = Callable[[], Union[Agent, Awaitable[Agent]]]
+
+
+@dataclass
+class _Hosting:
+    """One set of functions this worker runs for every session under an agent id."""
+
+    agent_id: str
+    functions: FunctionRegistry
+    timeout: float
 
 
 class Dispatch:
@@ -89,6 +110,8 @@ class Dispatch:
 
         self._handler: Optional[Handler] = None
         self._message_handler: Optional[MessageHandler] = None
+        self._hosted: list[_Hosting] = []
+        self._first_retry = FIRST_RETRY
         self._socket: Optional[Socket] = None
         self._running: set[asyncio.Task[None]] = set()
         # Which agent is answering which channel. A channel is one conversation, so the
@@ -107,7 +130,7 @@ class Dispatch:
 
     @property
     def active(self) -> int:
-        """How many calls are being handled right now."""
+        """How many calls, messages and hosted tool calls are being handled right now."""
         return len(self._running)
 
     def wait_for_call(self) -> Callable[[Handler], Handler]:
@@ -154,6 +177,37 @@ class Dispatch:
 
         return register
 
+    def host(
+        self, agent_id: str, functions: FunctionRegistry, timeout: float = 0.0
+    ) -> None:
+        """Run these functions for every session opened under an agent id, whoever opened it.
+
+        A session's own functions run in the process that opened it, which is no use to a
+        conversation opened from a browser. Hosting is the other direction: the router offers
+        these functions to each session naming the agent and sends every call to a worker
+        hosting them. Call before `run`.
+
+        Example:
+            ```python
+            functions = FunctionRegistry()
+
+
+            @functions.register(description="Read the SDK's source")
+            async def investigate_sdk(sdk: str) -> str:
+                return await read_source(sdk)
+
+
+            dispatch.host("stream-support", functions, timeout=60)
+            ```
+
+        Args:
+            agent_id: The agent whose sessions are offered the functions.
+            functions: The functions to run, as `agent.register` builds them.
+            timeout: How long the router gives one call, in seconds. Zero takes its
+                default.
+        """
+        self._hosted.append(_Hosting(agent_id, functions, timeout))
+
     async def get_or_create_agent(
         self, message: InboundMessage, create_agent: AgentFactory
     ) -> Agent:
@@ -187,40 +241,89 @@ class Dispatch:
             return agent
 
     async def run(self) -> None:
-        """Wait for calls and messages until cancelled.
+        """Wait for calls, messages and hosted tool calls until cancelled.
 
-        Returns when the router closes the connection. Work still being handled is waited
-        for, because dropping a call would hang up on whoever is talking.
+        Returns when the router closes the connection on purpose. A connection that drops
+        any other way, such as a router being redeployed, is opened again and the router is
+        told again what this worker hosts. Only the first connection failing is raised.
+        Work still being handled is waited for, because dropping a call would hang up on
+        whoever is talking.
 
         Raises:
-            RuntimeError: If neither handler has been registered, since work would then
-                arrive with nothing to do it.
+            RuntimeError: If no handler has been registered and nothing is hosted, since
+                work would then arrive with nothing to do it.
+            RouterError: If the router refuses the tools this worker hosts.
         """
-        if self._handler is None and self._message_handler is None:
+        if self._handler is None and self._message_handler is None and not self._hosted:
             raise RuntimeError(
                 "register a handler with @dispatch.wait_for_call() or "
-                "@dispatch.wait_for_message() before running"
+                "@dispatch.wait_for_message(), or host functions with dispatch.host(), "
+                "before running"
             )
 
-        socket = Socket(
-            f"{self.backend.socket(DISPATCH_PATH)}?capacity={self.capacity}",
-            self.backend.headers,
-        )
-        await socket.connect()
-        self._socket = socket
-        logger.info("waiting for calls on %s", self.backend.url)
+        address = f"{self.backend.socket(DISPATCH_PATH)}?capacity={self.capacity}"
+        socket = await self._connect(address)
+        logger.info("waiting for work on %s", self.backend.url)
 
         reporter = asyncio.create_task(self._report())
         try:
-            await self._read(socket)
+            retry = self._first_retry
+            while True:
+                opened = time.monotonic()
+                if not await self._serve(socket):
+                    return
+                if time.monotonic() - opened >= STEADY_AFTER:
+                    retry = self._first_retry
+
+                logger.warning("lost the router, reconnecting in %.1fs", retry)
+                while True:
+                    await asyncio.sleep(retry)
+                    retry = min(retry * 2, LAST_RETRY)
+                    try:
+                        socket = await self._connect(address)
+                        break
+                    except aiohttp.ClientError as exc:
+                        logger.warning(
+                            "could not reach the router, retrying in %.1fs: %s",
+                            retry,
+                            exc,
+                        )
         finally:
             reporter.cancel()
             await asyncio.gather(reporter, return_exceptions=True)
             await self._drain()
             await self._started.aclose()
             self._agents.clear()
+
+    async def _connect(self, address: str) -> Socket:
+        """Open one dispatch socket, with headers minted for it.
+
+        A token signed when the worker started would have expired by the time a
+        long-running one reconnects.
+        """
+        socket = Socket(address, self.backend.headers)
+        try:
+            await socket.connect()
+        except aiohttp.ClientError:
             await socket.close()
+            raise
+        return socket
+
+    async def _serve(self, socket: Socket) -> bool:
+        """Wait for work on one connection until it ends.
+
+        Returns:
+            Whether the connection dropped rather than being closed on purpose, and so is
+            worth opening again.
+        """
+        self._socket = socket
+        try:
+            await self._read(socket)
+            return socket.close_code != aiohttp.WSCloseCode.OK
+        finally:
             self._socket = None
+            self.worker_id = ""
+            await socket.close()
 
     async def _read(self, socket: Socket) -> None:
         """Apply what the router sends until it stops."""
@@ -236,6 +339,20 @@ class Dispatch:
             elif kind == "ready":
                 self.worker_id = str(frame.get("worker_id", ""))
                 logger.info("the router calls this worker %s", self.worker_id)
+                await self._host()
+            elif kind == "tool_call":
+                await self._call_hosted(frame)
+            elif kind == "hosting":
+                logger.info(
+                    "the router sends the tools of %s here", frame.get("agent_id", "")
+                )
+            elif kind == "hosting_refused":
+                # Not worth reconnecting: a worker whose tools were refused is one nobody
+                # will call, and saying so beats sitting connected looking healthy.
+                raise RouterError(
+                    f"the router refused to host tools for agent "
+                    f"{frame.get('agent_id', '')}: {frame.get('reason', '')}"
+                )
             elif kind == "pong":
                 self._latency_ms = (
                     time.monotonic() - float(frame.get("at", 0.0))
@@ -243,6 +360,68 @@ class Dispatch:
                 self._pong.set()
             else:
                 logger.debug("ignoring a dispatch frame of type %s", kind)
+
+    async def _host(self) -> None:
+        """Tell the router what this worker runs, once it is listening."""
+        for offer in self._hosted:
+            await self._tell(
+                {
+                    "type": "host_tools",
+                    "agent_id": offer.agent_id,
+                    "tools": [tool.to_dict() for tool in _tools(offer.functions)],
+                    "timeout_ms": int(offer.timeout * 1000),
+                }
+            )
+
+    async def _call_hosted(self, frame: dict[str, Any]) -> None:
+        """Start running one hosted tool call.
+
+        As a task rather than inline, because the socket it arrived on is also what
+        delivers the next one.
+        """
+        name = str(frame.get("name", ""))
+        for offer in self._hosted:
+            if offer.functions.get_function(name) is not None:
+                break
+        else:
+            await self._tell(
+                {
+                    "type": "tool_result",
+                    "id": frame.get("id", ""),
+                    "error": f"this worker does not run {name}",
+                }
+            )
+            return
+
+        logger.info(
+            "running the hosted tool %s for session %s",
+            name,
+            frame.get("session_id", ""),
+        )
+        task = asyncio.create_task(self._run_hosted(offer.functions, frame))
+        self._running.add(task)
+        task.add_done_callback(self._running.discard)
+
+    async def _run_hosted(
+        self, functions: FunctionRegistry, frame: dict[str, Any]
+    ) -> None:
+        """Run one hosted tool and answer the router with what it said.
+
+        A failure is reported rather than raised, so the model can say something useful
+        about a tool that did not work.
+        """
+        name = str(frame.get("name", ""))
+        result: dict[str, object] = {"type": "tool_result", "id": frame.get("id", "")}
+        try:
+            arguments = json.loads(frame.get("arguments") or "{}")
+            output = await functions.call_function(name, arguments)
+            result["output"] = output if isinstance(output, str) else json.dumps(output)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("the hosted tool %s failed", name)
+            result["error"] = str(exc)
+        await self._tell(result)
 
     def _answer(self, call: InboundCall) -> None:
         """Start handling one call.

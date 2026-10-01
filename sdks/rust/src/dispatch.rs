@@ -16,6 +16,7 @@ use crate::client::Client;
 use crate::error::{Error, Result};
 use crate::session::Session;
 use crate::socket::{Frame, Incoming, SocketSender};
+use crate::tools::Tools;
 
 /// How many calls a worker takes at once when it does not say.
 const DEFAULT_CAPACITY: u32 = 4;
@@ -104,6 +105,31 @@ impl InboundMessage {
 type CallHandler = Arc<dyn Fn(InboundCall) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 type MessageHandler = Arc<dyn Fn(InboundMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
+/// One set of functions this worker runs for every session under an agent id.
+#[derive(Clone)]
+struct Hosting {
+    agent_id: String,
+    tools: Tools,
+    timeout: Option<Duration>,
+}
+
+impl Hosting {
+    fn declaration(&self) -> Value {
+        let tools: Vec<Value> = self
+            .tools
+            .declared()
+            .into_iter()
+            .map(|tool| json!({"name": tool.name, "description": tool.description, "parameters": tool.parameters}))
+            .collect();
+        let timeout_ms = self.timeout.map_or(0, |timeout| timeout.as_millis() as u64);
+        json!({"type": "host_tools", "agent_id": self.agent_id, "tools": tools, "timeout_ms": timeout_ms})
+    }
+
+    fn runs(&self, name: &str) -> bool {
+        self.tools.declared().iter().any(|tool| tool.name == name)
+    }
+}
+
 /// Waits for inbound calls and messages, and runs a handler for each one.
 ///
 /// Neither arrives here first: a caller reached a Stream call over SIP, or somebody wrote in
@@ -136,6 +162,7 @@ struct Inner {
     capacity: u32,
     on_call: SyncMutex<Option<CallHandler>>,
     on_message: SyncMutex<Option<MessageHandler>>,
+    hosted: SyncMutex<Vec<Hosting>>,
     /// Which session is answering which channel. A channel is one conversation, so the
     /// session that answered the last message on it should answer the next.
     answering: Mutex<HashMap<String, Arc<Session>>>,
@@ -158,6 +185,7 @@ impl Dispatch {
                 capacity: capacity.max(1),
                 on_call: SyncMutex::new(None),
                 on_message: SyncMutex::new(None),
+                hosted: SyncMutex::new(Vec::new()),
                 answering: Mutex::new(HashMap::new()),
                 worker_id: SyncMutex::new(String::new()),
                 stop: CancellationToken::new(),
@@ -196,6 +224,22 @@ impl Dispatch {
         self
     }
 
+    /// Runs these functions for every session opened under `agent_id`, whoever opened it.
+    ///
+    /// A session's own functions run in the process that opened it, which is no use to a
+    /// conversation opened from a browser. Hosting is the other direction: the router offers
+    /// these functions to each session naming the agent and sends every call to a worker
+    /// hosting them. `timeout` is how long the router gives one call; `None` takes its
+    /// default. Call before [`Dispatch::run`].
+    pub fn host(&self, agent_id: &str, tools: Tools, timeout: Option<Duration>) -> &Self {
+        self.inner.hosted.lock().expect("hosted").push(Hosting {
+            agent_id: agent_id.into(),
+            tools,
+            timeout,
+        });
+        self
+    }
+
     /// The session answering on this message's channel, started if none is.
     ///
     /// The second message on a channel goes to the session that answered the first, which
@@ -221,19 +265,20 @@ impl Dispatch {
         Ok(session)
     }
 
-    /// Waits for calls and messages until the router closes the connection or
-    /// [`Dispatch::stop`] is called.
+    /// Waits for calls, messages and hosted tool calls until the router closes the
+    /// connection, refuses the tools this worker hosts, or [`Dispatch::stop`] is called.
     ///
     /// Work still being handled is waited for on the way out, because dropping a call would
     /// hang up on whoever is talking.
     pub async fn run(&self) -> Result<()> {
-        let (on_call, on_message) = (
+        let (on_call, on_message, hosted) = (
             self.inner.on_call.lock().expect("handler").clone(),
             self.inner.on_message.lock().expect("handler").clone(),
+            self.inner.hosted.lock().expect("hosted").clone(),
         );
-        if on_call.is_none() && on_message.is_none() {
+        if on_call.is_none() && on_message.is_none() && hosted.is_empty() {
             return Err(Error::configuration(
-                "register a handler with wait_for_call or wait_for_message first",
+                "register a handler with wait_for_call or wait_for_message, or host tools, first",
             ));
         }
 
@@ -247,6 +292,7 @@ impl Dispatch {
         let started = Instant::now();
         let mut latency_ms = 0.0;
         let mut report = tokio::time::interval_at(Instant::now() + REPORT_EVERY, REPORT_EVERY);
+        let mut failure = None;
 
         loop {
             while running.try_join_next().is_some() {}
@@ -296,7 +342,42 @@ impl Dispatch {
                 }
                 "ready" => {
                     *self.inner.worker_id.lock().expect("worker id") =
-                        frame.text("worker_id").into()
+                        frame.text("worker_id").into();
+                    for offer in &hosted {
+                        tell(&sender, offer.declaration()).await;
+                    }
+                }
+                // Not awaited inline: a tool can take a minute, and this socket also delivers the next.
+                "tool_call" => {
+                    let (id, name) = (frame.text("id").to_string(), frame.text("name").to_string());
+                    let Some(offer) = hosted.iter().find(|offer| offer.runs(&name)) else {
+                        tell(&sender, json!({"type": "tool_result", "id": id, "error": format!("this worker does not run {name}")})).await;
+                        continue;
+                    };
+                    let (tools, sender) = (offer.tools.clone(), sender.clone());
+                    let arguments = frame.text("arguments").to_string();
+                    running.spawn(async move {
+                        let outcome =
+                            tokio::spawn(async move { tools.call(&name, &arguments).await }).await;
+                        let result = match outcome {
+                            Ok(Ok(output)) => json!({"type": "tool_result", "id": id, "output": output}),
+                            Ok(Err(error)) => json!({"type": "tool_result", "id": id, "error": error}),
+                            Err(_) => json!({"type": "tool_result", "id": id, "error": "the tool panicked"}),
+                        };
+                        tell(&sender, result).await;
+                    });
+                }
+                "hosting_refused" => {
+                    // A worker whose tools were refused is one nobody will call.
+                    failure = Some(Error::Failed {
+                        operation: "dispatch".into(),
+                        message: format!(
+                            "the router refused to host tools for agent {}: {}",
+                            frame.text("agent_id"),
+                            frame.text("reason")
+                        ),
+                    });
+                    break;
                 }
                 "pong" => {
                     latency_ms = (started.elapsed().as_secs_f64() - frame.number("at")) * 1000.0
@@ -318,7 +399,7 @@ impl Dispatch {
             session.close().await;
         }
         sender.close().await;
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 
     /// Stops waiting. Work already being handled is still waited for by `run`.
