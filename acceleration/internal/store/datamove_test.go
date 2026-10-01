@@ -158,26 +158,17 @@ func (s *DataMoveSuite) TestExportCarriesOnlyTheCallersRows() {
 	s.Equal("acme-agent", configs[0]["name"])
 }
 
-func (s *DataMoveSuite) TestExportLeavesCredentialsBehind() {
-	s.seedPluginConnection(s.source, "acme", "xoxb-a-real-token")
-
-	connections := s.export("acme").of("agent_plugin_connections")
-
-	s.Require().Len(connections, 1)
-	for _, column := range secretColumns {
-		s.NotContains(connections[0], column, "a credential is not part of a customer's data")
+func (s *DataMoveSuite) TestExportLeavesConnectedAccountsBehind() {
+	connection := &ConnectorConnection{
+		CustomerID:       "acme",
+		ConnectorID:      "slack",
+		OwnerType:        "app",
+		Endpoint:         "https://mcp.slack.com/mcp",
+		CredentialSealed: []byte("sealed"),
 	}
-}
+	s.Require().NoError(s.source.CreateConnectorConnection(s.ctx, connection))
 
-func (s *DataMoveSuite) TestAnImportedConnectionHasToBeAuthorizedAgain() {
-	s.seedPluginConnection(s.source, "acme", "xoxb-a-real-token")
-
-	s.move("acme", "acme")
-
-	var token string
-	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
-		"SELECT access_token FROM agent_plugin_connections").Scan(&token))
-	s.Empty(token)
+	s.Empty(s.export("acme").of("connector_connections"), "a connected account is not part of a customer's data")
 }
 
 func (s *DataMoveSuite) TestImportWritesTheRowsUnderTheImportingCustomer() {
@@ -394,16 +385,6 @@ func (s *DataMoveSuite) seedVoice(store *Store, customerID, name string) string 
 	id := newID()
 	_, err := store.DB().ExecContext(s.ctx,
 		"INSERT INTO voices (id, customer_id, name) VALUES (?, ?, ?)", id, customerID, name)
-	s.Require().NoError(err)
-	return id
-}
-
-func (s *DataMoveSuite) seedPluginConnection(store *Store, customerID, token string) string {
-	id := newID()
-	_, err := store.DB().ExecContext(s.ctx,
-		"INSERT INTO agent_plugin_connections (id, customer_id, config_id, plugin_id, access_token)"+
-			" VALUES (?, ?, ?, ?, ?)",
-		id, customerID, newID(), "slack", token)
 	s.Require().NoError(err)
 	return id
 }

@@ -69,6 +69,18 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return s.WatchDataChanges(ctx)
 }
 
+// MigrateUpTo applies schema migrations through version before a data migration must run.
+func (s *Store) MigrateUpTo(ctx context.Context, version int64) error {
+	goose.SetBaseFS(migrations.FS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		return fmt.Errorf("store: set dialect: %w", err)
+	}
+	if err := goose.UpToContext(ctx, s.db.DB, ".", version); err != nil {
+		return fmt.Errorf("store: migrate through %d: %w", version, err)
+	}
+	return nil
+}
+
 // RecordRequest stores one request. Latency is optional because a request that failed
 // before reaching the provider has none.
 func (s *Store) RecordRequest(ctx context.Context, request *Request) error {

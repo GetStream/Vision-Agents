@@ -269,7 +269,7 @@ final class Agent
             subagent: self::set($subagent) ?? self::set($declared->subagent),
             search: self::set($declared->search),
             greeting: $pipeline->greeting ?? self::set($declared->greeting),
-            plugins: $declared->plugins === [] ? null : $declared->plugins,
+            connectors: $declared->connectors,
             keyterms: $pipeline->keyterms ?? ($declared->keyterms === [] ? null : $declared->keyterms),
             sandbox: $this->sandbox ?? ($declared->sandbox === '' ? null : (Sandbox::tryFrom($declared->sandbox) ?? $declared->sandbox)),
             tags: $tags === [] ? null : $tags,

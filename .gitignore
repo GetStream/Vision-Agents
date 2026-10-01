@@ -101,6 +101,8 @@ plugins/*/example/uv.lock
 /acceleration/router
 /acceleration/say
 /acceleration/transcribe
+# Local conversation outbox and runtime state.
+/acceleration/.local/
 /examples/voice_agents/swift_demo/backend/backend
 /examples/voice_agents/swift_demo/configure/configure
 

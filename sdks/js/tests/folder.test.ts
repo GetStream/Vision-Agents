@@ -74,10 +74,18 @@ describe("loadFolder", () => {
           'sts: ""',
           "mode: voice",
           "keyterms: [Vision Agents, Stream]",
-          "plugins:",
-          "  - weather",
           "tags:",
           "  team: support",
+          "connectors:",
+          "  - name: crm",
+          "    connector_id: salesforce",
+          "    connection:",
+          "      type: session",
+          "    tools:",
+          "      - name: query_records",
+          `        schema_digest: ${"a".repeat(64)}`,
+          "    required: true",
+          "    timeout_ms: 5000",
           "video:",
           "  source: camera",
           "",
@@ -92,10 +100,61 @@ describe("loadFolder", () => {
       sts: "",
       mode: "voice",
       keyterms: ["Vision Agents", "Stream"],
-      plugins: ["weather"],
       tags: { team: "support" },
+      connectors: [
+        {
+          name: "crm",
+          connector_id: "salesforce",
+          connection: { type: "session" },
+          tools: [{ name: "query_records", schema_digest: "a".repeat(64) }],
+          required: true,
+          timeout_ms: 5000,
+        },
+      ],
       video: { source: "camera", max_frames: 1 },
     });
+  });
+
+  it("reads an empty connector list and refuses unrecognized connector settings", async () => {
+    const empty = await loadFolder(await agentDir({ "agent.yaml": "connectors: []\n" }));
+    assert.deepEqual(empty.settings?.connectors, []);
+
+    await assert.rejects(
+      async () =>
+        loadFolder(
+          await agentDir({
+            "agent.yaml": [
+              "connectors:",
+              "  - name: crm",
+              "    connector_id: salesforce",
+              "    connection:",
+              "      type: session",
+              "    tools: []",
+              "    permissive: true",
+            ].join("\n"),
+          }),
+        ),
+      ConfigurationError,
+    );
+
+    await assert.rejects(
+      async () =>
+        loadFolder(
+          await agentDir({
+            "agent.yaml": [
+              "connectors:",
+              "  - name: crm",
+              "    connector_id: salesforce",
+              "    connection:",
+              "      type: session",
+              "    tools:",
+              "      - name: query_records",
+              "        schema_digest: missing",
+            ].join("\n"),
+          }),
+        ),
+      ConfigurationError,
+    );
   });
 
   it("is called after its directory when agent.yaml names nothing", async () => {

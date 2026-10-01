@@ -325,12 +325,12 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.search = settings.search
     if settings.greeting:
         body.greeting = settings.greeting
-    if settings.plugins:
-        body.plugins = settings.plugins
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:
         body.sandbox = SandboxProvider(settings.sandbox)
+    if settings.connectors is not None:
+        body.connectors = settings.connectors
     if settings.tags:
         tags = SyncAgentRequestTags()
         tags.additional_properties = dict(settings.tags)

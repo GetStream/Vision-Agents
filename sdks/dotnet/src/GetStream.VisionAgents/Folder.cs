@@ -95,8 +95,8 @@ public sealed record Declaration
     /// <summary>Where the subagent may run code it writes.</summary>
     public string Sandbox { get; init; } = "";
 
-    /// <summary>The plugins the agent may use.</summary>
-    public IReadOnlyList<string> Plugins { get; init; } = [];
+    /// <summary>Declarative connector bindings, with no credentials.</summary>
+    public IReadOnlyList<Dictionary<string, object>>? Connectors { get; init; }
 
     /// <summary>Words the transcriber would otherwise get wrong.</summary>
     public IReadOnlyList<string> Keyterms { get; init; } = [];
@@ -393,7 +393,7 @@ public sealed class Folder
             Search = read.Search ?? "",
             Greeting = read.Greeting ?? "",
             Sandbox = read.Sandbox ?? "",
-            Plugins = read.Plugins ?? [],
+            Connectors = read.Connectors,
             Keyterms = read.Keyterms ?? [],
             Tags = read.Tags ?? [],
             Video = video,
@@ -668,7 +668,7 @@ public sealed class Folder
         [YamlMember(Alias = "search")] public string? Search { get; set; }
         [YamlMember(Alias = "greeting")] public string? Greeting { get; set; }
         [YamlMember(Alias = "sandbox")] public string? Sandbox { get; set; }
-        [YamlMember(Alias = "plugins")] public List<string>? Plugins { get; set; }
+        [YamlMember(Alias = "connectors")] public List<Dictionary<string, object>>? Connectors { get; set; }
         [YamlMember(Alias = "keyterms")] public List<string>? Keyterms { get; set; }
         [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
         [YamlMember(Alias = "video")] public WrittenVideo? Video { get; set; }

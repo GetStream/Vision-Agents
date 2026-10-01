@@ -74,6 +74,8 @@ impl ::std::convert::TryFrom<::std::string::String> for ActivityGranularity {
 ///`AgentConfig`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct AgentConfig {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<::std::string::String>,
@@ -90,8 +92,6 @@ pub struct AgentConfig {
     pub llm: ::std::option::Option<::std::string::String>,
     pub mode: AgentMode,
     pub name: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox: ::std::option::Option<Sandbox>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -126,6 +126,9 @@ pub struct AgentConfig {
 ///`AgentConfigRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentConfigRequest {
+    ///Reusable connections and exact tools the agent may use. Session-selected user connections must belong to the verified session caller.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<::std::string::String>,
     /**A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
@@ -149,10 +152,6 @@ pub struct AgentConfigRequest {
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is unique among the customer's own.
     pub name: ::std::string::String,
-    /**Hosted MCP servers this agent may reach, named from the built-in catalog.
-    */
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox: ::std::option::Option<Sandbox>,
     /**What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
@@ -188,6 +187,79 @@ pub struct AgentConfigRequest {
     ///Provider-specific voice id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+///`AgentConnectorBinding`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct AgentConnectorBinding {
+    pub connection: AgentConnectorSelection,
+    pub connector_id: ::std::string::String,
+    pub name: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub required: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub timeout_ms: ::std::option::Option<i64>,
+    ///Exact MCP tools allowed, each pinned to its reviewed schema digest. An empty list grants no tools.
+    pub tools: ::std::vec::Vec<ConnectorToolGrant>,
+}
+///`AgentConnectorSelection`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct AgentConnectorSelection {
+    ///Required for fixed; session selection is supplied in the session request.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub connection_id: ::std::option::Option<::std::string::String>,
+    #[serde(rename = "type")]
+    pub type_: AgentConnectorSelectionType,
+}
+///`AgentConnectorSelectionType`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AgentConnectorSelectionType {
+    #[serde(rename = "fixed")]
+    Fixed,
+    #[serde(rename = "session")]
+    Session,
+}
+impl ::std::fmt::Display for AgentConnectorSelectionType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Fixed => f.write_str("fixed"),
+            Self::Session => f.write_str("session"),
+        }
+    }
+}
+impl ::std::str::FromStr for AgentConnectorSelectionType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "fixed" => Ok(Self::Fixed),
+            "session" => Ok(Self::Session),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AgentConnectorSelectionType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AgentConnectorSelectionType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`AgentLog`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -571,13 +643,18 @@ pub struct AttachedNumber {
     pub sip_uri: ::std::string::String,
     pub trunk_id: ::std::string::String,
 }
-///`AuthorizePluginRequest`
+///`AuthorizeConnectorRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
-pub struct AuthorizePluginRequest {
-    /**The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL.
-    */
+pub struct AuthorizeConnectorRequest {
+    ///Supply with oauth_client_secret for a manually registered integration. Some providers also support dynamic registration when both are omitted.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_url: ::std::option::Option<::std::string::String>,
+    pub oauth_client_id: ::std::option::Option<::std::string::String>,
+    ///Supply with oauth_client_id for a manually registered integration. Write-only; encrypted at rest and used only for OAuth exchange and refresh.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub oauth_client_secret: ::std::option::Option<::std::string::String>,
+    ///Minimum provider permissions to request. For Slack, choose only scopes needed by this connection; values must be in the connector definition.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
 }
 ///`AvailableNumber`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -1196,6 +1273,456 @@ pub struct CommandReceipt {
     pub state: ::std::string::String,
     pub user_message_id: ::std::string::String,
 }
+///`ConnectorAuthorization`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ConnectorAuthorization {
+    pub authorization_id: ::std::string::String,
+    pub authorization_url: ::std::string::String,
+    pub expires_at: ::std::string::String,
+    ///Short-lived secret delivered only to the router launch popup through postMessage. Never place it in a URL or persist it in application storage.
+    pub handoff_token: ::std::string::String,
+}
+///Connection metadata. Credential material is never returned.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ConnectorConnection {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub account_id: ::std::option::Option<::std::string::String>,
+    pub auth_type: ConnectorConnectionAuthType,
+    pub connector_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub created_at: ::std::option::Option<::std::string::String>,
+    pub endpoint: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub expires_at: ::std::option::Option<::std::string::String>,
+    pub granted_scopes: ::std::vec::Vec<::std::string::String>,
+    pub id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instance: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub label: ::std::option::Option<::std::string::String>,
+    ///Sanitized diagnostic; never includes provider response bodies or secrets.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub last_error: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub owner_id: ::std::option::Option<::std::string::String>,
+    pub owner_type: ConnectorConnectionOwnerType,
+    pub revision: i64,
+    pub status: ConnectorConnectionStatus,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tools_checked_at: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tools_digest: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub updated_at: ::std::option::Option<::std::string::String>,
+}
+///`ConnectorConnectionAuthType`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectorConnectionAuthType {
+    #[serde(rename = "oauth2")]
+    Oauth2,
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "bearer")]
+    Bearer,
+    #[serde(rename = "api_key")]
+    ApiKey,
+}
+impl ::std::fmt::Display for ConnectorConnectionAuthType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Oauth2 => f.write_str("oauth2"),
+            Self::None => f.write_str("none"),
+            Self::Bearer => f.write_str("bearer"),
+            Self::ApiKey => f.write_str("api_key"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectorConnectionAuthType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "oauth2" => Ok(Self::Oauth2),
+            "none" => Ok(Self::None),
+            "bearer" => Ok(Self::Bearer),
+            "api_key" => Ok(Self::ApiKey),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectorConnectionAuthType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectorConnectionAuthType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnectorConnectionOwnerType`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectorConnectionOwnerType {
+    #[serde(rename = "app")]
+    App,
+    #[serde(rename = "user")]
+    User,
+}
+impl ::std::fmt::Display for ConnectorConnectionOwnerType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::App => f.write_str("app"),
+            Self::User => f.write_str("user"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectorConnectionOwnerType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "app" => Ok(Self::App),
+            "user" => Ok(Self::User),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectorConnectionOwnerType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectorConnectionOwnerType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnectorConnectionStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectorConnectionStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "connected")]
+    Connected,
+    #[serde(rename = "needs_reauthorization")]
+    NeedsReauthorization,
+    #[serde(rename = "disconnected")]
+    Disconnected,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for ConnectorConnectionStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pending => f.write_str("pending"),
+            Self::Connected => f.write_str("connected"),
+            Self::NeedsReauthorization => f.write_str("needs_reauthorization"),
+            Self::Disconnected => f.write_str("disconnected"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectorConnectionStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "connected" => Ok(Self::Connected),
+            "needs_reauthorization" => Ok(Self::NeedsReauthorization),
+            "disconnected" => Ok(Self::Disconnected),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectorConnectionStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectorConnectionStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///A built-in or app-defined remote MCP connector definition.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ConnectorDefinition {
+    ///Fixed header name for api_key auth; never supplied by the model.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub api_key_header: ::std::option::Option<::std::string::String>,
+    pub auth_mode: ConnectorDefinitionAuthMode,
+    pub category: ::std::string::String,
+    pub description: ::std::string::String,
+    pub endpoint: ::std::string::String,
+    pub id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instance_hint: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instance_required: ::std::option::Option<bool>,
+    pub name: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+}
+///`ConnectorDefinitionAuthMode`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectorDefinitionAuthMode {
+    #[serde(rename = "oauth_dcr")]
+    OauthDcr,
+    #[serde(rename = "oauth_preconfigured")]
+    OauthPreconfigured,
+    #[serde(rename = "oauth_customer_credentials")]
+    OauthCustomerCredentials,
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "bearer")]
+    Bearer,
+    #[serde(rename = "api_key")]
+    ApiKey,
+}
+impl ::std::fmt::Display for ConnectorDefinitionAuthMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::OauthDcr => f.write_str("oauth_dcr"),
+            Self::OauthPreconfigured => f.write_str("oauth_preconfigured"),
+            Self::OauthCustomerCredentials => f.write_str("oauth_customer_credentials"),
+            Self::None => f.write_str("none"),
+            Self::Bearer => f.write_str("bearer"),
+            Self::ApiKey => f.write_str("api_key"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectorDefinitionAuthMode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "oauth_dcr" => Ok(Self::OauthDcr),
+            "oauth_preconfigured" => Ok(Self::OauthPreconfigured),
+            "oauth_customer_credentials" => Ok(Self::OauthCustomerCredentials),
+            "none" => Ok(Self::None),
+            "bearer" => Ok(Self::Bearer),
+            "api_key" => Ok(Self::ApiKey),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectorDefinitionAuthMode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectorDefinitionAuthMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnectorOwner`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ConnectorOwner {
+    #[serde(rename = "type")]
+    pub type_: ConnectorOwnerType,
+    ///Required only for a user-owned connection; backend supplied.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub user_id: ::std::option::Option<::std::string::String>,
+}
+///`ConnectorOwnerType`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectorOwnerType {
+    #[serde(rename = "app")]
+    App,
+    #[serde(rename = "user")]
+    User,
+}
+impl ::std::fmt::Display for ConnectorOwnerType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::App => f.write_str("app"),
+            Self::User => f.write_str("user"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectorOwnerType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "app" => Ok(Self::App),
+            "user" => Ok(Self::User),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectorOwnerType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectorOwnerType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnectorTool`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ConnectorTool {
+    pub description: ::std::string::String,
+    pub input_schema: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    pub name: ::std::string::String,
+    pub schema_digest: ::std::string::String,
+}
+///`ConnectorToolGrant`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ConnectorToolGrant {
+    pub name: ::std::string::String,
+    pub schema_digest: ::std::string::String,
+}
+///`ConnectorTools`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ConnectorTools {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub checked_at: ::std::option::Option<::std::string::String>,
+    pub connection_id: ::std::string::String,
+    pub digest: ::std::string::String,
+    pub tools: ::std::vec::Vec<ConnectorTool>,
+}
+///`ConnectorValidation`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ConnectorValidation {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub checked_at: ::std::option::Option<::std::string::String>,
+    pub connection_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
+    pub status: ConnectorValidationStatus,
+    pub tools_digest: ::std::string::String,
+}
+///`ConnectorValidationStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectorValidationStatus {
+    #[serde(rename = "connected")]
+    Connected,
+    #[serde(rename = "needs_reauthorization")]
+    NeedsReauthorization,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for ConnectorValidationStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Connected => f.write_str("connected"),
+            Self::NeedsReauthorization => f.write_str("needs_reauthorization"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectorValidationStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "connected" => Ok(Self::Connected),
+            "needs_reauthorization" => Ok(Self::NeedsReauthorization),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectorValidationStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectorValidationStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`Contact`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Contact {
@@ -1304,6 +1831,92 @@ impl ::std::convert::From<ImageContentPart> for ContentPart {
         Self::ImageContentPart(value)
     }
 }
+///`CreateConnectorConnectionRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CreateConnectorConnectionRequest {
+    pub connector_id: ::std::string::String,
+    ///Provider environment, such as Salesforce production or sandbox.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instance: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub label: ::std::option::Option<::std::string::String>,
+    pub owner: ConnectorOwner,
+}
+///`CreateConnectorDefinitionRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CreateConnectorDefinitionRequest {
+    ///Required only for api_key; fixed to this definition.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub api_key_header: ::std::option::Option<::std::string::String>,
+    pub auth_mode: CreateConnectorDefinitionRequestAuthMode,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub category: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub description: ::std::option::Option<::std::string::String>,
+    ///Public HTTPS Streamable HTTP MCP endpoint; query strings are not allowed.
+    pub endpoint: ::std::string::String,
+    pub id: ::std::string::String,
+    pub name: ::std::string::String,
+}
+///`CreateConnectorDefinitionRequestAuthMode`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CreateConnectorDefinitionRequestAuthMode {
+    #[serde(rename = "oauth_dcr")]
+    OauthDcr,
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "bearer")]
+    Bearer,
+    #[serde(rename = "api_key")]
+    ApiKey,
+}
+impl ::std::fmt::Display for CreateConnectorDefinitionRequestAuthMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::OauthDcr => f.write_str("oauth_dcr"),
+            Self::None => f.write_str("none"),
+            Self::Bearer => f.write_str("bearer"),
+            Self::ApiKey => f.write_str("api_key"),
+        }
+    }
+}
+impl ::std::str::FromStr for CreateConnectorDefinitionRequestAuthMode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "oauth_dcr" => Ok(Self::OauthDcr),
+            "none" => Ok(Self::None),
+            "bearer" => Ok(Self::Bearer),
+            "api_key" => Ok(Self::ApiKey),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CreateConnectorDefinitionRequestAuthMode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CreateConnectorDefinitionRequestAuthMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`CreateResponseRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CreateResponseRequest {
@@ -1341,6 +1954,9 @@ pub struct CreateSessionRequest {
     */
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub config_id: ::std::option::Option<::std::string::String>,
+    ///Explicit account selection for config bindings whose connection type is session. Each selected connection is checked against the verified caller.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub connector_bindings: ::std::option::Option<::std::vec::Vec<SessionConnectorBinding>>,
     ///Older history was omitted from the model context.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub context_truncated: ::std::option::Option<bool>,
@@ -3292,96 +3908,6 @@ pub struct PlacedCall {
     pub vendor: ::std::option::Option<::std::string::String>,
     pub vendor_call_id: ::std::string::String,
 }
-///One hosted MCP server from the built-in catalog.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct Plugin {
-    pub category: ::std::string::String,
-    pub description: ::std::string::String,
-    pub id: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_hint: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_required: ::std::option::Option<bool>,
-    pub name: ::std::string::String,
-}
-///`PluginAuthorization`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginAuthorization {
-    ///The URL the browser should open to finish the login.
-    pub authorize_url: ::std::string::String,
-}
-///A catalog plugin as this agent has it, including whether it is logged in.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
-pub struct PluginConnection {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub category: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub description: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_hint: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_required: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_url: ::std::option::Option<::std::string::String>,
-    pub name: ::std::string::String,
-    pub plugin_id: ::std::string::String,
-    pub status: PluginConnectionStatus,
-}
-///`PluginConnectionStatus`
-#[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum PluginConnectionStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "connected")]
-    Connected,
-    #[serde(rename = "failed")]
-    Failed,
-}
-impl ::std::fmt::Display for PluginConnectionStatus {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Pending => f.write_str("pending"),
-            Self::Connected => f.write_str("connected"),
-            Self::Failed => f.write_str("failed"),
-        }
-    }
-}
-impl ::std::str::FromStr for PluginConnectionStatus {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "pending" => Ok(Self::Pending),
-            "connected" => Ok(Self::Connected),
-            "failed" => Ok(Self::Failed),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for PluginConnectionStatus {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for PluginConnectionStatus {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 /**What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and a field left out is no opinion rather than off.
 */
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -3481,6 +4007,35 @@ pub struct ProviderPrice {
     pub per_million_input_tokens: ::std::option::Option<f64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub per_million_output_tokens: ::std::option::Option<f64>,
+}
+///`PutConnectorCredentialsRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct PutConnectorCredentialsRequest {
+    ///For OAuth connections, imports an existing provider-issued access token. The token endpoint, resource, and client authentication are resolved from the fixed connector definition or discovered provider metadata; callers cannot supply an endpoint that receives the token or refresh token.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub access_token: ::std::option::Option<::std::string::String>,
+    ///Required for api_key auth; stored encrypted and never returned.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub api_key: ::std::option::Option<::std::string::String>,
+    ///Required for bearer auth; stored encrypted and never returned.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub bearer_token: ::std::option::Option<::std::string::String>,
+    pub expected_revision: i64,
+    ///Required with an imported OAuth access token.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub expires_at: ::std::option::Option<::std::string::String>,
+    ///Provider-granted OAuth scopes, validated against the connector catalog where known.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub granted_scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///Required when importing a grant for a customer-registered or dynamically registered OAuth client. Operator-managed providers use their configured client.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub oauth_client_id: ::std::option::Option<::std::string::String>,
+    ///Optional confidential client secret for an imported grant; encrypted at rest.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub oauth_client_secret: ::std::option::Option<::std::string::String>,
+    ///Optional OAuth refresh token; stored encrypted with the access token.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_token: ::std::option::Option<::std::string::String>,
 }
 /**Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first.
 */
@@ -3950,6 +4505,13 @@ pub struct Session {
     */
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+///`SessionConnectorBinding`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct SessionConnectorBinding {
+    pub connection_id: ::std::string::String,
+    ///The alias of a config binding whose selection type is session.
+    pub name: ::std::string::String,
 }
 /**Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
 */
@@ -5176,6 +5738,9 @@ pub struct SttOptions {
 */
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SyncAgentRequest {
+    ///The directory's declarative connector bindings. Full sync replaces these bindings; connected accounts remain separate resources.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<::std::string::String>,
     /**The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
@@ -5201,8 +5766,6 @@ pub struct SyncAgentRequest {
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is also the directory's name.
     pub name: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sandbox: ::std::option::Option<Sandbox>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]

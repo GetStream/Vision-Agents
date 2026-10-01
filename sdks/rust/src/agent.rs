@@ -592,7 +592,7 @@ impl Agent {
             search: text(&settings.search),
             greeting: text(&settings.greeting),
             sandbox: settings.sandbox,
-            plugins: (!settings.plugins.is_empty()).then(|| settings.plugins.clone()),
+            connectors: settings.connectors.clone(),
             keyterms: (!settings.keyterms.is_empty()).then(|| settings.keyterms.clone()),
             tags,
             video: settings.video.as_ref().map(|video| types::SessionVideo {

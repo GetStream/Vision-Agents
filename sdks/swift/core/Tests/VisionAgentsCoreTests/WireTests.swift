@@ -64,6 +64,17 @@ import Testing
         #expect(event.toolCall == nil)
     }
 
+    @Test func optionalConnectorFailuresKeepTheirSafeReason() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(
+                #"{"type":"connector_unavailable","name":"linear","connector_id":"linear","reason":"needs_reauthorization"}"#.utf8))
+
+        #expect(event.kind == .connectorUnavailable)
+        #expect(event["name"].stringValue == "linear")
+        #expect(event["reason"].stringValue == "needs_reauthorization")
+    }
+
     /// The router reads one flat struct, so a command has to put its fields at the top level
     /// under the names in `readCommands`.
     @Test(arguments: [
@@ -90,6 +101,19 @@ import Testing
         encoder.outputFormatting = .sortedKeys
 
         #expect(String(decoding: try encoder.encode(command), as: UTF8.self) == expected)
+    }
+
+    @Test func sessionConnectorSelectionsUseTheRouterWireNames() throws {
+        let request = Components.Schemas.CreateSessionRequest(
+            connectorBindings: [
+                Components.Schemas.SessionConnectorBinding(
+                    name: "crm", connectionId: "connection-1")
+            ])
+        let object = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        let bindings = try #require(object["connector_bindings"] as? [[String: String]])
+
+        #expect(bindings == [["name": "crm", "connection_id": "connection-1"]])
     }
 
     @Test func aToolSchemaSaysWhichArgumentsAreRequired() throws {

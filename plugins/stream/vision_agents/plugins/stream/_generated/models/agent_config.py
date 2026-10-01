@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.agent_config_tags import AgentConfigTags
+    from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.session_video import SessionVideo
 
 
@@ -44,7 +45,7 @@ class AgentConfig:
         greeting (str | Unset):
         guardrail (str | Unset):
         skills (list[str] | Unset):
-        plugins (list[str] | Unset):
+        connectors (list[AgentConnectorBinding] | Unset):
         keyterms (list[str] | Unset):
         knowledge_namespace (str | Unset):
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
@@ -72,7 +73,7 @@ class AgentConfig:
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
-    plugins: list[str] | Unset = UNSET
+    connectors: list[AgentConnectorBinding] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
@@ -119,9 +120,12 @@ class AgentConfig:
         if not isinstance(self.skills, Unset):
             skills = self.skills
 
-        plugins: list[str] | Unset = UNSET
-        if not isinstance(self.plugins, Unset):
-            plugins = self.plugins
+        connectors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connectors, Unset):
+            connectors = []
+            for connectors_item_data in self.connectors:
+                connectors_item = connectors_item_data.to_dict()
+                connectors.append(connectors_item)
 
         keyterms: list[str] | Unset = UNSET
         if not isinstance(self.keyterms, Unset):
@@ -174,8 +178,8 @@ class AgentConfig:
             field_dict["guardrail"] = guardrail
         if skills is not UNSET:
             field_dict["skills"] = skills
-        if plugins is not UNSET:
-            field_dict["plugins"] = plugins
+        if connectors is not UNSET:
+            field_dict["connectors"] = connectors
         if keyterms is not UNSET:
             field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
@@ -192,6 +196,9 @@ class AgentConfig:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_config_tags import AgentConfigTags
+        from ..models.agent_connector_binding import (
+            AgentConnectorBinding,
+        )
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
@@ -234,7 +241,14 @@ class AgentConfig:
 
         skills = cast(list[str], d.pop("skills", UNSET))
 
-        plugins = cast(list[str], d.pop("plugins", UNSET))
+        _connectors = d.pop("connectors", UNSET)
+        connectors: list[AgentConnectorBinding] | Unset = UNSET
+        if _connectors is not UNSET:
+            connectors = []
+            for connectors_item_data in _connectors:
+                connectors_item = AgentConnectorBinding.from_dict(connectors_item_data)
+
+                connectors.append(connectors_item)
 
         keyterms = cast(list[str], d.pop("keyterms", UNSET))
 
@@ -274,7 +288,7 @@ class AgentConfig:
             greeting=greeting,
             guardrail=guardrail,
             skills=skills,
-            plugins=plugins,
+            connectors=connectors,
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             sandbox=sandbox,

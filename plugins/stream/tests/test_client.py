@@ -197,6 +197,11 @@ class TestSessions:
                 description="The comparison question, again",
                 project="docs",
                 custom={"ticket": "4721"},
+                connector_bindings=[
+                    stream.SessionConnectorBinding(
+                        name="crm", connection_id="conn_alice"
+                    )
+                ],
                 model_overwrites=stream.ModelOverwrites(
                     thinking=stream.ModelOverwritesThinking.HIGH
                 ),
@@ -212,6 +217,9 @@ class TestSessions:
         assert body["title"] == "Is Stream better?"
         assert body["project"] == "docs"
         assert body["custom"] == {"ticket": "4721"}
+        assert body["connector_bindings"] == [
+            {"name": "crm", "connection_id": "conn_alice"}
+        ]
         assert body["model_overwrites"] == {"thinking": "high"}
         # No call was named, so the conversation is held in writing and kept.
         assert body["text"] is True

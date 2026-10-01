@@ -360,7 +360,7 @@ module GetStream
           mode: presence(settings["mode"]), stt: presence(settings["stt"]), tts: presence(settings["tts"]),
           sts: settings["sts"], voice: presence(settings["voice"]), llm: presence(settings["llm"]),
           search: presence(settings["search"]), greeting: presence(settings["greeting"]),
-          plugins: settings["plugins"]&.then { |p| p unless p.empty? },
+          connectors: settings["connectors"],
           keyterms: settings["keyterms"]&.then { |k| k unless k.empty? },
           video: video && { source: video["source"], max_frames: video["max_frames"] }.compact,
           subagent: presence(@pipeline[:subagent].to_s) || presence(settings["subagent"]),

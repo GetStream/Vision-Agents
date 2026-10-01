@@ -533,4 +533,26 @@ func TestSealer(t *testing.T) {
 		_, err := NewSealer("")
 		require.Error(t, err)
 	})
+
+	t.Run("opens retained key versions and writes with the current key", func(t *testing.T) {
+		old, err := NewSealer("old-key")
+		require.NoError(t, err)
+		sealed, err := old.SealWithAAD("connector secret", []byte("tenant/connection/revision"))
+		require.NoError(t, err)
+
+		rotated, err := NewSealerWithKeyring(2, map[int]string{1: "old-key", 2: "new-key"})
+		require.NoError(t, err)
+		require.Equal(t, 2, rotated.CurrentVersion())
+		opened, err := rotated.OpenWithAADVersion(sealed, []byte("tenant/connection/revision"), 1)
+		require.NoError(t, err)
+		require.Equal(t, "connector secret", opened)
+
+		newSealed, err := rotated.SealWithAAD("rotated secret", []byte("tenant/connection/revision"))
+		require.NoError(t, err)
+		opened, err = rotated.OpenWithAADVersion(newSealed, []byte("tenant/connection/revision"), 2)
+		require.NoError(t, err)
+		require.Equal(t, "rotated secret", opened)
+		_, err = rotated.OpenWithAADVersion(newSealed, []byte("tenant/connection/revision"), 1)
+		require.Error(t, err)
+	})
 }

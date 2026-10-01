@@ -102,7 +102,7 @@ export interface Declaration {
   search?: string;
   greeting?: string;
   sandbox?: Schemas["Sandbox"];
-  plugins?: string[];
+  connectors?: Schemas["AgentConnectorBinding"][];
   keyterms?: string[];
   tags?: Record<string, string>;
   video?: Schemas["SessionVideo"];
@@ -589,7 +589,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.llm ? { llm: declared.llm } : {}),
     ...(declared.search ? { search: declared.search } : {}),
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
-    ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
+    ...(declared.connectors === undefined ? {} : { connectors: declared.connectors }),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
   };

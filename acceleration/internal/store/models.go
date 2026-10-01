@@ -337,10 +337,8 @@ type AgentConfig struct {
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
-	// Plugins names hosted MCP servers this agent is allowed to reach, from the built-in
-	// catalog. A name here without a connected row is a plugin that was attached and then
-	// the login expired or was revoked.
-	Plugins []string `bun:"plugins,type:jsonb"`
+	// Connectors grants exact MCP tools through explicit bindings to reusable connections.
+	Connectors []ConnectorBinding `bun:"connectors,type:jsonb"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// KnowledgeNamespace is what the agent may look things up in.
@@ -355,6 +353,99 @@ type AgentConfig struct {
 	CreatedAt time.Time  `bun:"created_at,notnull"`
 	UpdatedAt time.Time  `bun:"updated_at,notnull"`
 	DeletedAt *time.Time `bun:"deleted_at"`
+}
+
+// ConnectorBinding grants a named, fixed set of tools to one agent config.
+type ConnectorBinding struct {
+	Name        string            `json:"name"`
+	ConnectorID string            `json:"connector_id"`
+	Connection  ConnectionBinding `json:"connection"`
+	Tools       []ToolGrant       `json:"tools"`
+	Required    bool              `json:"required"`
+	TimeoutMs   int               `json:"timeout_ms,omitempty"`
+}
+
+// ConnectionBinding selects an app-owned fixed connection or a user account selected at
+// session creation.
+type ConnectionBinding struct {
+	Type         string `json:"type"`
+	ConnectionID string `json:"connection_id,omitempty"`
+}
+
+// ToolGrant is an exact, reviewed MCP tool name.
+type ToolGrant struct {
+	Name         string `json:"name"`
+	SchemaDigest string `json:"schema_digest"`
+}
+
+// ConnectorConnection stores reusable account metadata and an encrypted credential bundle.
+type ConnectorConnection struct {
+	bun.BaseModel `bun:"table:connector_connections,alias:cc"`
+
+	ID                   string          `bun:"id,pk" json:"id"`
+	CustomerID           string          `bun:"customer_id,notnull" json:"-"`
+	ConnectorID          string          `bun:"connector_id,notnull" json:"connector_id"`
+	OwnerType            string          `bun:"owner_type,notnull" json:"owner_type"`
+	OwnerID              string          `bun:"owner_id,notnull" json:"owner_id,omitempty"`
+	Endpoint             string          `bun:"endpoint,notnull" json:"endpoint"`
+	Instance             string          `bun:"instance,notnull" json:"instance,omitempty"`
+	Label                string          `bun:"label,notnull" json:"label,omitempty"`
+	AccountID            string          `bun:"account_id,notnull" json:"account_id,omitempty"`
+	AuthType             string          `bun:"auth_type,notnull" json:"auth_type"`
+	AuthHeader           string          `bun:"auth_header,notnull" json:"-"`
+	Status               string          `bun:"status,notnull" json:"status"`
+	GrantedScopes        []string        `bun:"granted_scopes,type:jsonb" json:"granted_scopes"`
+	Revision             int             `bun:"revision,notnull" json:"revision"`
+	CredentialSealed     []byte          `bun:"credential_sealed,notnull" json:"-"`
+	CredentialKEKVersion int             `bun:"credential_kek_version,notnull" json:"-"`
+	ExpiresAt            *time.Time      `bun:"expires_at" json:"expires_at,omitempty"`
+	CachedTools          []ConnectorTool `bun:"cached_tools,type:jsonb" json:"-"`
+	ToolsDigest          string          `bun:"tools_digest,notnull" json:"tools_digest,omitempty"`
+	ToolsCheckedAt       *time.Time      `bun:"tools_checked_at" json:"tools_checked_at,omitempty"`
+	LastError            string          `bun:"last_error,notnull" json:"last_error,omitempty"`
+	CreatedAt            time.Time       `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt            time.Time       `bun:"updated_at,notnull" json:"updated_at"`
+	DeletedAt            *time.Time      `bun:"deleted_at" json:"-"`
+}
+
+// ConnectorDefinition is an app-owned immutable remote MCP service description.
+type ConnectorDefinition struct {
+	bun.BaseModel `bun:"table:connector_definitions,alias:cd"`
+
+	CustomerID  string    `bun:"customer_id,pk,notnull" json:"-"`
+	ID          string    `bun:"id,pk,notnull" json:"id"`
+	Name        string    `bun:"name,notnull" json:"name"`
+	Category    string    `bun:"category,notnull" json:"category"`
+	Description string    `bun:"description,notnull" json:"description"`
+	Endpoint    string    `bun:"endpoint,notnull" json:"endpoint"`
+	AuthType    string    `bun:"auth_type,notnull" json:"auth_type"`
+	AuthHeader  string    `bun:"auth_header,notnull" json:"-"`
+	CreatedAt   time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt   time.Time `bun:"updated_at,notnull" json:"updated_at"`
+}
+
+// ConnectorTool is one tool discovered from a remote MCP connection.
+type ConnectorTool struct {
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"input_schema"`
+	SchemaDigest string         `json:"schema_digest"`
+}
+
+// ConnectorAuthorizationAttempt keeps the OAuth state hash searchable while the complete
+// PKCE/client context remains encrypted.
+type ConnectorAuthorizationAttempt struct {
+	bun.BaseModel `bun:"table:connector_authorization_attempts,alias:caa"`
+
+	ID            string     `bun:"id,pk"`
+	CustomerID    string     `bun:"customer_id,notnull"`
+	ConnectionID  string     `bun:"connection_id,notnull"`
+	StateHash     string     `bun:"state_hash,notnull"`
+	AttemptSealed []byte     `bun:"attempt_sealed,notnull"`
+	KEKVersion    int        `bun:"kek_version,notnull"`
+	ExpiresAt     time.Time  `bun:"expires_at,notnull"`
+	ConsumedAt    *time.Time `bun:"consumed_at"`
+	CreatedAt     time.Time  `bun:"created_at,notnull"`
 }
 
 // RouterConfig is a named set of per-modality routing options, for a caller that routes
@@ -467,41 +558,6 @@ type Skill struct {
 	CreatedAt  time.Time  `bun:"created_at,notnull"`
 	UpdatedAt  time.Time  `bun:"updated_at,notnull"`
 	DeletedAt  *time.Time `bun:"deleted_at"`
-}
-
-// How far a plugin login has got.
-const (
-	// PluginPending means the browser is still at the provider.
-	PluginPending = "pending"
-	// PluginConnected means tokens are stored and a session may use them.
-	PluginConnected = "connected"
-	// PluginFailed means the exchange did not work.
-	PluginFailed = "failed"
-)
-
-// PluginConnection is one hosted MCP server authorized for one agent config.
-type PluginConnection struct {
-	bun.BaseModel `bun:"table:agent_plugin_connections,alias:apc"`
-
-	ID         string `bun:"id,pk"`
-	CustomerID string `bun:"customer_id,notnull"`
-	ConfigID   string `bun:"config_id,notnull"`
-	PluginID   string `bun:"plugin_id,notnull"`
-	// InstanceURL is the shop or org hostname for plugins that have no single global URL.
-	InstanceURL  string     `bun:"instance_url,notnull"`
-	AccessToken  string     `bun:"access_token,notnull"`
-	RefreshToken string     `bun:"refresh_token,notnull"`
-	ExpiresAt    *time.Time `bun:"expires_at"`
-	Status       string     `bun:"status,notnull"`
-	// OAuthState, CodeVerifier, ClientID and TokenEndpoint are what the callback needs
-	// to finish the login. They are cleared once the connection is connected.
-	OAuthState    string     `bun:"oauth_state,notnull"`
-	CodeVerifier  string     `bun:"code_verifier,notnull"`
-	ClientID      string     `bun:"client_id,notnull"`
-	TokenEndpoint string     `bun:"token_endpoint,notnull"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
-	DeletedAt     *time.Time `bun:"deleted_at"`
 }
 
 // Where a knowledge url has got to.
@@ -1151,10 +1207,11 @@ type AgentSession struct {
 	// list grouped by project needs no JSON unpacking.
 	Project string `bun:"project,notnull"`
 	// Custom is the caller's own, handed back untouched and never read by the router.
-	Custom          map[string]any  `bun:"custom,type:jsonb,nullzero"`
-	ModelOverwrites ModelOverwrites `bun:"model_overwrites,type:jsonb,nullzero"`
-	CallID          string          `bun:"call_id,nullzero"`
-	CallType        string          `bun:"call_type,nullzero"`
+	Custom              map[string]any              `bun:"custom,type:jsonb,nullzero"`
+	ModelOverwrites     ModelOverwrites             `bun:"model_overwrites,type:jsonb,nullzero"`
+	ConnectorSelections []SessionConnectorSelection `bun:"connector_selections,type:jsonb,nullzero"`
+	CallID              string                      `bun:"call_id,nullzero"`
+	CallType            string                      `bun:"call_type,nullzero"`
 	// ForkedFrom is the session this one continued from, empty for one opened fresh.
 	ForkedFrom string `bun:"forked_from,nullzero"`
 	State      string `bun:"state,notnull"`
@@ -1187,6 +1244,14 @@ type ItemPosition struct {
 	At         time.Time `json:"t"`
 	ResponseID string    `json:"r"`
 	Ordinal    int       `json:"o"`
+}
+
+// SessionConnectorSelection records a connection ID selected for an agent binding. It
+// contains no credential material and is revalidated against the current config and caller
+// whenever a stored session is forked.
+type SessionConnectorSelection struct {
+	Name         string `json:"name"`
+	ConnectionID string `json:"connection_id"`
 }
 
 // SessionFilter narrows a session list to the ones worth reading.

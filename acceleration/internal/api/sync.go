@@ -36,7 +36,7 @@ type SyncAgentRequest struct {
 	Subagent      *string                    `json:"subagent,omitempty"`
 	Search        *string                    `json:"search,omitempty"`
 	Greeting      *string                    `json:"greeting,omitempty"`
-	Plugins       *[]string                  `json:"plugins,omitempty"`
+	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" doc:"The directory's declarative connector bindings. Full sync replaces these bindings; connected accounts remain separate resources."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Tags          *map[string]string         `json:"tags,omitempty"`
@@ -120,7 +120,7 @@ func (s *Server) registerSync(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The config as stored, or as it already was"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict},
 	}, s.syncAgent)
 }
 
@@ -148,14 +148,22 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if s.store == nil {
 		return nil, huma.Error400BadRequest(noConfigs)
 	}
-	if message, ok := syncComplaint(body); !ok {
-		return nil, huma.Error400BadRequest(message)
-	}
-
 	existing, found, err := s.store.AgentConfigByName(ctx, customerID, name)
 	if err != nil {
 		return nil, err
 	}
+	if found && body.Connectors == nil && len(existing.Connectors) > 0 {
+		return nil, huma.Error409Conflict("this config uses connector bindings; include connectors when syncing it")
+	}
+	if message, ok := syncComplaint(body); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, err := s.connectorDefinitionComplaint(ctx, customerID, body.Connectors); err != nil {
+		return nil, err
+	} else if message != "" {
+		return nil, huma.Error400BadRequest(message)
+	}
+
 	if found && existing.SyncHash == hash {
 		return &syncAgentResponse{Body: SyncAgentResult{Unchanged: true, Config: agentConfigOf(existing)}}, nil
 	}
@@ -250,6 +258,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	}
 	if _, ok := sandboxOf(body.Sandbox); !ok {
 		return fmt.Sprintf("there is no sandbox provider called %q", *body.Sandbox), false
+	}
+	if complaint, ok := connectorBindingsComplaint(body.Connectors); !ok {
+		return complaint, false
 	}
 	// Simulations are checked here, before anything is written, since a config stored under
 	// the new hash would make the next sync skip the simulations that failed.
@@ -367,8 +378,8 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Greeting != nil {
 		config.Greeting = *body.Greeting
 	}
-	if body.Plugins != nil {
-		config.Plugins = *body.Plugins
+	if body.Connectors != nil {
+		config.Connectors = connectorBindingsFromAPI(*body.Connectors)
 	}
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)

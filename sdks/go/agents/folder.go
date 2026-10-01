@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
 
 // AgentFile is what makes a directory an agent: it names it and says what it runs on.
@@ -136,21 +138,44 @@ type Settings struct {
 	STT         string `yaml:"stt"`
 	TTS         string `yaml:"tts"`
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
-	STS      *string           `yaml:"sts"`
-	Voice    string            `yaml:"voice"`
-	Speed    float64           `yaml:"speed"`
-	LLM      string            `yaml:"llm"`
-	Subagent string            `yaml:"subagent"`
-	Search   string            `yaml:"search"`
-	Greeting string            `yaml:"greeting"`
-	Sandbox  string            `yaml:"sandbox"`
-	Plugins  []string          `yaml:"plugins"`
-	Keyterms []string          `yaml:"keyterms"`
-	Tags     map[string]string `yaml:"tags"`
-	Video    *VideoSettings    `yaml:"video"`
+	STS        *string            `yaml:"sts"`
+	Voice      string             `yaml:"voice"`
+	Speed      float64            `yaml:"speed"`
+	LLM        string             `yaml:"llm"`
+	Subagent   string             `yaml:"subagent"`
+	Search     string             `yaml:"search"`
+	Greeting   string             `yaml:"greeting"`
+	Sandbox    string             `yaml:"sandbox"`
+	Connectors []ConnectorBinding `yaml:"connectors"`
+	Keyterms   []string           `yaml:"keyterms"`
+	Tags       map[string]string  `yaml:"tags"`
+	Video      *VideoSettings     `yaml:"video"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
+}
+
+// ConnectorBinding is the declarative, secret-free connector grant in agent.yaml.
+type ConnectorBinding acceleration.AgentConnectorBinding
+
+// UnmarshalYAML decodes wire-shaped connector bindings through their generated JSON tags.
+func (binding *ConnectorBinding) UnmarshalYAML(node *yaml.Node) error {
+	var fields map[string]any
+	if err := node.Decode(&fields); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	var decoded acceleration.AgentConnectorBinding
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*binding = ConnectorBinding(decoded)
+	return nil
 }
 
 // VideoSettings is which video a skill that captures it sees.

@@ -16,12 +16,13 @@ use GetStream\VisionAgents\Generated\SessionVideo;
 final readonly class Declaration
 {
     private const array STRINGS = ['name', 'description', 'mode', 'stt', 'tts', 'voice', 'llm', 'subagent', 'search', 'greeting', 'sandbox'];
-    private const array LISTS = ['plugins', 'keyterms'];
+    private const array LISTS = ['keyterms'];
+    private const array SETTINGS = ['name', 'description', 'mode', 'stt', 'tts', 'voice', 'llm', 'subagent', 'search', 'greeting', 'sandbox', 'keyterms', 'connectors', 'tags', 'video'];
 
     /**
      * @param ?string $sts null when the declaration says nothing, empty when it turns it off
-     * @param list<string> $plugins
      * @param list<string> $keyterms
+     * @param ?list<array<string, mixed>> $connectors
      * @param array<string, string> $tags
      */
     public function __construct(
@@ -37,8 +38,8 @@ final readonly class Declaration
         public string $search = '',
         public string $greeting = '',
         public string $sandbox = '',
-        public array $plugins = [],
         public array $keyterms = [],
+        public ?array $connectors = null,
         public array $tags = [],
         public ?SessionVideo $video = null,
     ) {
@@ -60,12 +61,19 @@ final readonly class Declaration
         $values = [];
         foreach ($parsed as $key => $value) {
             $key = (string) $key;
-            if (in_array($key, self::STRINGS, true)) {
+            if (!in_array($key, self::SETTINGS, true)) {
+                throw new ConfigurationException("\"{$key}\" is not something agent.yaml declares");
+            } elseif (in_array($key, self::STRINGS, true)) {
                 $values[$key] = self::scalar($key, $value);
             } elseif ($key === 'sts') {
                 $values['sts'] = $value === null ? null : self::scalar($key, $value);
             } elseif (in_array($key, self::LISTS, true)) {
                 $values[$key] = self::strings($key, $value);
+            } elseif ($key === 'connectors') {
+                if (!is_array($value) || !array_is_list($value) || count(array_filter($value, static fn (mixed $binding): bool => !is_array($binding) || array_is_list($binding))) > 0) {
+                    throw new ConfigurationException('connectors is a list of mappings');
+                }
+                $values[$key] = $value;
             } elseif ($key === 'tags') {
                 $values['tags'] = self::tags($value);
             } elseif ($key === 'video') {
@@ -88,8 +96,8 @@ final readonly class Declaration
             search: self::pick($values, 'search'),
             greeting: self::pick($values, 'greeting'),
             sandbox: self::pick($values, 'sandbox'),
-            plugins: self::pickList($values, 'plugins'),
             keyterms: self::pickList($values, 'keyterms'),
+            connectors: $values['connectors'] ?? null,
             tags: self::pickTags($values),
             video: ($values['video'] ?? null) instanceof SessionVideo ? $values['video'] : null,
         );

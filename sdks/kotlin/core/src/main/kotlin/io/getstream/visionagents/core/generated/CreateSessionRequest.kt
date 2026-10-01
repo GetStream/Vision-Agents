@@ -241,10 +241,12 @@ internal data class CreateSessionRequest (
     val phone: SessionPhone? = null,
 
     @SerialName(value = "video")
-    val video: SessionVideo? = null
+    val video: SessionVideo? = null,
+
+    @SerialName(value = "connector_bindings")
+    val connectorBindings: kotlin.collections.List<SessionConnectorBinding>? = null
 
 ) {
 
 
 }
-

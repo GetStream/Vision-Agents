@@ -308,7 +308,18 @@ func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
 
 func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
-	write(t, root, "agent.yaml", "llm: openai/gpt-5.6\ntags:\n  team: support\n")
+	write(t, root, "agent.yaml", `llm: openai/gpt-5.6
+tags:
+  team: support
+connectors:
+  - name: crm
+    connector_id: salesforce
+    connection:
+      type: session
+    tools:
+      - name: lookup_contact
+        schema_digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+`)
 	write(t, root, "instructions.md", "You are Jean.\n")
 	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
 	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
@@ -344,6 +355,13 @@ func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	}
 	if synced.Llm == nil || *synced.Llm != "openai/gpt-5.6" || (*synced.Tags)["team"] != "support" {
 		t.Errorf("what agent.yaml declares did not go with it: %+v", synced)
+	}
+	if synced.Connectors == nil || len(*synced.Connectors) != 1 ||
+		(*synced.Connectors)[0].Name != "crm" ||
+		(*synced.Connectors)[0].ConnectorId != "salesforce" ||
+		(*synced.Connectors)[0].Connection.Type != acceleration.AgentConnectorSelectionTypeSession ||
+		(*synced.Connectors)[0].Tools[0].Name != "lookup_contact" {
+		t.Errorf("the connector bindings sent are %+v", synced.Connectors)
 	}
 	if synced.Stt != nil || synced.Mode != nil {
 		t.Errorf("settings the declaration never named were sent: %+v", synced)

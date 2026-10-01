@@ -48,7 +48,7 @@ func runKeys(args []string, settings config.Config, logger *slog.Logger) error {
 	}
 
 	ctx := context.Background()
-	pgStore, err := openStore(ctx, settings)
+	pgStore, err := openStore(ctx, settings, logger)
 	if err != nil {
 		return err
 	}

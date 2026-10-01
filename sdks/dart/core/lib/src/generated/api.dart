@@ -351,6 +351,7 @@ final class CreateSessionRequest {
     this.text,
     this.configId,
     this.agent,
+    this.connectorBindings,
     this.incognito,
     this.title,
     this.description,
@@ -414,6 +415,13 @@ final class CreateSessionRequest {
       agent: switch (json['agent']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.agent'),
+      },
+      connectorBindings: switch (json['connector_bindings']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'CreateSessionRequest.connector_bindings'))
+            SessionConnectorBinding.fromJson(item),
+        ],
       },
       incognito: switch (json['incognito']) {
         null => null,
@@ -578,6 +586,7 @@ final class CreateSessionRequest {
   final bool? text;
   final String? configId;
   final String? agent;
+  final List<SessionConnectorBinding>? connectorBindings;
   final bool? incognito;
   final String? title;
   final String? description;
@@ -621,6 +630,8 @@ final class CreateSessionRequest {
     'text': ?text,
     'config_id': ?configId,
     'agent': ?agent,
+    if (connectorBindings case final value?)
+      'connector_bindings': [for (final item in value) item.toJson()],
     'incognito': ?incognito,
     'title': ?title,
     'description': ?description,
@@ -1355,6 +1366,23 @@ final class Session {
     if (closedAt case final value?) 'closed_at': value.toUtc().toIso8601String(),
     if (lastResponseAt case final value?) 'last_response_at': value.toUtc().toIso8601String(),
   };
+}
+
+final class SessionConnectorBinding {
+  const SessionConnectorBinding({required this.name, required this.connectionId});
+
+  factory SessionConnectorBinding.fromJson(Object? value) {
+    final json = _object(value, 'SessionConnectorBinding');
+    return SessionConnectorBinding(
+      name: _string(json['name'], 'SessionConnectorBinding.name'),
+      connectionId: _string(json['connection_id'], 'SessionConnectorBinding.connection_id'),
+    );
+  }
+
+  final String name;
+  final String connectionId;
+
+  Map<String, Object?> toJson() => {'name': name, 'connection_id': connectionId};
 }
 
 /// Who the session's memories are about.

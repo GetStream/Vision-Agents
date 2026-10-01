@@ -40,13 +40,15 @@ type dataTable struct {
 // dataTables is everything that belongs to a customer, parents first.
 //
 // Deliberately absent: organizations, apps and api_keys, which are the credentials rather
-// than the data, and which a deployment mints for itself; and goose_db_version, which is
-// this schema's own bookkeeping. Organization-scope policies are absent too, since one
+// than the data, and which a deployment mints for itself; connector connections and their
+// authorization attempts, whose sealed grants only this deployment's key opens, so an
+// account is connected again where it lands; and goose_db_version, which is this schema's
+// own bookkeeping. Organization-scope policies are absent too, since one
 // organization's decisions cover apps the caller may not have.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
-	{name: "agent_plugin_connections", customer: "customer_id"},
+	{name: "connector_definitions", customer: "customer_id"},
 	{name: "router_configs", customer: "customer_id"},
 	{name: "voices", customer: "customer_id"},
 	{name: "voice_samples", parent: "voices", parentColumn: "voice_id"},

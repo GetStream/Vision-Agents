@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -96,6 +97,11 @@ func (s *Server) ForkSession(ctx context.Context, request ForkSessionRequestObje
 	if err != nil {
 		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
 	}
+	if config == nil {
+		if err := s.revalidateForkConnectors(ctx, customerID, &spec); err != nil {
+			return nil, err
+		}
+	}
 	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
@@ -117,6 +123,43 @@ func (s *Server) ForkSession(ctx context.Context, request ForkSessionRequestObje
 		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
 	}
 	return ForkSession201JSONResponse(sessionOf(created)), nil
+}
+
+// revalidateForkConnectors refreshes inherited grants from the current agent config.
+// Account selections survive only while the current config still exposes that alias as a
+// caller-selected connection; session startup then checks the account against the current
+// caller, connection state, provider, and reviewed tool schemas.
+func (s *Server) revalidateForkConnectors(ctx context.Context, customerID string, spec *session.Spec) error {
+	if spec.ConfigID == "" {
+		spec.ConnectorBindings = nil
+		spec.ConnectorSelections = nil
+		return nil
+	}
+	if s.store == nil {
+		spec.ConnectorBindings = nil
+		spec.ConnectorSelections = nil
+		return nil
+	}
+
+	config, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID)
+	if err != nil {
+		return fmt.Errorf("api: revalidate connector grants for fork: %w", err)
+	}
+	spec.ConnectorBindings = config.Connectors
+	allowed := make(map[string]struct{}, len(config.Connectors))
+	for _, binding := range config.Connectors {
+		if binding.Connection.Type == "session" {
+			allowed[binding.Name] = struct{}{}
+		}
+	}
+	selections := spec.ConnectorSelections[:0]
+	for _, selection := range spec.ConnectorSelections {
+		if _, exists := allowed[selection.Name]; exists {
+			selections = append(selections, selection)
+		}
+	}
+	spec.ConnectorSelections = selections
+	return nil
 }
 
 // GetSession returns one session.
@@ -559,6 +602,16 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if request.Keyterms != nil {
 		spec.Keyterms = *request.Keyterms
 	}
+	if request.ConnectorBindings != nil {
+		selected := make([]session.ConnectorSelection, 0, len(*request.ConnectorBindings))
+		for _, binding := range *request.ConnectorBindings {
+			selected = append(selected, session.ConnectorSelection{
+				Name:         binding.Name,
+				ConnectionID: binding.ConnectionId,
+			})
+		}
+		spec.ConnectorSelections = selected
+	}
 	// Cost labels are merged rather than replaced: a config labels which agent the spend
 	// belongs to and a call labels which conversation, and both are worth billing on.
 	if request.Tags != nil {
@@ -840,11 +893,17 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		}
 	case parent.Stored != nil:
 		row := parent.Stored
+		selections := make([]session.ConnectorSelection, 0, len(row.ConnectorSelections))
+		for _, stored := range row.ConnectorSelections {
+			selections = append(selections, session.ConnectorSelection{
+				Name: stored.Name, ConnectionID: stored.ConnectionID,
+			})
+		}
 		spec = session.Spec{
 			AgentName: row.AgentName, ConfigID: row.ConfigID,
 			Title: row.Title, Description: row.Description, Project: row.Project,
 			Custom: row.Custom, ModelOverwrites: row.ModelOverwrites,
-			CallType: row.CallType,
+			CallType: row.CallType, ConnectorSelections: selections,
 		}
 		parentID = row.ID
 		wasText = row.CallID == ""

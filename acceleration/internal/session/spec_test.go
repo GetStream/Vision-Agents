@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -40,13 +41,17 @@ func (s *SpecSuite) TestAConfigsSpeedBecomesTheSessions() {
 	s.Equal(0.9, spec.Speed)
 }
 
-func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []string{"slack", "calendly"},
-	})
+func (s *SpecSuite) TestConnectorBindingsBecomeTheSessions() {
+	want := []store.ConnectorBinding{{
+		Name:        "slack_team",
+		ConnectorID: "slack",
+		Connection:  store.ConnectionBinding{Type: "session"},
+		Tools:       []store.ToolGrant{{Name: "search_messages", SchemaDigest: strings.Repeat("a", 64)}},
+		Required:    true,
+	}}
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Connectors: want})
 
-	s.Equal([]string{"slack", "calendly"}, spec.Plugins)
+	s.Equal(want, spec.ConnectorBindings)
 }
 
 func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {

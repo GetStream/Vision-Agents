@@ -31,7 +31,8 @@ type Tool struct {
 	Description string `yaml:"description"`
 	// Parameters is a JSON Schema object describing the arguments. It is untyped because
 	// a schema is untyped: the shape is whatever the tool accepts.
-	Parameters map[string]any `yaml:"parameters"`
+	Parameters   map[string]any `yaml:"parameters"`
+	SchemaDigest string         `yaml:"-" json:"-"`
 }
 
 // Tools is the set a harness was configured with.

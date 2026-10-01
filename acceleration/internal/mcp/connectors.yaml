@@ -1,0 +1,109 @@
+connectors:
+  - id: slack
+    name: Slack
+    category: Communication
+    description: Search the workspace, read and send messages, and look people up.
+    url: https://mcp.slack.com/mcp
+    auth: oauth
+    oauth_mode: confidential
+    resource: https://mcp.slack.com
+    authorization_endpoint: https://slack.com/oauth/v2_user/authorize
+    token_endpoint: https://slack.com/api/oauth.v2.user.access
+    refresh_endpoint: https://slack.com/api/oauth.v2.user.access
+    token_endpoint_auth_method: client_secret_post
+    client_env: SLACK
+    scopes:
+      - search:read.public
+      - search:read.private
+      - search:read.mpim
+      - search:read.im
+      - search:read.files
+      - search:read.users
+      - files:read
+      - files:write
+      - emoji:read
+      - chat:write
+      - channels:history
+      - groups:history
+      - mpim:history
+      - im:history
+      - channels:write
+      - groups:write
+      - im:write
+      - mpim:write
+      - reactions:write
+      - canvases:read
+      - canvases:write
+      - users:read
+      - users:read.email
+      - channels:read
+      - groups:read
+      - mpim:read
+      - im:read
+      - lists:read
+      - lists:write
+  - id: calendly
+    name: Calendly
+    category: Scheduling
+    description: Check availability, create scheduling links, and book meetings.
+    url: https://mcp.calendly.com
+    auth: oauth
+    oauth_mode: dcr
+    resource: https://mcp.calendly.com/
+    issuer: https://calendly.com
+    authorization_endpoint: https://calendly.com/oauth/authorize
+    token_endpoint: https://calendly.com/oauth/token
+    registration_endpoint: https://calendly.com/oauth/register
+    scopes:
+      - mcp:scheduling:read
+      - mcp:scheduling:write
+  - id: calcom
+    name: Cal.com
+    category: Scheduling
+    description: Manage bookings, event types and schedules.
+    url: https://mcp.cal.com/mcp
+    auth: oauth
+    oauth_mode: dcr
+  - id: linear
+    name: Linear
+    category: Project management
+    description: Search issues and projects, read workspace context, and update work.
+    url: https://mcp.linear.app/mcp
+    auth: oauth
+    oauth_mode: dcr
+    scopes:
+      - read
+      - write
+  - id: github
+    name: GitHub
+    category: Developer tools
+    description: Search repositories, inspect issues and pull requests, and make changes.
+    url: https://api.githubcopilot.com/mcp/
+    auth: oauth
+    oauth_mode: dcr
+    client_env: GITHUB
+  - id: gong
+    name: Gong
+    category: Revenue
+    description: Review recorded conversations, transcripts, and revenue intelligence.
+    url: https://mcp.gong.io/mcp
+    auth: oauth
+    oauth_mode: customer_dcr
+    authorization_endpoint: https://app.gong.io/oauth2/authorize
+    token_endpoint: https://app.gong.io/oauth2/generate-mcp-token
+    token_endpoint_auth_method: client_secret_basic
+  - id: salesforce
+    name: Salesforce
+    category: Customers
+    description: Read and update CRM records through Salesforce's hosted MCP server.
+    url: https://api.salesforce.com/platform/mcp/v1/{instance}/platform/sobject-all
+    auth: oauth
+    oauth_mode: confidential
+    authorization_endpoint: https://login.salesforce.com/services/oauth2/authorize
+    token_endpoint: https://login.salesforce.com/services/oauth2/token
+    token_endpoint_auth_method: client_secret_post
+    client_env: SALESFORCE
+    scopes:
+      - mcp_api
+      - refresh_token
+    instance_hint: Use production or sandbox for the hosted MCP endpoint.

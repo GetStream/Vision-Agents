@@ -103,6 +103,12 @@ api.CreateSessionRequest createRequestOf(SessionOptions options, {String? callId
                   parameters: tool.parameters,
                 ),
             ],
+      connectorBindings: options.connectorBindings.isEmpty
+          ? null
+          : [
+              for (final binding in options.connectorBindings)
+                api.SessionConnectorBinding(name: binding.name, connectionId: binding.connectionId),
+            ],
       tags: options.tags.isEmpty ? null : options.tags,
     );
 

@@ -35,6 +35,8 @@ type SessionOptions struct {
 	Incognito bool
 	// ModelOverwrites changes the models for this conversation alone.
 	ModelOverwrites *acceleration.ModelOverwrites
+	// ConnectorBindings selects the user's accounts for session-selected agent bindings.
+	ConnectorBindings []acceleration.SessionConnectorBinding
 
 	// CallID is the call to join. Empty holds the conversation in writing.
 	CallID string
@@ -249,6 +251,9 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 		ConversationId:  pointer(options.ConversationID),
 		Instructions:    pointer(options.Instructions),
 		UserId:          pointer(options.UserID),
+	}
+	if len(options.ConnectorBindings) > 0 {
+		request.ConnectorBindings = &options.ConnectorBindings
 	}
 	if len(options.Custom) > 0 {
 		custom := options.Custom

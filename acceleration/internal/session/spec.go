@@ -163,8 +163,10 @@ type Spec struct {
 	// SkillNames are skills to look up rather than spell out: the customer's own, or one
 	// of the built-in think, recall and explain.
 	SkillNames []string
-	// Plugins are hosted MCP servers this session may reach, named from the catalog.
-	Plugins []string
+	// ConnectorBindings are the exact configured connector capabilities; session-selected
+	// accounts are named explicitly in ConnectorSelections.
+	ConnectorBindings   []store.ConnectorBinding
+	ConnectorSelections []ConnectorSelection
 	// KnowledgeNamespace is what the agent may look things up in. Empty means it knows
 	// only what it was told.
 	KnowledgeNamespace string
@@ -198,6 +200,12 @@ type Spec struct {
 	// scheduled.
 	CampaignID string
 	ContactID  string
+}
+
+// ConnectorSelection is a caller's explicit account choice for one session binding.
+type ConnectorSelection struct {
+	Name         string
+	ConnectionID string
 }
 
 // MemorySpec is the caller's memory filter: who the memories are about, and what narrows
@@ -248,7 +256,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Greeting:           config.Greeting,
 		Guardrail:          config.Guardrail,
 		SkillNames:         config.Skills,
-		Plugins:            config.Plugins,
+		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Sandbox:            config.Sandbox,

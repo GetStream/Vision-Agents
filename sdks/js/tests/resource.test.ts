@@ -142,6 +142,18 @@ describe("sessions", () => {
     await held.close();
   });
 
+  it("sends selected connector accounts with their configured aliases", async () => {
+    const { session: held } = await open({
+      connectorBindings: [{ name: "crm", connection_id: "conn_alice" }],
+    });
+
+    const body = router.received[0]?.body as Record<string, unknown>;
+    assert.deepEqual(body["connector_bindings"], [
+      { name: "crm", connection_id: "conn_alice" },
+    ]);
+    await held.close();
+  });
+
   it("puts a query on the wire as the parameters the router reads", async () => {
     router.serve("GET", "/v1/agents/sessions", { body: { items: [session()], has_more: false } });
     const after = new Date("2026-01-01T00:00:00.000Z");

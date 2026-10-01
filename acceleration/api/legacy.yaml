@@ -1035,6 +1035,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
     delete:
       operationId: deleteAgentConfig
       summary: Delete an agent config
@@ -1058,41 +1060,267 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /v1/agents/plugins:
+  /v1/agents/connectors:
     get:
-      operationId: listPlugins
-      summary: The hosted MCP servers an agent may attach
-      description: >
-        A built-in catalog, not the customer's own rows. q filters by name, category or
-        description. Connecting one is a login on a config, not a change to this list.
+      operationId: listConnectors
+      summary: Search built-in and app-defined MCP connectors
+      description: >-
+        Returns provider endpoints and supported auth modes, never provider credentials.
+        Built-in providers and tenant-owned custom definitions are listed together.
       parameters:
         - name: q
           in: query
           required: false
           schema:
             type: string
-          description: Filter by name, category or description.
       responses:
         "200":
-          description: Matching plugins, in catalog order
+          description: Connectors in catalog order
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Plugin"
+                  $ref: "#/components/schemas/ConnectorDefinition"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createConnectorDefinition
+      summary: Register a custom remote MCP connector
+      description: >-
+        Registers an immutable public HTTPS endpoint and its fixed authentication policy
+        for this app. Private network endpoints, executable definitions, and arbitrary
+        credential headers are not accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConnectorDefinitionRequest"
+      responses:
+        "201":
+          description: Custom connector definition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorDefinition"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /v1/agents/plugins/callback:
+  /v1/agents/connectors/{id}:
     get:
-      operationId: pluginOAuthCallback
-      summary: Finish a plugin login
-      description: >
-        The provider redirects here with a code. The path is unauthenticated because the
-        browser arrives from the identity provider, and the state is the secret.
+      operationId: getConnectorDefinition
+      summary: Read a built-in or app-defined connector
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: Connector metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorDefinition"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/connections:
+    get:
+      operationId: listConnectorConnections
+      summary: List reusable account connections
+      description: >-
+        Returns metadata only. OAuth tokens and imported credentials are never returned.
+        Connections belong to the app or to one verified application user.
+      parameters:
+        - name: connector_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: owner_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [app, user]
+        - name: owner_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Connections visible to this app
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConnectorConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createConnectorConnection
+      summary: Create an account connection
+      description: >-
+        Creates an app-owned shared account or a user-owned personal account. OAuth
+        credentials are added only by the following authorization operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConnectorConnectionRequest"
+      responses:
+        "201":
+          description: Pending connection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/agents/connections/{id}:
+    get:
+      operationId: getConnectorConnection
+      summary: Read one connection's metadata
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: Connection metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteConnectorConnection
+      summary: Disconnect an account everywhere it is bound
+      description: >-
+        Immediately denies future tool dispatches and deletes the local encrypted
+        credentials. This does not claim the provider revoked already-issued tokens.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: The local connection and credentials are gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/connections/{id}/authorizations:
+    post:
+      operationId: authorizeConnectorConnection
+      summary: Start provider consent for an account connection
+      description: >-
+        Starts an OAuth authorization attempt. Customer-created integrations such as Gong
+        may use approved dynamic registration or submit both their client ID and secret;
+        supplied credentials are write-only and stored encrypted for token exchange and
+        refresh. Open the returned launch URL in a popup and deliver the handoff token to
+        that popup with postMessage; the router then sets a short-lived, HttpOnly callback
+        cookie on its own origin before redirecting the browser to the provider. Never put
+        the handoff token in a URL.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthorizeConnectorRequest"
+      responses:
+        "200":
+          description: Launch URL and browser handoff for provider authorization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorAuthorization"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/connections/{id}/credentials:
+    put:
+      operationId: putConnectorCredentials
+      summary: Write a connection credential or import an OAuth grant
+      description: >-
+        Writes a bearer token or API key encrypted at rest, imports a provider-issued
+        OAuth grant, or activates a no-auth connection. OAuth endpoints, resource identity,
+        and client authentication are resolved from the connector definition or trusted
+        provider metadata. Credential material is write-only and updates require the
+        current connection revision.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutConnectorCredentialsRequest"
+      responses:
+        "200":
+          description: Updated connection metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/agents/connectors/oauth/callback:
+    get:
+      operationId: connectorOAuthCallback
+      summary: Complete provider consent
+      description: >-
+        Unauthenticated OAuth redirect endpoint. It requires the browser-binding cookie
+        issued when authorization started, then consumes expiring state once and redirects
+        to the configured dashboard. Provider tokens are never put in the URL.
       security: []
       parameters:
         - name: code
@@ -1112,23 +1340,21 @@ paths:
             type: string
       responses:
         "302":
-          description: The browser is sent back to the agent editor
+          description: Redirect to the dashboard connection page
 
-  /v1/agents/configs/{id}/plugins:
+  /v1/agents/connections/{id}/tools:
     get:
-      operationId: listConfigPlugins
-      summary: The plugin logins this agent holds
+      operationId: listConnectorTools
+      summary: Read the tools discovered for a connection
       parameters:
         - $ref: "#/components/parameters/ResourceID"
       responses:
         "200":
-          description: The config's connections
+          description: Cached tool schemas and their digest
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/PluginConnection"
+                $ref: "#/components/schemas/ConnectorTools"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1138,55 +1364,19 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /v1/agents/configs/{id}/plugins/{plugin_id}/authorize:
+  /v1/agents/connections/{id}/validate:
     post:
-      operationId: authorizePlugin
-      summary: Start a plugin login
-      description: >
-        Discovers the MCP server's OAuth endpoints and returns the URL the browser should
-        open. Shopify and Salesforce need an instance url, because they have no single
-        global host.
-
-        Server-side only: it needs a server-side token, so it cannot be reached from an
-        end user's device.
+      operationId: validateConnectorConnection
+      summary: Check connectivity and refresh the cached tool list
       parameters:
         - $ref: "#/components/parameters/ResourceID"
-        - $ref: "#/components/parameters/PluginID"
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AuthorizePluginRequest"
       responses:
         "200":
-          description: The URL the browser should open
+          description: Connection status and tool-list digest
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PluginAuthorization"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/agents/configs/{id}/plugins/{plugin_id}:
-    delete:
-      operationId: disconnectPlugin
-      summary: Drop a plugin login
-      description: >-
-        Server-side only: it needs a server-side token, so it cannot be reached from an
-        end user's device.
-      parameters:
-        - $ref: "#/components/parameters/ResourceID"
-        - $ref: "#/components/parameters/PluginID"
-      responses:
-        "204":
-          description: The login is gone
+                $ref: "#/components/schemas/ConnectorValidation"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3962,13 +4152,6 @@ components:
       description: The resource, as returned when it was created.
       schema:
         type: string
-    PluginID:
-      name: plugin_id
-      in: path
-      required: true
-      description: A built-in catalog id such as slack or calendly.
-      schema:
-        type: string
     ConfigName:
       name: name
       in: query
@@ -4035,6 +4218,12 @@ components:
             $ref: "#/components/schemas/Error"
     NotFound:
       description: No such modality, provider or shortcut
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: The request conflicts with the existing agent config or connector state
       content:
         application/json:
           schema:
@@ -4249,12 +4438,13 @@ components:
           description: >
             Skill names, either the customer's own or one of the built-in think, recall
             and explain. Omit for the built-in set.
-        plugins:
+        connectors:
           type: array
+          description: >-
+            Reusable connections and exact tools the agent may use. Session-selected user
+            connections must belong to the verified session caller.
           items:
-            type: string
-          description: >
-            Hosted MCP servers this agent may reach, named from the built-in catalog.
+            $ref: "#/components/schemas/AgentConnectorBinding"
         keyterms:
           type: array
           items:
@@ -4319,10 +4509,10 @@ components:
           type: array
           items:
             type: string
-        plugins:
+        connectors:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/AgentConnectorBinding"
         keyterms:
           type: array
           items:
@@ -5454,10 +5644,10 @@ components:
           type: string
           format: date-time
 
-    Plugin:
+    ConnectorDefinition:
       type: object
-      required: [id, name, category, description]
-      description: One hosted MCP server from the built-in catalog.
+      required: [id, name, category, description, endpoint, auth_mode]
+      description: A built-in or app-defined remote MCP connector definition.
       properties:
         id:
           type: string
@@ -5467,50 +5657,317 @@ components:
           type: string
         description:
           type: string
+        endpoint:
+          type: string
+          format: uri
+        auth_mode:
+          type: string
+          enum: [oauth_dcr, oauth_preconfigured, oauth_customer_credentials, none, bearer, api_key]
+        api_key_header:
+          type: string
+          description: Fixed header name for api_key auth; never supplied by the model.
+        scopes:
+          type: array
+          items:
+            type: string
         instance_required:
           type: boolean
         instance_hint:
           type: string
 
-    PluginConnection:
+    CreateConnectorDefinitionRequest:
       type: object
-      required: [plugin_id, name, status]
-      description: A catalog plugin as this agent has it, including whether it is logged in.
+      required: [id, name, endpoint, auth_mode]
       properties:
-        plugin_id:
+        id:
           type: string
+          pattern: '^custom_[a-z][a-z0-9_-]{0,56}$'
         name:
           type: string
+          minLength: 1
+          maxLength: 120
         category:
           type: string
+          maxLength: 80
         description:
           type: string
-        instance_required:
-          type: boolean
-        instance_hint:
+          maxLength: 1000
+        endpoint:
           type: string
-        instance_url:
+          format: uri
+          description: Public HTTPS Streamable HTTP MCP endpoint; query strings are not allowed.
+        auth_mode:
+          type: string
+          enum: [oauth_dcr, none, bearer, api_key]
+        api_key_header:
+          type: string
+          maxLength: 100
+          description: Required only for api_key; fixed to this definition.
+
+    PutConnectorCredentialsRequest:
+      type: object
+      required: [expected_revision]
+      properties:
+        expected_revision:
+          type: integer
+          minimum: 1
+        bearer_token:
+          type: string
+          writeOnly: true
+          description: Required for bearer auth; stored encrypted and never returned.
+        api_key:
+          type: string
+          writeOnly: true
+          description: Required for api_key auth; stored encrypted and never returned.
+        access_token:
+          type: string
+          writeOnly: true
+          description: >-
+            For OAuth connections, imports an existing provider-issued access token.
+            The token endpoint, resource, and client authentication are resolved from
+            the fixed connector definition or discovered provider metadata; callers
+            cannot supply an endpoint that receives the token or refresh token.
+        refresh_token:
+          type: string
+          writeOnly: true
+          description: Optional OAuth refresh token; stored encrypted with the access token.
+        expires_at:
+          type: string
+          format: date-time
+          description: Required with an imported OAuth access token.
+        granted_scopes:
+          type: array
+          items:
+            type: string
+          description: Provider-granted OAuth scopes, validated against the connector catalog where known.
+        oauth_client_id:
+          type: string
+          description: >-
+            Required when importing a grant for a customer-registered or dynamically
+            registered OAuth client. Operator-managed providers use their configured client.
+        oauth_client_secret:
+          type: string
+          writeOnly: true
+          description: Optional confidential client secret for an imported grant; encrypted at rest.
+
+    ConnectorOwner:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [app, user]
+        user_id:
+          type: string
+          description: Required only for a user-owned connection; backend supplied.
+
+    CreateConnectorConnectionRequest:
+      type: object
+      required: [connector_id, owner]
+      properties:
+        connector_id:
+          type: string
+        owner:
+          $ref: "#/components/schemas/ConnectorOwner"
+        instance:
+          type: string
+          description: Provider environment, such as Salesforce production or sandbox.
+        label:
+          type: string
+          maxLength: 120
+
+    ConnectorConnection:
+      type: object
+      required: [id, connector_id, owner_type, endpoint, auth_type, status, granted_scopes, revision]
+      description: Connection metadata. Credential material is never returned.
+      properties:
+        id:
+          type: string
+        connector_id:
+          type: string
+        owner_type:
+          type: string
+          enum: [app, user]
+        owner_id:
+          type: string
+        endpoint:
+          type: string
+          format: uri
+        auth_type:
+          type: string
+          enum: [oauth2, none, bearer, api_key]
+        instance:
+          type: string
+        label:
+          type: string
+        account_id:
           type: string
         status:
           type: string
-          enum: [pending, connected, failed]
+          enum: [pending, connected, needs_reauthorization, disconnected, failed]
+        granted_scopes:
+          type: array
+          items:
+            type: string
+        revision:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+        tools_digest:
+          type: string
+        tools_checked_at:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+          description: Sanitized diagnostic; never includes provider response bodies or secrets.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
-    AuthorizePluginRequest:
+    AuthorizeConnectorRequest:
       type: object
       properties:
-        instance_url:
+        scopes:
+          type: array
+          description: Minimum provider permissions to request. For Slack, choose only scopes needed by this connection; values must be in the connector definition.
+          items:
+            type: string
+        oauth_client_id:
           type: string
-          description: >
-            The shop hostname or Salesforce my-domain. Required for plugins that have no
-            single global URL.
+          description: >-
+            Supply with oauth_client_secret for a manually registered integration. Some
+            providers also support dynamic registration when both are omitted.
+        oauth_client_secret:
+          type: string
+          writeOnly: true
+          description: >-
+            Supply with oauth_client_id for a manually registered integration. Write-only;
+            encrypted at rest and used only for OAuth exchange and refresh.
 
-    PluginAuthorization:
+    ConnectorAuthorization:
       type: object
-      required: [authorize_url]
+      required: [authorization_url, authorization_id, handoff_token, expires_at]
       properties:
-        authorize_url:
+        authorization_url:
           type: string
-          description: The URL the browser should open to finish the login.
+          format: uri
+        authorization_id:
+          type: string
+        handoff_token:
+          type: string
+          description: >-
+            Short-lived secret delivered only to the router launch popup through
+            postMessage. Never place it in a URL or persist it in application storage.
+        expires_at:
+          type: string
+          format: date-time
+
+    ConnectorTool:
+      type: object
+      required: [name, description, input_schema, schema_digest]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        input_schema:
+          type: object
+          additionalProperties: true
+        schema_digest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+
+    ConnectorTools:
+      type: object
+      required: [connection_id, tools, digest]
+      properties:
+        connection_id:
+          type: string
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectorTool"
+        digest:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
+
+    ConnectorValidation:
+      type: object
+      required: [connection_id, status, tools_digest]
+      properties:
+        connection_id:
+          type: string
+        status:
+          type: string
+          enum: [connected, needs_reauthorization, failed]
+        tools_digest:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+
+    AgentConnectorBinding:
+      type: object
+      required: [name, connector_id, connection, tools]
+      properties:
+        name:
+          type: string
+        connector_id:
+          type: string
+        connection:
+          $ref: "#/components/schemas/AgentConnectorSelection"
+        tools:
+          type: array
+          description: Exact MCP tools allowed, each pinned to its reviewed schema digest. An empty list grants no tools.
+          items:
+            $ref: "#/components/schemas/ConnectorToolGrant"
+        required:
+          type: boolean
+          default: false
+        timeout_ms:
+          type: integer
+          minimum: 1
+          maximum: 30000
+
+    AgentConnectorSelection:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [fixed, session]
+        connection_id:
+          type: string
+          description: Required for fixed; session selection is supplied in the session request.
+
+    ConnectorToolGrant:
+      type: object
+      required: [name, schema_digest]
+      properties:
+        name:
+          type: string
+        schema_digest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+
+    SessionConnectorBinding:
+      type: object
+      required: [name, connection_id]
+      properties:
+        name:
+          type: string
+          description: The alias of a config binding whose selection type is session.
+        connection_id:
+          type: string
 
     VoiceRequest:
       type: object
@@ -6694,6 +7151,13 @@ components:
             never chose. A name matching nothing is refused rather than silently starting
             an unconfigured agent, and naming both this and config_id is refused too,
             since there is no sensible answer when they disagree.
+        connector_bindings:
+          type: array
+          description: >-
+            Explicit account selection for config bindings whose connection type is
+            session. Each selected connection is checked against the verified caller.
+          items:
+            $ref: "#/components/schemas/SessionConnectorBinding"
         incognito:
           type: boolean
           default: false

@@ -535,6 +535,31 @@ extension Components {
                 case score
             }
         }
+        /// - Remark: Generated from `#/components/schemas/SessionConnectorBinding`.
+        internal struct SessionConnectorBinding: Codable, Hashable, Sendable {
+            /// The alias of a config binding whose selection type is session.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionConnectorBinding/name`.
+            internal var name: Swift.String
+            /// - Remark: Generated from `#/components/schemas/SessionConnectorBinding/connection_id`.
+            internal var connectionId: Swift.String
+            /// Creates a new `SessionConnectorBinding`.
+            ///
+            /// - Parameters:
+            ///   - name: The alias of a config binding whose selection type is session.
+            ///   - connectionId:
+            internal init(
+                name: Swift.String,
+                connectionId: Swift.String
+            ) {
+                self.name = name
+                self.connectionId = connectionId
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case name
+                case connectionId = "connection_id"
+            }
+        }
         /// - Remark: Generated from `#/components/schemas/CreateSessionRequest`.
         internal struct CreateSessionRequest: Codable, Hashable, Sendable {
             /// Stream Chat CID to resume; returned for persistent text sessions.
@@ -564,6 +589,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/agent`.
             internal var agent: Swift.String?
+            /// Explicit account selection for config bindings whose connection type is session. Each selected connection is checked against the verified caller.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/connector_bindings`.
+            internal var connectorBindings: [Components.Schemas.SessionConnectorBinding]?
             /// Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
             ///
             ///
@@ -749,6 +778,7 @@ extension Components {
             ///   - text: Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
             ///   - configId: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
             ///   - agent: The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
+            ///   - connectorBindings: Explicit account selection for config bindings whose connection type is session. Each selected connection is checked against the verified caller.
             ///   - incognito: Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
             ///   - title: What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
             ///   - description: A longer note about the conversation, searched alongside the title.
@@ -791,6 +821,7 @@ extension Components {
                 text: Swift.Bool? = nil,
                 configId: Swift.String? = nil,
                 agent: Swift.String? = nil,
+                connectorBindings: [Components.Schemas.SessionConnectorBinding]? = nil,
                 incognito: Swift.Bool? = nil,
                 title: Swift.String? = nil,
                 description: Swift.String? = nil,
@@ -833,6 +864,7 @@ extension Components {
                 self.text = text
                 self.configId = configId
                 self.agent = agent
+                self.connectorBindings = connectorBindings
                 self.incognito = incognito
                 self.title = title
                 self.description = description
@@ -876,6 +908,7 @@ extension Components {
                 case text
                 case configId = "config_id"
                 case agent
+                case connectorBindings = "connector_bindings"
                 case incognito
                 case title
                 case description

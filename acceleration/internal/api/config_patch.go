@@ -10,26 +10,26 @@ import (
 // AgentConfigPatch is what changes about an agent config. Every field is optional, and one
 // left out keeps what is stored.
 type AgentConfigPatch struct {
-	Name               *string            `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
-	Mode               *AgentMode         `json:"mode,omitempty"`
-	Stt                *string            `json:"stt,omitempty"`
-	Tts                *string            `json:"tts,omitempty"`
-	Sts                *string            `json:"sts,omitempty"`
-	Voice              *string            `json:"voice,omitempty"`
-	Speed              *float64           `json:"speed,omitempty" minimum:"0" doc:"The voice's rate of delivery, 1 being its own. Zero leaves it there."`
-	Llm                *string            `json:"llm,omitempty"`
-	Subagent           *string            `json:"subagent,omitempty"`
-	Search             *string            `json:"search,omitempty"`
-	Instructions       *string            `json:"instructions,omitempty"`
-	Greeting           *string            `json:"greeting,omitempty"`
-	Guardrail          *string            `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
-	Skills             *[]string          `json:"skills,omitempty"`
-	Plugins            *[]string          `json:"plugins,omitempty"`
-	Keyterms           *[]string          `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
-	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
-	Tags               *map[string]string `json:"tags,omitempty"`
-	Video              *SessionVideo      `json:"video,omitempty"`
+	Name               *string                  `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
+	Mode               *AgentMode               `json:"mode,omitempty"`
+	Stt                *string                  `json:"stt,omitempty"`
+	Tts                *string                  `json:"tts,omitempty"`
+	Sts                *string                  `json:"sts,omitempty"`
+	Voice              *string                  `json:"voice,omitempty"`
+	Speed              *float64                 `json:"speed,omitempty" minimum:"0" doc:"The voice's rate of delivery, 1 being its own. Zero leaves it there."`
+	Llm                *string                  `json:"llm,omitempty"`
+	Subagent           *string                  `json:"subagent,omitempty"`
+	Search             *string                  `json:"search,omitempty"`
+	Instructions       *string                  `json:"instructions,omitempty"`
+	Greeting           *string                  `json:"greeting,omitempty"`
+	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
+	Skills             *[]string                `json:"skills,omitempty"`
+	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"Replaces the config's connector bindings. Connected accounts remain separate resources."`
+	Keyterms           *[]string                `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty"`
+	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
+	Tags               *map[string]string       `json:"tags,omitempty"`
+	Video              *SessionVideo            `json:"video,omitempty"`
 }
 
 func (*AgentConfigPatch) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -90,13 +90,19 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 
 	patch := request.Body
 	if message, ok := configComplaint(AgentConfigRequest{
-		Name:      override(config.Name, patch.Name),
-		Mode:      patch.Mode,
-		Keyterms:  patch.Keyterms,
-		Sandbox:   patch.Sandbox,
-		Speed:     patch.Speed,
-		Guardrail: patch.Guardrail,
+		Name:       override(config.Name, patch.Name),
+		Mode:       patch.Mode,
+		Keyterms:   patch.Keyterms,
+		Sandbox:    patch.Sandbox,
+		Speed:      patch.Speed,
+		Guardrail:  patch.Guardrail,
+		Connectors: patch.Connectors,
 	}); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, err := s.connectorDefinitionComplaint(ctx, customerID, patch.Connectors); err != nil {
+		return nil, err
+	} else if message != "" {
 		return nil, huma.Error400BadRequest(message)
 	}
 
@@ -116,7 +122,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Greeting = override(config.Greeting, patch.Greeting)
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
 	config.Skills = override(config.Skills, patch.Skills)
-	config.Plugins = override(config.Plugins, patch.Plugins)
+	if patch.Connectors != nil {
+		config.Connectors = connectorBindingsFromAPI(*patch.Connectors)
+	}
 	if patch.Keyterms != nil {
 		config.Keyterms = keytermsOf(patch.Keyterms)
 	}

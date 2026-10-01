@@ -67,6 +67,17 @@ questions carry a `command_id` (the SDKs add it), rewinding is refused (fork at 
 instead), and the session ends when its last watcher disconnects, leaving the channel to
 resume with `conversation_id`.
 
+### Per-agent plugin login is retired in favor of reusable connector connections
+
+The old per-agent plugin routes, config field, and plaintext storage table are removed.
+Startup transfers connected accounts for Slack, Calendly, Cal.com, and Salesforce into
+encrypted app-owned connections, marks them for reauthorization, and adds bindings with no
+tools granted. Gong, Linear, and GitHub are supported by the new connector catalog but
+could not have entries in the old catalog. Shopify and inactive or unsupported old logins
+do not carry forward. Set `ROUTER_AUTH_KEK` before upgrading a deployment with active
+supported logins; agents must reconnect accounts and explicitly review tool grants before
+they can use them.
+
 ### The `lemonslice` and `liveavatar` plugins have been removed
 
 `vision-agents[lemonslice]` and `vision-agents[liveavatar]` are gone, along with
@@ -466,6 +477,17 @@ SDK sends them with `client.Clip{URL, MaxFrames}` or `client.ClipFile(path)`.
 `session.chat({ client })` opens the conversation's channel on a connected `StreamChat` of
 yours instead of connecting a second one, and `interrupt({ commandId })` names the turn it
 stops.
+
+### Agents can use reusable MCP connector accounts
+
+Connectors now have app-owned definitions, reusable app- or user-owned account connections,
+and explicit per-agent tool grants. The catalog includes Gong, Slack, Salesforce, Calendly,
+Cal.com, Linear, and GitHub, alongside tenant-defined public MCP endpoints. OAuth, bearer,
+API-key, and anonymous connections are supported; credentials are encrypted at rest and
+never sent to the model. OAuth grants refresh on demand, and agents receive only reviewed
+tools whose schemas still match their saved grants. The browser OAuth flow uses a
+router-hosted launch popup so its callback cookie is set on the router origin even when
+the dashboard and router have different origins.
 
 ### A dispatch worker can run tools for every session under an agent id
 

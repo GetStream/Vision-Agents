@@ -63,6 +63,28 @@ fn a_directory_with_only_instructions_is_an_agent() {
 }
 
 #[test]
+fn connector_bindings_are_read_from_agent_yaml() {
+    let (_temporary, root) = directory("crm");
+    write(
+        &root,
+        "agent.yaml",
+        "name: crm\nconnectors:\n  - name: sales\n    connector_id: salesforce\n    connection:\n      type: session\n    tools:\n      - name: query_records\n        schema_digest: schema-v1\n",
+    );
+
+    let folder = Folder::load(&root).unwrap();
+    let connectors = folder.settings.connectors.unwrap();
+
+    assert_eq!(connectors.len(), 1);
+    assert_eq!(connectors[0].name, "sales");
+    assert_eq!(connectors[0].connector_id, "salesforce");
+    assert_eq!(
+        connectors[0].connection.type_,
+        types::AgentConnectorSelectionType::Session
+    );
+    assert_eq!(connectors[0].tools[0].name, "query_records");
+}
+
+#[test]
 fn nested_knowledge_keeps_the_path_it_was_found_at() {
     let (_temporary, root) = directory("jean");
     write(&root, "agent.yaml", "name: jean\n");

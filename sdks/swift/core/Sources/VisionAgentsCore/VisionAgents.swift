@@ -31,6 +31,8 @@ public struct SessionOptions: Sendable {
     public var voice: String?
     /// Functions of yours the agent may call, answered on this device.
     public var tools: [AgentTool] = []
+    /// User-owned connector accounts selected for config bindings that are session-scoped.
+    public var connectorBindings: [SessionConnectorSelection] = []
     /// Cost labels, carried onto every request the session makes.
     public var tags: [String: String] = [:]
 
@@ -137,6 +139,12 @@ public struct VisionAgents: Sendable {
             text: callID == nil,
             configId: options.configID.flatMap { $0.isEmpty ? nil : $0 },
             agent: options.agent.flatMap { $0.isEmpty ? nil : $0 },
+            connectorBindings: options.connectorBindings.isEmpty
+                ? nil
+                : options.connectorBindings.map {
+                    Components.Schemas.SessionConnectorBinding(
+                        name: $0.name, connectionId: $0.connectionID)
+                },
             incognito: options.incognito,
             title: options.title,
             description: options.description,

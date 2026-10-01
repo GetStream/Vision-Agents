@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.agent_config_request_tags import AgentConfigRequestTags
+    from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.session_video import SessionVideo
 
 
@@ -46,7 +47,8 @@ class AgentConfigRequest:
             means every turn is answered.
         skills (list[str] | Unset): Skill names, either the customer's own or one of the built-in think, recall and
             explain. Omit for the built-in set.
-        plugins (list[str] | Unset): Hosted MCP servers this agent may reach, named from the built-in catalog.
+        connectors (list[AgentConnectorBinding] | Unset): Reusable connections and exact tools the agent may use.
+            Session-selected user connections must belong to the verified session caller.
         keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong, such as product
             or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
         knowledge_namespace (str | Unset): What the agent may look things up in. Empty means it knows only what it was
@@ -71,7 +73,7 @@ class AgentConfigRequest:
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
-    plugins: list[str] | Unset = UNSET
+    connectors: list[AgentConnectorBinding] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
@@ -113,9 +115,12 @@ class AgentConfigRequest:
         if not isinstance(self.skills, Unset):
             skills = self.skills
 
-        plugins: list[str] | Unset = UNSET
-        if not isinstance(self.plugins, Unset):
-            plugins = self.plugins
+        connectors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connectors, Unset):
+            connectors = []
+            for connectors_item_data in self.connectors:
+                connectors_item = connectors_item_data.to_dict()
+                connectors.append(connectors_item)
 
         keyterms: list[str] | Unset = UNSET
         if not isinstance(self.keyterms, Unset):
@@ -164,8 +169,8 @@ class AgentConfigRequest:
             field_dict["guardrail"] = guardrail
         if skills is not UNSET:
             field_dict["skills"] = skills
-        if plugins is not UNSET:
-            field_dict["plugins"] = plugins
+        if connectors is not UNSET:
+            field_dict["connectors"] = connectors
         if keyterms is not UNSET:
             field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
@@ -181,6 +186,9 @@ class AgentConfigRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_config_request_tags import (
             AgentConfigRequestTags,
+        )
+        from ..models.agent_connector_binding import (
+            AgentConnectorBinding,
         )
         from ..models.session_video import SessionVideo
 
@@ -223,7 +231,14 @@ class AgentConfigRequest:
 
         skills = cast(list[str], d.pop("skills", UNSET))
 
-        plugins = cast(list[str], d.pop("plugins", UNSET))
+        _connectors = d.pop("connectors", UNSET)
+        connectors: list[AgentConnectorBinding] | Unset = UNSET
+        if _connectors is not UNSET:
+            connectors = []
+            for connectors_item_data in _connectors:
+                connectors_item = AgentConnectorBinding.from_dict(connectors_item_data)
+
+                connectors.append(connectors_item)
 
         keyterms = cast(list[str], d.pop("keyterms", UNSET))
 
@@ -258,7 +273,7 @@ class AgentConfigRequest:
             greeting=greeting,
             guardrail=guardrail,
             skills=skills,
-            plugins=plugins,
+            connectors=connectors,
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             sandbox=sandbox,

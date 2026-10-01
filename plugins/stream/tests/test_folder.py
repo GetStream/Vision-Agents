@@ -106,6 +106,29 @@ class TestFolder:
         assert settings.keyterms == ["Vision Agents"]
         assert settings.tags == {"team": "support"}
 
+    def test_connector_bindings_are_read_from_agent_yaml(self, tmp_path: Path):
+        root = tmp_path / "crm"
+        write(
+            root,
+            "agent.yaml",
+            "name: crm\n"
+            "connectors:\n"
+            "  - name: sales\n"
+            "    connector_id: salesforce\n"
+            "    connection:\n"
+            "      type: session\n"
+            "    tools:\n"
+            "      - name: query_records\n"
+            "        schema_digest: schema-v1\n",
+        )
+
+        binding = load(root).settings.connectors[0]
+
+        assert binding.name == "sales"
+        assert binding.connector_id == "salesforce"
+        assert binding.connection.type_.value == "session"
+        assert binding.tools[0].name == "query_records"
+
     def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "name: jean\ndescription: the receptionist\n")
@@ -114,7 +137,6 @@ class TestFolder:
 
         assert settings.llm == ""
         assert settings.sandbox == ""
-        assert settings.plugins == []
         assert settings.tags == {}
 
     def test_a_key_nobody_knows_is_refused(self, tmp_path: Path):

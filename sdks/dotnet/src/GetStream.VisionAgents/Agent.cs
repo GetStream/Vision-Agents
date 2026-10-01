@@ -145,6 +145,9 @@ public sealed record SessionOptions
     /// <summary>Anything of the caller's own, which a later query can match on.</summary>
     public Dictionary<string, object?>? Custom { get; init; }
 
+    /// <summary>Accounts selected for the agent's session-scoped connector bindings.</summary>
+    public IReadOnlyList<Dictionary<string, object>>? ConnectorBindings { get; init; }
+
     /// <summary>Holds the conversation and keeps nothing, not even the Stream Chat channel a text session is otherwise kept in.</summary>
     public bool Incognito { get; init; }
 
@@ -576,7 +579,7 @@ public sealed class Agent : IAsyncDisposable
         var harness = _options.Harness;
         options ??= new SessionOptions();
         var subagent = harness?.Subagent is { Length: > 0 } delegated ? delegated : pipeline.Subagent;
-        return new CreateSessionRequest
+        var request = new CreateSessionRequest
         {
             CallId = call?.Id,
             CallType = call?.Type,
@@ -614,6 +617,11 @@ public sealed class Agent : IAsyncDisposable
             Navigating = navigating ? true : null,
             Tools = Tools.Count > 0 ? Tools.Declared() : null,
         };
+        if (options.ConnectorBindings is { Count: > 0 } bindings)
+        {
+            request.AdditionalProperties["connector_bindings"] = bindings;
+        }
+        return request;
     }
 
     /// <summary>Turns a name into something a call can be joined under.</summary>
@@ -692,7 +700,10 @@ public sealed class Agent : IAsyncDisposable
         request.Search = VisionAgentsClient.Blank(declared.Search);
         request.Greeting = VisionAgentsClient.Blank(declared.Greeting);
         request.Sandbox = VisionAgentsClient.Blank(declared.Sandbox);
-        request.Plugins = declared.Plugins.Count > 0 ? [.. declared.Plugins] : null;
+        if (declared.Connectors is not null)
+        {
+            request.AdditionalProperties["connectors"] = declared.Connectors;
+        }
         request.Keyterms = declared.Keyterms.Count > 0 ? [.. declared.Keyterms] : null;
         request.Tags = declared.Tags.Count > 0 ? new Dictionary<string, string>(declared.Tags) : null;
         request.Video = declared.Video is { } video

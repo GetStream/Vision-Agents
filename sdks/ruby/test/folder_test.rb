@@ -103,6 +103,15 @@ class TestFolder < Minitest::Test
     assert_equal({ "source" => "camera", "max_frames" => 1 }, folder.settings["video"])
   end
 
+  def test_connector_bindings_are_read_from_agent_yaml
+    write("agent.yaml", "name: crm\nconnectors:\n  - name: sales\n    connector_id: salesforce\n" \
+                        "    connection:\n      type: session\n    tools: []\n")
+
+    assert_equal [{ "name" => "sales", "connector_id" => "salesforce",
+                    "connection" => { "type" => "session" }, "tools" => [] }],
+                 VA::Folder.load(@root).settings["connectors"]
+  end
+
   def test_a_declaration_key_nobody_knows_is_refused
     ["name: jean\nlmm: openai/gpt-5.6\n", "video:\n  max_frames: 9\n", "keyterms: Vision Agents\n"].each do |yaml|
       write("agent.yaml", yaml)

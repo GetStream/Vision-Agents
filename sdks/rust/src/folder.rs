@@ -72,7 +72,7 @@ pub struct Settings {
     pub search: String,
     pub greeting: String,
     pub sandbox: Option<types::Sandbox>,
-    pub plugins: Vec<String>,
+    pub connectors: Option<Vec<types::AgentConnectorBinding>>,
     pub keyterms: Vec<String>,
     pub tags: BTreeMap<String, String>,
     pub video: Option<VideoSettings>,
@@ -352,7 +352,11 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "greeting" => settings.greeting = text()?,
             "mode" => settings.mode = named(&text()?, "mode")?,
             "sandbox" => settings.sandbox = named(&text()?, "sandbox")?,
-            "plugins" => settings.plugins = strings(&value, &key)?,
+            "connectors" => {
+                let value = yaml_json(&value)?;
+                settings.connectors =
+                    Some(serde_json::from_value(value).map_err(|error| error.to_string())?);
+            }
             "keyterms" => settings.keyterms = strings(&value, &key)?,
             "tags" => settings.tags = mapping(&value, &key)?,
             "video" => settings.video = video(&value)?,
@@ -360,6 +364,35 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
         }
     }
     Ok(settings)
+}
+
+fn yaml_json(value: &Yaml) -> std::result::Result<serde_json::Value, String> {
+    match value {
+        Yaml::Null => Ok(serde_json::Value::Null),
+        Yaml::Boolean(value) => Ok(serde_json::Value::Bool(*value)),
+        Yaml::Integer(value) => Ok(serde_json::Value::Number((*value).into())),
+        Yaml::Real(value) => value
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(serde_json::Value::Number)
+            .ok_or("connectors contain an invalid number".into()),
+        Yaml::String(value) => Ok(serde_json::Value::String(value.clone())),
+        Yaml::Array(values) => values
+            .iter()
+            .map(yaml_json)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map(serde_json::Value::Array),
+        Yaml::Hash(values) => {
+            let mut object = serde_json::Map::new();
+            for (key, value) in values {
+                let key = scalar(key).ok_or("connectors use string keys")?;
+                object.insert(key, yaml_json(value)?);
+            }
+            Ok(serde_json::Value::Object(object))
+        }
+        _ => Err("connectors contain a YAML value the SDK cannot represent".into()),
+    }
 }
 
 /// A string enum as the spec spells it, or `None` for an empty value.

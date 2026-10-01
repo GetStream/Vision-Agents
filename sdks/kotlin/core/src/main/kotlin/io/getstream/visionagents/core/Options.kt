@@ -40,9 +40,14 @@ public data class SessionOptions(
     val voice: String? = null,
     /** Functions of yours the agent may call, answered on this device. */
     val tools: List<AgentTool> = emptyList(),
+    /** Accounts selected for session-scoped connector bindings. */
+    val connectorBindings: List<SessionConnectorSelection> = emptyList(),
     /** Cost labels, carried onto every request the session makes. */
     val tags: Map<String, String> = emptyMap(),
 )
+
+/** A caller-owned account selected for one configured connector alias. */
+public data class SessionConnectorSelection(val name: String, val connectionId: String)
 
 /**
  * What to change about a conversation while continuing it as a new one.

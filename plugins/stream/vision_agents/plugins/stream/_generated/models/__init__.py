@@ -6,6 +6,9 @@ from .agent_config import AgentConfig
 from .agent_config_request import AgentConfigRequest
 from .agent_config_request_tags import AgentConfigRequestTags
 from .agent_config_tags import AgentConfigTags
+from .agent_connector_binding import AgentConnectorBinding
+from .agent_connector_selection import AgentConnectorSelection
+from .agent_connector_selection_type import AgentConnectorSelectionType
 from .agent_log import AgentLog
 from .agent_log_details import AgentLogDetails
 from .agent_log_page import AgentLogPage
@@ -19,7 +22,7 @@ from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_status import AgentResponseStatus
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
-from .authorize_plugin_request import AuthorizePluginRequest
+from .authorize_connector_request import AuthorizeConnectorRequest
 from .available_number import AvailableNumber
 from .budget import Budget
 from .budget_interval import BudgetInterval
@@ -55,10 +58,30 @@ from .classify_result import ClassifyResult
 from .classify_result_answers import ClassifyResultAnswers
 from .classify_usage import ClassifyUsage
 from .command_receipt import CommandReceipt
+from .connector_authorization import ConnectorAuthorization
+from .connector_connection import ConnectorConnection
+from .connector_connection_auth_type import ConnectorConnectionAuthType
+from .connector_connection_owner_type import ConnectorConnectionOwnerType
+from .connector_connection_status import ConnectorConnectionStatus
+from .connector_definition import ConnectorDefinition
+from .connector_definition_auth_mode import ConnectorDefinitionAuthMode
+from .connector_owner import ConnectorOwner
+from .connector_owner_type import ConnectorOwnerType
+from .connector_tool import ConnectorTool
+from .connector_tool_grant import ConnectorToolGrant
+from .connector_tool_input_schema import ConnectorToolInputSchema
+from .connector_tools import ConnectorTools
+from .connector_validation import ConnectorValidation
+from .connector_validation_status import ConnectorValidationStatus
 from .contact import Contact
 from .contact_state import ContactState
 from .contacts_request import ContactsRequest
 from .contacts_request_contacts_item import ContactsRequestContactsItem
+from .create_connector_connection_request import CreateConnectorConnectionRequest
+from .create_connector_definition_request import CreateConnectorDefinitionRequest
+from .create_connector_definition_request_auth_mode import (
+    CreateConnectorDefinitionRequestAuthMode,
+)
 from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
@@ -111,6 +134,7 @@ from .knowledge_url_state import KnowledgeUrlState
 from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
 from .list_agent_logs_severity import ListAgentLogsSeverity
+from .list_connector_connections_owner_type import ListConnectorConnectionsOwnerType
 from .list_sessions_state import ListSessionsState
 from .list_simulation_runs_state import ListSimulationRunsState
 from .llm_options import LlmOptions
@@ -135,10 +159,6 @@ from .place_call_request_custom import PlaceCallRequestCustom
 from .place_call_request_headers import PlaceCallRequestHeaders
 from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
-from .plugin import Plugin
-from .plugin_authorization import PluginAuthorization
-from .plugin_connection import PluginConnection
-from .plugin_connection_status import PluginConnectionStatus
 from .policy import Policy
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
@@ -146,6 +166,7 @@ from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
 from .provider_price import ProviderPrice
+from .put_connector_credentials_request import PutConnectorCredentialsRequest
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
 from .respond_request import RespondRequest
@@ -167,6 +188,7 @@ from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
 from .search_sessions_state import SearchSessionsState
 from .session import Session
+from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
 from .session_memory import SessionMemory
 from .session_memory_filter import SessionMemoryFilter
@@ -252,6 +274,9 @@ __all__ = (
     "AgentConfigRequest",
     "AgentConfigRequestTags",
     "AgentConfigTags",
+    "AgentConnectorBinding",
+    "AgentConnectorSelection",
+    "AgentConnectorSelectionType",
     "AgentLog",
     "AgentLogDetails",
     "AgentLogPage",
@@ -265,7 +290,7 @@ __all__ = (
     "AgentResponseStatus",
     "AttachNumberRequest",
     "AttachedNumber",
-    "AuthorizePluginRequest",
+    "AuthorizeConnectorRequest",
     "AvailableNumber",
     "Budget",
     "BudgetInterval",
@@ -301,10 +326,28 @@ __all__ = (
     "ClassifyResultAnswers",
     "ClassifyUsage",
     "CommandReceipt",
+    "ConnectorAuthorization",
+    "ConnectorConnection",
+    "ConnectorConnectionAuthType",
+    "ConnectorConnectionOwnerType",
+    "ConnectorConnectionStatus",
+    "ConnectorDefinition",
+    "ConnectorDefinitionAuthMode",
+    "ConnectorOwner",
+    "ConnectorOwnerType",
+    "ConnectorTool",
+    "ConnectorToolGrant",
+    "ConnectorToolInputSchema",
+    "ConnectorTools",
+    "ConnectorValidation",
+    "ConnectorValidationStatus",
     "Contact",
     "ContactState",
     "ContactsRequest",
     "ContactsRequestContactsItem",
+    "CreateConnectorConnectionRequest",
+    "CreateConnectorDefinitionRequest",
+    "CreateConnectorDefinitionRequestAuthMode",
     "CreateResponseRequest",
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
@@ -357,6 +400,7 @@ __all__ = (
     "LibraryVoice",
     "LibraryVoices",
     "ListAgentLogsSeverity",
+    "ListConnectorConnectionsOwnerType",
     "ListSessionsState",
     "ListSimulationRunsState",
     "LlmOptions",
@@ -381,10 +425,6 @@ __all__ = (
     "PlaceCallRequestHeaders",
     "PlaceCallRequestTags",
     "PlacedCall",
-    "Plugin",
-    "PluginAuthorization",
-    "PluginConnection",
-    "PluginConnectionStatus",
     "Policy",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
@@ -392,6 +432,7 @@ __all__ = (
     "ProviderBenchmark",
     "ProviderHealth",
     "ProviderPrice",
+    "PutConnectorCredentialsRequest",
     "RecordingSource",
     "RecordingStatus",
     "RespondRequest",
@@ -413,6 +454,7 @@ __all__ = (
     "SearchResult",
     "SearchSessionsState",
     "Session",
+    "SessionConnectorBinding",
     "SessionCustom",
     "SessionMemory",
     "SessionMemoryFilter",

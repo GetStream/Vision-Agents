@@ -110,6 +110,8 @@ type Call struct {
 	// ModelOverwrites changes the models for this conversation alone, over whatever the
 	// agent config decided.
 	ModelOverwrites *acceleration.ModelOverwrites
+	// ConnectorBindings selects the user's accounts for session-selected agent bindings.
+	ConnectorBindings []acceleration.SessionConnectorBinding
 
 	// Tags are cost labels, carried onto every request the session makes.
 	Tags map[string]string
@@ -146,7 +148,7 @@ type Participant struct {
 // Kind is the backend's own name for it: joined, heard, responding, response_delta,
 // responded, spoke, turn, delegated, task_settled, task_cancelled, tool_ran, transferred,
 // pressed, looked_up, backchannel, interrupted, overlap_decided, conversation_compacted,
-// error and left. The fields below are filled from whichever of those carry them, and Frame
+// connector_unavailable, error and left. The fields below are filled from whichever of those carry them, and Frame
 // is the whole thing for anything they do not cover.
 type Event struct {
 	Kind        string
@@ -423,6 +425,9 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 		request.Custom = &custom
 	}
 	request.ModelOverwrites = call.ModelOverwrites
+	if len(call.ConnectorBindings) > 0 {
+		request.ConnectorBindings = &call.ConnectorBindings
+	}
 
 	setString(&request.CallType, call.Type)
 	setString(&request.UserId, call.UserID)

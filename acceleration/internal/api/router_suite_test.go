@@ -95,6 +95,10 @@ const (
 	suiteStreamSecret = "suite-stream-secret"
 )
 
+// suiteDashboardURL is where a browser is sent back to once a connector login finishes. No
+// browser follows it here, so a made-up dashboard is enough to read the redirect.
+const suiteDashboardURL = "https://dashboard.test/connections?config_id=agent"
+
 // RouterSuite runs the whole router against Postgres and Redis with real API key auth, for
 // suites to embed. A suite picks the app its clients call in its SetupTest:
 // s.useFixture("standard") for the app most tests share, or s.useApp(s.data.createApp())
@@ -144,6 +148,16 @@ type RouterSuite struct {
 	// memoryStore is where sessions remember, for a suite about memory to set before it
 	// starts the harness. Nil keeps them in memories.
 	memoryStore memory.Store
+
+	// oauthHTTP is what the router reaches a connector's OAuth provider with, for a suite
+	// about connectors to set before it starts the harness so a provider answering in
+	// process may be reached. Nil is the router's own client, which reaches only public
+	// HTTPS hosts.
+	oauthHTTP *http.Client
+
+	// withoutCredentialSealer starts the router with no key to seal connector credentials
+	// with, for a suite about what a deployment that never configured one can still do.
+	withoutCredentialSealer bool
 
 	utils testUtils
 	data  testData
@@ -210,6 +224,15 @@ func (s *RouterSuite) SetupSuite() {
 	sessions := s.sessionManager(streams, logger)
 	s.dispatch = dispatch.NewPool()
 
+	// The listener is opened before the router is built, because connector logins send the
+	// provider back to where the router says it is reachable, and that is this address.
+	s.server = httptest.NewUnstartedServer(nil)
+	s.T().Cleanup(s.server.Close)
+	credentials := s.sealer
+	if s.withoutCredentialSealer {
+		credentials = nil
+	}
+
 	server, err := NewServer(Options{
 		Routers: map[routing.Modality]routing.Inspector{
 			routing.LLM:    streams.LLM,
@@ -220,30 +243,36 @@ func (s *RouterSuite) SetupSuite() {
 			routing.LCM:    streams.LCM,
 			routing.Image:  streams.Image,
 		},
-		Streams:       streams,
-		Sessions:      sessions,
-		Store:         pgStore,
-		Live:          liveClient,
-		Auth:          s.authenticator(pgStore),
-		AuthMode:      auth.APIKey,
-		Phone:         s.telephony(logger),
-		Campaigns:     s.campaigns(sessions, logger),
-		Simulations:   s.simulations(sessions, streams, logger),
-		Knowledge:     s.knowledgeWriter(),
-		KnowledgeURLs: s.pages(redisAddr),
-		Voices:        s.voiceService(),
-		VoiceLibrary:  voices.NewCatalogue(),
-		Dispatch:      s.dispatch,
-		Policies:      policies,
-		Quota:         limiter,
-		StreamKey:     suiteStreamKey,
-		StreamSecret:  suiteStreamSecret,
-		DataRetention: time.Hour,
-		Logger:        logger,
+		Streams:          streams,
+		Sessions:         sessions,
+		Store:            pgStore,
+		CredentialSealer: credentials,
+		Live:             liveClient,
+		Auth:             s.authenticator(pgStore),
+		AuthMode:         auth.APIKey,
+		Phone:            s.telephony(logger),
+		Campaigns:        s.campaigns(sessions, logger),
+		Simulations:      s.simulations(sessions, streams, logger),
+		Knowledge:        s.knowledgeWriter(),
+		KnowledgeURLs:    s.pages(redisAddr),
+		Voices:           s.voiceService(),
+		VoiceLibrary:     voices.NewCatalogue(),
+		Dispatch:         s.dispatch,
+		Policies:         policies,
+		Quota:            limiter,
+		StreamKey:        suiteStreamKey,
+		StreamSecret:     suiteStreamSecret,
+		PublicURL:        "http://" + s.server.Listener.Addr().String(),
+		DashboardURL:     suiteDashboardURL,
+		DataRetention:    time.Hour,
+		Logger:           logger,
 	})
 	s.Require().NoError(err)
-	s.server = httptest.NewServer(server.Handler())
-	s.T().Cleanup(s.server.Close)
+	if s.oauthHTTP != nil {
+		server.oauth.HTTP = s.oauthHTTP
+	}
+	s.server.Config.Handler = server.Handler()
+	s.server.Start()
 }
 
 // routers builds every modality against stubs that answer in process. What a real vendor

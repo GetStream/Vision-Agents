@@ -129,6 +129,9 @@ func TestJoiningRendersTheAgentAsASessionToCreate(t *testing.T) {
 	session, err := pipeline.Join(t.Context(), Call{
 		ID: "call-1", UserID: "jean", Instructions: "Be brief.",
 		Tags: map[string]string{"customer_id": "123"},
+		ConnectorBindings: []acceleration.SessionConnectorBinding{{
+			Name: "crm", ConnectionId: "conn_alice",
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +148,11 @@ func TestJoiningRendersTheAgentAsASessionToCreate(t *testing.T) {
 	}
 	if (*request.Tags)["customer_id"] != "123" {
 		t.Errorf("the cost labels did not travel: %v", request.Tags)
+	}
+	if request.ConnectorBindings == nil || len(*request.ConnectorBindings) != 1 ||
+		(*request.ConnectorBindings)[0].Name != "crm" ||
+		(*request.ConnectorBindings)[0].ConnectionId != "conn_alice" {
+		t.Errorf("the selected connector accounts did not travel: %+v", request.ConnectorBindings)
 	}
 }
 

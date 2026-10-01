@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"testing"
 )
@@ -238,4 +239,27 @@ func (s *SyncSuite) documents(namespace string) []IndexedKnowledgeDocument {
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 		"/v1/agents/knowledge/documents?namespace="+namespace, nil, &listed))
 	return listed
+}
+
+func (s *SyncSuite) TestASyncWritesTheConnectorBindingsItDeclares() {
+	bindings := []AgentConnectorBinding{sessionBinding("crm", "salesforce")}
+
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": bindings})
+
+	s.Equal(rendered(bindings), value(result.Config.Connectors))
+}
+
+func (s *SyncSuite) TestASyncLeavingOutTheConnectorsOfAConfigThatHasThemIsRefused() {
+	// A directory synced by a tool that predates connectors would otherwise erase bindings
+	// it never knew of.
+	config := s.seedConfigWithConnectors()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": config.Name, "hash": "legacy-sync-hash-" + s.utils.uuid()})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "include connectors when syncing it")
+	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config.ID)
+	s.Require().NoError(err)
+	s.Equal(config.Connectors, stored.Connectors, "the bindings are kept")
 }

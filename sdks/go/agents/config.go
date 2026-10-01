@@ -154,8 +154,12 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		sandbox := acceleration.Sandbox(settings.Sandbox)
 		body.Sandbox = &sandbox
 	}
-	if len(settings.Plugins) > 0 {
-		body.Plugins = &settings.Plugins
+	if settings.Connectors != nil {
+		connectors := make([]acceleration.AgentConnectorBinding, len(settings.Connectors))
+		for index, binding := range settings.Connectors {
+			connectors[index] = acceleration.AgentConnectorBinding(binding)
+		}
+		body.Connectors = &connectors
 	}
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms

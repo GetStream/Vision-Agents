@@ -461,7 +461,6 @@ class TestSyncAgent:
             "search: search-fast\n"
             "greeting: Hello.\n"
             "sandbox: daytona\n"
-            "plugins:\n  - gmail\n"
             "keyterms:\n  - Vision Agents\n"
             "tags:\n  team: support\n"
         )
@@ -480,7 +479,6 @@ class TestSyncAgent:
         assert stored["search"] == "search-fast"
         assert stored["greeting"] == "Hello."
         assert stored["sandbox"] == "daytona"
-        assert stored["plugins"] == ["gmail"]
         assert stored["keyterms"] == ["Vision Agents"]
         assert stored["tags"] == {"team": "support"}
 

@@ -61,6 +61,7 @@ public struct AgentEvent: Sendable, Hashable {
         case interrupted
         case overlapDecided = "overlap_decided"
         case conversationCompacted = "conversation_compacted"
+        case connectorUnavailable = "connector_unavailable"
         case error
         case left
     }

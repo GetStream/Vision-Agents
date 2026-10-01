@@ -14,6 +14,7 @@ from ._generated.models import (
     PhoneCapability,
     PhoneNumber,
     PhoneNumberType,
+    SessionConnectorBinding,
     SkippedVendor,
 )
 from .accelerated import Accelerated
@@ -74,6 +75,7 @@ __all__ = [
     "Responses",
     "Router",
     "RouterError",
+    "SessionConnectorBinding",
     "STS",
     "STT",
     "Session",

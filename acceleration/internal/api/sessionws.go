@@ -307,6 +307,12 @@ func resolveTool(found *session.Session, callID, commandID, turnID string, parts
 // with the SDKs: a field renamed in Go should break this function, not a client.
 func frameOf(event session.Event) (frame, bool) {
 	switch typed := event.(type) {
+	case session.ConnectorUnavailable:
+		return frame{
+			"type": "connector_unavailable", "name": typed.Name,
+			"connector_id": typed.ConnectorID, "reason": typed.Reason,
+		}, true
+
 	case session.ToolCall:
 		if typed.Cancel {
 			return frame{"type": "tool_cancel", "id": typed.ID, "command_id": typed.CommandID, "turn_id": typed.TurnID}, true

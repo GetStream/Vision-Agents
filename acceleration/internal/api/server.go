@@ -35,8 +35,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -87,9 +87,10 @@ const clientAccessibleExtension = "x-client-accessible"
 // need them report the dependency as unavailable rather than panicking.
 type Options struct {
 	// Routers is the router serving each modality. A modality that is absent is a 404.
-	Routers map[routing.Modality]routing.Inspector
-	Store   *store.Store
-	Live    *live.Client
+	Routers          map[routing.Modality]routing.Inspector
+	Store            *store.Store
+	CredentialSealer *auth.Sealer
+	Live             *live.Client
 	// Phone serves the telephony paths. Absent when the deployment has no vendors, in
 	// which case those paths say so rather than pretending numbers can be bought.
 	Phone *phone.Service
@@ -140,9 +141,10 @@ type Options struct {
 	// what a dashboard talking to the router without a proxy in between needs. Empty
 	// means no browser may, which is right for a deployment only servers reach.
 	CORSOrigins []string
-	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
+	// PublicURL is where this process is reachable, which connector OAuth callbacks need.
 	PublicURL string
-	// DashboardURL is where a finished plugin login sends the browser.
+	// DashboardURL is the complete destination after connector login, including its path
+	// and any app/config selection query. Its origin is trusted for the popup handoff.
 	DashboardURL string
 	// AuthMode is how this deployment decided that, which a handler needs when the mode
 	// itself is the answer: moving a customer's data is refused outright in noauth,
@@ -175,32 +177,33 @@ type Options struct {
 
 // Server implements the generated StrictServerInterface.
 type Server struct {
-	routers       map[routing.Modality]routing.Inspector
-	store         *store.Store
-	live          *live.Client
-	phone         *phone.Service
-	sessions      *session.Manager
-	streams       *Streams
-	transcripts   *chatlog.Reader
-	campaigns     *campaign.Runner
-	simulations   *simulation.Runner
-	knowledge     knowledge.Writer
-	pages         *urls.Service
-	voices        *voices.Service
-	library       *voices.Catalogue
-	dispatch      *dispatch.Pool
-	streamSecret  string
-	streamKey     string
-	corsOrigins   []string
-	publicURL     string
-	dashboardURL  string
-	oauth         *plugins.Auth
-	authenticator auth.Authenticator
-	authMode      auth.Mode
-	dataRetention time.Duration
-	quota         *quota.Limiter
-	policies      *policy.Enforcer
-	trusted       []netip.Prefix
+	routers          map[routing.Modality]routing.Inspector
+	store            *store.Store
+	credentialSealer *auth.Sealer
+	live             *live.Client
+	phone            *phone.Service
+	sessions         *session.Manager
+	streams          *Streams
+	transcripts      *chatlog.Reader
+	campaigns        *campaign.Runner
+	simulations      *simulation.Runner
+	knowledge        knowledge.Writer
+	pages            *urls.Service
+	voices           *voices.Service
+	library          *voices.Catalogue
+	dispatch         *dispatch.Pool
+	streamSecret     string
+	streamKey        string
+	corsOrigins      []string
+	publicURL        string
+	dashboardURL     string
+	oauth            *mcp.OAuthClient
+	authenticator    auth.Authenticator
+	authMode         auth.Mode
+	dataRetention    time.Duration
+	quota            *quota.Limiter
+	policies         *policy.Enforcer
+	trusted          []netip.Prefix
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
@@ -229,6 +232,11 @@ func WithAuthenticator(authenticator auth.Authenticator) Option {
 func NewServer(options Options, with ...Option) (*Server, error) {
 	for _, option := range with {
 		option(&options)
+	}
+	if options.DashboardURL != "" {
+		if _, err := connectorOrigin(options.DashboardURL); err != nil {
+			return nil, fmt.Errorf("api: invalid dashboard URL: %w", err)
+		}
 	}
 	if len(options.Routers) == 0 {
 		return nil, errors.New("api: at least one router is required")
@@ -265,35 +273,35 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		logger = slog.Default()
 	}
 	server := &Server{
-		routers:       options.Routers,
-		store:         options.Store,
-		live:          options.Live,
-		phone:         options.Phone,
-		sessions:      options.Sessions,
-		streams:       options.Streams,
-		transcripts:   options.Transcripts,
-		campaigns:     options.Campaigns,
-		simulations:   options.Simulations,
-		knowledge:     options.Knowledge,
-		pages:         options.KnowledgeURLs,
-		voices:        options.Voices,
-		library:       options.VoiceLibrary,
-		dispatch:      options.Dispatch,
-		streamSecret:  options.StreamSecret,
-		streamKey:     options.StreamKey,
-		corsOrigins:   options.CORSOrigins,
-		publicURL:     options.PublicURL,
-		dashboardURL:  options.DashboardURL,
-		authenticator: authenticator,
-		authMode:      authMode,
-		dataRetention: retention,
-		quota:         options.Quota,
-		policies:      options.Policies,
-		trusted:       options.TrustedProxies,
-		upgrader:      newUpgrader(options.CORSOrigins),
-		oauth: &plugins.Auth{
-			PublicURL:    options.PublicURL,
-			DashboardURL: options.DashboardURL,
+		routers:          options.Routers,
+		store:            options.Store,
+		credentialSealer: options.CredentialSealer,
+		live:             options.Live,
+		phone:            options.Phone,
+		sessions:         options.Sessions,
+		streams:          options.Streams,
+		transcripts:      options.Transcripts,
+		campaigns:        options.Campaigns,
+		simulations:      options.Simulations,
+		knowledge:        options.Knowledge,
+		pages:            options.KnowledgeURLs,
+		voices:           options.Voices,
+		library:          options.VoiceLibrary,
+		dispatch:         options.Dispatch,
+		streamSecret:     options.StreamSecret,
+		streamKey:        options.StreamKey,
+		corsOrigins:      options.CORSOrigins,
+		publicURL:        options.PublicURL,
+		dashboardURL:     options.DashboardURL,
+		authenticator:    authenticator,
+		authMode:         authMode,
+		dataRetention:    retention,
+		quota:            options.Quota,
+		policies:         options.Policies,
+		trusted:          options.TrustedProxies,
+		upgrader:         newUpgrader(options.CORSOrigins),
+		oauth: &mcp.OAuthClient{
+			PublicURL: options.PublicURL,
 		},
 		popularity: newPopularity(options.Store, logger),
 		logger:     logger,
@@ -329,7 +337,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
-	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
+	mux.HandleFunc("GET /v1/agents/connectors/oauth/launch/{id}", s.connectorOAuthLaunchPageHandler)
+	mux.HandleFunc("POST /v1/agents/connectors/oauth/launch/{id}", s.connectorOAuthLaunchHandoff)
+	mux.HandleFunc("GET "+mcp.CallbackPath, s.finishConnectorLogin)
+	mux.HandleFunc("GET "+mcp.ClientMetadataPath, s.connectorOAuthClientMetadataHandler)
 	s.newAPI(mux)
 	handler := HandlerFromMux(NewStrictHandler(s, nil), mux)
 	// Sentry is outermost so it sees panics from every middleware below it, not
@@ -483,7 +494,10 @@ var unspecifiedRoutes = map[string]bool{
 	"GET /v1/data/changes":                false,
 	// Reached before there is a caller to classify: the browser arrives from the identity
 	// provider and the state parameter is the secret.
-	"GET /v1/agents/plugins/callback": true,
+	"GET /v1/agents/connectors/oauth/callback":     true,
+	"GET /.well-known/oauth-client-metadata":       true,
+	"GET /v1/agents/connectors/oauth/launch/{id}":  true,
+	"POST /v1/agents/connectors/oauth/launch/{id}": true,
 }
 
 // serverSideRoutes builds the matcher for every operation an end user's device may not
@@ -495,7 +509,7 @@ var unspecifiedRoutes = map[string]bool{
 // a path that spells it differently.
 //
 // An operation declaring no security at all is skipped in both directions. It is reached
-// before there is a caller to classify — the health check and the plugin redirect, where
+// before there is a caller to classify — the health check and the connector redirect, where
 // the browser arrives from the identity provider — so there is nobody to refuse.
 func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 	operations, err := specifiedOperations(document)
@@ -643,6 +657,9 @@ func withCORS(allowed []string, next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
 			w.Header().Set("Access-Control-Allow-Methods", corsMethods)
 			w.Header().Set("Access-Control-Max-Age", "600")
+			if named && !anywhere {
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing
 		// worth routing, so it is answered here rather than by a handler that would only

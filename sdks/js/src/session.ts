@@ -26,9 +26,9 @@ export interface Participant {
  * `kind` is the backend's own name for it: joined, hearing, heard, decision, responding,
  * response_delta, responded, blocked, spoke, turn, delegated, task_settled, task_cancelled,
  * tool_started, tool_ran, transferred, pressed, looked_up, backchannel, interrupted,
- * overlap_decided, conversation_compacted, conversation_updated, error and left. The fields
- * below are filled from whichever of those carry them, and `frame` is the whole thing for
- * anything they do not cover.
+ * overlap_decided, conversation_compacted, conversation_updated, connector_unavailable,
+ * error and left. The fields below are filled from whichever of those carry them, and
+ * `frame` is the whole thing for anything they do not cover.
  */
 export interface SessionEvent {
   readonly kind: string;

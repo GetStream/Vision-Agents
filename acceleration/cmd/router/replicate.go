@@ -58,7 +58,7 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pgStore, err := openStore(ctx, settings)
+	pgStore, err := openStore(ctx, settings, logger)
 	if err != nil {
 		return err
 	}

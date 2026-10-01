@@ -270,6 +270,7 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 		"name: jean\nlmm: openai/gpt-5.6\n",
 		"video:\n  max_frames: 9\n",
 		"keyterms: Vision Agents\n",
+		"connectors:\n  - name: crm\n    connection:\n      type: session\n      id: wrong_key\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", declaration)

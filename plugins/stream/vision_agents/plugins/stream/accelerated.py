@@ -30,6 +30,7 @@ from ._generated.models import (
     Error,
     Sandbox,
     Session,
+    SessionConnectorBinding,
     SessionMemory,
     SessionMemoryFilter,
     SessionSkill,
@@ -85,6 +86,7 @@ class Accelerated(OmniLLM):
         keyterms: Optional[list[str]] = None,
         video_source: str = "",
         video_max_frames: int = 0,
+        connector_bindings: Optional[list[SessionConnectorBinding]] = None,
         log_latency: bool = False,
     ):
         """Configure a pipeline to run remotely.
@@ -116,6 +118,7 @@ class Accelerated(OmniLLM):
                 member IDs. Empty leaves whatever the stored config named.
             video_source: Camera or processor source for delegated capture.
             video_max_frames: Recent frames per task (1–8); zero uses configuration.
+            connector_bindings: Accounts to use for declared session-scoped connector aliases.
             log_latency: Print per-model timing and a turn DAG to agent stdout.
                 Disabled by default; metrics are still recorded by the router.
         """
@@ -135,6 +138,7 @@ class Accelerated(OmniLLM):
         self.keyterms = keyterms or []
         self.video_source = video_source
         self.video_max_frames = video_max_frames
+        self.connector_bindings = connector_bindings or []
         self.log_latency = log_latency
 
         self.backend = Backend(url=url, customer_id=customer_id)
@@ -341,6 +345,8 @@ class Accelerated(OmniLLM):
             request.video = SessionVideo(
                 source=self.video_source, max_frames=self.video_max_frames or 1
             )
+        if self.connector_bindings:
+            request.connector_bindings = self.connector_bindings
 
         tools = self._tools()
         if tools:

@@ -291,55 +291,188 @@ impl Client {
         )
         .await
     }
-    /// The plugin logins this agent holds
+    /// List reusable account connections
     ///
-    /// `GET /v1/agents/configs/{id}/plugins` (`listConfigPlugins`).
-    pub async fn list_config_plugins(&self, id: &str) -> Result<Vec<types::PluginConnection>> {
+    /// `GET /v1/agents/connections` (`listConnectorConnections`).
+    pub async fn list_connector_connections(
+        &self,
+        query: &ListConnectorConnectionsQuery,
+    ) -> Result<Vec<types::ConnectorConnection>> {
         self.send(
             Method::GET,
-            &format!("/v1/agents/configs/{id}/plugins", id = segment(id)),
+            "/v1/agents/connections",
+            Some(query),
             None::<&()>,
-            None::<&()>,
-            "listConfigPlugins",
+            "listConnectorConnections",
         )
         .await
     }
-    /// Drop a plugin login
+    /// Create an account connection
     ///
-    /// `DELETE /v1/agents/configs/{id}/plugins/{plugin_id}` (`disconnectPlugin`).
-    pub async fn disconnect_plugin(&self, id: &str, plugin_id: &str) -> Result<()> {
+    /// `POST /v1/agents/connections` (`createConnectorConnection`).
+    pub async fn create_connector_connection(
+        &self,
+        body: &types::CreateConnectorConnectionRequest,
+    ) -> Result<types::ConnectorConnection> {
+        self.send(
+            Method::POST,
+            "/v1/agents/connections",
+            None::<&()>,
+            Some(body),
+            "createConnectorConnection",
+        )
+        .await
+    }
+    /// Read one connection's metadata
+    ///
+    /// `GET /v1/agents/connections/{id}` (`getConnectorConnection`).
+    pub async fn get_connector_connection(&self, id: &str) -> Result<types::ConnectorConnection> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/connections/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getConnectorConnection",
+        )
+        .await
+    }
+    /// Disconnect an account everywhere it is bound
+    ///
+    /// `DELETE /v1/agents/connections/{id}` (`deleteConnectorConnection`).
+    pub async fn delete_connector_connection(&self, id: &str) -> Result<()> {
         self.send(
             Method::DELETE,
-            &format!(
-                "/v1/agents/configs/{id}/plugins/{plugin_id}",
-                id = segment(id),
-                plugin_id = segment(plugin_id)
-            ),
+            &format!("/v1/agents/connections/{id}", id = segment(id)),
             None::<&()>,
             None::<&()>,
-            "disconnectPlugin",
+            "deleteConnectorConnection",
         )
         .await
     }
-    /// Start a plugin login
+    /// Start provider consent for an account connection
     ///
-    /// `POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize` (`authorizePlugin`).
-    pub async fn authorize_plugin(
+    /// `POST /v1/agents/connections/{id}/authorizations` (`authorizeConnectorConnection`).
+    pub async fn authorize_connector_connection(
         &self,
         id: &str,
-        plugin_id: &str,
-        body: Option<&types::AuthorizePluginRequest>,
-    ) -> Result<types::PluginAuthorization> {
+        body: Option<&types::AuthorizeConnectorRequest>,
+    ) -> Result<types::ConnectorAuthorization> {
         self.send(
             Method::POST,
             &format!(
-                "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize",
-                id = segment(id),
-                plugin_id = segment(plugin_id)
+                "/v1/agents/connections/{id}/authorizations",
+                id = segment(id)
             ),
             None::<&()>,
             body,
-            "authorizePlugin",
+            "authorizeConnectorConnection",
+        )
+        .await
+    }
+    /// Write a connection credential or import an OAuth grant
+    ///
+    /// `PUT /v1/agents/connections/{id}/credentials` (`putConnectorCredentials`).
+    pub async fn put_connector_credentials(
+        &self,
+        id: &str,
+        body: &types::PutConnectorCredentialsRequest,
+    ) -> Result<types::ConnectorConnection> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/agents/connections/{id}/credentials", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "putConnectorCredentials",
+        )
+        .await
+    }
+    /// Read the tools discovered for a connection
+    ///
+    /// `GET /v1/agents/connections/{id}/tools` (`listConnectorTools`).
+    pub async fn list_connector_tools(&self, id: &str) -> Result<types::ConnectorTools> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/connections/{id}/tools", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "listConnectorTools",
+        )
+        .await
+    }
+    /// Check connectivity and refresh the cached tool list
+    ///
+    /// `POST /v1/agents/connections/{id}/validate` (`validateConnectorConnection`).
+    pub async fn validate_connector_connection(
+        &self,
+        id: &str,
+    ) -> Result<types::ConnectorValidation> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/connections/{id}/validate", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "validateConnectorConnection",
+        )
+        .await
+    }
+    /// Search built-in and app-defined MCP connectors
+    ///
+    /// `GET /v1/agents/connectors` (`listConnectors`).
+    pub async fn list_connectors(
+        &self,
+        query: &ListConnectorsQuery,
+    ) -> Result<Vec<types::ConnectorDefinition>> {
+        self.send(
+            Method::GET,
+            "/v1/agents/connectors",
+            Some(query),
+            None::<&()>,
+            "listConnectors",
+        )
+        .await
+    }
+    /// Register a custom remote MCP connector
+    ///
+    /// `POST /v1/agents/connectors` (`createConnectorDefinition`).
+    pub async fn create_connector_definition(
+        &self,
+        body: &types::CreateConnectorDefinitionRequest,
+    ) -> Result<types::ConnectorDefinition> {
+        self.send(
+            Method::POST,
+            "/v1/agents/connectors",
+            None::<&()>,
+            Some(body),
+            "createConnectorDefinition",
+        )
+        .await
+    }
+    /// Complete provider consent
+    ///
+    /// `GET /v1/agents/connectors/oauth/callback` (`connectorOAuthCallback`).
+    pub async fn connector_o_auth_callback(
+        &self,
+        query: &ConnectorOAuthCallbackQuery,
+    ) -> Result<()> {
+        self.send(
+            Method::GET,
+            "/v1/agents/connectors/oauth/callback",
+            Some(query),
+            None::<&()>,
+            "connectorOAuthCallback",
+        )
+        .await
+    }
+    /// Read a built-in or app-defined connector
+    ///
+    /// `GET /v1/agents/connectors/{id}` (`getConnectorDefinition`).
+    pub async fn get_connector_definition(&self, id: &str) -> Result<types::ConnectorDefinition> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/connectors/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getConnectorDefinition",
         )
         .await
     }
@@ -607,32 +740,6 @@ impl Client {
             None::<&()>,
             None::<&()>,
             "getAgentLog",
-        )
-        .await
-    }
-    /// The hosted MCP servers an agent may attach
-    ///
-    /// `GET /v1/agents/plugins` (`listPlugins`).
-    pub async fn list_plugins(&self, query: &ListPluginsQuery) -> Result<Vec<types::Plugin>> {
-        self.send(
-            Method::GET,
-            "/v1/agents/plugins",
-            Some(query),
-            None::<&()>,
-            "listPlugins",
-        )
-        .await
-    }
-    /// Finish a plugin login
-    ///
-    /// `GET /v1/agents/plugins/callback` (`pluginOAuthCallback`).
-    pub async fn plugin_o_auth_callback(&self, query: &PluginOAuthCallbackQuery) -> Result<()> {
-        self.send(
-            Method::GET,
-            "/v1/agents/plugins/callback",
-            Some(query),
-            None::<&()>,
-            "pluginOAuthCallback",
         )
         .await
     }
@@ -1863,6 +1970,32 @@ pub struct ListAgentConfigsQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
+/// The query string `listConnectorConnections` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListConnectorConnectionsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connector_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<String>,
+}
+/// The query string `listConnectors` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListConnectorsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+}
+/// The query string `connectorOAuthCallback` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ConnectorOAuthCallbackQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
 /// The query string `getConversationCommand` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct GetConversationCommandQuery {
@@ -1915,23 +2048,6 @@ pub struct ListAgentLogsQuery {
     pub cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
-}
-/// The query string `listPlugins` takes. A field left `None` is left out.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct ListPluginsQuery {
-    /// Filter by name, category or description.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub q: Option<String>,
-}
-/// The query string `pluginOAuthCallback` takes. A field left `None` is left out.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct PluginOAuthCallbackQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 /// The query string `listSessions` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

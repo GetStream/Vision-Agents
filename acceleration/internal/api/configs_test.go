@@ -3,10 +3,13 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -172,6 +175,89 @@ func (s *ConfigsSuite) TestOnlyTheAppsOwnBackendMayPatchAConfig() {
 	})
 }
 
+func (s *ConfigsSuite) TestPatchingAConfigReplacesItsConnectorBindings() {
+	created := s.createConfig(map[string]any{"name": "support", "llm": "llm-flow"})
+	bindings := []AgentConnectorBinding{sessionBinding("crm", "salesforce")}
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": bindings}, &patched))
+
+	s.Equal(rendered(bindings), value(patched.Connectors))
+	s.Equal("llm-flow", value(patched.Llm), "what was not sent is kept")
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal(rendered(bindings), value(read.Connectors))
+}
+
+func (s *ConfigsSuite) TestPatchingAConfigWithoutConnectorsKeepsItsBindings() {
+	bindings := []AgentConnectorBinding{sessionBinding("crm", "salesforce")}
+	created := s.createConfig(map[string]any{"name": "support", "connectors": bindings})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"instructions": "be brief"}, &patched))
+
+	s.Equal(rendered(bindings), value(patched.Connectors))
+}
+
+func (s *ConfigsSuite) TestAPatchWithAConnectorBindingThatBreaksToolNamespacingChangesNothing() {
+	created := s.createConfig(map[string]any{"name": "support", "llm": "llm-flow"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{
+			"llm":        "en-low-latency",
+			"connectors": []AgentConnectorBinding{sessionBinding("slack__workspace", "slack")},
+		})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "connector binding names")
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal("llm-flow", value(read.Llm))
+	s.Empty(value(read.Connectors))
+}
+
+func (s *ConfigsSuite) TestAPatchBindingAConnectorTheAppNeverRegisteredIsRefused() {
+	created := s.createConfig(map[string]any{"name": "support"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": []AgentConnectorBinding{sessionBinding("crm", "custom_crm")}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "no connector named custom_crm")
+}
+
+func (s *ConfigsSuite) TestAPatchMayBindAConnectorTheAppRegistered() {
+	created := s.createConfig(map[string]any{"name": "support"})
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connectors",
+		map[string]any{"id": "custom_crm", "name": "Custom CRM", "endpoint": "https://8.8.8.8/mcp", "auth_mode": "none"},
+		nil))
+	bindings := []AgentConnectorBinding{sessionBinding("crm", "custom_crm")}
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": bindings}, &patched))
+
+	s.Equal(rendered(bindings), value(patched.Connectors))
+}
+
+func (s *ConfigsSuite) TestReplacingAConfigWithoutItsConnectorBindingsIsRefused() {
+	// A writer that predates connectors would otherwise erase bindings it never knew of.
+	config := s.seedConfigWithConnectors()
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+config.ID,
+		map[string]any{"name": config.Name})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "include connectors when updating it")
+	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config.ID)
+	s.Require().NoError(err)
+	s.Equal(config.Connectors, stored.Connectors)
+}
+
 func (s *ConfigsSuite) TestADeletedConfigCannotBeUsedAgain() {
 	created := s.createConfig(map[string]any{"name": "support"})
 
@@ -247,4 +333,43 @@ func (s *ConfigsSuite) createConfig(body map[string]any) AgentConfig {
 	s.Require().Equal(http.StatusCreated,
 		s.serverClient.do(http.MethodPost, "/v1/agents/configs", body, &created))
 	return created
+}
+
+// seedConfigWithConnectors is a config binding a connector, written straight into Postgres
+// the way one stored before a writer knew about connectors would read back.
+func (s *RouterSuite) seedConfigWithConnectors() store.AgentConfig {
+	config := store.AgentConfig{
+		CustomerID: s.customerID(),
+		Name:       "connector-config-" + s.utils.uuid(),
+		Connectors: []store.ConnectorBinding{{
+			Name:        "slack",
+			ConnectorID: "slack",
+			Connection:  store.ConnectionBinding{Type: "fixed", ConnectionID: s.utils.uuid()},
+			Tools:       []store.ToolGrant{{Name: "search_messages", SchemaDigest: strings.Repeat("c", 64)}},
+		}},
+	}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	return config
+}
+
+// sessionBinding binds connectorID as name, with the account chosen when a session starts
+// and one tool granted.
+func sessionBinding(name, connectorID string) AgentConnectorBinding {
+	return AgentConnectorBinding{
+		Name:        name,
+		ConnectorId: connectorID,
+		Connection:  AgentConnectorSelection{Type: AgentConnectorSelectionTypeSession},
+		Tools:       []ConnectorToolGrant{{Name: "query_records", SchemaDigest: strings.Repeat("a", 64)}},
+	}
+}
+
+// rendered is bindings as the router reads them back, which says outright that a binding
+// left unmarked is not required.
+func rendered(bindings []AgentConnectorBinding) []AgentConnectorBinding {
+	read := make([]AgentConnectorBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		binding.Required = pointerTo(binding.Required != nil && *binding.Required)
+		read = append(read, binding)
+	}
+	return read
 }

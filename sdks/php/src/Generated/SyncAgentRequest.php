@@ -30,6 +30,8 @@ final readonly class SyncAgentRequest
         // The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base a...
         /** @var list<KnowledgeUrlDeclaration>|null */
         public ?array $knowledgeUrls = null,
+        /** @var list<array<string, mixed>>|null */
+        public ?array $connectors = null,
         public AgentMode|string|null $mode = null,
         public ?string $stt = null,
         public ?string $tts = null,
@@ -41,8 +43,6 @@ final readonly class SyncAgentRequest
         public ?string $subagent = null,
         public ?string $search = null,
         public ?string $greeting = null,
-        /** @var list<string>|null */
-        public ?array $plugins = null,
         /** @var list<string>|null */
         public ?array $keyterms = null,
         public Sandbox|string|null $sandbox = null,
@@ -64,6 +64,7 @@ final readonly class SyncAgentRequest
             skills: array_key_exists('skills', $data) && $data['skills'] !== null ? array_map(SkillRequest::fromArray(...), Json::objects($data, 'skills')) : null,
             knowledge: array_key_exists('knowledge', $data) && $data['knowledge'] !== null ? array_map(KnowledgeDocument::fromArray(...), Json::objects($data, 'knowledge')) : null,
             knowledgeUrls: array_key_exists('knowledge_urls', $data) && $data['knowledge_urls'] !== null ? array_map(KnowledgeUrlDeclaration::fromArray(...), Json::objects($data, 'knowledge_urls')) : null,
+            connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? Json::objects($data, 'connectors') : null,
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
@@ -74,7 +75,6 @@ final readonly class SyncAgentRequest
             subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
             search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
-            plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::strings($data, 'plugins') : null,
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
@@ -106,6 +106,9 @@ final readonly class SyncAgentRequest
         if ($this->knowledgeUrls !== null) {
             $out['knowledge_urls'] = array_map(static fn (KnowledgeUrlDeclaration $each): array => $each->toArray(), $this->knowledgeUrls);
         }
+        if ($this->connectors !== null) {
+            $out['connectors'] = $this->connectors;
+        }
         if ($this->mode !== null) {
             $out['mode'] = Json::enumValue($this->mode);
         }
@@ -135,9 +138,6 @@ final readonly class SyncAgentRequest
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting;
-        }
-        if ($this->plugins !== null) {
-            $out['plugins'] = $this->plugins;
         }
         if ($this->keyterms !== null) {
             $out['keyterms'] = $this->keyterms;
