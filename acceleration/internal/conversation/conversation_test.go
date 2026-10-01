@@ -1154,3 +1154,84 @@ func TestSharedHistoryPreservesAuthorsAsUserData(t *testing.T) {
 	require.Empty(t, messages)
 	require.True(t, truncated, "author data must count toward history budget")
 }
+
+// openWithReply opens a conversation whose reply has been created in Chat, so live
+// updates are being sent for it.
+func openWithReply(t *testing.T) (*chatStore, *Conversation, string) {
+	t.Helper()
+	db, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	t.Cleanup(c.Release)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	require.Eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.created[id] }, 3*time.Second, 20*time.Millisecond)
+	return db, c, id
+}
+
+// TestShownReasoningIsLiveAndNeverStored covers show_reasoning: the model's thinking
+// reaches watchers as a reasoning field on ephemeral updates, and neither the settled
+// message nor the local ledger ever holds it.
+func TestShownReasoningIsLiveAndNeverStored(t *testing.T) {
+	db, c, id := openWithReply(t)
+	c.ShowReasoning(true)
+
+	c.Observe(agent.ReasoningDelta{Text: "Weighing the two "})
+	c.Observe(agent.ReasoningDelta{Text: "options."})
+	require.Eventually(t, func() bool {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		for _, patch := range db.patches {
+			if patch["reasoning"] == "Weighing the two options." {
+				return true
+			}
+		}
+		return false
+	}, 3*time.Second, 20*time.Millisecond)
+
+	c.Observe(agent.ResponseDelta{Text: "The answer."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	raw, err := os.ReadFile(filepath.Join(c.dir(), "state.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "Weighing")
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	stored, err := json.Marshal(db.messages[id])
+	require.NoError(t, err)
+	require.Contains(t, string(stored), "The answer.")
+	require.NotContains(t, string(stored), "Weighing")
+}
+
+// TestReasoningIsHiddenUnlessTheConfigShowsIt keeps thinking, which can name tools and
+// internal details, off the wire for an agent that has not turned show_reasoning on.
+func TestReasoningIsHiddenUnlessTheConfigShowsIt(t *testing.T) {
+	db, c, _ := openWithReply(t)
+
+	c.Observe(agent.ReasoningDelta{Text: "Weighing the two options."})
+	c.Observe(agent.ResponseDelta{Text: "The answer."})
+	require.Eventually(t, func() bool {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		return len(db.patches) > 0 && db.patches[len(db.patches)-1]["text"] == "The answer."
+	}, 3*time.Second, 20*time.Millisecond)
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	for _, patch := range db.patches {
+		require.NotContains(t, patch, "reasoning")
+	}
+}
+
+// TestLiveReasoningKeepsOnlyItsMostRecentPart bounds what each update carries, cutting
+// on a character boundary rather than through one.
+func TestLiveReasoningKeepsOnlyItsMostRecentPart(t *testing.T) {
+	text := "é" + strings.Repeat("a", maxThinking-1)
+
+	kept := tail(text, maxThinking)
+
+	require.Equal(t, strings.Repeat("a", maxThinking-1), kept)
+}

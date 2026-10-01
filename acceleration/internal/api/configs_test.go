@@ -113,6 +113,17 @@ func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEndUsersSee() {
 	s.Equal([]string{"web_search"}, value(patched.VisibleTools))
 }
 
+func (s *ConfigsSuite) TestAConfigShowsReasoningOnlyOnceTurnedOn() {
+	created := s.createConfig(map[string]any{"name": "support"})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"show_reasoning": true}, &patched))
+
+	s.False(value(created.ShowReasoning))
+	s.True(value(patched.ShowReasoning))
+}
+
 func (s *ConfigsSuite) TestAVisibleToolPatternThatCannotMatchIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "visible_tools": []string{"athena_[*"}})

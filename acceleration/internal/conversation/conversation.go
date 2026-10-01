@@ -123,7 +123,14 @@ type operation struct {
 	Message Message
 	Create  bool
 	Author  string `json:",omitempty"`
+	// thinking rides only on a live update. It is unexported so it never reaches the
+	// outbox on disk or a stored message.
+	thinking string
 }
+
+// maxThinking bounds the live reasoning sent with each update to its most recent part.
+const maxThinking = 4000
+
 type Service struct {
 	lock   *os.File
 	closed bool
@@ -143,8 +150,13 @@ type Conversation struct {
 	created  map[string]bool
 	emit     func(Updated)
 	dirty    bool
-	stopped  chan struct{}
-	done     chan struct{}
+	// showReasoning is the agent config's show_reasoning. reasoning is the model's
+	// thinking for the current reply, shown to watchers through ephemeral updates only
+	// and never persisted.
+	showReasoning bool
+	reasoning     string
+	stopped       chan struct{}
+	done          chan struct{}
 }
 
 var validID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
@@ -768,6 +780,14 @@ func (c *Conversation) ShowTools(patterns []string) {
 	c.data.VisibleTools = append([]string(nil), patterns...)
 }
 
+// ShowReasoning sets whether watchers see the model's thinking while a reply is written,
+// as the agent config's show_reasoning.
+func (c *Conversation) ShowReasoning(show bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.showReasoning = show
+}
+
 func (c *Conversation) Agent() string             { return c.data.Agent }
 func (c *Conversation) Attach(emit func(Updated)) { c.mu.Lock(); defer c.mu.Unlock(); c.emit = emit }
 func (c *Conversation) Release() {
@@ -842,6 +862,7 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 	}
 	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner}
 	c.data.Current = &a
+	c.reasoning = ""
 	c.data.Pending = append(c.data.Pending,
 		operation{Message: u, Create: true, Author: c.userAuthor()},
 		operation{Message: a, Create: true})
@@ -961,6 +982,11 @@ func (c *Conversation) Observe(event agent.Event) {
 		c.state("writing")
 		m.Text += e.Text
 		m.Saved = false
+	case agent.ReasoningDelta:
+		if !c.showReasoning || !c.acceptTurn(e.TurnID, false) {
+			return
+		}
+		c.reasoning = tail(c.reasoning+e.Text, maxThinking)
 	case agent.Responded:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -1403,12 +1429,28 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 		return err
 	}
 	if ephemeral {
+		if op.thinking != "" {
+			fields["reasoning"] = op.thinking
+		}
 		_, err := c.service.client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
 		return err
 	}
 	_, err = c.service.client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields})
 	return err
 }
+
+// tail keeps the last limit bytes of text without splitting a UTF-8 character.
+func tail(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := len(text) - limit
+	for cut < len(text) && !utf8.RuneStart(text[cut]) {
+		cut++
+	}
+	return text[cut:]
+}
+
 func sameSnapshot(a, b Message) bool {
 	a.Saved = false
 	b.Saved = false
@@ -1491,6 +1533,7 @@ func (c *Conversation) run() {
 			c.mu.Lock()
 			m := c.data.Current
 			visible := c.data.VisibleTools
+			thinking := c.reasoning
 			dirty := c.dirty && m != nil && c.created[m.ID]
 			if m != nil {
 				copy := *m
@@ -1505,7 +1548,7 @@ func (c *Conversation) run() {
 			c.mu.Unlock()
 			if dirty && m != nil && m.FinishedAt == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := c.send(ctx, operation{Message: *m}, true, visible)
+				err := c.send(ctx, operation{Message: *m, thinking: thinking}, true, visible)
 				cancel()
 				if err != nil {
 					c.mu.Lock()

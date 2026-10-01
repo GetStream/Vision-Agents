@@ -181,6 +181,8 @@ components:
           $ref: '#/components/schemas/Sandbox'
         search:
           type: string
+        show_reasoning:
+          type: boolean
         skills:
           items:
             type: string
@@ -257,6 +259,9 @@ components:
           $ref: '#/components/schemas/Sandbox'
         search:
           type: string
+        show_reasoning:
+          description: Whether people watching a persistent conversation see the model's reasoning live while a written reply is being worked on. It is sent only on live updates, never stored on the reply, and may mention tools and internal details, so it is off unless turned on.
+          type: boolean
         skills:
           items:
             type: string
@@ -329,6 +334,10 @@ components:
           description: |
             What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
           type: string
+        show_reasoning:
+          description: |
+            Whether people watching a persistent conversation see the model's reasoning live while a written reply is being worked on. It is sent only on live updates, never stored on the reply, and may mention tools and internal details, so it is off unless turned on.
+          type: boolean
         skills:
           description: |
             Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.

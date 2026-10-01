@@ -4276,6 +4276,13 @@ components:
             is exactly {"status":"answered","citations":[{"id","title","url","citation"}]}
             also adds those citations to the reply's sources. Empty shows search and
             web_search.
+        show_reasoning:
+          type: boolean
+          description: >
+            Whether people watching a persistent conversation see the model's reasoning
+            live while a written reply is being worked on. It is sent only on live
+            updates, never stored on the reply, and may mention tools and internal
+            details, so it is off unless turned on.
         knowledge_namespace:
           type: string
           description: >
@@ -4344,6 +4351,8 @@ components:
           type: array
           items:
             type: string
+        show_reasoning:
+          type: boolean
         knowledge_namespace:
           type: string
         sandbox:

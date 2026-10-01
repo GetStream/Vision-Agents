@@ -346,6 +346,9 @@ type AgentConfig struct {
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
 	// replies, as names or path.Match patterns. Empty shows search and web_search.
 	VisibleTools []string `bun:"visible_tools,type:jsonb"`
+	// ShowReasoning says whether watchers of a persistent conversation see the model's
+	// reasoning live while a written reply is worked on. It is never stored on the reply.
+	ShowReasoning bool `bun:"show_reasoning,notnull"`
 	// KnowledgeNamespace is what the agent may look things up in.
 	KnowledgeNamespace string `bun:"knowledge_namespace,notnull"`
 	// Sandbox is where the subagent may run code it writes, "daytona" being the one

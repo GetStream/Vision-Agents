@@ -392,6 +392,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Instructions:       value(request.Instructions),
 		Greeting:           value(request.Greeting),
 		Guardrail:          value(request.Guardrail),
+		ShowReasoning:      value(request.ShowReasoning),
 		KnowledgeNamespace: value(request.KnowledgeNamespace),
 		Sandbox:            box,
 	}
@@ -477,6 +478,9 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.VisibleTools) > 0 {
 		visible := config.VisibleTools
 		rendered.VisibleTools = &visible
+	}
+	if config.ShowReasoning {
+		rendered.ShowReasoning = &config.ShowReasoning
 	}
 	if len(config.Tags) > 0 {
 		tags := config.Tags

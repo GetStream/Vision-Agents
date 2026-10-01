@@ -27,6 +27,7 @@ type AgentConfigPatch struct {
 	Plugins            *[]string          `json:"plugins,omitempty"`
 	Keyterms           *[]string          `json:"keyterms,omitempty"`
 	VisibleTools       *[]string          `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
+	ShowReasoning      *bool              `json:"show_reasoning,omitempty" doc:"Whether people watching a persistent conversation see the model's reasoning live while a written reply is being worked on. It is sent only on live updates, never stored on the reply, and may mention tools and internal details, so it is off unless turned on."`
 	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
 	Tags               *map[string]string `json:"tags,omitempty"`
@@ -123,6 +124,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		config.Keyterms = keytermsOf(patch.Keyterms)
 	}
 	config.VisibleTools = override(config.VisibleTools, patch.VisibleTools)
+	config.ShowReasoning = override(config.ShowReasoning, patch.ShowReasoning)
 	config.KnowledgeNamespace = override(config.KnowledgeNamespace, patch.KnowledgeNamespace)
 	if patch.Sandbox != nil {
 		config.Sandbox, _ = sandboxOf(patch.Sandbox)

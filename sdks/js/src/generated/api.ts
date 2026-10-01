@@ -2274,6 +2274,7 @@ export type components = {
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly search?: string;
+            readonly show_reasoning?: boolean;
             readonly skills?: readonly string[];
             /** Format: double */
             readonly speed?: number;
@@ -2308,6 +2309,8 @@ export type components = {
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly search?: string;
+            /** @description Whether people watching a persistent conversation see the model's reasoning live while a written reply is being worked on. It is sent only on live updates, never stored on the reply, and may mention tools and internal details, so it is off unless turned on. */
+            readonly show_reasoning?: boolean;
             readonly skills?: readonly string[];
             /**
              * Format: double
@@ -2345,6 +2348,8 @@ export type components = {
             readonly sandbox?: components["schemas"]["Sandbox"];
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
             readonly search?: string;
+            /** @description Whether people watching a persistent conversation see the model's reasoning live while a written reply is being worked on. It is sent only on live updates, never stored on the reply, and may mention tools and internal details, so it is off unless turned on. */
+            readonly show_reasoning?: boolean;
             /** @description Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set. */
             readonly skills?: readonly string[];
             /**

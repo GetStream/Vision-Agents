@@ -1460,10 +1460,11 @@ type AgentConfig struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox  `json:"sandbox,omitempty"`
-	Search  *string   `json:"search,omitempty"`
-	Skills  *[]string `json:"skills,omitempty"`
-	Speed   *float64  `json:"speed,omitempty"`
+	Sandbox       *Sandbox  `json:"sandbox,omitempty"`
+	Search        *string   `json:"search,omitempty"`
+	ShowReasoning *bool     `json:"show_reasoning,omitempty"`
+	Skills        *[]string `json:"skills,omitempty"`
+	Speed         *float64  `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string `json:"sts,omitempty"`
@@ -1499,9 +1500,12 @@ type AgentConfigPatch struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox  `json:"sandbox,omitempty"`
-	Search  *string   `json:"search,omitempty"`
-	Skills  *[]string `json:"skills,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+	Search  *string  `json:"search,omitempty"`
+
+	// ShowReasoning Whether people watching a persistent conversation see the model's reasoning live while a written reply is being worked on. It is sent only on live updates, never stored on the reply, and may mention tools and internal details, so it is off unless turned on.
+	ShowReasoning *bool     `json:"show_reasoning,omitempty"`
+	Skills        *[]string `json:"skills,omitempty"`
 
 	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
 	Speed    *float64           `json:"speed,omitempty"`
@@ -1548,6 +1552,9 @@ type AgentConfigRequest struct {
 
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
 	Search *string `json:"search,omitempty"`
+
+	// ShowReasoning Whether people watching a persistent conversation see the model's reasoning live while a written reply is being worked on. It is sent only on live updates, never stored on the reply, and may mention tools and internal details, so it is off unless turned on.
+	ShowReasoning *bool `json:"show_reasoning,omitempty"`
 
 	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
 	Skills *[]string `json:"skills,omitempty"`
