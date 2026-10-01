@@ -12,38 +12,48 @@ import (
 	"time"
 )
 
+// nonPublicPrefixes are the address blocks no connector endpoint may resolve to. Each one
+// is a block IANA's special-purpose registries mark as not globally reachable, or one whose
+// address carries an IPv4 address inside it that could be private:
+// https://www.iana.org/assignments/iana-ipv4-special-registry and
+// https://www.iana.org/assignments/iana-ipv6-special-registry. The /24 and /23 of IETF
+// protocol assignments are refused whole, including the few anycast services inside them
+// that are reachable, since no connector endpoint lives there. Some entries repeat what
+// netip's IsPrivate and IsLoopback or the 2000::/3 check below already refuse; they stay so
+// the list can be read against the registries line by line.
 var nonPublicPrefixes = mustParsePrefixes([]string{
-	"0.0.0.0/8",
-	"10.0.0.0/8",
-	"100.64.0.0/10",
-	"127.0.0.0/8",
-	"169.254.0.0/16",
-	"172.16.0.0/12",
-	"192.0.0.0/24",
-	"192.0.2.0/24",
-	"192.88.99.0/24",
-	"192.168.0.0/16",
-	"198.18.0.0/15",
-	"198.51.100.0/24",
-	"203.0.113.0/24",
-	"224.0.0.0/4",
-	"240.0.0.0/4",
-	"::/128",
-	"::1/128",
-	"64:ff9b::/96",
-	"64:ff9b:1::/48",
-	"100::/64",
-	"2001::/23",
-	"2001:db8::/32",
-	"2002::/16",
-	"3fff::/20",
-	"fc00::/7",
-	"fe80::/10",
-	"ff00::/8",
+	"0.0.0.0/8",       // "This network", RFC 791 section 3.2
+	"10.0.0.0/8",      // Private-Use, RFC 1918
+	"100.64.0.0/10",   // Shared Address Space (carrier-grade NAT), RFC 6598
+	"127.0.0.0/8",     // Loopback, RFC 1122 section 3.2.1.3
+	"169.254.0.0/16",  // Link Local, RFC 3927; the cloud metadata server answers on 169.254.169.254
+	"172.16.0.0/12",   // Private-Use, RFC 1918
+	"192.0.0.0/24",    // IETF Protocol Assignments, RFC 6890 section 2.1
+	"192.0.2.0/24",    // Documentation (TEST-NET-1), RFC 5737
+	"192.88.99.0/24",  // 6to4 Relay Anycast, deprecated by RFC 7526
+	"192.168.0.0/16",  // Private-Use, RFC 1918
+	"198.18.0.0/15",   // Benchmarking, RFC 2544
+	"198.51.100.0/24", // Documentation (TEST-NET-2), RFC 5737
+	"203.0.113.0/24",  // Documentation (TEST-NET-3), RFC 5737
+	"224.0.0.0/4",     // Multicast, RFC 5771
+	"240.0.0.0/4",     // Reserved, RFC 1112 section 4; holds limited broadcast 255.255.255.255
+	"::/128",          // Unspecified Address, RFC 4291
+	"::1/128",         // Loopback Address, RFC 4291
+	"64:ff9b::/96",    // IPv4-IPv6 translation, RFC 6052; the low 32 bits are an IPv4 address
+	"64:ff9b:1::/48",  // Local-use IPv4-IPv6 translation, RFC 8215
+	"100::/64",        // Discard-Only Address Block, RFC 6666
+	"2001::/23",       // IETF Protocol Assignments, RFC 2928; holds Teredo 2001::/32, RFC 4380, which wraps an IPv4 address
+	"2001:db8::/32",   // Documentation, RFC 3849
+	"2002::/16",       // 6to4, RFC 3056; bits 16 to 47 are an IPv4 address
+	"3fff::/20",       // Documentation, RFC 9637
+	"fc00::/7",        // Unique-Local, RFC 4193
+	"fe80::/10",       // Link-Local Unicast, RFC 4291
+	"ff00::/8",        // Multicast, RFC 4291 section 2.7
 })
 
-// ipv6GlobalUnicast is the only IPv6 space IANA allocates for global unicast. Outside it
-// sit IPv4-compatible (::/96) and IPv4-translated (::ffff:0:0:0/96) forms of local hosts.
+// ipv6GlobalUnicast is the only IPv6 space IANA allocates for global unicast (RFC 4291,
+// https://www.iana.org/assignments/ipv6-address-space). Outside it sit IPv4-compatible
+// (::/96) and IPv4-translated (::ffff:0:0:0/96) forms of local hosts.
 var ipv6GlobalUnicast = netip.MustParsePrefix("2000::/3")
 
 var errCrossHostRedirect = errors.New("egress: redirect to another host refused")
