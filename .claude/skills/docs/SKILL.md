@@ -3,7 +3,7 @@ name: docs
 description: How to edit the agents docs on getstream.io. Use when writing or updating agents documentation pages, sidebars or the SDK switcher.
 ---
 
-Docs live in the main site repo (GetStream/getstream.io) under `content/docs`, typically located at workspace/getstream.io
+Docs live in the main site repo, typically located at workspace/getstream.io, under `content/docs`
 
 Some general docs tips
 
@@ -13,7 +13,7 @@ Some general docs tips
 
 ## Where things live
 
-- Content: `getstream.io/content/docs`, a plain folder in the site repo (no longer a submodule)
+- Content: `getstream.io/content/docs`, a plain directory of the getstream.io repo (it was GetStream/docs-content). Its authoring conventions are in `content/docs/AGENTS.md`
 - Pages: `agents/<framework>/*.md`; pages shared by every SDK go in `agents/_default/`
 - Sidebars: `_sidebars/[agents][<framework>].json` (`baseURL`, `defaultLanguages`, `items` of `{ title, slug, markdown }`). `[agents][default].json` is the `/agents/docs/` home
 - Framework slugs: `javascript`, `ios` (shown as Swift), `android` (Kotlin), `flutter` (Dart), `python`, `go-golang`, `dotnet-csharp`, `ruby`, `rust`, `php`. A new slug needs a label in `routing.ts` and a logo in `public/docs-assets/icons/`
@@ -35,4 +35,4 @@ Some general docs tips
 ## Preview and ship
 
 - `npm run dev` in getstream.io (Node 24), then open `http://localhost:3000/agents/docs/<framework>/`. Don't run builds or checks unless asked
-- Commit content and site changes together on a getstream.io branch, never `main`
+- Commit content on a getstream.io branch, never `main`, and open an ordinary PR. It deploys when merged
