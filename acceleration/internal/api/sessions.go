@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -307,7 +306,7 @@ func (s *Server) SetSessionSettings(ctx context.Context, request SetSessionSetti
 
 	body := request.Body
 	settings := session.Settings{
-		LLM: body.Llm, STT: body.Stt, TTS: body.Tts, STS: body.Sts, Subagent: body.Subagent,
+		LLM: body.Llm, STT: body.Stt, TTS: body.Tts, STS: body.Sts,
 		Voice: body.Voice, Temperature: body.Temperature, MaxOutputTokens: body.MaxOutputTokens,
 	}
 	if body.Thinking != nil {
@@ -380,7 +379,7 @@ func (s *Server) UpdateSession(ctx context.Context, request UpdateSessionRequest
 // for any.
 func settingsOf(body UpdateSessionRequest) (session.Settings, bool) {
 	settings := session.Settings{
-		LLM: body.Llm, STT: body.Stt, TTS: body.Tts, STS: body.Sts, Subagent: body.Subagent,
+		LLM: body.Llm, STT: body.Stt, TTS: body.Tts, STS: body.Sts,
 		Voice: body.Voice, Temperature: body.Temperature, MaxOutputTokens: body.MaxOutputTokens,
 	}
 	if body.Thinking != nil {
@@ -540,18 +539,12 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if spec.Text {
 		spec.STSTarget = ""
 	}
-	spec.SubagentTarget = override(spec.SubagentTarget, request.Subagent)
 	spec.SearchTarget = override(spec.SearchTarget, request.Search)
 	spec.Voice = override(spec.Voice, request.Voice)
 	spec.MaxTokens = override(spec.MaxTokens, request.MaxTokens)
-	spec.Tasks = override(spec.Tasks, request.Tasks)
 	spec.ToolTimeoutMs = override(spec.ToolTimeoutMs, request.ToolTimeoutMs)
 	spec.Backchannel = override(spec.Backchannel, request.Backchannel)
 	spec.MinConfidence = override(spec.MinConfidence, request.MinConfidence)
-
-	if request.Sandbox != nil {
-		spec.Sandbox = string(*request.Sandbox)
-	}
 
 	if request.Languages != nil {
 		spec.LanguageHints = *request.Languages
@@ -588,22 +581,6 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if request.Video != nil {
 		spec.VideoSource = override(spec.VideoSource, request.Video.Source)
 		spec.VideoMaxFrames = override(spec.VideoMaxFrames, request.Video.MaxFrames)
-	}
-	if request.Skills != nil {
-		skills := harness.Skills{Skills: make([]harness.Skill, 0, len(*request.Skills))}
-		for _, skill := range *request.Skills {
-			skills.Skills = append(skills.Skills, harness.Skill{
-				Name: skill.Name, Revision: value(skill.Revision),
-				CaptureVideo: value(skill.CaptureVideo),
-				Description:  skill.Description,
-				Instructions: skill.Instructions,
-				Deadline:     time.Duration(value(skill.DeadlineMs)) * time.Millisecond,
-			})
-		}
-		spec.Skills = &skills
-	}
-	if request.SkillNames != nil {
-		spec.SkillNames = *request.SkillNames
 	}
 	if request.Tools != nil {
 		for _, tool := range *request.Tools {
@@ -774,7 +751,7 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 func modelOverwritesOf(sent ModelOverwrites) store.ModelOverwrites {
 	return store.ModelOverwrites{
 		LLM: value(sent.Llm), STT: value(sent.Stt), TTS: value(sent.Tts),
-		STS: value(sent.Sts), Subagent: value(sent.Subagent), Search: value(sent.Search),
+		STS: value(sent.Sts), Search: value(sent.Search),
 		Thinking:        string(value(sent.Thinking)),
 		Temperature:     sent.Temperature,
 		MaxOutputTokens: sent.MaxOutputTokens,
@@ -798,9 +775,6 @@ func modelOverwritesFor(held store.ModelOverwrites) *ModelOverwrites {
 	}
 	if held.STS != "" {
 		rendered.Sts = &held.STS
-	}
-	if held.Subagent != "" {
-		rendered.Subagent = &held.Subagent
 	}
 	if held.Search != "" {
 		rendered.Search = &held.Search

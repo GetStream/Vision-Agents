@@ -81,6 +81,30 @@ func (s *ConfigsSuite) TestAConfigRemembersWhichSearchItRoutesTo() {
 	s.Equal("en-low-latency", value(created.Search))
 }
 
+func (s *ConfigsSuite) TestAConfigRunsTheDefaultHarnessUnlessItSaysOtherwise() {
+	unnamed := s.createConfig(map[string]any{"name": "support"})
+	s.Equal(Default, value(unnamed.Harness), "a config that names none runs the default")
+
+	named := s.createConfig(map[string]any{"name": "sales", "harness": "default"})
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+named.Id, nil, &read))
+	s.Equal(Default, value(read.Harness))
+}
+
+func (s *ConfigsSuite) TestAConfigNamingAHarnessThatDoesNotExistIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "harness": "fancy"})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "fancy")
+
+	created := s.createConfig(map[string]any{"name": "support"})
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"harness": "fancy"})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "harness")
+}
+
 func (s *ConfigsSuite) TestAConfigNamingASandboxNobodyRunsIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "sandbox": "docker"})

@@ -157,6 +157,8 @@ components:
           type: string
         guardrail:
           type: string
+        harness:
+          $ref: '#/components/schemas/Harness'
         id:
           type: string
         instructions:
@@ -233,6 +235,8 @@ components:
         guardrail:
           description: 'A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.'
           type: string
+        harness:
+          $ref: '#/components/schemas/Harness'
         instructions:
           type: string
         keyterms:
@@ -297,6 +301,8 @@ components:
           description: |
             A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
           type: string
+        harness:
+          $ref: '#/components/schemas/Harness'
         instructions:
           type: string
         keyterms:
@@ -1356,23 +1362,10 @@ components:
           description: |
             What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
           type: string
-        sandbox:
-          $ref: '#/components/schemas/Sandbox'
         search:
           description: |
             Omit it and the config decides, or search-fast when there is no config.
           type: string
-        skill_names:
-          description: |
-            Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped.
-          items:
-            type: string
-          type: array
-        skills:
-          description: Omit for the built-in set of think, recall and explain.
-          items:
-            $ref: '#/components/schemas/SessionSkill'
-          type: array
         sts:
           description: |
             A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
@@ -1381,18 +1374,11 @@ components:
           description: |
             Omit it and the config decides, or en-low-latency when there is no config.
           type: string
-        subagent:
-          description: |
-            The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
-          type: string
         tags:
           additionalProperties:
             type: string
           description: Cost labels, carried onto every request the session makes.
           type: object
-        tasks:
-          description: How much delegated work may run at once.
-          type: integer
         text:
           default: false
           description: |
@@ -1660,6 +1646,12 @@ components:
           description: What to call them, for a transcript a person reads later.
           type: string
       type: object
+    Harness:
+      description: |
+        Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+      enum:
+        - default
+      type: string
     HealthStatus:
       properties:
         dependencies:
@@ -2203,10 +2195,6 @@ components:
             A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.
           type: string
         stt:
-          type: string
-        subagent:
-          description: |
-            The model delegated work runs on, in place of the config's.
           type: string
         temperature:
           description: |
@@ -3157,8 +3145,6 @@ components:
           type: string
         stt:
           type: string
-        subagent:
-          type: string
         temperature:
           format: double
           type: number
@@ -3182,35 +3168,6 @@ components:
           description: |
             The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
           type: string
-      type: object
-    SessionSkill:
-      description: |
-        A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under.
-      properties:
-        capture_video:
-          description: Capture task-scoped visual evidence before reasoning.
-          type: boolean
-        deadline_ms:
-          description: How long the work may run before it is abandoned. Zero is the default.
-          format: int64
-          type: integer
-        description:
-          description: The one line the fast model sees.
-          type: string
-        instructions:
-          description: The full prompt, which only the subagent sees.
-          type: string
-        name:
-          type: string
-        revision:
-          description: Immutable skill revision selected by the application's authorized registry.
-          format: int64
-          minimum: 1
-          type: integer
-      required:
-        - name
-        - description
-        - instructions
       type: object
     SessionSort:
       additionalProperties: false
@@ -4009,6 +3966,8 @@ components:
         guardrail:
           description: 'The directory''s guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.'
           type: string
+        harness:
+          $ref: '#/components/schemas/Harness'
         hash:
           description: A fingerprint of the directory. A second sync with the same hash does nothing.
           type: string
@@ -4675,8 +4634,6 @@ components:
             A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
           type: string
         stt:
-          type: string
-        subagent:
           type: string
         temperature:
           format: double

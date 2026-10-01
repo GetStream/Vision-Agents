@@ -217,17 +217,23 @@ func TestAHardQuestionIsHandedToTheThinkingModel(t *testing.T) {
 	// Both models are named rather than left to a capability shortcut, because what is
 	// under test is the pairing itself: a fast model that knows to hand work over, and a
 	// slow one behind it.
+	// The subagent is part of the stored config, so the session runs under the config Sync
+	// wrote.
 	agent := chatting(t, agents.Options{
+		Name:         "e2e-delegating",
 		Instructions: "You are Jean. Be brief.",
 		LLM: stream.Accelerated(stream.Config{
 			Backend: router(t),
+			Agent:   "e2e-delegating",
 			LLM:     "gemini/gemini-3.8-flash",
 		}),
 		Harness: &agents.Harness{
-			UseSkills: true,
 			Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
 		},
 	})
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 
 	session, err := agent.Chat(t.Context())
 	if err != nil {
@@ -292,7 +298,6 @@ func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
 		Name:         "e2e-sync",
 		Instructions: "You are Jean, the first time.",
 		Harness: &agents.Harness{
-			UseSkills: true,
 			Skills: []agents.Skill{{
 				Name:         "e2e-think",
 				Description:  "Work something out before answering",

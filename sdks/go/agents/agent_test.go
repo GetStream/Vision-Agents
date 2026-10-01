@@ -412,11 +412,15 @@ func TestADirectorysSkillsAreWhatTheAgentJoinsWith(t *testing.T) {
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
 
-	var call stream.Call
-	agent.options.Harness.apply(&call)
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 
-	if call.Skills == nil || len(*call.Skills) != 1 || (*call.Skills)[0].Name != "think" {
-		t.Errorf("the session would be created with %+v", call.Skills)
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	skills := router.syncs[0].Skills
+	if skills == nil || len(*skills) != 1 || (*skills)[0].Name != "think" {
+		t.Errorf("the config would be stored with %+v", skills)
 	}
 }
 
@@ -451,48 +455,47 @@ func TestAMemoryFilterSaysWhoTheMemoriesAreAboutAndWhatNarrowsThem(t *testing.T)
 	}
 }
 
-func TestAHarnessRendersIntoTheCallItConfigures(t *testing.T) {
-	harness := &Harness{
-		UseSkills: true,
+func TestAgentYAMLNamesTheHarnessAndSandboxTheConfigIsStoredWith(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nharness: default\nsandbox: daytona\n")
+
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root, Harness: &Harness{
 		Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
-		VM:        Daytona(),
-		Tasks:     3,
-		Skills: []Skill{{
-			Name: "think", Description: "Work it out",
-			Instructions: "Reason it through.", Deadline: 30 * time.Second,
-		}},
+	}})
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 
-	var call stream.Call
-	harness.apply(&call)
-
-	if call.Subagent != "openai/gpt-5.6-sol" || call.Tasks != 3 || call.Sandbox != "daytona" {
-		t.Errorf("the call was configured as %+v", call)
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	synced := router.syncs[0]
+	if synced.Harness == nil || *synced.Harness != acceleration.Default {
+		t.Errorf("the harness was stored as %v", synced.Harness)
 	}
-	if call.Skills == nil || len(*call.Skills) != 1 {
-		t.Fatalf("the skills are %+v", call.Skills)
+	if synced.Sandbox == nil || *synced.Sandbox != "daytona" {
+		t.Errorf("the sandbox was stored as %v", synced.Sandbox)
 	}
-	skill := (*call.Skills)[0]
-	if skill.Name != "think" || skill.DeadlineMs == nil || *skill.DeadlineMs != 30000 {
-		t.Errorf("the skill went over as %+v", skill)
+	if synced.Subagent == nil || *synced.Subagent != "openai/gpt-5.6-sol" {
+		t.Errorf("the subagent was stored as %v", synced.Subagent)
 	}
 }
 
 func TestTheDefaultHarnessLeavesTheBuiltInSkillsAlone(t *testing.T) {
-	var call stream.Call
-	DefaultHarness().apply(&call)
+	router := newBackend(t)
+	stored, err := agentOn(t, router, Options{Name: "jean", Harness: DefaultHarness()}).Sync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if call.Skills != nil {
-		t.Errorf("the built-in set was replaced by %+v", call.Skills)
+	if stored.Skills != nil {
+		t.Errorf("the built-in set was replaced by %+v", *stored.Skills)
 	}
 }
 
-func TestAHarnessAskingForNoSkillsTurnsDelegationOff(t *testing.T) {
-	var call stream.Call
-	(&Harness{UseSkills: false}).apply(&call)
-
-	if call.Skills == nil || len(*call.Skills) != 0 {
-		t.Errorf("the skills are %+v, want an empty list rather than none at all", call.Skills)
+func TestAHarnessThatDoesNotExistIsRefused(t *testing.T) {
+	if _, err := New(Options{Name: "jean", Harness: &Harness{Name: "fancy"}}); err == nil {
+		t.Fatal("the backend has only the default harness, so another name means nothing")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -275,6 +276,9 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if _, ok := sandboxOf(request.Sandbox); !ok {
 		return fmt.Sprintf("there is no sandbox provider called %q", *request.Sandbox), false
 	}
+	if _, ok := harnessOf(request.Harness); !ok {
+		return fmt.Sprintf("there is no harness called %q", *request.Harness), false
+	}
 	if value(request.Speed) < 0 {
 		return "a voice's speed cannot be negative", false
 	}
@@ -346,6 +350,19 @@ func sandboxOf(box *Sandbox) (string, bool) {
 	return string(*box), true
 }
 
+// harnessOf reads the harness a caller sent, which is optional and defaults to the default
+// one. An unknown one is refused rather than defaulted, since an agent asked to run one that
+// does not exist would otherwise quietly run another.
+func harnessOf(named *Harness) (string, bool) {
+	if named == nil || *named == "" {
+		return harness.Default, true
+	}
+	if !named.Valid() {
+		return "", false
+	}
+	return string(*named), true
+}
+
 // keytermsOf reads the terms a caller sent, which are optional and may be blank.
 func keytermsOf(list *[]string) []string {
 	if list == nil {
@@ -377,6 +394,7 @@ func skillComplaint(request SkillRequest) (string, bool) {
 func storedConfig(request AgentConfigRequest, customerID string) store.AgentConfig {
 	mode, _ := modeOf(request.Mode)
 	box, _ := sandboxOf(request.Sandbox)
+	named, _ := harnessOf(request.Harness)
 	config := store.AgentConfig{
 		CustomerID:         customerID,
 		Name:               strings.TrimSpace(request.Name),
@@ -394,6 +412,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Guardrail:          value(request.Guardrail),
 		KnowledgeNamespace: value(request.KnowledgeNamespace),
 		Sandbox:            box,
+		Harness:            named,
 	}
 	if request.Skills != nil {
 		config.Skills = *request.Skills
@@ -462,6 +481,11 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		box := Sandbox(config.Sandbox)
 		rendered.Sandbox = &box
 	}
+	named := Harness(config.Harness)
+	if named == "" {
+		named = Default
+	}
+	rendered.Harness = &named
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills

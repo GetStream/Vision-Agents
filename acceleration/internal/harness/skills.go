@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -45,6 +46,11 @@ type Skill struct {
 // Skills is the set a harness was configured with.
 type Skills struct {
 	Skills []Skill `yaml:"skills"`
+	// Load reads a skill's instructions at the moment the subagent runs it, for a skill
+	// held by its name and description alone. The fast model only ever sees the index, so
+	// nothing more is read until a skill is used, and a skill edited mid-conversation is
+	// used as it now is. Nil means every skill carries its own instructions.
+	Load func(ctx context.Context, name string) (string, error) `yaml:"-"`
 }
 
 // Lookup returns a skill by name.
@@ -108,7 +114,7 @@ func (s Skills) Validate() error {
 			return fmt.Errorf("harness: skill %s has no description, so the model "+
 				"would never know when to ask for it", skill.Name)
 		}
-		if skill.Instructions == "" {
+		if skill.Instructions == "" && s.Load == nil {
 			return fmt.Errorf("harness: skill %s has no instructions", skill.Name)
 		}
 		if _, duplicate := seen[skill.Name]; duplicate {

@@ -389,6 +389,21 @@ func (e Granularity) Valid() bool {
 	}
 }
 
+// Defines values for Harness.
+const (
+	Default Harness = "default"
+)
+
+// Valid indicates whether the value is a known member of the Harness enum.
+func (e Harness) Valid() bool {
+	switch e {
+	case Default:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatusStatus.
 const (
 	Degraded HealthStatusStatus = "degraded"
@@ -1463,9 +1478,12 @@ type ActivityGranularity string
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
-	CreatedAt          time.Time `json:"created_at"`
-	Greeting           *string   `json:"greeting,omitempty"`
-	Guardrail          *string   `json:"guardrail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Greeting  *string   `json:"greeting,omitempty"`
+	Guardrail *string   `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness            *Harness  `json:"harness,omitempty"`
 	Id                 string    `json:"id"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
@@ -1503,7 +1521,10 @@ type AgentConfigPatch struct {
 	Greeting *string `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
-	Guardrail          *string   `json:"guardrail,omitempty"`
+	Guardrail *string `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness            *Harness  `json:"harness,omitempty"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
@@ -1540,8 +1561,11 @@ type AgentConfigRequest struct {
 	Greeting *string `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
-	Guardrail    *string `json:"guardrail,omitempty"`
-	Instructions *string `json:"instructions,omitempty"`
+	Guardrail *string `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness      *Harness `json:"harness,omitempty"`
+	Instructions *string  `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
 	Keyterms *[]string `json:"keyterms,omitempty"`
@@ -2217,17 +2241,8 @@ type CreateSessionRequest struct {
 	// ProjectId What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
 	ProjectId *string `json:"project_id,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox `json:"sandbox,omitempty"`
-
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
-
-	// SkillNames Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped.
-	SkillNames *[]string `json:"skill_names,omitempty"`
-
-	// Skills Omit for the built-in set of think, recall and explain.
-	Skills *[]SessionSkill `json:"skills,omitempty"`
 
 	// Sts A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
 	Sts *string `json:"sts,omitempty"`
@@ -2235,14 +2250,8 @@ type CreateSessionRequest struct {
 	// Stt Omit it and the config decides, or en-low-latency when there is no config.
 	Stt *string `json:"stt,omitempty"`
 
-	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
-	Subagent *string `json:"subagent,omitempty"`
-
 	// Tags Cost labels, carried onto every request the session makes.
 	Tags *map[string]string `json:"tags,omitempty"`
-
-	// Tasks How much delegated work may run at once.
-	Tasks *int `json:"tasks,omitempty"`
 
 	// Text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
 	Text *bool `json:"text,omitempty"`
@@ -2417,6 +2426,9 @@ type GuestUserRequest struct {
 	// Name What to call them, for a transcript a person reads later.
 	Name *string `json:"name,omitempty"`
 }
+
+// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+type Harness string
 
 // HealthStatus defines model for HealthStatus.
 type HealthStatus struct {
@@ -2800,9 +2812,6 @@ type ModelOverwrites struct {
 	// Sts A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.
 	Sts *string `json:"sts,omitempty"`
 	Stt *string `json:"stt,omitempty"`
-
-	// Subagent The model delegated work runs on, in place of the config's.
-	Subagent *string `json:"subagent,omitempty"`
 
 	// Temperature How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
 	Temperature *float64 `json:"temperature,omitempty"`
@@ -3437,7 +3446,6 @@ type SessionSettingsRequest struct {
 	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
 	Sts         *string                          `json:"sts,omitempty"`
 	Stt         *string                          `json:"stt,omitempty"`
-	Subagent    *string                          `json:"subagent,omitempty"`
 	Temperature *float64                         `json:"temperature,omitempty"`
 	Thinking    *SessionSettingsRequestThinking  `json:"thinking,omitempty"`
 	Tts         *string                          `json:"tts,omitempty"`
@@ -3452,25 +3460,6 @@ type SessionSettingsRequestThinking string
 
 // SessionSettingsRequestVerbosity defines model for SessionSettingsRequest.Verbosity.
 type SessionSettingsRequestVerbosity string
-
-// SessionSkill A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under.
-type SessionSkill struct {
-	// CaptureVideo Capture task-scoped visual evidence before reasoning.
-	CaptureVideo *bool `json:"capture_video,omitempty"`
-
-	// DeadlineMs How long the work may run before it is abandoned. Zero is the default.
-	DeadlineMs *int64 `json:"deadline_ms,omitempty"`
-
-	// Description The one line the fast model sees.
-	Description string `json:"description"`
-
-	// Instructions The full prompt, which only the subagent sees.
-	Instructions string `json:"instructions"`
-	Name         string `json:"name"`
-
-	// Revision Immutable skill revision selected by the application's authorized registry.
-	Revision *int64 `json:"revision,omitempty"`
-}
 
 // SessionSort defines model for SessionSort.
 type SessionSort struct {
@@ -3995,6 +3984,9 @@ type SyncAgentRequest struct {
 	// Guardrail The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
 
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness *Harness `json:"harness,omitempty"`
+
 	// Hash A fingerprint of the directory. A second sync with the same hash does nothing.
 	Hash         string               `json:"hash"`
 	Instructions *string              `json:"instructions,omitempty"`
@@ -4393,7 +4385,6 @@ type UpdateSessionRequest struct {
 	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
 	Sts         *string                        `json:"sts,omitempty"`
 	Stt         *string                        `json:"stt,omitempty"`
-	Subagent    *string                        `json:"subagent,omitempty"`
 	Temperature *float64                       `json:"temperature,omitempty"`
 	Thinking    *UpdateSessionRequestThinking  `json:"thinking,omitempty"`
 	Title       *string                        `json:"title,omitempty"`

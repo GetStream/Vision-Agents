@@ -14,6 +14,10 @@ const (
 	compactionKeepRecent  = 6
 	compactionMinTokens   = 2048
 	compactionCacheRatio  = 0.5
+	// compactionWindowRatio is how full the model's context window may get before the
+	// history is summarised regardless of the cache, leaving room for the summary to land
+	// before a prompt is refused for being too long.
+	compactionWindowRatio = 0.8
 )
 
 var compactionSkill = Skill{
@@ -28,14 +32,15 @@ type compaction struct {
 	prefix []llm.Message
 }
 
-// MaybeCompact starts private summary work when history is large and prefix caching has
-// stopped paying for keeping the full transcript verbatim. It reports whether it started
-// any, so the conversation can record that its own memory was rewritten.
+// MaybeCompact starts private summary work when history is large and either the prompt
+// is nearing the model's context window or prefix caching has stopped paying for keeping
+// the full transcript verbatim. It reports whether it started any, so the conversation can
+// record that its own memory was rewritten.
 func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens int64) (bool, error) {
 	if h.tasks == nil || len(history) < compactionMinMessages || inputTokens < compactionMinTokens {
 		return false, nil
 	}
-	if float64(cachedTokens)/float64(inputTokens) >= compactionCacheRatio {
+	if !h.nearingContextWindow(inputTokens) && float64(cachedTokens)/float64(inputTokens) >= compactionCacheRatio {
 		return false, nil
 	}
 
@@ -62,6 +67,18 @@ func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens 
 	}
 	h.logger.Debug("compacting conversation", "task", taskID, "messages", prefixLength)
 	return true, nil
+}
+
+// nearingContextWindow reports whether a prompt of inputTokens has used most of the window
+// of the model holding the conversation. A model whose window is not declared never is.
+func (h *Harness) nearingContextWindow(inputTokens int64) bool {
+	h.mu.Lock()
+	model := h.options.Model
+	h.mu.Unlock()
+	if model == nil || model.ContextWindow() <= 0 {
+		return false
+	}
+	return float64(inputTokens) >= compactionWindowRatio*float64(model.ContextWindow())
 }
 
 func (h *Harness) finishCompaction(result Result) {

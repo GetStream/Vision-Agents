@@ -140,6 +140,7 @@ type Settings struct {
 	Voice    string            `yaml:"voice"`
 	Speed    float64           `yaml:"speed"`
 	LLM      string            `yaml:"llm"`
+	Harness  string            `yaml:"harness"`
 	Subagent string            `yaml:"subagent"`
 	Search   string            `yaml:"search"`
 	Greeting string            `yaml:"greeting"`
@@ -278,7 +279,7 @@ func (f *Folder) fill(options *Options) {
 		return
 	}
 	if options.Harness == nil {
-		options.Harness = &Harness{UseSkills: true, Skills: f.Skills}
+		options.Harness = &Harness{Skills: f.Skills}
 		return
 	}
 	if len(options.Harness.Skills) == 0 {

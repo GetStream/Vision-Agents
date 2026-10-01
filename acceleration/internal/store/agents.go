@@ -41,7 +41,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 var configColumns = []string{
 	"name", "mode", "stt", "tts", "sts", "voice", "speed", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "guardrail",
-	"skills", "plugins", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "tags",
+	"skills", "plugins", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "harness", "tags",
 	"sync_hash", "updated_at",
 }
 

@@ -350,7 +350,9 @@ type AgentConfig struct {
 	KnowledgeNamespace string `bun:"knowledge_namespace,notnull"`
 	// Sandbox is where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none.
-	Sandbox string            `bun:"sandbox,notnull"`
+	Sandbox string `bun:"sandbox,notnull"`
+	// Harness is which harness the agent's sessions run, "default" being the one there is.
+	Harness string            `bun:"harness,notnull"`
 	Tags    map[string]string `bun:"tags,type:jsonb"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
@@ -1100,12 +1102,11 @@ const (
 // resolves; Thinking, Temperature and MaxOutputTokens are folded into the LLM options the
 // same way the router's own overrides are.
 type ModelOverwrites struct {
-	LLM      string `json:"llm,omitempty"`
-	STT      string `json:"stt,omitempty"`
-	TTS      string `json:"tts,omitempty"`
-	STS      string `json:"sts,omitempty"`
-	Subagent string `json:"subagent,omitempty"`
-	Search   string `json:"search,omitempty"`
+	LLM    string `json:"llm,omitempty"`
+	STT    string `json:"stt,omitempty"`
+	TTS    string `json:"tts,omitempty"`
+	STS    string `json:"sts,omitempty"`
+	Search string `json:"search,omitempty"`
 	// Thinking is how hard to reason: off, low, medium or high. It becomes the reasoning
 	// effort on the LLM options, which is what the providers that support one are sent.
 	Thinking        string   `json:"thinking,omitempty"`

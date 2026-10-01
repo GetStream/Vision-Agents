@@ -159,12 +159,13 @@ type Spec struct {
 	MaxTokens    int
 	Tasks        int
 
-	// Skills are what the voice model may hand to the subagent, spelled out. Nil means
-	// SkillNames decides, and both being empty means the built-in set, which is only
-	// loaded when there is a subagent to run them.
-	Skills *harness.Skills
-	// SkillNames are skills to look up rather than spell out: the customer's own, or one
-	// of the built-in think, recall and explain.
+	// Harness is which harness the session runs, from the agent's config. Empty is the
+	// default, and so is every session today; a caller cannot choose it.
+	Harness string
+
+	// SkillNames are the skills the voice model may hand to the subagent: the agent
+	// config's own, or one of the built-in think, recall and explain. Empty means the
+	// built-in set, which is only loaded when there is a subagent to run them.
 	SkillNames []string
 	// Plugins are hosted MCP servers this session may reach, named from the catalog.
 	Plugins []string
@@ -256,6 +257,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		VisibleTools:       config.VisibleTools,
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Sandbox:            config.Sandbox,
+		Harness:            config.Harness,
 		Tags:               routing.Tags(config.Tags),
 	}
 }
@@ -267,6 +269,13 @@ func (s *Spec) Normalize() error {
 	// caller who asks for a native model in a text session, say, should be refused for that
 	// reason rather than have the refusal depend on which of the two was read first.
 	s.applyOverwrites()
+
+	if s.Harness == "" {
+		s.Harness = harness.Default
+	}
+	if s.Harness != harness.Default {
+		return fmt.Errorf("session: there is no harness called %q", s.Harness)
+	}
 
 	if s.ID == "" {
 		id, err := uuid.NewV7()
@@ -400,9 +409,6 @@ func (s *Spec) applyOverwrites() {
 	}
 	if over.STS != "" {
 		s.STSTarget = over.STS
-	}
-	if over.Subagent != "" {
-		s.SubagentTarget = over.Subagent
 	}
 	if over.Search != "" {
 		s.SearchTarget = over.Search

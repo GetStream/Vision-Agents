@@ -240,6 +240,9 @@ type ProviderConfig struct {
 	// InputModalities are extra input kinds this model accepts, e.g. "image". Empty
 	// means text only, and a request carrying anything else is not routed here.
 	InputModalities []string `yaml:"input_modalities"`
+	// ContextWindow is how many tokens of prompt this host serves the model with, which
+	// can be less than its maker's. Compaction reads it; routing does not.
+	ContextWindow int64 `yaml:"context_window"`
 }
 
 // Supports reports whether this model can express every term a request named.

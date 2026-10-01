@@ -4117,34 +4117,6 @@ components:
             What a call is doing, in words for the people in the conversation, such as
             "Checking your location". Shown on the reply's ai_tool_call attachment.
 
-    SessionSkill:
-      type: object
-      required: [name, description, instructions]
-      description: >
-        A kind of work worth handing to the slower model. There is nothing behind a skill
-        but a better model: what it declares is the instructions that model answers under.
-      properties:
-        name:
-          type: string
-        revision:
-          type: integer
-          format: int64
-          minimum: 1
-          description: Immutable skill revision selected by the application's authorized registry.
-        description:
-          type: string
-          description: The one line the fast model sees.
-        capture_video:
-          type: boolean
-          description: Capture task-scoped visual evidence before reasoning.
-        instructions:
-          type: string
-          description: The full prompt, which only the subagent sees.
-        deadline_ms:
-          type: integer
-          format: int64
-          description: How long the work may run before it is abandoned. Zero is the default.
-
     SessionMemory:
       type: object
       description: >
@@ -4199,6 +4171,14 @@ components:
         Where the subagent may run code it writes. Only the subagent is offered it:
         running code takes seconds, and the model holding the conversation has none to
         spare. Omit it and the subagent works everything out in its head.
+
+    Harness:
+      type: string
+      enum: [default]
+      description: >
+        Which harness the agent's sessions run: what hands work to the subagent, loads
+        skills, compacts the conversation and starts the sandbox. Set on the agent, never
+        on a session. Omit it for the default, the only one there is.
 
     AgentConfigRequest:
       type: object
@@ -4301,6 +4281,8 @@ components:
             told.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
+        harness:
+          $ref: "#/components/schemas/Harness"
         tags:
           type: object
           additionalProperties:
@@ -4366,6 +4348,8 @@ components:
           type: string
         sandbox:
           $ref: "#/components/schemas/Sandbox"
+        harness:
+          $ref: "#/components/schemas/Harness"
         tags:
           type: object
           additionalProperties:
@@ -6807,11 +6791,6 @@ components:
             A speech-to-speech target. Naming one makes this a native session: the model
             hears and speaks for itself, so no transcriber, conversation model or voice is
             opened. Omit it and the config decides.
-        subagent:
-          type: string
-          description: >
-            The model that does the thinking. Empty means the voice model answers
-            everything itself, and skills mean nothing.
         search:
           type: string
           description: >
@@ -6833,11 +6812,6 @@ components:
             terms, and providers that cannot be told about vocabulary ignore them.
         max_tokens:
           type: integer
-        tasks:
-          type: integer
-          description: How much delegated work may run at once.
-        sandbox:
-          $ref: "#/components/schemas/Sandbox"
         backchannel:
           type: boolean
           default: false
@@ -6848,19 +6822,6 @@ components:
           description: >
             How sure the transcriber must be before the agent answers rather than checks
             what was meant.
-        skills:
-          type: array
-          items:
-            $ref: "#/components/schemas/SessionSkill"
-          description: Omit for the built-in set of think, recall and explain.
-        skill_names:
-          type: array
-          items:
-            type: string
-          description: >
-            Skills to look up rather than spell out: the customer's own, or one of the
-            built-in think, recall and explain. Ignored when skills are given in full,
-            and a name nothing defines is refused rather than dropped.
         tools:
           type: array
           items:
@@ -6905,10 +6866,6 @@ components:
           description: >
             A speech-to-speech target. Naming one here makes the session native even if the
             config did not, which means no transcriber, model or voice is opened.
-        subagent:
-          type: string
-          description: >
-            The model delegated work runs on, in place of the config's.
         search:
           type: string
         thinking:
@@ -7419,8 +7376,6 @@ components:
           description: >
             A speech-to-speech target, which makes the session native. Empty makes it a
             cascade again.
-        subagent:
-          type: string
         voice:
           type: string
           description: >
@@ -7468,8 +7423,6 @@ components:
           description: >
             A speech-to-speech target, which makes the session native. Empty makes it a
             cascade again.
-        subagent:
-          type: string
         voice:
           type: string
           description: >

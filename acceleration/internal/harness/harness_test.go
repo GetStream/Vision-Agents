@@ -161,6 +161,8 @@ func stubConfig() routing.ModalityConfig {
 			Model:     "stub-model",
 			Languages: []string{"en"},
 			Realtime:  true,
+			// ContextWindow is far past what any test sends unless it means to fill it.
+			ContextWindow: 100_000,
 		}},
 		Aliases: map[string]routing.Alias{
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
@@ -187,6 +189,8 @@ type HarnessSuite struct {
 	tools Tools
 	// box is where the next harness's subagent may run code. Nil is the usual case.
 	box *stubSandbox
+	// skills are what the next harness offers.
+	skills Skills
 
 	harness *Harness
 	events  *collector
@@ -200,6 +204,7 @@ func (s *HarnessSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.tools = Tools{}
 	s.box = nil
+	s.skills = testSkills()
 }
 
 // collector drains a harness's events for the life of one test, because the emitter
@@ -257,7 +262,7 @@ func (s *HarnessSuite) build(delegating bool) {
 	s.fast = newStubLLM()
 	options := Options{
 		Model:  s.session(s.fast),
-		Skills: testSkills(),
+		Skills: s.skills,
 		Tools:  s.tools,
 		Logger: slog.New(slog.DiscardHandler),
 	}
@@ -534,6 +539,55 @@ func (s *HarnessSuite) TestARequestForHelpIsDelegatedAndNotSpoken() {
 	s.Equal("15% of 84.20", asked.Input[1].Content)
 
 	s.Equal("think", s.awaitDelegated(1)[0].Skill)
+}
+
+func (s *HarnessSuite) TestASkillOfferedByNameIsReadAsItIsWhenItIsUsed() {
+	// The fast model only ever sees the index, so a skill's instructions are read when the
+	// subagent runs it, and an edit made mid-conversation is what the next use answers under.
+	var mu sync.Mutex
+	stored := "refund within 30 days"
+	s.skills = Skills{
+		Skills: []Skill{{Name: "refund", Description: "what a caller is owed", Deadline: time.Minute}},
+		Load: func(_ context.Context, name string) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return name + ": " + stored, nil
+		},
+	}
+	s.build(true)
+	s.respond("turn-1", "can I get my money back")
+
+	s.Require().NotContains(s.fast.requests()[0].Instructions, "30 days",
+		"the fast model sees what a skill is for, never its instructions")
+	s.reply("turn-1", `One moment. <ask skill="refund">bought 20 days ago</ask>`)
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
+	s.Equal("refund: refund within 30 days", s.slow.requests()[0].Instructions)
+
+	mu.Lock()
+	stored = "refund within 14 days"
+	mu.Unlock()
+	_, err := s.harness.Delegate("refund", "bought 20 days ago", "turn-2", nil, nil)
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.slow.requests()) == 2 }, "the subagent was never asked again")
+	s.Equal("refund: refund within 14 days", s.slow.requests()[1].Instructions)
+}
+
+func (s *HarnessSuite) TestASkillThatCannotBeReadFailsRatherThanRunningWithoutInstructions() {
+	s.skills = Skills{
+		Skills: []Skill{{Name: "refund", Description: "what a caller is owed", Deadline: time.Minute}},
+		Load: func(context.Context, string) (string, error) {
+			return "", errors.New("the skill was deleted")
+		},
+	}
+	s.build(true)
+	s.respond("turn-1", "can I get my money back")
+
+	_, err := s.harness.Delegate("refund", "bought 20 days ago", "turn-1", nil, nil)
+	s.Require().NoError(err)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Failed, settled.State)
+	s.Empty(s.slow.requests(), "nothing was asked without the skill's instructions")
 }
 
 func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
@@ -959,6 +1013,21 @@ func (s *HarnessSuite) TestAnEffectivePrefixCacheKeepsVerbatimHistory() {
 	s.False(started)
 
 	s.Empty(s.slow.requests(), "cached history is cheaper and more faithful than a summary")
+}
+
+func (s *HarnessSuite) TestAPromptNearingTheContextWindowIsCompactedEvenWhenCached() {
+	// A cache that pays does not make room, so once the prompt has used most of the window
+	// the history is summarised before the next turn is refused for being too long.
+	s.build(true)
+
+	started, err := s.harness.MaybeCompact(longHistory(), 79_999, 79_999)
+	s.Require().NoError(err)
+	s.False(started, "under 80% of the window, a cached history stays verbatim")
+
+	started, err = s.harness.MaybeCompact(longHistory(), 80_000, 80_000)
+	s.Require().NoError(err)
+	s.True(started)
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the summary was never asked for")
 }
 
 func (s *HarnessSuite) TestShortHistoryIsNotCompacted() {
