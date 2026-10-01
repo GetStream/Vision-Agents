@@ -30,29 +30,30 @@ stt = deepgram.STT(
 
 ## Text-to-Speech (TTS)
 
-Low-latency text-to-speech using Deepgram's Aura model via WebSocket streaming.
+Low-latency text-to-speech using Deepgram's Flux TTS via WebSocket streaming (`/v2/speak`).
 
 ```python
 from vision_agents.plugins import deepgram
 
 tts = deepgram.TTS(
-    model="aura-2-thalia-en",  # Default voice
+    model="flux-haley-en",  # Default voice
     sample_rate=16000,  # Audio sample rate
+    speed=1.0,  # Optional speech-rate multiplier (0.85–1.15)
 )
 ```
 
 ### Available Voices
 
-Deepgram offers various Aura voice models:
+Deepgram Flux voices use the `flux-{voice}-en` format. Aura model strings are not supported.
 
-- `aura-2-thalia-en` - Default female voice
-- `aura-2-orion-en` - Male voice
-- See [TTS Models](https://developers.deepgram.com/docs/tts-models) for all options
+- `flux-haley-en` - Default featured voice
+- `flux-kit-en`
+- See [Flux TTS voices](https://developers.deepgram.com/docs/flux-tts/voices) for all options
 
 ### TTS Docs
 
-- https://developers.deepgram.com/docs/tts-websocket
-- https://developers.deepgram.com/docs/streaming-text-to-speech
+- https://developers.deepgram.com/docs/flux-tts/overview
+- https://developers.deepgram.com/docs/flux-tts/voices
 
 ## Environment Variables
 

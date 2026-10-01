@@ -1422,6 +1422,205 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyRequest
+    {
+
+        /// <summary>
+        /// A provider/model or a capability shortcut. Empty takes classify-fast.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("target")]
+        public string? Target { get; set; } = default!;
+
+        /// <summary>
+        /// What the questions are about: a string for plain text, or a JSON object whose parts a question can name, such as `message`.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public object State { get; set; } = default!;
+
+        /// <summary>
+        /// Keyed by ids of the caller's own choosing, which is how the answers come back. An id is not part of what is asked, so a question carries its whole meaning in its instructions.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("questions")]
+        public System.Collections.Generic.Dictionary<string, ClassifyQuestion> Questions { get; set; } = new System.Collections.Generic.Dictionary<string, ClassifyQuestion>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyQuestion
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
+        public string Instructions { get; set; } = default!;
+
+        /// <summary>
+        /// A choice's options, each with a description of what it covers or an empty string where the name says it. Include one for "none of these" whenever the options may not cover an input.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("options")]
+        public System.Collections.Generic.Dictionary<string, string>? Options { get; set; } = default!;
+
+        /// <summary>
+        /// A score's levels, in order, each describing a concrete situation.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("levels")]
+        public System.Collections.Generic.List<string>? Levels { get; set; } = default!;
+
+        /// <summary>
+        /// What yes means for a noul, where the instructions do not say it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("yes")]
+        public string? Yes { get; set; } = default!;
+
+        /// <summary>
+        /// What no means for a noul, where the instructions do not say it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("no")]
+        public string? No { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyResult
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// The version that answered, which is worth recording when the target was an alias.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("answers")]
+        public System.Collections.Generic.Dictionary<string, ClassifyAnswer> Answers { get; set; } = new System.Collections.Generic.Dictionary<string, ClassifyAnswer>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("usage")]
+        public ClassifyUsage Usage { get; set; } = new ClassifyUsage();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What the request read and wrote. The state's tokens are counted once however many questions shared them.
+    /// <br/>
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyUsage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("input_tokens")]
+        public long InputTokens { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("output_tokens")]
+        public long OutputTokens { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Which fields carry the answer depends on the type. A noul fills yes alone. A choice fills chosen, probabilities and confidence. A score fills level, legend, probabilities and confidence.
+    /// <br/>
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ClassifyAnswer
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = default!;
+
+        /// <summary>
+        /// The probability a noul is true, from 0 to 1.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("yes")]
+        public double? Yes { get; set; } = default!;
+
+        /// <summary>
+        /// The likeliest option of a choice.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chosen")]
+        public string? Chosen { get; set; } = default!;
+
+        /// <summary>
+        /// Where a score landed, which may be between two of its levels.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("level")]
+        public double? Level { get; set; } = default!;
+
+        /// <summary>
+        /// A score's levels by index, as decimal strings.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("legend")]
+        public System.Collections.Generic.Dictionary<string, string>? Legend { get; set; } = default!;
+
+        /// <summary>
+        /// The distribution the answer came from: options for a choice, level indices for a score. They sum to one.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("probabilities")]
+        public System.Collections.Generic.Dictionary<string, double>? Probabilities { get; set; } = default!;
+
+        /// <summary>
+        /// How peaked the distribution is, not whether acting on it is safe.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("confidence")]
+        public double? Confidence { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SearchResult
     {
 
@@ -3818,6 +4017,42 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset StartedAt { get; set; } = default!;
 
         /// <summary>
+        /// Last transcript revision to a stable turn ready for the flow controller.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cadence_ms")]
+        public double? CadenceMs { get; set; } = default!;
+
+        /// <summary>
+        /// Stable turn to the main model request, including flow and queueing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("decision_ms")]
+        public double? DecisionMs { get; set; } = default!;
+
+        /// <summary>
+        /// Main model request to the first text delta admitted to the voice pipeline.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("model_to_first_text_ms")]
+        public double? ModelToFirstTextMs { get; set; } = default!;
+
+        /// <summary>
+        /// First text delta to the first TTS request.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("text_to_tts_ms")]
+        public double? TextToTtsMs { get; set; } = default!;
+
+        /// <summary>
+        /// First TTS request to the first audio chunk published to the edge.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tts_to_audio_ms")]
+        public double? TtsToAudioMs { get; set; } = default!;
+
+        /// <summary>
+        /// Individual model requests for this turn, including flow and delegated work.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("model_calls")]
+        public System.Collections.Generic.List<ModelCallTiming>? ModelCalls { get; set; } = default!;
+
+        /// <summary>
         /// What the caller said, when it can be matched to this exchange.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("heard")]
@@ -3830,7 +4065,7 @@ namespace GetStream.VisionAgents.Models
         public string? Said { get; set; } = default!;
 
         /// <summary>
-        /// How long the caller waited between finishing and being answered.
+        /// Last transcript revision to first audio published; includes cadence settling.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("roundtrip_ms")]
         public double? RoundtripMs { get; set; } = default!;
@@ -3854,7 +4089,7 @@ namespace GetStream.VisionAgents.Models
         public double? TtsTtfbMs { get; set; } = default!;
 
         /// <summary>
-        /// Voice in to voice out, which is the whole of what the caller felt.
+        /// Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("speech_end_to_audio_ms")]
         public double? SpeechEndToAudioMs { get; set; } = default!;
@@ -3870,6 +4105,63 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("interrupted")]
         public bool? Interrupted { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ModelCallTiming
+    {
+
+        /// <summary>
+        /// Response ID for this operation; retries can share an ID.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("operation_id")]
+        public string? OperationId { get; set; } = default!;
+
+        /// <summary>
+        /// reply, flow or subagent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("purpose")]
+        public string? Purpose { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("started_at")]
+        public System.DateTimeOffset StartedAt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string Model { get; set; } = default!;
+
+        /// <summary>
+        /// Request to first token.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ttft_ms")]
+        public double? TtftMs { get; set; } = default!;
+
+        /// <summary>
+        /// Request to completed response or failed create.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("duration_ms")]
+        public double? DurationMs { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("input_tokens")]
+        public long? InputTokens { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("output_tokens")]
+        public long? OutputTokens { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("success")]
+        public bool Success { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -3946,12 +4238,6 @@ namespace GetStream.VisionAgents.Models
         public string? ConversationId { get; set; } = default!;
 
         /// <summary>
-        /// Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("persist_conversation")]
-        public bool? PersistConversation { get; set; } = default!;
-
-        /// <summary>
         /// Older history was omitted from the model context.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("context_truncated")]
@@ -3985,7 +4271,7 @@ namespace GetStream.VisionAgents.Models
         public string? Agent { get; set; } = default!;
 
         /// <summary>
-        /// Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+        /// Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
         /// <br/>
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("incognito")]
@@ -4323,6 +4609,34 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class VideoSource
+    {
+
+        /// <summary>
+        /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("url")]
+        public string Url { get; set; } = default!;
+
+        /// <summary>
+        /// How many frames to sample, evenly spaced across the clip. Default 8.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_frames")]
+        public int? MaxFrames { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class TextContentPart
     {
 
@@ -4463,12 +4777,6 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("conversation_id")]
         public string? ConversationId { get; set; } = default!;
-
-        /// <summary>
-        /// Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("persist_conversation")]
-        public bool? PersistConversation { get; set; } = default!;
 
         /// <summary>
         /// Older history was omitted from the model context.
@@ -4721,6 +5029,19 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("images")]
         public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
+
+        /// <summary>
+        /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("videos")]
+        public System.Collections.Generic.List<VideoSource>? Videos { get; set; } = default!;
+
+        /// <summary>
+        /// Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("command_id")]
+        public string? CommandId { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

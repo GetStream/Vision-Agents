@@ -133,6 +133,7 @@ type Session struct {
 	watchers             map[uint64]*watcher
 	nextWatcher          uint64
 	state                State
+	modality             string
 	connectorUnavailable []ConnectorUnavailable
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
@@ -145,10 +146,13 @@ type Session struct {
 	// named it, or when there is no channel to name.
 	naming *naming
 	// labelMu guards title and description, which are what naming last called the
-	// conversation, over the spec's own.
+	// conversation, over the spec's own. It also guards the spec's labels, which Describe
+	// rewrites while the session runs.
 	labelMu     sync.Mutex
 	title       string
 	description string
+	// renamed is set once somebody named the conversation, after which naming leaves it be.
+	renamed bool
 
 	// records keeps the turns and what each one did, so a conversation can be read back
 	// without the socket that heard it. Nil for an incognito session and for a deployment
@@ -185,9 +189,9 @@ func (s *Session) ID() string { return s.id }
 
 // Spec is what the session was asked for.
 func (s *Session) Spec() Spec {
-	spec := s.spec
 	s.labelMu.Lock()
 	defer s.labelMu.Unlock()
+	spec := s.spec
 	if s.title != "" {
 		spec.Title, spec.Description = s.title, s.description
 	}
@@ -202,6 +206,26 @@ func (s *Session) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state
+}
+
+// Modality is how the user has taken part so far: store.ModalityText, ModalityVoice or
+// ModalityVideo.
+func (s *Session) Modality() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.modality
+}
+
+// SawVideo records that the agent has seen the user's video, which makes the session a video
+// one for good.
+func (s *Session) SawVideo() {
+	s.mu.Lock()
+	seen := s.modality == store.ModalityVideo
+	s.modality = store.ModalityVideo
+	s.mu.Unlock()
+	if !seen && s.records != nil {
+		s.records.SawVideo(s.id)
+	}
 }
 
 // Provider names the model answering and the voice speaking, which are only known once the
@@ -576,6 +600,9 @@ func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persist
 // driving a conversation knows a turn is over rather than merely answered once.
 func (s *Session) Busy() bool { return s.voiceAgent.Busy() }
 
+// Tools names what the agent may do rather than say.
+func (s *Session) Tools() []string { return s.voiceAgent.Tools() }
+
 // SetInstructions changes what the agent is told to be from the next turn on.
 func (s *Session) SetInstructions(text string) {
 	s.spec.Instructions = text
@@ -649,6 +676,45 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		s.calls.Changed(row(s))
 	}
 	return nil
+}
+
+// Labels is what a session is renamed to. A nil field is left as it is.
+type Labels struct {
+	Title       *string
+	Description *string
+	Custom      *map[string]any
+}
+
+// Describe renames the session and relabels it. A name given here is somebody's choice, so
+// the conversation is no longer named for what was said.
+func (s *Session) Describe(ctx context.Context, labels Labels) {
+	s.labelMu.Lock()
+	if s.title != "" {
+		s.spec.Title, s.spec.Description = s.title, s.description
+	}
+	if labels.Title != nil {
+		s.spec.Title = *labels.Title
+	}
+	if labels.Description != nil {
+		s.spec.Description = *labels.Description
+	}
+	if labels.Custom != nil {
+		s.spec.Custom = *labels.Custom
+	}
+	s.title, s.description = s.spec.Title, s.spec.Description
+	s.renamed = labels.Title != nil || labels.Description != nil || s.renamed
+	title, description, custom := s.spec.Title, s.spec.Description, s.spec.Custom
+	s.labelMu.Unlock()
+
+	if s.records != nil {
+		s.records.Described(s.spec.CustomerID, s.id, title, description, custom)
+	}
+	if s.naming != nil && s.spec.ConversationID != "" {
+		if err := s.naming.service.Describe(ctx, s.spec.ConversationID, title, description); err != nil {
+			s.logger.Warn("could not rename the conversation's channel",
+				"session", s.id, "conversation", s.spec.ConversationID, "error", err)
+		}
+	}
 }
 
 // ResolveTool hands a tool result back to the model waiting for it, reporting whether

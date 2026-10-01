@@ -566,10 +566,6 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/conversation_id`.
             internal var conversationId: Swift.String?
-            /// Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/persist_conversation`.
-            internal var persistConversation: Swift.Bool?
             /// Older history was omitted from the model context.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/context_truncated`.
@@ -597,7 +593,7 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/connector_bindings`.
             internal var connectorBindings: [Components.Schemas.SessionConnectorBinding]?
-            /// Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+            /// Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
             ///
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/incognito`.
@@ -777,14 +773,13 @@ extension Components {
             ///
             /// - Parameters:
             ///   - conversationId: Stream Chat CID to resume; returned for persistent text sessions.
-            ///   - persistConversation: Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
             ///   - contextTruncated: Older history was omitted from the model context.
             ///   - callId: The call to join. Required unless the session is text.
             ///   - text: Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
             ///   - configId: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
             ///   - agent: The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
             ///   - connectorBindings: Explicit account selection for config bindings whose connection type is session. Each selected connection is checked against the verified caller.
-            ///   - incognito: Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+            ///   - incognito: Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
             ///   - title: What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
             ///   - description: A longer note about the conversation, searched alongside the title.
             ///   - project: What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
@@ -821,7 +816,6 @@ extension Components {
             ///   - video:
             internal init(
                 conversationId: Swift.String? = nil,
-                persistConversation: Swift.Bool? = nil,
                 contextTruncated: Swift.Bool? = nil,
                 callId: Swift.String? = nil,
                 text: Swift.Bool? = nil,
@@ -865,7 +859,6 @@ extension Components {
                 video: Components.Schemas.SessionVideo? = nil
             ) {
                 self.conversationId = conversationId
-                self.persistConversation = persistConversation
                 self.contextTruncated = contextTruncated
                 self.callId = callId
                 self.text = text
@@ -910,7 +903,6 @@ extension Components {
             }
             internal enum CodingKeys: String, CodingKey {
                 case conversationId = "conversation_id"
-                case persistConversation = "persist_conversation"
                 case contextTruncated = "context_truncated"
                 case callId = "call_id"
                 case text
@@ -1093,16 +1085,71 @@ extension Components {
                 case maxFrames = "max_frames"
             }
         }
+        /// - Remark: Generated from `#/components/schemas/ImageSource`.
+        internal struct ImageSource: Codable, Hashable, Sendable {
+            /// Absolute HTTP(S) URL or base64 image data URI.
+            ///
+            /// - Remark: Generated from `#/components/schemas/ImageSource/url`.
+            internal var url: Swift.String
+            /// - Remark: Generated from `#/components/schemas/ImageSource/detail`.
+            internal enum DetailPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case auto = "auto"
+                case low = "low"
+                case high = "high"
+            }
+            /// - Remark: Generated from `#/components/schemas/ImageSource/detail`.
+            internal var detail: Components.Schemas.ImageSource.DetailPayload?
+            /// Creates a new `ImageSource`.
+            ///
+            /// - Parameters:
+            ///   - url: Absolute HTTP(S) URL or base64 image data URI.
+            ///   - detail:
+            internal init(
+                url: Swift.String,
+                detail: Components.Schemas.ImageSource.DetailPayload? = nil
+            ) {
+                self.url = url
+                self.detail = detail
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case url
+                case detail
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/VideoSource`.
+        internal struct VideoSource: Codable, Hashable, Sendable {
+            /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/VideoSource/url`.
+            internal var url: Swift.String
+            /// How many frames to sample, evenly spaced across the clip. Default 8.
+            ///
+            /// - Remark: Generated from `#/components/schemas/VideoSource/max_frames`.
+            internal var maxFrames: Swift.Int?
+            /// Creates a new `VideoSource`.
+            ///
+            /// - Parameters:
+            ///   - url: Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+            ///   - maxFrames: How many frames to sample, evenly spaced across the clip. Default 8.
+            internal init(
+                url: Swift.String,
+                maxFrames: Swift.Int? = nil
+            ) {
+                self.url = url
+                self.maxFrames = maxFrames
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case url
+                case maxFrames = "max_frames"
+            }
+        }
         /// - Remark: Generated from `#/components/schemas/Session`.
         internal struct Session: Codable, Hashable, Sendable {
             /// Stream Chat CID to resume; returned for persistent text sessions.
             ///
             /// - Remark: Generated from `#/components/schemas/Session/conversation_id`.
             internal var conversationId: Swift.String?
-            /// Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-            ///
-            /// - Remark: Generated from `#/components/schemas/Session/persist_conversation`.
-            internal var persistConversation: Swift.Bool?
             /// Older history was omitted from the model context.
             ///
             /// - Remark: Generated from `#/components/schemas/Session/context_truncated`.
@@ -1217,7 +1264,6 @@ extension Components {
             ///
             /// - Parameters:
             ///   - conversationId: Stream Chat CID to resume; returned for persistent text sessions.
-            ///   - persistConversation: Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
             ///   - contextTruncated: Older history was omitted from the model context.
             ///   - id:
             ///   - callId: Empty for a text session, which joins no call.
@@ -1249,7 +1295,6 @@ extension Components {
             ///   - lastResponseAt: When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
             internal init(
                 conversationId: Swift.String? = nil,
-                persistConversation: Swift.Bool? = nil,
                 contextTruncated: Swift.Bool? = nil,
                 id: Swift.String,
                 callId: Swift.String,
@@ -1281,7 +1326,6 @@ extension Components {
                 lastResponseAt: Foundation.Date? = nil
             ) {
                 self.conversationId = conversationId
-                self.persistConversation = persistConversation
                 self.contextTruncated = contextTruncated
                 self.id = id
                 self.callId = callId
@@ -1314,7 +1358,6 @@ extension Components {
             }
             internal enum CodingKeys: String, CodingKey {
                 case conversationId = "conversation_id"
-                case persistConversation = "persist_conversation"
                 case contextTruncated = "context_truncated"
                 case id
                 case callId = "call_id"
@@ -1479,6 +1522,48 @@ extension Components {
                 case responseId = "response_id"
             }
         }
+        /// - Remark: Generated from `#/components/schemas/CreateResponseRequest`.
+        internal struct CreateResponseRequest: Codable, Hashable, Sendable {
+            /// What to answer, as though it had been said.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/text`.
+            internal var text: Swift.String
+            /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/images`.
+            internal var images: [Components.Schemas.ImageSource]?
+            /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/videos`.
+            internal var videos: [Components.Schemas.VideoSource]?
+            /// Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/command_id`.
+            internal var commandId: Swift.String?
+            /// Creates a new `CreateResponseRequest`.
+            ///
+            /// - Parameters:
+            ///   - text: What to answer, as though it had been said.
+            ///   - images:
+            ///   - videos: Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
+            ///   - commandId: Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
+            internal init(
+                text: Swift.String,
+                images: [Components.Schemas.ImageSource]? = nil,
+                videos: [Components.Schemas.VideoSource]? = nil,
+                commandId: Swift.String? = nil
+            ) {
+                self.text = text
+                self.images = images
+                self.videos = videos
+                self.commandId = commandId
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case text
+                case images
+                case videos
+                case commandId = "command_id"
+            }
+        }
         /// - Remark: Generated from `#/components/schemas/AgentResponse`.
         internal struct AgentResponse: Codable, Hashable, Sendable {
             /// - Remark: Generated from `#/components/schemas/AgentResponse/id`.
@@ -1545,6 +1630,102 @@ extension Components {
                 case error
                 case createdAt = "created_at"
                 case finishedAt = "finished_at"
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/AgentResponseItem`.
+        internal struct AgentResponseItem: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/response_id`.
+            internal var responseId: Swift.String
+            /// The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/ordinal`.
+            internal var ordinal: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/session_id`.
+            internal var sessionId: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/kind`.
+            internal enum KindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case said = "said"
+                case thought = "thought"
+                case toolCall = "tool_call"
+                case toolResult = "tool_result"
+                case answer = "answer"
+                case blocked = "blocked"
+                case error = "error"
+            }
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/kind`.
+            internal var kind: Components.Schemas.AgentResponseItem.KindPayload
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/text`.
+            internal var text: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/tool_name`.
+            internal var toolName: Swift.String?
+            /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/payload`.
+            internal struct PayloadPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                /// Creates a new `PayloadPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/payload`.
+            internal var payload: Components.Schemas.AgentResponseItem.PayloadPayload?
+            /// - Remark: Generated from `#/components/schemas/AgentResponseItem/at`.
+            internal var at: Foundation.Date
+            /// Creates a new `AgentResponseItem`.
+            ///
+            /// - Parameters:
+            ///   - responseId:
+            ///   - ordinal: The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
+            ///   - sessionId:
+            ///   - kind:
+            ///   - text:
+            ///   - toolName:
+            ///   - payload: Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+            ///   - at:
+            internal init(
+                responseId: Swift.String,
+                ordinal: Swift.Int,
+                sessionId: Swift.String? = nil,
+                kind: Components.Schemas.AgentResponseItem.KindPayload,
+                text: Swift.String? = nil,
+                toolName: Swift.String? = nil,
+                payload: Components.Schemas.AgentResponseItem.PayloadPayload? = nil,
+                at: Foundation.Date
+            ) {
+                self.responseId = responseId
+                self.ordinal = ordinal
+                self.sessionId = sessionId
+                self.kind = kind
+                self.text = text
+                self.toolName = toolName
+                self.payload = payload
+                self.at = at
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case responseId = "response_id"
+                case ordinal
+                case sessionId = "session_id"
+                case kind
+                case text
+                case toolName = "tool_name"
+                case payload
+                case at
             }
         }
         /// How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.

@@ -185,8 +185,21 @@ let branch = session.fork(&types::ForkSessionRequest {
 }).await?;
 ```
 
-`rewind` takes a response, its id, or any item of one. A conversation kept in Stream Chat
-cannot be rewound; fork it at the response instead.
+`rewind` takes a response, its id, or any item of one. A text conversation is kept in Stream
+Chat unless it is `incognito`, and one kept there cannot be rewound; fork it at the response
+instead.
+
+## Changing models mid-conversation
+
+```rust
+session.update_settings(types::SessionSettingsRequest {
+    llm: Some("llm-thinking".into()),
+    thinking: Some(types::SessionSettingsRequestThinking::High),
+    ..Default::default()
+}).await?;
+```
+
+It applies from the next turn; a field left `None` is left as it is.
 
 ## One modality at a time
 

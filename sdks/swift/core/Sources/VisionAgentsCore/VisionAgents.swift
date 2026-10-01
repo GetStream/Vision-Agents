@@ -7,12 +7,19 @@ import OpenAPIRuntime
 /// what it does not say, and the router decides what the config does not. Setting a field here
 /// overrides both, for this session only.
 public struct SessionOptions: Sendable {
-    /// An agent config to start from, by id.
-    ///
-    /// An id rather than a name: reading the configs is server-side only, so there is
-    /// nothing here to resolve a name against. Whoever built the app knows which agent it
-    /// talks to, and passes the id down.
+    /// The agent to talk to, by the name its config was synced under. The router resolves
+    /// it, and refuses a name that matches nothing rather than starting an agent with no
+    /// config.
     public var agent: String?
+    /// An agent config to start from, by id, for a caller that holds one instead of a name.
+    public var configID: String?
+    /// Carries on this conversation rather than starting one.
+    public var conversationID: String?
+    /// Writes nothing down: no transcript, no memory.
+    public var incognito: Bool?
+    public var title: String?
+    public var description: String?
+    public var project: String?
     /// The system prompt.
     public var instructions: String?
     /// Said on joining without going through the model.
@@ -36,10 +43,12 @@ public struct SessionOptions: Sendable {
 
 /// The router, as a phone sees it.
 ///
-/// Two lines get a conversation going:
+/// A few lines get a conversation going:
 ///
-///     let agents = VisionAgents(url: url, customerID: "acme")
-///     let chat = try await agents.chat(agent: configID)
+///     let agents = VisionAgents(apiKey: "your_api_key")
+///     agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
+///     let session = try await agents.agent("myagent").sessions.create()
+///     let turn = try await session.responses.create("Where is order 1042?")
 ///
 /// Opening a conversation, reading back its turns, going back to one of them, branching off
 /// and ending it is the whole of what is here, because it is the whole of what the router
@@ -49,12 +58,40 @@ public struct SessionOptions: Sendable {
 public struct VisionAgents: Sendable {
     public let backend: Backend
 
+    public init(apiKey: String, url: URL = Backend.defaultURL, urlSession: URLSession = .shared) {
+        backend = Backend(apiKey: apiKey, url: url, urlSession: urlSession)
+    }
+
+    /// A router running locally with nothing in front of it.
     public init(url: URL, customerID: String, urlSession: URLSession = .shared) {
         backend = Backend(url: url, customerID: customerID, urlSession: urlSession)
     }
 
     public init(backend: Backend) {
         self.backend = backend
+    }
+
+    /// Every conversation this caller has, whichever agent holds it.
+    public var sessions: Sessions { Sessions(agents: self, agent: nil) }
+
+    /// Says who this device is acting for, and how to prove it. See `Backend.setUser`.
+    public func setUser(_ user: User, token: @escaping TokenProvider) {
+        backend.setUser(user, token: token)
+    }
+
+    /// Says who this device is acting for, with a token that will not be refreshed.
+    public func setUser(_ user: User, token: String) {
+        backend.setUser(user, token: token)
+    }
+
+    /// Forgets the user, which is what signing out is.
+    public func clearUser() {
+        backend.clearUser()
+    }
+
+    /// One agent, by the name its config was synced under.
+    public func agent(_ name: String) -> Agent {
+        Agent(agents: self, name: name)
     }
 
     /// Holds a conversation in writing: no call is joined, nothing is transcribed or spoken.
@@ -96,18 +133,22 @@ public struct VisionAgents: Sendable {
 
     /// Starts a session without following it, for a caller building its own state layer.
     public func createSession(_ options: SessionOptions, callID: String?) async throws -> Session {
-        let configID = options.agent.flatMap { $0.isEmpty ? nil : $0 }
-
         let body = Components.Schemas.CreateSessionRequest(
+            conversationId: options.conversationID,
             callId: callID,
             text: callID == nil,
-            configId: configID,
+            configId: options.configID.flatMap { $0.isEmpty ? nil : $0 },
+            agent: options.agent.flatMap { $0.isEmpty ? nil : $0 },
             connectorBindings: options.connectorBindings.isEmpty
                 ? nil
                 : options.connectorBindings.map {
                     Components.Schemas.SessionConnectorBinding(
                         name: $0.name, connectionId: $0.connectionID)
                 },
+            incognito: options.incognito,
+            title: options.title,
+            description: options.description,
+            project: options.project,
             instructions: options.instructions,
             greeting: options.greeting,
             llm: options.llm,
@@ -264,16 +305,105 @@ public struct VisionAgents: Sendable {
         }
     }
 
-    /// Runs one request, reporting a transport failure as one and leaving cancellation alone.
     private func call<T>(_ body: (Client) async throws -> T) async throws -> T {
+        try await backend.call(body)
+    }
+}
+
+/// One agent, and the conversations held with it.
+public struct Agent: Sendable {
+    /// The name the agent's config was synced under.
+    public let name: String
+
+    /// This agent's conversations: opening one names it, and listing is narrowed to it.
+    public let sessions: Sessions
+
+    init(agents: VisionAgents, name: String) {
+        self.name = name
+        sessions = Sessions(agents: agents, agent: name)
+    }
+}
+
+/// Conversations: opening one, and finding the ones there were.
+///
+/// From `Agent.sessions` every call is about that agent: opening names it, and listing is
+/// narrowed to it.
+public struct Sessions: Sendable {
+    private let agents: VisionAgents
+    private let agent: String?
+
+    init(agents: VisionAgents, agent: String?) {
+        self.agents = agents
+        self.agent = agent
+    }
+
+    /// Opens a conversation held in writing: no call is joined, nothing is transcribed or
+    /// spoken.
+    ///
+    /// Ask it things with `responses`. Call `start()` on it to watch the reply arrive and to
+    /// answer the tools in `options`, which run on this device.
+    public func create(_ options: SessionOptions = SessionOptions()) async throws -> AgentSession {
+        var options = options
+        if options.agent == nil { options.agent = agent }
+        return try await agents.chat(options)
+    }
+
+    /// This caller's conversations, newest first, the ones that ended included.
+    ///
+    /// A page shorter than the limit asked for is the last one.
+    public func query(limit: Int? = nil, offset: Int? = nil) async throws -> [Session] {
+        let output = try await agents.backend.call {
+            try await $0.listSessions(query: .init(agent: agent, limit: limit, offset: offset))
+        }
+        switch output {
+        case .ok(let response):
+            return try response.body.json.map(Session.init)
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
+        case .unauthorized(let response):
+            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .undocumented(let status, _):
+            throw AgentsError.http(status: status, message: "unexpected")
+        }
+    }
+
+    /// Finds conversations by their title, description, project and agent name, best match
+    /// first. What was said is not searched.
+    public func search(_ text: String, limit: Int? = nil, offset: Int? = nil) async throws -> [Session] {
+        let output = try await agents.backend.call {
+            try await $0.searchSessions(
+                query: .init(q: text, agent: agent, limit: limit, offset: offset))
+        }
+        switch output {
+        case .ok(let response):
+            return try response.body.json.map(Session.init)
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
+        case .unauthorized(let response):
+            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .undocumented(let status, _):
+            throw AgentsError.http(status: status, message: "unexpected")
+        }
+    }
+
+    /// A session's turns, for one read back from `query` rather than held.
+    public func responses(_ sessionID: String) -> Responses {
+        Responses(backend: agents.backend, sessionID: sessionID)
+    }
+}
+
+extension Backend {
+    /// Runs one request, reporting a transport failure as one and leaving cancellation alone.
+    func call<T>(_ body: (Client) async throws -> T) async throws -> T {
         do {
-            return try await body(backend.client())
+            return try await body(client())
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as AgentsError {
             throw error
         } catch let error as ClientError {
             if error.underlyingError is CancellationError { throw CancellationError() }
+            if let error = error.underlyingError as? AgentsError { throw error }
             throw AgentsError.transport(error.underlyingError)
         } catch {
             throw AgentsError.transport(error)

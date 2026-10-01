@@ -92,7 +92,7 @@ func (c *Client) ServerSide() bool { return c.backend.UserID == "" }
 // No request is made: this is the name in a wrapper, and a name that matches nothing
 // configured is refused when a conversation is opened rather than here.
 func (c *Client) Agent(name string) *Agent {
-	agent := &Agent{client: c, name: name, functions: tools.NewRegistry()}
+	agent := &Agent{client: c, name: name, tools: tools.NewRegistry()}
 	agent.Sessions = &Sessions{client: c, agent: agent}
 	return agent
 }
@@ -145,21 +145,19 @@ type Agent struct {
 
 	client *Client
 	name   string
-	// functions are the caller's own, offered by every conversation this agent opens. Held
-	// on the agent rather than per session because a function registered once should not
-	// have to be registered again for the next conversation.
-	functions *tools.Registry
+	// tools are the caller's own, offered by every conversation this agent opens. Held on
+	// the agent rather than per session because a tool added once should not have to be
+	// added again for the next conversation.
+	tools *tools.Registry
 }
 
 // Name is what the agent is called, which is what a caller knows it as.
 func (a *Agent) Name() string { return a.name }
 
-// Functions are the ones this agent's conversations offer the model, to register into.
+// Tools are the ones this agent's conversations offer the model, to add to:
 //
-// It satisfies the target agents.Register takes, so the same registration works here:
-//
-//	agents.Register(agent, "get_weather", "Get current weather", func(...) {...})
-func (a *Agent) Functions() *tools.Registry { return a.functions }
+//	agent.Tools().Add(GetWeather{})
+func (a *Agent) Tools() *tools.Registry { return a.tools }
 
 // Config is how the agent is configured, as the backend has it, or nil for a name nothing is
 // stored under.
@@ -186,6 +184,35 @@ func (a *Agent) Config(ctx context.Context) (*acceleration.AgentConfig, error) {
 		}
 	}
 	return nil, nil
+}
+
+// UpdateConfig changes some of how the agent is configured and returns the config as it now
+// is. A field left out of the patch keeps what is stored, so setting a guardrail leaves the
+// instructions, skills and models alone.
+//
+// Server side only: how an agent is configured is not a device's to change.
+func (a *Agent) UpdateConfig(ctx context.Context, patch acceleration.AgentConfigPatch) (*acceleration.AgentConfig, error) {
+	config, err := a.Config(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return nil, fmt.Errorf("client: there is no agent called %s to update", a.name)
+	}
+
+	api, err := a.client.api()
+	if err != nil {
+		return nil, err
+	}
+	patched, err := api.PatchAgentConfigWithResponse(ctx, config.Id, patch)
+	if err != nil {
+		return nil, fmt.Errorf("client: updating the agent %s: %w", a.name, err)
+	}
+	if patched.JSON200 == nil {
+		return nil, failure("updating the agent "+a.name, patched.Status(),
+			patched.JSON400, patched.JSON401, patched.JSON403, patched.JSON404)
+	}
+	return patched.JSON200, nil
 }
 
 // failure turns whichever error body arrived into one error, or reports the status when none

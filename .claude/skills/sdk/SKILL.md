@@ -6,6 +6,18 @@ description: How to build an SDK for the acceleration backend
 * we use openAPI, so generate your SDK from the openAPI spec
 * some endpoints are server side only. such as configuring agents, or listening to agent dispatch
 
+## Resource methods, never raw requests
+
+Every resource gets a clean, named API: `client.simulations.create(...)`, `client.simulations.update(id, ...)`,
+`client.simulations.run(id)`, `client.simulations.runs.get(id)`. The generated client is the layer
+underneath, not the public API. Users, examples and docs never write `client.post("/v1/agents/simulations", ...)`,
+call generated operation functions (`CreateSimulationWithResponse`), or import generated modules.
+
+* Group by resource, and nest sub-resources: `simulations.runs.list()`, `agent.sessions.create()`.
+* Use the standard verbs: `create`, `get`, `list`, `update`, `delete`, plus actions named after the endpoint (`run`, `cancel`, `fork`).
+* Take keyword arguments or the language's options struct, and return the typed model.
+* A new endpoint isn't finished until it has a resource method in Go, and the docs use that method.
+
 ## Supported SDKs
 
 Client side: JS, swift, kotlin, dart/flutter
@@ -29,6 +41,7 @@ The structure of an agent folder is like this
 - guardrail.md
 - skills 
 - knowledge (markdown files and urls)
+- simulations (`*.yaml`, each a list of simulations: `name`, `scenario`, `assertion`, and optionally `mode`, `variations`, `max_turns`, `caller_target`, `judge_target`, `caller_stt`, `caller_tts`, `caller_voice`, `tags`)
 
 For a router a folder can also contain router.yaml
 
@@ -84,6 +97,29 @@ session.responses.rewind(responseItem) // go back to a response and continue fro
 session.interrupt()
 
 session.fork(options) // similar options to channel creation
+
+// one method changes a session: title, description, custom, instructions, models, voice
+session.update({title: "Pricing", llm: "openai/gpt-5"})
+agent.sessions.update(sessionId, {title: "Pricing"}) // an ended session can still be renamed
+```
+
+### Updating a session
+
+Changing a session is one method named `update`, spelled the way the language spells it:
+`session.update` (JS, Python, Ruby, Rust, Dart, Kotlin, Swift, PHP), `session.Update` (Go),
+`session.UpdateAsync` (.NET). It calls `PATCH /v1/agents/sessions/{id}` (`updateSession`)
+and returns the session as it now is. Take the generated `UpdateSessionRequest` or the
+language's keyword arguments; a field left out is left as it is.
+
+* Editable: `title`, `description`, `custom`, `instructions`, `llm`, `stt`, `tts`, `sts`,
+  `subagent`, `voice`, `thinking`, `temperature`, `max_output_tokens`, `verbosity`.
+* Not editable: `id`, the call, `incognito`. Fork for a session that differs in those.
+* A session that ended accepts only `title`, `description` and `custom`, so also offer
+  `agent.sessions.update(id, ...)` for renaming one without a live handle.
+* Don't add separate `setInstructions` / `updateSettings` methods for new SDKs; the
+  `/instructions` and `/settings` endpoints are deprecated.
+
+```js
 
 
 Guest users
@@ -189,3 +225,36 @@ router = acceleration.Router("clinic")
 async with router.stt.realtime() as stt:
 	 await stt.process_audio(chunk, CALLER)
 ```
+
+## Asking goes through responses.create
+
+The Go SDK has no `session.Respond`: every question is `session.Responses.Create(ctx, text, inputs...)`,
+which returns the response id, takes images and clips, and adds a `command_id` for a conversation kept in
+Stream Chat. The socket `respond` frame is left for the router, not wrapped by an SDK. The other SDKs
+still wrap the frame (`respond` in JavaScript, Python, Ruby, PHP and Rust, `RespondAsync` in C#, and
+`send` in Kotlin, Swift and Dart) and should drop it for `responses.create` the same way, with the docs
+moving with them.
+
+`listSessions`, `searchSessions`, `listResponses` and `listResponseItems` page by cursor now (see the
+`pagination` skill): `cursor` replaces `offset`, and each returns `{items, has_more, next_cursor}`
+instead of an array. Go and JavaScript have moved. Python (`plugins/stream`), Swift, Kotlin, Dart, .NET,
+Ruby, Rust and PHP still send `offset` and expect an array, and need to move with their generated
+clients regenerated.
+
+`createSession` takes an optional `id` (a UUID the caller chose) and answers 409 when a session already has it; generated ids are UUIDv7. Go (`SessionOptions.ID`) and JavaScript (`sessions.create({ id })`) have moved. Python (`plugins/stream`), Swift, Kotlin, Dart, .NET, Ruby, Rust and PHP need their generated clients regenerated and the option exposed.
+
+A session is changed with `update`, backed by `updateSession` (`PATCH /v1/agents/sessions/{id}`): title, description, custom, instructions, models and voice in one call. `setSessionSettings` (`PATCH .../settings`) is deprecated. Go (`session.Update`) and JavaScript (`session.update`) have moved. Python (`update_settings`), Ruby, Rust (`update_settings`), PHP (`updateSettings`) and .NET (`UpdateSettingsAsync`) still call the settings endpoint and should become `update` on `updateSession`, with the "Update a running session" tabs in the docs moving with them.
+
+Credentials come from the environment. A client built with no arguments reads `STREAM_API_KEY` and `STREAM_API_SECRET` itself, so examples, READMEs and docs write `new Client()` (or the SDK's equivalent), never `new Client({ apiKey: process.env.STREAM_API_KEY, apiSecret: process.env.STREAM_API_SECRET })`. Pass them explicitly only when they come from somewhere other than those variables. Go, JavaScript, Python (`plugins/stream`), Ruby, PHP, .NET and Rust already fall back to them; any SDK that does not should, and snippets that pass them by hand should drop them.
+
+`listSessions` and `searchSessions` are replaced by `querySessions` (`POST /v1/agents/sessions/query`), which takes `{filter, sort, limit, cursor}` in the body (see the `query` skill). The filter allows `agent`, `user_id`, `project_id` and `modality` (a bare value or `{"$eq": ...}`) and `text: {"$q": ...}`. It sorts by `updated_at`, or by `relevance` for a text search, which cannot be combined with `project_id`. `project` is now `project_id` on `createSession`, `forkSession` and `Session`. `Session` gains a required `modality` (`text`, `voice` or `video`). Go has moved (`Query.ProjectID`, `Query.Modality`, `SessionOptions.ProjectID`, `ForkOptions.ProjectID`, `Call.ProjectID`). JavaScript, Python (`plugins/stream`), Swift, Kotlin, Dart, .NET, Ruby, Rust and PHP still call the two old endpoints and send `project`, and need to move with their generated clients regenerated.
+
+Memory can be deleted. `truncateMemories` (`DELETE /v1/agents/users/{user_id}/memories`) deletes everything remembered about one user, from every session and agent; `deleteSessionMemories` (`DELETE /v1/agents/sessions/{id}/memories`) deletes what one session learned. Both answer 204 and are server-side only. Stopping a session (`stopSession`, what `close` calls) keeps its memories, so never wipe memory from `close`. Name them `memories.truncate(userId)`, `sessions.deleteMemories(id)` and `session.deleteMemories()`, spelled the way the language spells them. Go (`Client.Memories().Truncate`, `Sessions.DeleteMemories`, `Session.DeleteMemories`) and JavaScript (`client.memories.truncate`, `sessions.deleteMemories`, `session.deleteMemories`) have moved. Python (`plugins/stream`), Swift, Kotlin, Dart, .NET, Ruby, Rust and PHP need their generated clients regenerated and the three methods added.
+
+`closeSession` (`DELETE /v1/agents/sessions/{id}`) is split in two. `stopSession` (`POST /v1/agents/sessions/{id}/stop`) is what ending a call does: the agent leaves and everything the session recorded and remembered is kept. `deleteSession` (`DELETE /v1/agents/sessions/{id}`) now deletes the session: it stops it if it is running, deletes its turns and items, and deletes what it taught memory. Both answer 204 and are client-accessible. A conversation in writing is normally left running, so `close` should only stop a call. Go has moved (`Pipeline.Leave` stops, `Session.Close` stops, new `Sessions.Delete` and `Session.Delete`). JavaScript, Python (`plugins/stream`), Swift, Kotlin, Dart, .NET, Ruby, Rust and PHP still send `DELETE` to close, which now deletes the conversation, and need their generated clients regenerated, `close` moved to `stopSession`, and `delete` added.
+
+An agent config can be changed in part. `patchAgentConfig` (`PATCH /v1/agents/configs/{id}`) takes an `AgentConfigPatch` and writes only the fields sent, so a guardrail or instructions can be set without restating everything else; `updateAgentConfig` (PUT) and `syncAgent` still replace instructions, guardrail, skills and knowledge. Server-side only. Name it `updateConfig` on the agent handle, spelled the way the language spells it: look the config up by the agent's name, then patch it. Go (`client.Agent.UpdateConfig`) and JavaScript (`AgentHandle.updateConfig`) have moved. Python (`plugins/stream`), .NET, Ruby, Rust and PHP need their generated clients regenerated and the method added.
+
+Simulations need resource methods (see "Resource methods, never raw requests"): `simulations.create/get/list/update/delete/run` and `simulations.runs.get/list/cancel`. Go is first. No SDK has them yet: JavaScript only has `client.post(...)`, Go only has the generated `CreateSimulationWithResponse`, Rust has the flat `create_simulation`, and Python (`plugins/stream`) has only `_generated`. The Python example in the simulations docs already uses `api.simulations.create`, `api.simulations.run` and `api.simulations.runs.get`, so Python needs them to match. Swift, Kotlin, Dart, .NET, Ruby and PHP follow.
+
+An agent folder can declare simulations in `simulations/*.yaml`. Each file is a list, so related simulations can share a file, and names must be unique across files. `syncAgent` (now declared in Go with Huma) takes them as `simulations: [SimulationDeclaration]`. When the field is sent, the router makes the config's simulations exactly that list: each is found by name and updated in place, so its runs stay attached, and one no longer declared is deleted. When the field is left out, the stored ones are left alone. So send `simulations` only when the folder has a `simulations/` directory, and send an empty list when that directory is empty. Refuse unknown keys, as with `agent.yaml`. The fingerprint appends `"\nsimulations:"` and then each simulation's JSON (field order as in the Go `agents.Simulation`), only when `simulations/` exists, so folders without one keep their current hash. Go has moved (`agents.Folder.Simulations`, sent by `Agent.Sync`). Python (`plugins/stream`), JavaScript, .NET, Ruby, Rust and PHP need their generated clients regenerated and the folder loader extended. `syncAgent` now validates its body, so a skill must carry `config_id` (every SDK already sends `""`).

@@ -1116,6 +1116,152 @@ pub struct ClaimGuestResult {
     pub sessions_moved: i64,
     pub user_id: ::std::string::String,
 }
+/**Which fields carry the answer depends on the type. A noul fills yes alone. A choice fills chosen, probabilities and confidence. A score fills level, legend, probabilities and confidence.
+*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ClassifyAnswer {
+    ///The likeliest option of a choice.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub chosen: ::std::option::Option<::std::string::String>,
+    ///How peaked the distribution is, not whether acting on it is safe.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub confidence: ::std::option::Option<f64>,
+    ///A score's levels by index, as decimal strings.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub legend: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Where a score landed, which may be between two of its levels.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub level: ::std::option::Option<f64>,
+    /**The distribution the answer came from: options for a choice, level indices for a score. They sum to one.
+    */
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub probabilities: ::std::collections::BTreeMap<::std::string::String, f64>,
+    #[serde(rename = "type")]
+    pub type_: ClassifyQuestionType,
+    ///The probability a noul is true, from 0 to 1.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub yes: ::std::option::Option<f64>,
+}
+///`ClassifyQuestion`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ClassifyQuestion {
+    pub instructions: ::std::string::String,
+    ///A score's levels, in order, each describing a concrete situation.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub levels: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///What no means for a noul, where the instructions do not say it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub no: ::std::option::Option<::std::string::String>,
+    /**A choice's options, each with a description of what it covers or an empty string where the name says it. Include one for "none of these" whenever the options may not cover an input.
+    */
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub options: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    #[serde(rename = "type")]
+    pub type_: ClassifyQuestionType,
+    ///What yes means for a noul, where the instructions do not say it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub yes: ::std::option::Option<::std::string::String>,
+}
+/**noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
+*/
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ClassifyQuestionType {
+    #[serde(rename = "noul")]
+    Noul,
+    #[serde(rename = "choice")]
+    Choice,
+    #[serde(rename = "score")]
+    Score,
+}
+impl ::std::fmt::Display for ClassifyQuestionType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Noul => f.write_str("noul"),
+            Self::Choice => f.write_str("choice"),
+            Self::Score => f.write_str("score"),
+        }
+    }
+}
+impl ::std::str::FromStr for ClassifyQuestionType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "noul" => Ok(Self::Noul),
+            "choice" => Ok(Self::Choice),
+            "score" => Ok(Self::Score),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ClassifyQuestionType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ClassifyQuestionType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ClassifyRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ClassifyRequest {
+    /**Keyed by ids of the caller's own choosing, which is how the answers come back. An id is not part of what is asked, so a question carries its whole meaning in its instructions.
+    */
+    pub questions: ::std::collections::BTreeMap<::std::string::String, ClassifyQuestion>,
+    /**What the questions are about: a string for plain text, or a JSON object whose parts a question can name, such as `message`.
+    */
+    pub state: ::serde_json::Value,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    /**A provider/model or a capability shortcut. Empty takes classify-fast.
+    */
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target: ::std::option::Option<::std::string::String>,
+}
+///`ClassifyResult`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ClassifyResult {
+    pub answers: ::std::collections::BTreeMap<::std::string::String, ClassifyAnswer>,
+    ///The version that answered, which is worth recording when the target was an alias.
+    pub model: ::std::string::String,
+    pub provider: ::std::string::String,
+    pub usage: ClassifyUsage,
+}
+/**What the request read and wrote. The state's tokens are counted once however many questions shared them.
+*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ClassifyUsage {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+}
 ///`CommandReceipt`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CommandReceipt {
@@ -1774,10 +1920,17 @@ impl ::std::convert::TryFrom<::std::string::String> for CreateConnectorDefinitio
 ///`CreateResponseRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CreateResponseRequest {
+    ///Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub command_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
     ///What to answer, as though it had been said.
     pub text: ::std::string::String,
+    /**Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
+    */
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub videos: ::std::option::Option<::std::vec::Vec<VideoSource>>,
 }
 ///`CreateSessionRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -1821,7 +1974,7 @@ pub struct CreateSessionRequest {
     */
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<::std::string::String>,
-    /**Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+    /**Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
     */
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub incognito: ::std::option::Option<bool>,
@@ -1852,9 +2005,6 @@ pub struct CreateSessionRequest {
     */
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub navigating: ::std::option::Option<bool>,
-    ///Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub persist_conversation: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub phone: ::std::option::Option<SessionPhone>,
     /**What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
@@ -3276,6 +3426,30 @@ impl ::std::convert::TryFrom<::std::string::String> for Modality {
         value.parse()
     }
 }
+///`ModelCallTiming`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ModelCallTiming {
+    ///Request to completed response or failed create.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub duration_ms: ::std::option::Option<f64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub input_tokens: ::std::option::Option<i64>,
+    pub model: ::std::string::String,
+    ///Response ID for this operation; retries can share an ID.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub operation_id: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub output_tokens: ::std::option::Option<i64>,
+    pub provider: ::std::string::String,
+    ///reply, flow or subagent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub purpose: ::std::option::Option<::std::string::String>,
+    pub started_at: ::std::string::String,
+    pub success: bool,
+    ///Request to first token.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub ttft_ms: ::std::option::Option<f64>,
+}
 /**What to change about the models for one session, over whatever its agent config decided.
 It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
 */
@@ -4304,9 +4478,6 @@ pub struct Session {
     pub mode: ::std::option::Option<SessionMode>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub model_overwrites: ::std::option::Option<ModelOverwrites>,
-    ///Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub persist_conversation: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub project: ::std::option::Option<::std::string::String>,
     pub state: SessionState,
@@ -5786,6 +5957,12 @@ pub struct TimelineEntry {
     ///How much the agent spoke.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub audio_out_ms: ::std::option::Option<f64>,
+    ///Last transcript revision to a stable turn ready for the flow controller.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cadence_ms: ::std::option::Option<f64>,
+    ///Stable turn to the main model request, including flow and queueing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub decision_ms: ::std::option::Option<f64>,
     ///What the caller said, when it can be matched to this exchange.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub heard: ::std::option::Option<::std::string::String>,
@@ -5795,19 +5972,31 @@ pub struct TimelineEntry {
     ///The wait between asking the model and its first token.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm_ttft_ms: ::std::option::Option<f64>,
-    ///How long the caller waited between finishing and being answered.
+    ///Individual model requests for this turn, including flow and delegated work.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model_calls: ::std::option::Option<::std::vec::Vec<ModelCallTiming>>,
+    ///Main model request to the first text delta admitted to the voice pipeline.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model_to_first_text_ms: ::std::option::Option<f64>,
+    ///Last transcript revision to first audio published; includes cadence settling.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub roundtrip_ms: ::std::option::Option<f64>,
     ///What the agent answered.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub said: ::std::option::Option<::std::string::String>,
-    ///Voice in to voice out, which is the whole of what the caller felt.
+    ///Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub speech_end_to_audio_ms: ::std::option::Option<f64>,
     pub started_at: ::std::string::String,
     ///The provider's decode time for the transcript that settled the turn.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub stt_latency_ms: ::std::option::Option<f64>,
+    ///First text delta to the first TTS request.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub text_to_tts_ms: ::std::option::Option<f64>,
+    ///First TTS request to the first audio chunk published to the edge.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tts_to_audio_ms: ::std::option::Option<f64>,
     ///The wait between sending the first sentence and the first audio.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts_ttfb_ms: ::std::option::Option<f64>,
@@ -6190,6 +6379,16 @@ pub struct TurnStatsBucket {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts_ttfb_p95_ms: ::std::option::Option<f64>,
     pub turn_count: i64,
+}
+///`VideoSource`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct VideoSource {
+    ///How many frames to sample, evenly spaced across the clip. Default 8.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_frames: ::std::option::Option<i64>,
+    /**Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+    */
+    pub url: ::std::string::String,
 }
 ///`Voice`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

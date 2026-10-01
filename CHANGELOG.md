@@ -2,6 +2,71 @@
 
 ## Breaking Changes
 
+### Deleting a session deletes it; stopping one is `POST .../stop`
+
+`DELETE /v1/agents/sessions/{id}` used to end a session and keep everything. It now deletes
+the session: a running one is stopped first, then its turns, their items and what it taught
+memory are deleted. The user's memories from other sessions are kept. To end a call and keep
+the conversation, use the new `POST /v1/agents/sessions/{id}/stop`. Both answer 204 and are
+open to the device holding the session.
+
+In Go, `Session.Close` stops, and `Sessions.Delete` and `Session.Delete` delete. SDKs that
+still close with `DELETE` now delete the conversation until they move to `stop`.
+
+### Sessions are listed and searched with `querySessions`, and `project` is `project_id`
+
+`GET /v1/agents/sessions` and `GET /v1/agents/sessions/search` are replaced by
+`POST /v1/agents/sessions/query`, which takes `{filter, sort, limit, cursor}` in the body.
+It answers three queries: every session, most recently updated first; a text search
+(`{"text": {"$q": "..."}}`), best match first; and one project's sessions
+(`{"project_id": "..."}`), most recently updated first. `agent` and `user_id` narrow any of
+them. The `config_id`, `state`, `custom`, `created_after` and `created_before` filters are
+gone, and a field or operator outside these is a 400. `project` is now `project_id` on
+session create, fork and the session itself.
+
+In Go, `Sessions.Query` and `Sessions.Search` call the new endpoint, and `Query` keeps only
+`ProjectID`, `UserID`, `Limit` and `Cursor`. `SessionOptions.Project`, `ForkOptions.Project`
+and `stream.Call.Project` are now `ProjectID`. Other SDKs follow.
+
+### Session, response and item lists page by cursor instead of offset
+
+`GET /v1/agents/sessions`, `/v1/agents/sessions/search`, `/v1/agents/sessions/{id}/responses`
+and `/v1/agents/sessions/{id}/responses/items` no longer take `offset`, and return a page
+object instead of a bare array: `{items, has_more, next_cursor}`. Pass `next_cursor` back as
+`cursor`, with the same filters, for the next page. A session opened or deleted while someone
+pages no longer repeats or skips a row, and a deep page costs the same as the first.
+
+In the Go SDK, `Sessions.Query` and `Sessions.Search` return `*acceleration.SessionPage` and
+take `Query.Cursor` instead of `Query.Offset`. `Responses.List` and `Items.List` take a cursor
+string instead of an offset and return the page. `Items.Unwind` follows the cursor as before.
+In JavaScript, `sessions.query`, `sessions.search`, `responses.list` and `items.list` take
+`cursor` instead of `offset` and return the page.
+
+### One `update` for a session, in place of settings and instructions
+
+`PATCH /v1/agents/sessions/{id}` (`updateSession`) changes a session's title, description,
+custom labels, instructions, models and voice in one request, and returns the session as it
+now is. A session that ended can still be renamed and relabelled. The id, the call and
+incognito cannot change. `PATCH .../settings` and `PUT .../instructions` still work but are
+deprecated. In Go, `session.UpdateSettings(client.Settings{...})` is now
+`session.Update(client.SessionUpdate{...})`, and `agent.Sessions.Update(id, ...)` renames a
+conversation without a live handle. In JavaScript, `session.updateSettings({...})` is now
+`session.update({...})`. Other SDKs follow.
+
+### Sessions are kept in Stream Chat by default, and `persist_conversation` is gone
+
+`persist_conversation` has been removed from `POST /v1/agents/sessions` and from every SDK's
+session options. Every text session is now kept in a Stream Chat channel, so any Stream Chat SDK
+can read it back; pass `incognito: true` to keep nothing. Voice calls were already written to
+Chat, and now show what the caller is saying as it is transcribed, through ephemeral message
+updates, before storing the settled turn. A router without Stream credentials still runs a new
+text session, without a channel.
+
+What was true of a persisted conversation is now true of every text session: a user's
+questions carry a `command_id` (the SDKs add it), rewinding is refused (fork at the response
+instead), and the session ends when its last watcher disconnects, leaving the channel to
+resume with `conversation_id`.
+
 ### Per-agent plugin login is retired in favor of reusable connector connections
 
 The old per-agent plugin routes, config field, and plaintext storage table are removed.
@@ -166,6 +231,57 @@ credentials, err := backend.Credentials()  // was: backend.Headers()
 Half a credential is refused by `Resolve` rather than ignored, so a missing secret is not
 quietly downgraded to an unauthenticated request.
 
+### Go tools are types, added to `agent.Tools()`
+
+A tool is now a struct with `Name`, `Description` and `Run` methods. Its exported fields are
+the arguments the model fills in; unexported fields carry whatever `Run` needs:
+
+```go
+type LookupOrder struct {
+	OrderID string `json:"order_id" schema:"the order number"`
+	orders  *Orders
+}
+
+func (LookupOrder) Name() string        { return "lookup_order" }
+func (LookupOrder) Description() string { return "Look up an order by its number" }
+func (l LookupOrder) Run(ctx context.Context) (any, error) { return l.orders.Find(ctx, l.OrderID) }
+
+agent.Tools().Add(LookupOrder{orders: orders})
+```
+
+`agents.RegisterFunction` and `agents.Registrar` are gone, `Agent.Functions()` is now
+`Agent.Tools()`, and `agents.Dispatch.Host` takes a `*tools.Registry`. `tools.Register` is
+unchanged for a caller that prefers a closure. In `client`, `Agent.Functions()` and
+`Session.Functions()` are now `Tools()`, and the `Functions` field of `SessionOptions` and
+`ForkOptions` is now `Tools`.
+
+### A Go agent's session is a `client.Session`, with `Responses`
+
+`agent.Chat`, `agent.Join`, `agent.WaitForCall` and `agent.StartCall` return an
+`agents.Session` that embeds `*client.Session`, so a conversation the agent opened reads the
+same as one opened by name, as it does in JavaScript:
+
+```go
+session, err := agent.Chat(ctx)
+answer, err := session.Responses.Create(ctx, "Where is order 1042?")
+```
+
+`Fork`, `Chat()` and `Video()` come with it. `Say` and `Respond` now take whether to
+interrupt, like `client.Session.Say` already did: `session.Respond(text)` is
+`session.Respond(text, true)`, and `session.Say(text)` is `session.Say(text, false)`.
+`Session.Session()` is `Session.Created()`.
+
+### Go `Responses.Create` takes `client.Image` and `client.Clip`
+
+`session.Responses.Create(ctx, text, inputs ...client.Input)` replaces the variadic
+`acceleration.ImageSource`. `client.Image{URL, Detail}` is a picture, and `client.Clip` or
+`client.ClipFile(path)` is a video:
+
+```go
+_, err = session.Responses.Create(ctx, "Which receipt is for order 1042?",
+	client.Image{URL: "https://example.com/receipts/1041.png"})
+```
+
 ### Routing in the Go SDK starts from a client, and `SyncRouters` / `DefineRouter` moved onto it
 
 Where the router is and who is calling it is now said once, to `stream.NewClient`, rather
@@ -301,7 +417,66 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 `{name}/router.yaml` under it rather than `*.yaml`. Both files take an optional
 `description`.
 
+### `gemini` plugin: Realtime defaults to `gemini-3.8-live` (#647)
+
+`gemini.Realtime` now defaults to `gemini-3.8-live` (was `gemini-3.1-flash-live-preview`). Pass `model=` explicitly to stay on an older Live model.
+
+### `sarvam` plugin: drop deprecated LLM, STT, and TTS models (#637)
+
+Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-105b` (`sarvam-105b-conversations` is also supported). STT drops `saarika:v2.5` and `saaras:v2` / `saaras:v2.5` and defaults to `saaras:v3-realtime` on `/speech-to-text-realtime/ws` (`saaras:v3` and `saaras:v4` remain on the legacy WebSocket). TTS no longer accepts `bulbul:v3-beta`.
+
+### `deepgram` plugin: TTS defaults to Flux (`/v2/speak`) (#633)
+
+`deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
+
 ## New Features
+
+### A reply can start before the flow controller rules: `ROUTER_SPECULATIVE_REPLIES`
+
+The flow controller decides whether the words a caller settled on were meant for the agent,
+and the reply used to wait for that ruling, so every answered turn paid for two model round
+trips one after the other. With `ROUTER_SPECULATIVE_REPLIES=true` the reply is asked for
+beside the ruling and held until it comes back: an answer for the same words speaks it, and
+anything else drops it unheard. It is off by default, because a dropped reply is still paid
+for, and on a pause-heavy call most of them are dropped.
+
+### A session says whether the user wrote, spoke or showed video
+
+Every session now has a `modality`: `text` for a conversation held in writing, `voice` for a
+call, and `video` once the agent has seen the user's video, either as frames from the SDK's
+`get_video_frames` tool or as clips sent with `responses.create`. It only moves up, so a
+call that showed video once stays `video`. `querySessions` takes it as a filter,
+`{"modality": "video"}`, and in Go it is `Query.Modality`. Sessions recorded before this
+are `text` without a call and `voice` with one.
+
+### Choose a session's id when creating it
+
+`POST /v1/agents/sessions` takes an optional `id`, a UUID the caller chose, so the session can
+be referred to before it exists. An id some session already has is refused with a 409. Without
+one the router generates a UUIDv7 rather than a random hex string. In Go it is
+`SessionOptions.ID`, and in JavaScript `sessions.create({ id })`. Other SDKs follow.
+
+### Change a running session's models from the server SDKs
+
+`PATCH /v1/agents/sessions/{id}/settings` is wrapped on the session object in every server
+SDK: `updateSettings` (JavaScript), `update_settings` (Python, Ruby, Rust), `updateSettings`
+(PHP), `UpdateSettings` (Go) and `UpdateSettingsAsync` (C#). Each returns the session as it now
+runs. It stays backend-only, so the Kotlin, Swift and Dart SDKs do not offer it.
+
+### `responses.create` takes a video
+
+`POST /v1/agents/sessions/{id}/responses` takes `videos`: up to two clips, each an `http(s)`
+URL or a `data:video/...` URI of at most 50 MB. The router samples `max_frames` frames
+spread evenly through each clip (8 by default, up to 32) with ffmpeg, which the router
+image now ships, and hands them to the vision subagent like attached images, each captioned
+with where in the clip it was taken. URLs are fetched only from public addresses. The Go
+SDK sends them with `client.Clip{URL, MaxFrames}` or `client.ClipFile(path)`.
+
+### The JavaScript SDK's session can use a chat client you already hold
+
+`session.chat({ client })` opens the conversation's channel on a connected `StreamChat` of
+yours instead of connecting a second one, and `interrupt({ commandId })` names the turn it
+stops.
 
 ### Agents can use reusable MCP connector accounts
 
@@ -1110,26 +1285,6 @@ and decodes to `PcmData` as it arrives. All three read `TELNYX_API_KEY` from the
 environment. See `plugins/telnyx/examples/voice_agent_call.py` for an inbound
 call answered by an all-Telnyx pipeline.
 
-### `speechify` plugin: Speechify TTS
-
-Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's streaming API. It streams raw PCM audio, defaults to the `simba-3.2` model with the `geffen_32` voice, and reads `SPEECHIFY_API_KEY` from the environment. Install with `vision-agents[speechify]`.
-
-### Realtime input audio pacing (#599)
-
-Realtime LLMs that need a steady upstream audio cadence can now opt into framework-level pacing. Pass `input_audio_pacing=AudioInputPacingConfig(...)` to a `Realtime` subclass and the framework buffers the irregular PCM the WebRTC uplink delivers and forwards fixed-size chunks (default 20 ms) at a stable wall-clock rate. `AudioInputPacingConfig.virtual_microphone()` is a preset for speech-to-speech models that interpret gaps in the input as end-of-turn — it primes a 500 ms buffer and fills digital silence on a dry buffer so the model never sees an interruption.
-
-### `gemini` plugin: Live Translate model with auto-enabled input pacing (#599)
-
-Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and bumps the default Gemini Realtime model to `gemini-3.1-flash-live-preview` (was `gemini-2.5-flash-native-audio-preview-12-2025`). The Live Translate model is sensitive to uneven input audio — irregular upstream chunks produce audible jitter and word-cutoffs in its output. `GeminiRealtime` automatically installs `AudioInputPacingConfig.virtual_microphone()` whenever the model is `gemini-3.5-live-translate-preview`, so the framework feeds it a steady 20 ms stream by default. Opt out with `input_audio_pacing=None`.
-
-### `getstream` plugin: non-blocking StreamConversation persistence (#589)
-
-`StreamConversation` now persists messages to Stream Chat in the background instead of awaiting each REST round-trip inline. Voice pipelines call `upsert_message` on the critical path (per transcript and per LLM delta), where the inline ~150–300 ms round-trip compounded into audible response latency. Writes are dispatched as fire-and-forget tasks serialized behind a per-channel lock, so ordering is preserved and the final persisted message always matches the final content. Adds `Conversation.wait_for_pending_syncs()`, drained on agent shutdown so in-flight writes are not dropped.
-
-### `anam` plugin: Anam SDK 0.6.0
-
-The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
-
 ### A VM on the agent config
 
 `define_agent(vm=Daytona)` says where the subagent may run the code it writes, and every
@@ -1166,7 +1321,32 @@ answers out of a knowledge directory and a page on the docs site, both under one
 `analyst` hands arithmetic to a subagent with a VM. `sync_agent(name)` now finds an agent
 directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
+### `gemini` plugin: Gemini 3.8 Live and Extended Thinking (#647)
+
+Adds `gemini-3.8-live` and `gemini-3.8-live-extended-thinking`. Agent turn completion follows `interaction_status` (`IDLE`, with deprecated `REQUIRES_ACTION` treated as idle) instead of treating `turn_complete` as session-idle. Live tools default to `NON_BLOCKING`. Video turn coverage defaults to `TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO`. Requires `google-genai>=2.19.0`.
+
+### `gemini` plugin: Gemini 3.5 speech-to-text
+
+Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` by default). It streams 16 kHz PCM, supports `language_codes` and `custom_vocabulary`, and emits standard transcript and turn events. Automatic language detection is the default (omit `language_codes` or pass `[]`).
+
+### `deepgram` plugin: Flux TTS streaming, `speed`, and Interrupt barge-in (#633)
+
+Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
+
 ## Bug Fixes
+
+- The Python client now adds a `command_id` when it asks a stored text conversation
+  something, as the JavaScript SDK does, so a user's question is no longer refused.
+- An incognito voice call is no longer written into Stream Chat. The transcript writer was
+  opened for every call, whatever `incognito` said.
+- Images sent with a turn are no longer dropped when the conversation model also asks the
+  vision skill to look. Its own ask superseded the task holding the images, and the new one
+  looked at the camera instead, failing with "nobody is connected to run it" on a text
+  session.
+- The Go SDK can hold a user's kept conversation. A pipeline acting for an end user
+  (`Backend.UserID`) on a persisted text session now sends each `Respond` with a fresh
+  `command_id`; the router refused those turns with "personal conversations require a
+  command ID". Sessions speaking for the app are unchanged.
 
 - `POST /v1/agents/sessions/{id}/responses` takes an optional `command_id`, so a page can ask
   a user's kept conversation over HTTP and still get the turn's id back; it was refused with
@@ -1175,6 +1355,23 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 - Chat readers are explicitly added to existing agent channels before their token is
   issued, so opening a members-only transcript no longer fails with `ReadChannel`.
+
+- The JavaScript SDK works in a browser without a `fetch` of your own: it called the global
+  `fetch` as its own method, which every browser refuses with "Illegal invocation".
+
+- The JavaScript SDK's session socket is admitted by the authenticating proxy: with
+  `authenticate` it now also carries the token as `authorization` with
+  `stream-auth-type=jwt`, which is how the proxy reads a socket's credential. It was refused
+  with a 401, so a page on a hosted deployment could only use `watch: false`.
+
+- The JavaScript SDK's `respond` names a command on a kept conversation, the way
+  `responses.create` does, so asking one over the socket is no longer refused with
+  "personal conversations require a command ID". It returns the command's id, and takes a
+  `commandId` of your own.
+
+- The JavaScript SDK tells a router reached by `customerId` who the end user is: `userId`
+  is sent as `user_id` in the query of every request and socket, which a router in `proxy`
+  mode reads. It was dropped, so the conversations such a caller opened belonged to nobody.
 
 - Managed research workspaces resume stopped Daytona VMs in place, refresh preview access and recover worker processes before research; pinned source revisions are preserved.
 
@@ -1204,22 +1401,6 @@ Two tools in one reply each started a generate, and the second stole the floor s
 
 `voicebench compare --baseline accelerated` resolves `baselines/accelerated/<commit>/`. `--store-baseline` on a run copies (and merges per-pack) `summary.json` and `manifest.json` there.
 
-### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
-
-`nvidia/cosmos-reason2-8b` is no longer available on the NVIDIA Chat Completions API for typical API Catalog keys. The plugin default, README, and example now use `meta/llama-3.2-11b-vision-instruct`.
-
-### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus (#610)
-
-`PegasusVLM` now polls the TwelveLabs Assets API until an uploaded clip is `ready` before `analyze_stream` — direct uploads return `processing` and must not be analyzed early. Encoded MP4 clips also set PTS/`time_base` so padded buffers report at least 4 seconds of duration (Pegasus's minimum). Uploaded assets are still deleted if ready-wait fails or times out.
-
-### `openai` plugin: `ChatCompletionsLLM` ignored injected/eager turn text and leaked `<think>` reasoning
-
-`ChatCompletionsLLM.simple_response` rebuilt the request purely from the conversation and ignored its `text` argument unless `participant` was `None`. Because the agent always supplies a participant, injected `agent.responses.create()` instructions produced an empty request (`400 chat content is empty`), and eager turns answered the *previous* transcript. The current `text` is now appended as the trailing user message when the conversation does not already end with it. Additionally, `<think>...</think>` reasoning spans emitted by reasoning models (e.g. MiniMax-M3) are now stripped from streamed deltas and final text so they no longer reach chat or TTS.
-
-### `gemini` plugin: crash on duplicate follow-up tool calls (#588)
-
-`GeminiLLM.simple_response` crashed with `ValueError('content parts are required.')` when the model echoed an already-executed function call in a follow-up turn. `_dedup_and_execute` filtered it out, leaving the follow-up `chat.send_message_stream(parts=[], ...)` with an empty list, which google-genai rejects. The multi-hop loop now exits cleanly when every requested call is a duplicate.
-
 ### Router: sentences from a per-sentence voice were heard spliced together (#675)
 
 A voice that takes each sentence as its own request (Gemini TTS, Fish, Speechify) synthesised a reply's sentences side by side, and the agent played their audio in the order it arrived, so a two-sentence reply sounded like two voices talking over each other. The router now holds each sentence's audio until the ones before it have finished, while still synthesising them in parallel. A barge-in drops everything held, and every sentence is still settled and billed.
@@ -1227,6 +1408,173 @@ A voice that takes each sentence as its own request (Gemini TTS, Fish, Speechify
 ### Router: Gemini TTS changed voice from one sentence to the next (#677)
 
 Asked for no voice, Gemini picks one on every request, and the router sends it one request per sentence, so an agent without a configured voice could sound like a different person on each reply. Gemini TTS now defaults to the prebuilt voice Kore. A voice named on the agent or the request still wins.
+
+### `deepgram` plugin: Flux STT handles typed `TurnInfo` from SDK 7.7 (#633)
+
+`deepgram-sdk` 7.7 delivers listen v2 `TurnInfo` as typed objects instead of dicts. The STT handler now accepts both, so transcripts and turn events are emitted and the unexpected-message warning spam is gone.
+
+### Agent metadata was overwritten by stale user data (#630)
+
+The component metadata added in #618 was merged *under* the existing `agent_user.custom`, so a pre-set `custom` won and the provider/model fields never reached the edge. Component metadata now takes precedence, and keys that don't describe a configured component are unset on the stored user, so a previous run's `tts`/`avatar`/... values are cleared instead of lingering. `StreamEdge` maps a `None` custom field to the partial-update `unset` list rather than writing a literal null.
+
+# v0.6.9
+
+## Breaking Changes
+
+### `xai` plugin: Realtime default model bumped to `grok-voice-think-fast-2.0` (#624)
+
+`xai.Realtime` defaults to `grok-voice-think-fast-2.0` (was `grok-voice-think-fast-1.0`). Pass `model=` explicitly to stay on a 1.0 model.
+
+## New Features
+
+### `telnyx` plugin: LLM, STT and TTS (#629, #631)
+
+The Telnyx plugin, until now a phone transport, also exposes `telnyx.LLM`,
+`telnyx.STT`, and `telnyx.TTS`, so a phone agent can run end to end on Telnyx.
+`telnyx.LLM` wraps Telnyx Inference's OpenAI-compatible Chat Completions
+endpoint and defaults to `meta-llama/Llama-3.3-70B-Instruct`. `telnyx.STT`
+streams `linear16` over WebSocket and takes a `sample_rate`, so telephony audio
+from `TelnyxMediaStream` can be transcribed at 8 kHz without an upsample; pick
+the engine with `transcription_engine`. `telnyx.TTS` streams MP3 over WebSocket
+and decodes to `PcmData` as it arrives. All three read `TELNYX_API_KEY` from the
+environment. See `plugins/telnyx/examples/voice_agent_call.py` for an inbound
+call answered by an all-Telnyx pipeline.
+
+### `speechify` plugin: Speechify TTS (#615, #617)
+
+Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's streaming API. It streams raw PCM audio, defaults to the `simba-3.2` model with the `geffen_32` voice, and reads `SPEECHIFY_API_KEY` from the environment. Install with `vision-agents[speechify]`.
+
+### Agent metadata describing the configured providers (#618)
+
+The agent user is now published with metadata describing its own pipeline, so dashboards and Stream Chat clients can tell what an agent is made of without out-of-band bookkeeping. `Agent.components_metadata` returns `{"llm" | "vlm" | "realtime": {...}, "stt": ..., "tts": ..., "turn_detection": ..., "avatar": ..., "processors": [...]}` where each entry is `{"provider": <plugin name>, "model": <str | None>}`, and `Agent.authenticate()` writes it (plus `is_agent: True`) to the edge user's custom data. `StreamEdge` now merges via a partial update instead of an upsert, so custom fields written by other clients survive. Adds the public `MetadataValue` type in `vision_agents.core.edge.types`.
+
+## Bug Fixes
+
+### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
+
+`nvidia/cosmos-reason2-8b` is no longer available on the NVIDIA Chat Completions API for typical API Catalog keys. The plugin default, README, and example now use `meta/llama-3.2-11b-vision-instruct`.
+
+# v0.6.8
+
+## Breaking Changes
+
+### Minimum `getstream` raised to `>=4.1.0,<5` (#612)
+
+`agents-core` and the `getstream` plugin now require `getstream` 4.1, which introduces a stateful `AudioStreamTrack`. Audio tracks own their queue and lifecycle, so the agent and the avatar plugins (`anam`, `lemonslice`, `liveavatar`) no longer drive playback timing themselves. Out-of-tree edge transports that construct audio tracks (see `local` and `tencent` for reference) need the same update.
+
+# v0.6.7
+
+## Breaking Changes
+
+### `moonshine` extra removed (#613)
+
+The `moonshine` plugin is gone, and with it the `vision-agents[moonshine]` extra.
+
+## New Features
+
+### `anam` plugin: Anam SDK 0.6.0 (#614)
+
+The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
+
+### `kokoro` plugin: model warmup (#613)
+
+`kokoro.TTS` warms the model on `start()` so the first synthesis doesn't pay the load cost, and its streaming/lifecycle handling was tightened. The `pocket` plugin's dependency pins were also refreshed.
+
+## Bug Fixes
+
+### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus (#610)
+
+`PegasusVLM` now polls the TwelveLabs Assets API until an uploaded clip is `ready` before `analyze_stream` — direct uploads return `processing` and must not be analyzed early. Encoded MP4 clips also set PTS/`time_base` so padded buffers report at least 4 seconds of duration (Pegasus's minimum). Uploaded assets are still deleted if ready-wait fails or times out.
+
+# v0.6.6
+
+## Bug Fixes
+
+### `EventManager.register_events_from_module` crashed on non-string class types (#608)
+
+The scan assumed every candidate's class attribute was a string and raised when it wasn't, which broke event registration for modules containing such classes.
+
+# v0.6.5
+
+## New Features
+
+### Realtime input audio pacing (#599)
+
+Realtime LLMs that need a steady upstream audio cadence can now opt into framework-level pacing. Pass `input_audio_pacing=AudioInputPacingConfig(...)` to a `Realtime` subclass and the framework buffers the irregular PCM the WebRTC uplink delivers and forwards fixed-size chunks (default 20 ms) at a stable wall-clock rate. `AudioInputPacingConfig.virtual_microphone()` is a preset for speech-to-speech models that interpret gaps in the input as end-of-turn — it primes a 500 ms buffer and fills digital silence on a dry buffer so the model never sees an interruption.
+
+### `gemini` plugin: Live Translate model with auto-enabled input pacing (#599)
+
+Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and bumps the default Gemini Realtime model to `gemini-3.1-flash-live-preview` (was `gemini-2.5-flash-native-audio-preview-12-2025`). The Live Translate model is sensitive to uneven input audio — irregular upstream chunks produce audible jitter and word-cutoffs in its output. `GeminiRealtime` automatically installs `AudioInputPacingConfig.virtual_microphone()` whenever the model is `gemini-3.5-live-translate-preview`, so the framework feeds it a steady 20 ms stream by default. Opt out with `input_audio_pacing=None`.
+
+### `twelvelabs` plugin: Pegasus video understanding (#607)
+
+New opt-in `twelvelabs` plugin exposing `PegasusVLM`, a `VideoLLM` backed by TwelveLabs Pegasus. Unlike frame-by-frame VLMs it buffers recent frames, encodes a short MP4 clip, uploads it to the TwelveLabs Assets API, and streams the analysis back, so the agent can reason about motion and events over time. Reads `TWELVELABS_API_KEY`. Install with `vision-agents[twelvelabs]`.
+
+### `telnyx` plugin: phone transport (#594)
+
+New `telnyx` plugin providing `TelnyxMediaStream` for Telnyx Media Streaming, plus a call registry, µ-law/PCM audio handling, webhook signature verification, and runnable inbound/outbound call examples. Install with `vision-agents[telnyx]`.
+
+### `cartesia` plugin: streaming STT (#602)
+
+Adds `cartesia.STT` (WebSocket streaming) alongside the existing TTS, and refreshes the supported Cartesia speech models.
+
+## Bug Fixes
+
+### `openai` plugin: strict mode rejected tools with optional parameters (#605)
+
+`convert_tools_to_openai_format` set `strict: True` unconditionally, but the Responses API rejects an object schema in strict mode unless every property is listed in `required` — so any tool with a defaulted or optional parameter failed. Strict mode is now enabled per tool only when the schema qualifies, `additionalProperties: false` is applied recursively (nested objects, array items, `anyOf`/`oneOf`/`allOf`), and the normalization runs on a deep copy so the registry's shared schema is no longer mutated.
+
+# v0.6.4
+
+## New Features
+
+### `gemini` plugin: `google-genai>=2.8.0` for native live translation (#598)
+
+google-genai 2.8.0 adds a native `translation_config` field on `LiveConnectConfig`, so the Gemini Live Translate models can be driven through `gemini.Realtime(config=...)` without an SDK monkeypatch.
+
+# v0.6.3
+
+## Breaking Changes
+
+### `all-plugins` extra removed (#584)
+
+With 30+ plugins it no longer makes sense to install them all at once. Depend on the specific extras you need, e.g. `vision-agents[getstream,gemini,deepgram]`.
+
+### `deepgram-sdk` raised to `>=7.1.0,<7.2.0` (#543)
+
+The Deepgram plugin moves to SDK 7. Listen v2 messages arrive as plain dicts on this version, and the STT handler was updated accordingly.
+
+## New Features
+
+### `minimax` plugin: MiniMax LLM (#593)
+
+New `minimax` plugin exposing `minimax.LLM` over MiniMax's OpenAI-compatible Chat Completions API. Defaults to `MiniMax-M3` (512K context, image input); `MiniMax-M2.7` and `MiniMax-M2.7-highspeed` are also supported. Reads `MINIMAX_API_KEY` and optional `MINIMAX_BASE_URL`. Install with `vision-agents[minimax]`.
+
+### `qdrant` plugin: Qdrant RAG (#572)
+
+New `qdrant` plugin providing a Qdrant-backed RAG implementation for grounding agent responses in your own documents. Install with `vision-agents[qdrant]`.
+
+### `inworld` plugin: LLM and VLM via the Inworld router (#530)
+
+Adds `inworld.LLM` and `inworld.VLM` on top of Inworld's OpenAI-compatible `/v1/chat/completions`, which routes upstream across providers with auto-selection, fallbacks, and traffic splitting. Router options are constructor kwargs (`fallback_models`, `ignore_models`, `sort_by`, `ttft_timeout`, `metadata`, `web_search`), sent as `extra_body`. A `ttft_timeout` below 500 ms raises `ValueError` at construction instead of producing the gateway's misleading 502s.
+
+### `getstream` plugin: non-blocking StreamConversation persistence (#589)
+
+`StreamConversation` now persists messages to Stream Chat in the background instead of awaiting each REST round-trip inline. Voice pipelines call `upsert_message` on the critical path (per transcript and per LLM delta), where the inline ~150–300 ms round-trip compounded into audible response latency. Writes are dispatched as fire-and-forget tasks serialized behind a per-channel lock, so ordering is preserved and the final persisted message always matches the final content. Adds `Conversation.wait_for_pending_syncs()`, drained on agent shutdown so in-flight writes are not dropped.
+
+## Bug Fixes
+
+### `openai` plugin: `ChatCompletionsLLM` ignored injected/eager turn text and leaked `<think>` reasoning (#592)
+
+`ChatCompletionsLLM.simple_response` rebuilt the request purely from the conversation and ignored its `text` argument unless `participant` was `None`. Because the agent always supplies a participant, injected `agent.simple_response()` instructions produced an empty request (`400 chat content is empty`), and eager turns answered the *previous* transcript. The current `text` is now appended as the trailing user message when the conversation does not already end with it. Additionally, `<think>...</think>` reasoning spans emitted by reasoning models (e.g. MiniMax-M3) are now stripped from streamed deltas and final text so they no longer reach chat or TTS.
+
+### `gemini` plugin: crash on duplicate follow-up tool calls (#588)
+
+`GeminiLLM.simple_response` crashed with `ValueError('content parts are required.')` when the model echoed an already-executed function call in a follow-up turn. `_dedup_and_execute` filtered it out, leaving the follow-up `chat.send_message_stream(parts=[], ...)` with an empty list, which google-genai rejects. The multi-hop loop now exits cleanly when every requested call is a duplicate.
+
+### Packaging: plugin wheels contain only the import package (#587)
+
+Plugin wheels were built from `["."]`, pulling `tests/`, `example/`, `README.md` and `pyproject.toml` of each plugin into the published artifact. Every plugin now scopes its wheel target to `["vision_agents"]`.
 
 # v0.6.2
 

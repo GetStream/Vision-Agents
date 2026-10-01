@@ -245,6 +245,7 @@ func run(options options, logger *slog.Logger) error {
 		LanguageHints:  options.languages(),
 		Memory:         remembering,
 		AppID:          options.appID,
+		SessionID:      options.callID,
 		Store:          routers.store,
 		Live:           routers.live,
 		Logger:         logger,

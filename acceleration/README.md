@@ -40,7 +40,7 @@ and billing as a direct API call.
 | `internal/phone/didww`  | Sells numbers and cannot dial: it has no call control API at all    |
 | `internal/store`     | Postgres via bun, plus the goose migrations in `migrations/`        |
 | `internal/live`      | Redis via rueidis: provider health and live per-customer counters   |
-| `internal/api`       | HTTP layer generated from `api/openapi.yaml`                        |
+| `internal/api`       | HTTP layer: Huma operations on chi, rendered into `api/openapi.yaml` |
 | `cmd/router`         | Serves the HTTP API                                                 |
 | `cmd/say`            | Types a line, hears it                                              |
 | `cmd/chat`           | Types a line, reads the answer                                      |
@@ -114,6 +114,7 @@ the other commands that read them there.
 | `SALESFORCE_MCP_CLIENT_ID` / `SALESFORCE_MCP_CLIENT_SECRET` | Salesforce External Client App for hosted MCP. Set the client ID; the secret is optional when PKCE is enabled. Register the router callback URL in the app. |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
+| `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
@@ -301,7 +302,7 @@ Anonymous is left out of that, since an anonymous name is a claim nobody checked
 allowing it would make guessing whose a session was enough to read it.
 
 `internal/session` enforces all of this rather than the handlers, so `getSession`,
-`closeSession`, the events socket, the call token and the session actions cannot each be
+`stopSession`, `deleteSession`, the events socket, the call token and the session actions cannot each be
 wrong in their own way.
 
 Not built yet, in the order [.factory/features/auth.md](../.factory/features/auth.md) puts
@@ -1319,10 +1320,15 @@ docker run -d --name va-redis -p 56379:6379 redis:7-alpine
 
 ## Regenerate the HTTP layer
 
-`api/openapi.yaml` is the source of truth for every side. After editing it:
+Operations are declared in Go with Huma, on a chi router, and the structs are the source
+of truth. `api/openapi.yaml` is rendered from them and read by every client generator, so it
+is never edited by hand. The operations not yet moved to Go are still described in
+`api/legacy.yaml` and generated into `internal/api/generated.go` by oapi-codegen, and
+`cmd/openapi` merges both halves into one document. After changing an operation:
 
 ```bash
-go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
+go tool oapi-codegen -config api/oapi-codegen.yaml api/legacy.yaml   # only if legacy.yaml changed
+go run ./cmd/openapi
 uv run ../plugins/stream/generate.py
 uv run ../sdks/swift/generate.py
 (cd ../sdks/js && npm run types)
@@ -1338,7 +1344,7 @@ browser and on a server and the runtime is the part that differs between them. I
 code is hand-written in `sdks/js/src/client.ts` and typed against the generated `paths`, so
 a new operation is reachable there as soon as the types are regenerated.
 
-The three sockets are declared in the spec with a `101` response so a reader and a client
+The three sockets are declared in `api/legacy.yaml` with a `101` response so a reader and a client
 generator know they exist, and excluded from generation: a strict server cannot express an
 upgrade. Their handlers are hand-written in `internal/api/sessionws.go`, `streamws.go` and
 `dispatchws.go`, and the Python side of them in `plugins/stream/.../_socket.py`. Excluding
@@ -1416,8 +1422,8 @@ contract.
 
 ## Persistent text conversations
 
-A text session can set `persist_conversation: true` and optionally `conversation_id`
-to bind to a Stream Chat `agent:support-<uuid>` channel. The configured agent ID is
+Every text session is kept in a Stream Chat `agent:support-<uuid>` channel unless it is
+`incognito`; pass `conversation_id` to bind to an existing one. The configured agent ID is
 preserved; the backend verifies the channel's customer and agent ownership on
 resume and on `GET /v1/agents/conversations/{cid}/messages?agent_id=...&before=...`.
 This endpoint returns up to 100 messages and a `before` cursor. Completed ordinary
@@ -1447,10 +1453,12 @@ and Redis are not. This implementation assumes one backend process owns the loca
 outbox. Closing the last client of a persisted text session ends that session;
 the saved channel remains available.
 
-The Go SDK exposes `agents.ChatOptions{Persist: true, ConversationID: cid}`,
+The Go SDK exposes `agents.ChatOptions{ConversationID: cid}`,
 `Session.ConversationID()`, `Session.ContextTruncated()`,
 `stream.Backend.ConversationHistory`, and `Event.ConversationMessage`.
-Nonpersistent sessions retain their existing behavior. Text-mode native skills
+Without Stream credentials a new text session runs without a channel. Voice calls write
+their transcript into Chat as well: what a caller is saying streams as ephemeral updates
+and is stored once the turn settles. Text-mode native skills
 use task-oriented delegation; voice sessions retain their speech-repair policy.
 
 STT/TTS recording requests may explicitly set `inline: true` to complete a short

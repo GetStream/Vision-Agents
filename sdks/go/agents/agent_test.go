@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // backend is a stand-in for the acceleration router's configuration paths: enough of them
@@ -154,14 +156,48 @@ func agentOn(t *testing.T, router *backend, options Options) *Agent {
 	return agent
 }
 
-func TestAnAgentNeedsAnLLMAndAName(t *testing.T) {
-	if _, err := New(Options{Name: "jean"}); err == nil {
-		t.Error("an agent with nothing answering is not an agent")
-	}
+func TestAnAgentNeedsAName(t *testing.T) {
 	if _, err := New(Options{LLM: stream.Accelerated(stream.Config{})}); err == nil {
 		t.Error("an agent has to be called something")
 	}
 }
+
+func TestANamedAgentRunsItsStoredConfigWithItsTools(t *testing.T) {
+	agent, err := New(Options{Name: "jean", Tools: []tools.Tool{lookupOrder{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if agent.LLM() == nil {
+		t.Fatal("an agent given only a name has nothing answering")
+	}
+	if listed := agent.Tools().List(); len(listed) != 1 || listed[0].Name != "lookup_order" {
+		t.Errorf("the model is offered %+v", listed)
+	}
+}
+
+func TestANamedAgentReadsItsFolderUnderAgents(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "agents/jean/agent.yaml", "name: jean\n")
+	write(t, root, "agents/jean/instructions.md", "You are Jean.\n")
+	t.Chdir(root)
+
+	agent, err := New(Options{Name: "jean"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.Folder() == nil || agent.Instructions() != "You are Jean." {
+		t.Errorf("agents/jean was not read: instructions are %q", agent.Instructions())
+	}
+}
+
+type lookupOrder struct {
+	OrderID string `json:"order_id"`
+}
+
+func (lookupOrder) Name() string                     { return "lookup_order" }
+func (lookupOrder) Description() string              { return "Look up an order by its number" }
+func (lookupOrder) Run(context.Context) (any, error) { return "shipped", nil }
 
 func TestAnAgentJoinsUnderAUserIDDerivedFromItsName(t *testing.T) {
 	router := newBackend(t)
@@ -169,6 +205,77 @@ func TestAnAgentJoinsUnderAUserIDDerivedFromItsName(t *testing.T) {
 
 	if agent.options.UserID != "jean-le-bot" {
 		t.Errorf("the agent joins as %q", agent.options.UserID)
+	}
+}
+
+func TestAChatIsAskedThroughItsResponsesLikeASessionOpenedByName(t *testing.T) {
+	router := newWorked(t, nil)
+	agent, err := New(Options{
+		Name: "jean",
+		LLM: stream.Accelerated(stream.Config{
+			Backend: stream.Backend{URL: router.URL, CustomerID: "acme"},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	answer, err := session.Responses.Create(t.Context(), "Where is order 1042?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer.ID() != "response-1" || answer.Created.SessionId != session.ID() {
+		t.Errorf("the answer is %+v, want response-1 in %s", answer.Created, session.ID())
+	}
+	if asked := router.questions(); len(asked) != 1 || asked[0] != session.ID()+": Where is order 1042?" {
+		t.Errorf("the router was asked %v", asked)
+	}
+}
+
+func TestASessionCanChangeWhatTheAgentWasConfiguredWith(t *testing.T) {
+	router := newWorked(t, nil)
+	agent, err := New(Options{
+		Name:         "jean",
+		Instructions: "You are Jean.",
+		CostTracking: map[string]string{"team": "support", "tier": "free"},
+		LLM: stream.Accelerated(stream.Config{
+			Backend: stream.Backend{URL: router.URL, CustomerID: "acme"},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
+		Instructions: "You are Jean, and brief.",
+		CostTracking: map[string]string{"tier": "pro"},
+		Title:        "Order 1042",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	opened := router.opened[0]
+	if opened.Instructions == nil || *opened.Instructions != "You are Jean, and brief." {
+		t.Errorf("the session was opened with instructions %v", opened.Instructions)
+	}
+	if opened.Tags == nil || (*opened.Tags)["team"] != "support" || (*opened.Tags)["tier"] != "pro" {
+		t.Errorf("the session was labelled %v", opened.Tags)
+	}
+	if opened.Title == nil || *opened.Title != "Order 1042" {
+		t.Errorf("the session was titled %v", opened.Title)
+	}
+	if agent.options.CostTracking["tier"] != "free" {
+		t.Errorf("the session wrote its labels through to the agent: %v", agent.options.CostTracking)
 	}
 }
 

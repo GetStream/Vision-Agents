@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -20,48 +19,6 @@ import (
 // It is a 404 rather than a 501 because the resource genuinely is not there: this router
 // runs no conversations, so it holds no sessions to find.
 const noSessions = "this deployment does not run sessions"
-
-// CreateSession joins a call and returns the session running it.
-func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequestObject) (CreateSessionResponseObject, error) {
-	customerID, ok := CustomerFrom(ctx)
-	if !ok {
-		return CreateSession401JSONResponse{missingCustomer()}, nil
-	}
-	if s.sessions == nil {
-		return CreateSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
-	}
-	if request.Body == nil {
-		return CreateSession400JSONResponse{badRequest("a request body is required")}, nil
-	}
-
-	// A config is read before the session is created rather than inside it, so a caller
-	// naming one that is not theirs is told so instead of getting a session that quietly
-	// ignored it.
-	config, failure := s.configFor(ctx, customerID, request.Body.ConfigId, request.Body.Agent)
-	if failure != nil {
-		if failure.status == notFound {
-			return CreateSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
-		}
-		return CreateSession400JSONResponse{badRequest(failure.message)}, nil
-	}
-
-	spec := specOf(*request.Body, customerID, config)
-	// Who asked comes from the credential rather than from specOf, which merges the request
-	// with the config and so only ever sees what the caller was willing to say about
-	// themselves. Both halves are recorded, because the name is only worth what the kind
-	// says it is: this pair is what the session is owned by and what every later request
-	// for it is matched against.
-	spec.Caller = CallerFrom(ctx)
-	spec.CallerKind = KindFrom(ctx)
-	created, err := s.sessions.Create(ctx, spec)
-	if err != nil {
-		// Everything that can go wrong here is the caller's spec or a provider that would
-		// not start, and both are worth reading rather than a 500 with the detail in a
-		// log the caller cannot see.
-		return CreateSession400JSONResponse{badRequest(err.Error())}, nil
-	}
-	return CreateSession201JSONResponse(sessionOf(created)), nil
-}
 
 // configFor resolves whichever way the caller addressed the agent.
 //
@@ -101,64 +58,6 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 			message: "there is no agent called " + named}
 	}
 	return &found, nil
-}
-
-// ListSessions returns the calling customer's sessions, newest first.
-//
-// Without filters it is the live sessions, as it always was. With any of them it is a query
-// over what has happened too, so a caller asking for their conversations gets the ones that
-// ended as well as the one they are having.
-func (s *Server) ListSessions(ctx context.Context, request ListSessionsRequestObject) (ListSessionsResponseObject, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
-		return ListSessions401JSONResponse{missingCustomer()}, nil
-	}
-	if s.sessions == nil {
-		return ListSessions200JSONResponse{}, nil
-	}
-
-	filter, err := sessionFilter(ctx, sessionQuery{
-		Agent: request.Params.Agent, ConfigID: request.Params.ConfigId,
-		UserID: request.Params.UserId, Project: request.Params.Project,
-		State: string(value(request.Params.State)), Custom: request.Params.Custom,
-		After: request.Params.CreatedAfter, Before: request.Params.CreatedBefore,
-		Limit: request.Params.Limit, Offset: request.Params.Offset,
-	})
-	if err != nil {
-		return ListSessions400JSONResponse{badRequest(err.Error())}, nil
-	}
-
-	found, err := s.sessions.Query(ctx, OwnerFrom(ctx), filter)
-	if err != nil {
-		return nil, err
-	}
-	return ListSessions200JSONResponse(sessionsOf(found)), nil
-}
-
-// SearchSessions finds a conversation by what the caller named it.
-func (s *Server) SearchSessions(ctx context.Context, request SearchSessionsRequestObject) (SearchSessionsResponseObject, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
-		return SearchSessions401JSONResponse{missingCustomer()}, nil
-	}
-	if s.sessions == nil {
-		return SearchSessions200JSONResponse{}, nil
-	}
-
-	filter, err := sessionFilter(ctx, sessionQuery{
-		Agent: request.Params.Agent, ConfigID: request.Params.ConfigId,
-		UserID: request.Params.UserId, Project: request.Params.Project,
-		State: string(value(request.Params.State)), Custom: request.Params.Custom,
-		After: request.Params.CreatedAfter, Before: request.Params.CreatedBefore,
-		Limit: request.Params.Limit, Offset: request.Params.Offset,
-	})
-	if err != nil {
-		return SearchSessions400JSONResponse{badRequest(err.Error())}, nil
-	}
-
-	found, err := s.sessions.Search(ctx, OwnerFrom(ctx), value(request.Params.Q), filter)
-	if err != nil {
-		return nil, err
-	}
-	return SearchSessions200JSONResponse(sessionsOf(found)), nil
 }
 
 // ForkSession continues a conversation as a new one.
@@ -275,28 +174,6 @@ func (s *Server) GetSession(ctx context.Context, request GetSessionRequestObject
 		}
 	}
 	return GetSession200JSONResponse(sessionOf(found)), nil
-}
-
-// CloseSession ends a session, which is how the agent leaves the call.
-func (s *Server) CloseSession(ctx context.Context, request CloseSessionRequestObject) (CloseSessionResponseObject, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
-		return CloseSession401JSONResponse{missingCustomer()}, nil
-	}
-	if s.sessions == nil {
-		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
-	}
-
-	if _, failure := s.session(ctx, request.Id); failure != nil {
-		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: unknownSession}}, nil
-	}
-	closed, err := s.sessions.Close(request.Id, OwnerFrom(ctx))
-	if err != nil {
-		return nil, err
-	}
-	if !closed {
-		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: unknownSession}}, nil
-	}
-	return CloseSession204Response{}, nil
 }
 
 // SaySession speaks a piece of text without going through the model.
@@ -490,6 +367,76 @@ func (s *Server) SetSessionSettings(ctx context.Context, request SetSessionSetti
 	return SetSessionSettings200JSONResponse(sessionOf(found)), nil
 }
 
+// UpdateSession renames, relabels, re-instructs or moves one session onto other models. A
+// session that ended can only be renamed and relabelled.
+func (s *Server) UpdateSession(ctx context.Context, request UpdateSessionRequestObject) (UpdateSessionResponseObject, error) {
+	found, failure := s.storedOrLiveSession(ctx, request.Id)
+	if failure == nil && found.Live != nil && !canReadSession(ctx, found.Live.Spec()) {
+		failure = &lookupFailure{status: notFound, message: unknownSession}
+	}
+	if failure != nil {
+		if failure.status == unauthorized {
+			return UpdateSession401JSONResponse{missingCustomer()}, nil
+		}
+		return UpdateSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+	}
+	if request.Body == nil {
+		return UpdateSession400JSONResponse{badRequest("a request body is required")}, nil
+	}
+
+	body := request.Body
+	settings, moving := settingsOf(*body)
+	labels := session.Labels{Title: body.Title, Description: body.Description, Custom: body.Custom}
+
+	if found.Live == nil {
+		if moving || body.Instructions != nil {
+			return UpdateSession400JSONResponse{badRequest(
+				"the session has ended, so only its title, description and custom can change")}, nil
+		}
+		row := *found.Stored
+		row.Title = override(row.Title, body.Title)
+		row.Description = override(row.Description, body.Description)
+		row.Custom = override(row.Custom, body.Custom)
+		if err := s.store.DescribeSession(ctx, row.CustomerID, row.ID, row.Title, row.Description,
+			value(body.Custom)); err != nil {
+			return nil, err
+		}
+		return UpdateSession200JSONResponse(storedSessionOf(row)), nil
+	}
+
+	live := found.Live
+	if moving {
+		if err := live.SetSettings(ctx, settings); err != nil {
+			return UpdateSession400JSONResponse{badRequest(err.Error())}, nil
+		}
+	}
+	if body.Instructions != nil {
+		live.SetInstructions(*body.Instructions)
+	}
+	if labels.Title != nil || labels.Description != nil || labels.Custom != nil {
+		live.Describe(ctx, labels)
+	}
+	return UpdateSession200JSONResponse(sessionOf(live)), nil
+}
+
+// settingsOf reads the models and voice an update asks for, and reports whether it asks
+// for any.
+func settingsOf(body UpdateSessionRequest) (session.Settings, bool) {
+	settings := session.Settings{
+		LLM: body.Llm, STT: body.Stt, TTS: body.Tts, STS: body.Sts, Subagent: body.Subagent,
+		Voice: body.Voice, Temperature: body.Temperature, MaxOutputTokens: body.MaxOutputTokens,
+	}
+	if body.Thinking != nil {
+		thinking := string(*body.Thinking)
+		settings.Thinking = &thinking
+	}
+	if body.Verbosity != nil {
+		verbosity := string(*body.Verbosity)
+		settings.Verbosity = &verbosity
+	}
+	return settings, settings != session.Settings{}
+}
+
 // lookupStatus says which way finding a session failed.
 type lookupStatus int
 
@@ -567,67 +514,6 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 	return session.Found{Stored: &row}, nil
 }
 
-// sessionQuery is the filter as it arrives, which is the same set of parameters on listing
-// and on searching. Gathered into one struct so the two cannot drift apart in what they
-// admit: a filter honoured by one and forgotten by the other is one a caller uses to read
-// somebody else's conversations.
-type sessionQuery struct {
-	Agent, ConfigID, UserID, Project *string
-	// State is a string rather than either of the two generated enums, because the
-	// generator makes one type per operation and they are the same parameter.
-	State         string
-	Custom        *string
-	After, Before *time.Time
-	Limit, Offset *int
-}
-
-// sessionFilter turns query parameters into a store filter, refusing what cannot be meant.
-//
-// The user id is the one parameter a caller does not get to choose freely: anybody who is
-// not the app's own backend is narrowed to their own sessions whatever they asked for,
-// because a filter a caller can widen is not a boundary. The manager narrows it again for
-// the same reason; two checks is the right number for something that decides whose
-// conversations a stranger can read.
-func sessionFilter(ctx context.Context, query sessionQuery) (store.SessionFilter, error) {
-	filter := store.SessionFilter{
-		AgentName: value(query.Agent),
-		ConfigID:  value(query.ConfigID),
-		Project:   value(query.Project),
-		State:     query.State,
-		Limit:     value(query.Limit),
-		Offset:    value(query.Offset),
-	}
-	if query.After != nil {
-		filter.After = *query.After
-	}
-	if query.Before != nil {
-		filter.Before = *query.Before
-	}
-
-	if requested := value(query.UserID); requested != "" {
-		if KindFrom(ctx) != auth.KindServer {
-			return store.SessionFilter{}, errors.New(
-				"only a server-side caller may list another user's sessions")
-		}
-		filter.UserID = requested
-	}
-
-	if labels := value(query.Custom); labels != "" {
-		decoded := map[string]any{}
-		if err := json.Unmarshal([]byte(labels), &decoded); err != nil {
-			return store.SessionFilter{}, errors.New("custom must be a JSON object of labels")
-		}
-		filter.Custom = make(map[string]string, len(decoded))
-		for key, held := range decoded {
-			// Flattened to strings because that is what a query string carries and what the
-			// containment check compares: a caller who labelled a session with the number 4
-			// finds it again by typing 4.
-			filter.Custom[key] = fmt.Sprint(held)
-		}
-	}
-	return filter, nil
-}
-
 // sessionsOf renders a query's results, taking the live half where there is one: a session
 // in flight knows what routing resolved its models to, which the row does not carry.
 func sessionsOf(found []session.Found) []Session {
@@ -661,16 +547,19 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if config != nil {
 		spec = session.FromConfig(*config)
 	}
+	spec.ID = value(request.Id)
 	spec.CallID = value(request.CallId)
 	spec.CustomerID = customerID
 	spec.Text = value(request.Text)
-	spec.PersistConversation = value(request.PersistConversation)
+	// A text conversation is kept in Stream Chat unless it is incognito, which Normalize
+	// turns off, so any Chat client can read it back.
+	spec.PersistConversation = spec.Text
 	spec.ConversationID = value(request.ConversationId)
 
 	spec.Incognito = value(request.Incognito)
 	spec.Title = override(spec.Title, request.Title)
 	spec.Description = override(spec.Description, request.Description)
-	spec.Project = override(spec.Project, request.Project)
+	spec.Project = override(spec.Project, request.ProjectId)
 	if request.Custom != nil {
 		spec.Custom = *request.Custom
 	}
@@ -795,6 +684,7 @@ func sessionOf(found *session.Session) Session {
 		UserId:    spec.UserID,
 		AgentId:   spec.AgentID,
 		State:     SessionState(found.State()),
+		Modality:  SessionModality(found.Modality()),
 		CreatedAt: found.CreatedAt(),
 	}
 	if found.CapturesVideo() {
@@ -849,7 +739,7 @@ func describe(rendered *Session, spec session.Spec) {
 		rendered.Description = &spec.Description
 	}
 	if spec.Project != "" {
-		rendered.Project = &spec.Project
+		rendered.ProjectId = &spec.Project
 	}
 	if len(spec.Custom) > 0 {
 		rendered.Custom = &spec.Custom
@@ -874,8 +764,11 @@ func storedSessionOf(row store.AgentSession) Session {
 		CallType:  row.CallType,
 		UserId:    row.UserID,
 		AgentId:   row.AgentID,
-		State:     SessionState(row.State),
+		State:     Live,
 		CreatedAt: row.CreatedAt,
+	}
+	if row.State == store.SessionClosed {
+		rendered.State = Ended
 	}
 	// A session with no call was held in writing, which is what the absence of one means.
 	if row.CallID == "" {
@@ -892,6 +785,10 @@ func storedSessionOf(row store.AgentSession) Session {
 // mergeStored writes what only the row knows onto a rendered session: the labels, and when
 // it ended.
 func mergeStored(rendered *Session, row *store.AgentSession) {
+	// A live session knows its modality before the row that records it.
+	if rendered.Modality == "" {
+		rendered.Modality = SessionModality(row.Modality)
+	}
 	if row.AgentName != "" {
 		rendered.Agent = &row.AgentName
 	}
@@ -905,7 +802,7 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.Description = &row.Description
 	}
 	if row.Project != "" {
-		rendered.Project = &row.Project
+		rendered.ProjectId = &row.Project
 	}
 	if len(row.Custom) > 0 {
 		custom := row.Custom
@@ -1033,7 +930,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	spec.ForkedFrom = parentID
 	spec.Title = override(spec.Title, request.Title)
 	spec.Description = override(spec.Description, request.Description)
-	spec.Project = override(spec.Project, request.Project)
+	spec.Project = override(spec.Project, request.ProjectId)
 	spec.Instructions = override(spec.Instructions, request.Instructions)
 	spec.Incognito = value(request.Incognito)
 	if request.Custom != nil {
@@ -1045,6 +942,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 
 	// The fork is its own conversation, so it gets its own channel and its own agent id:
 	// sharing the parent's would have two sessions writing into one transcript.
+	spec.ID = ""
 	spec.ConversationID = ""
 	spec.AgentID = ""
 	spec.CallID = value(request.CallId)
@@ -1060,6 +958,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	// write -- so a fork that is carrying history persists, and a parent that kept none has
 	// none to hand over. Recall is cleared rather than inherited, because a fork of a fork
 	// reads its own parent and not its grandparent: the parent's channel already holds both.
+	spec.PersistConversation = spec.Text
 	spec.Recall = nil
 	if recall != nil && (request.Messages == nil || *request.Messages) {
 		spec.PersistConversation = true

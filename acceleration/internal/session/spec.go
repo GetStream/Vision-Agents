@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -33,6 +35,9 @@ type Recall struct {
 // difference is only who is deciding: a flag becomes a field, and the process that used to
 // be started per call becomes a session in a process that is already running.
 type Spec struct {
+	// ID is the id the session is held by. Empty is generated as a UUIDv7; one the caller
+	// chose has to be a UUID.
+	ID                  string
 	PersistConversation bool
 	ConversationID      string
 	ContextTruncated    bool
@@ -264,6 +269,16 @@ func (s *Spec) Normalize() error {
 	// caller who asks for a native model in a text session, say, should be refused for that
 	// reason rather than have the refusal depend on which of the two was read first.
 	s.applyOverwrites()
+
+	if s.ID == "" {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return fmt.Errorf("session: generating an id: %w", err)
+		}
+		s.ID = id.String()
+	} else if _, err := uuid.Parse(s.ID); err != nil {
+		return fmt.Errorf("session: the id %q is not a UUID", s.ID)
+	}
 
 	// Incognito is honoured here rather than at each of the places that records something,
 	// because one place that forgot would be a conversation kept against its caller's

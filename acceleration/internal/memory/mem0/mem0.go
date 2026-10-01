@@ -1,8 +1,9 @@
 // Package mem0 stores an agent's memories in mem0's hosted platform.
 //
-// mem0 publishes no Go SDK, so this speaks its v3 REST API directly: one call to hand a
-// conversation over and one to ask what is known. Extraction is asynchronous on mem0's
-// side, so adding returns an event id rather than the memories it will produce.
+// mem0 publishes no Go SDK, so this speaks its REST API directly: one call to hand a
+// conversation over, one to ask what is known, and a list and a batch delete to forget.
+// Extraction is asynchronous on mem0's side, so adding returns an event id rather than the
+// memories it will produce.
 package mem0
 
 import (
@@ -32,6 +33,9 @@ const (
 
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
+
+// deletePageSize is how many memories are deleted per batch, well under mem0's 1000.
+const deletePageSize = 100
 
 // Options configures a Store. The key falls back to the environment, the way every other
 // provider in this service is configured.
@@ -108,7 +112,7 @@ func (s *Store) Recall(ctx context.Context, query memory.Query) ([]memory.Memory
 	}
 
 	var response searchResponse
-	if err := s.call(ctx, "/v3/memories/search/", body, &response); err != nil {
+	if err := s.call(ctx, http.MethodPost, "/v3/memories/search/", body, &response); err != nil {
 		return nil, err
 	}
 
@@ -136,6 +140,11 @@ func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm
 		Messages: make([]message, 0, len(messages)),
 		UserID:   scope.UserID,
 		AppID:    scope.AppID,
+		AgentID:  scope.AgentID,
+		RunID:    scope.RunID,
+		// The caller's labels are written as metadata, which is the only place a search
+		// can later filter on them.
+		Metadata: scope.Extra,
 	}
 	for _, said := range messages {
 		if said.Content == "" {
@@ -148,11 +157,60 @@ func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm
 	}
 
 	var response addResponse
-	if err := s.call(ctx, "/v3/memories/add/", body, &response); err != nil {
+	if err := s.call(ctx, http.MethodPost, "/v3/memories/add/", body, &response); err != nil {
 		return err
 	}
 	s.logger.Debug("queued a conversation to remember", "event", response.EventID, "status", response.Status)
 	return nil
+}
+
+// Truncate deletes everything mem0 knows about one user of one app.
+func (s *Store) Truncate(ctx context.Context, appID, userID string) error {
+	if appID == "" || userID == "" {
+		return errors.New("mem0: truncating needs an app id and a user id")
+	}
+	return s.deleteMatching(ctx, map[string]any{"app_id": appID, "user_id": userID})
+}
+
+// ForgetRun deletes what one session of one app taught mem0.
+func (s *Store) ForgetRun(ctx context.Context, appID, runID string) error {
+	if appID == "" || runID == "" {
+		return errors.New("mem0: forgetting a session needs an app id and a run id")
+	}
+	return s.deleteMatching(ctx, map[string]any{"app_id": appID, "run_id": runID})
+}
+
+// deleteMatching deletes every memory the filters match, a page at a time.
+//
+// mem0's delete-all endpoint takes one entity and ignores the rest, so asked for an app and
+// a run it deletes the whole app. Listing by filter and deleting by id is the only way to
+// delete exactly what was asked for.
+func (s *Store) deleteMatching(ctx context.Context, filters map[string]any) error {
+	deleted := map[string]bool{}
+	for {
+		var page listResponse
+		path := fmt.Sprintf("/v3/memories/?page=1&page_size=%d", deletePageSize)
+		if err := s.call(ctx, http.MethodPost, path, listRequest{Filters: filters}, &page); err != nil {
+			return err
+		}
+		if len(page.Results) == 0 {
+			return nil
+		}
+
+		batch := batchDeleteRequest{Memories: make([]batchMemory, 0, len(page.Results))}
+		for _, found := range page.Results {
+			// A memory listed again after being deleted would loop here for ever.
+			if deleted[found.ID] {
+				return fmt.Errorf("mem0: memory %s is still listed after being deleted", found.ID)
+			}
+			deleted[found.ID] = true
+			batch.Memories = append(batch.Memories, batchMemory{MemoryID: found.ID})
+		}
+		var response batchDeleteResponse
+		if err := s.call(ctx, http.MethodDelete, "/v1/batch/", batch, &response); err != nil {
+			return err
+		}
+	}
 }
 
 // Provider is the name this store is recorded under.
@@ -165,13 +223,13 @@ func (s *Store) Client() *http.Client { return s.client }
 // Close releases nothing: the store holds no connection of its own.
 func (s *Store) Close() error { return nil }
 
-func (s *Store) call(ctx context.Context, path string, body, into any) error {
+func (s *Store) call(ctx context.Context, method, path string, body, into any) error {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("mem0: encode %s: %w", path, err)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+path, bytes.NewReader(encoded))
+	request, err := http.NewRequestWithContext(ctx, method, s.baseURL+path, bytes.NewReader(encoded))
 	if err != nil {
 		return fmt.Errorf("mem0: %s: %w", path, err)
 	}
@@ -198,17 +256,19 @@ func (s *Store) call(ctx context.Context, path string, body, into any) error {
 
 // filtersFor scopes a search to who the memories belong to. An app id narrows it further,
 // which is what keeps two deployments sharing one mem0 account apart.
-func filtersFor(scope memory.Scope) map[string]string {
-	filters := make(map[string]string, len(scope.Extra)+2)
-	// The caller's own labels go in first, so neither of the two identities below can be
-	// overwritten by one: a filter that could rewrite the user id would read somebody
-	// else's memories.
-	for key, value := range scope.Extra {
-		filters[key] = value
+//
+// The agent and run ids are left out. mem0 files what it learns about the user with no
+// agent id, so filtering on one finds nothing, and filtering on the run would recall only
+// what this session already knows.
+func filtersFor(scope memory.Scope) map[string]any {
+	filters := map[string]any{
+		"user_id": scope.UserID,
+		"app_id":  scope.AppID,
 	}
-	filters["user_id"] = scope.UserID
-	if scope.AppID != "" {
-		filters["app_id"] = scope.AppID
+	// v3 refuses unknown keys at the top level, so the caller's labels can only ever
+	// narrow the search through metadata, never rewrite the ids above.
+	if len(scope.Extra) > 0 {
+		filters["metadata"] = scope.Extra
 	}
 	return filters
 }
@@ -219,9 +279,12 @@ type message struct {
 }
 
 type addRequest struct {
-	Messages []message `json:"messages"`
-	UserID   string    `json:"user_id"`
-	AppID    string    `json:"app_id,omitempty"`
+	Messages []message         `json:"messages"`
+	UserID   string            `json:"user_id"`
+	AppID    string            `json:"app_id"`
+	AgentID  string            `json:"agent_id"`
+	RunID    string            `json:"run_id"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 type addResponse struct {
@@ -230,9 +293,9 @@ type addResponse struct {
 }
 
 type searchRequest struct {
-	Query   string            `json:"query"`
-	Filters map[string]string `json:"filters"`
-	TopK    int               `json:"top_k,omitempty"`
+	Query   string         `json:"query"`
+	Filters map[string]any `json:"filters"`
+	TopK    int            `json:"top_k,omitempty"`
 }
 
 type searchResponse struct {
@@ -241,4 +304,26 @@ type searchResponse struct {
 		Memory string  `json:"memory"`
 		Score  float64 `json:"score"`
 	} `json:"results"`
+}
+
+type listRequest struct {
+	Filters map[string]any `json:"filters"`
+}
+
+type listResponse struct {
+	Results []struct {
+		ID string `json:"id"`
+	} `json:"results"`
+}
+
+type batchMemory struct {
+	MemoryID string `json:"memory_id"`
+}
+
+type batchDeleteRequest struct {
+	Memories []batchMemory `json:"memories"`
+}
+
+type batchDeleteResponse struct {
+	Message string `json:"message"`
 }

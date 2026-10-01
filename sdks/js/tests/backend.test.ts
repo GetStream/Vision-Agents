@@ -255,6 +255,58 @@ describe("Backend", () => {
     );
   });
 
+  it("hands the proxy a socket's credential the way it reads a request's", async () => {
+    // The proxy refuses a socket carrying only `token`; `token` stays for a router reached
+    // directly, which is what reads it.
+    const backend = new Backend({ url: router.url, apiKey: "key", token: "t", authenticate: true });
+
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("api_key"), "key");
+    assert.equal(url.searchParams.get("token"), "t");
+    assert.equal(url.searchParams.get("authorization"), "t");
+    assert.equal(url.searchParams.get("stream-auth-type"), "jwt", "a user, never a backend");
+  });
+
+  it("leaves a socket to a router reached directly as it was", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "key", token: "t" });
+
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("token"), "t");
+    assert.equal(url.searchParams.get("authorization"), null);
+    assert.equal(url.searchParams.get("stream-auth-type"), null);
+  });
+
+  it("names the end user to a router reached by customer id", async () => {
+    const backend = new Backend({ url: router.url, customerId: "local", userId: "ana" });
+
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("customer_id"), "local");
+    assert.equal(url.searchParams.get("user_id"), "ana");
+    assert.deepEqual(backend.query(), { user_id: "ana" });
+    assert.deepEqual(await backend.headers(), { "X-Customer-Id": "local" }, "no header a page's CORS would refuse");
+    assert.deepEqual(new Backend({ url: router.url, customerId: "local" }).query(), {});
+  });
+
+  it("calls the runtime's fetch on the global object, which a browser insists on", async () => {
+    // A browser's fetch throws "Illegal invocation" unless it is called on the window. Node's
+    // does not care, so the check is made here.
+    const real = globalThis.fetch;
+    globalThis.fetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+      if (this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return real(input, init);
+    } as typeof fetch;
+    try {
+      const backend = new Backend({ url: router.url, customerId: "local" });
+      router.serve("GET", "/v1/agents/configs", { body: [] });
+      const response = await backend.request(`${router.url}/v1/agents/configs`, { method: "GET" });
+      assert.equal(response.status, 200);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
   it("upgrades an https router to wss", async () => {
     const backend = new Backend({ url: "https://router.example.com", customerId: "local" });
     const url = await backend.socketURL("/v1/agents/sessions/x/events");

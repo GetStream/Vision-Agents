@@ -167,8 +167,10 @@ export interface AgentOptions {
 
 /** How a text conversation is held. */
 export interface ChatOptions extends SessionOptions {
-  /** Keep the conversation in Stream Chat, creating a channel when no id is given. */
-  persist?: boolean;
+  /**
+   * The Stream Chat channel to resume. Left empty the backend creates one, since every text
+   * conversation is kept unless it is incognito.
+   */
   conversationId?: string;
   /**
    * The conversation being answered, which names the channel replies are written into.
@@ -276,11 +278,10 @@ export class Agent {
    * skills handed to the same slower model, the same knowledge base.
    */
   chat(options: ChatOptions = {}): Promise<Session> {
-    const { persist, conversationId, agentId, ...rest } = options;
+    const { conversationId, agentId, ...rest } = options;
     return this.open(
       {
         text: true,
-        ...(persist === undefined ? {} : { persist_conversation: persist }),
         ...(conversationId ? { conversation_id: conversationId } : {}),
         ...(agentId ? { agent_id: agentId } : {}),
       },
@@ -315,7 +316,6 @@ export class Agent {
   reply(message: InboundMessage, options: SessionOptions = {}): Promise<Session> {
     return this.chat({
       ...options,
-      persist: true,
       conversationId: `${message.channelType}:${message.channelId}`,
       agentId: message.agentId,
     });

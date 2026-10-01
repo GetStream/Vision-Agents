@@ -75,17 +75,6 @@ public struct Router: Sendable {
 
     /// Runs one request, reporting a transport failure as one and leaving cancellation alone.
     func call<T>(_ body: (Client) async throws -> T) async throws -> T {
-        do {
-            return try await body(backend.client())
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as AgentsError {
-            throw error
-        } catch let error as ClientError {
-            if error.underlyingError is CancellationError { throw CancellationError() }
-            throw AgentsError.transport(error.underlyingError)
-        } catch {
-            throw AgentsError.transport(error)
-        }
+        try await backend.call(body)
     }
 }

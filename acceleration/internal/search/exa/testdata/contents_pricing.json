@@ -1,0 +1,4 @@
+{
+	"results":[{"url":"https://example.com/pricing","title":"Pricing","text":"# Pricing\n\nA call costs a penny."}],
+	"statuses":[{"id":"https://example.com/pricing","status":"success"}]
+}

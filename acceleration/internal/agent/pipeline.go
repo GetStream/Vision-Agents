@@ -435,6 +435,7 @@ func (a *Agent) stopPipeline(keepHarness bool) []error {
 // releasePipeline cancels the running pipeline and closes its sessions, in the order that
 // lets each of its goroutines run out of work. It does not wait for them.
 func (a *Agent) releasePipeline(keepHarness bool) (*pipeline, []error) {
+	a.dropSpeculations()
 	a.mu.Lock()
 	p := a.pipe
 	listeners := make([]*sttrouter.Session, 0, len(a.listeners))

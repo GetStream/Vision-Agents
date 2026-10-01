@@ -254,6 +254,25 @@ public sealed class ClientTests
     }
 
     [Fact]
+    public async Task SettingsAreChangedWithOnlyWhatWasSet()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("GET", "/v1/agents/sessions/s1", 200, Fixtures.Session("s1"));
+        router.On("PATCH", "/v1/agents/sessions/s1/settings", 200, Fixtures.Session("s1"));
+        router.On("DELETE", "/v1/agents/sessions/s1", 204);
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+
+        await using var session = await client.Sessions.GetAsync("s1", cancel);
+        var updated = await session.UpdateSettingsAsync(new SessionSettingsRequest { Llm = "llm-thinking", Thinking = "high" }, cancel);
+
+        Assert.Equal("s1", updated.Id);
+        var body = router.Only("PATCH", "/v1/agents/sessions/s1/settings").Body!.AsObject();
+        Assert.Equal(["llm", "thinking"], body.Select(pair => pair.Key).Order());
+        Assert.Equal(("llm-thinking", "high"), (body.Text("llm"), body.Text("thinking")));
+    }
+
+    [Fact]
     public async Task TheBodyIsWrittenWithTheRouterSpelling()
     {
         await using var router = await TestRouter.StartAsync();
@@ -261,10 +280,10 @@ public sealed class ClientTests
         using var client = Fixtures.Client(router);
 
         await client.PostAsync<Models.Session>("/v1/agents/sessions",
-            new CreateSessionRequest { ConversationId = "agent:1", PersistConversation = true }, TestContext.Current.CancellationToken);
+            new CreateSessionRequest { ConversationId = "agent:1", Incognito = true }, TestContext.Current.CancellationToken);
 
         var body = router.Only("POST", "/v1/agents/sessions").Body!.AsObject();
-        Assert.Equal(["conversation_id", "persist_conversation"], body.Select(pair => pair.Key).Order());
-        Assert.Equal(JsonValueKind.True, body["persist_conversation"]!.GetValueKind());
+        Assert.Equal(["conversation_id", "incognito"], body.Select(pair => pair.Key).Order());
+        Assert.Equal(JsonValueKind.True, body["incognito"]!.GetValueKind());
     }
 }

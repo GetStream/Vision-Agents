@@ -10,12 +10,13 @@ import {
   type GuestUserOptions,
 } from "./guests.js";
 import { AgentHandle } from "./handle.js";
+import { Memories } from "./memories.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
 
-/** The methods the router serves. It serves no PATCH, because the spec describes none. */
-export type Method = "get" | "post" | "put" | "delete";
+/** The methods the router serves. */
+export type Method = "get" | "post" | "put" | "patch" | "delete";
 
 type Operation<P extends keyof paths, M extends Method> = M extends keyof paths[P]
   ? NonNullable<paths[P][M]>
@@ -109,9 +110,12 @@ type Arguments<Op> = Record<string, never> extends RequestOptions<Op>
  */
 export class Client {
   readonly backend: Backend;
+  /** What the app's agents remember about its users. */
+  readonly memories: Memories;
 
   constructor(backend: Backend | BackendOptions = {}) {
     this.backend = backend instanceof Backend ? backend : new Backend(backend);
+    this.memories = new Memories(this);
   }
 
   /**
@@ -198,6 +202,13 @@ export class Client {
     return this.send("put", path, options[0]);
   }
 
+  patch<P extends PathsWith<"patch">>(
+    path: P,
+    ...options: Arguments<Operation<P, "patch">>
+  ): Promise<Result<Operation<P, "patch">>> {
+    return this.send("patch", path, options[0]);
+  }
+
   delete<P extends PathsWith<"delete">>(
     path: P,
     ...options: Arguments<Operation<P, "delete">>
@@ -216,7 +227,7 @@ export class Client {
 
     const operation = `${method.toUpperCase()} ${template}`;
     const url = new URL(this.backend.url + fill(template, path));
-    for (const [name, value] of Object.entries(query ?? {})) {
+    for (const [name, value] of Object.entries({ ...this.backend.query(), ...query })) {
       if (value === undefined || value === null) {
         continue;
       }

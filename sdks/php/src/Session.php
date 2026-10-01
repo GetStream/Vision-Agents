@@ -11,6 +11,7 @@ use GetStream\VisionAgents\Generated\InstructionsRequest;
 use GetStream\VisionAgents\Generated\RespondRequest;
 use GetStream\VisionAgents\Generated\SayRequest;
 use GetStream\VisionAgents\Generated\Session as SessionRow;
+use GetStream\VisionAgents\Generated\SessionSettingsRequest;
 use GetStream\VisionAgents\Worker\Watch;
 
 /**
@@ -106,6 +107,28 @@ final class Session
     {
         $forked = $this->client->post('/v1/agents/sessions/{id}/fork', ['id' => $this->id()], body: ($options ?? new ForkSessionRequest())->toArray());
         return new self($this->client, SessionRow::fromArray(Json::asObject($forked)), $this->agent);
+    }
+
+    /**
+     * Changes the models and voice of this session only, from the next turn. The config it
+     * started from is untouched, and a target that does not route is refused before anything
+     * changes. An empty `sts` makes the session a cascade again; an empty `voice` returns to
+     * the provider's default.
+     */
+    public function updateSettings(
+        ?string $llm = null,
+        ?string $stt = null,
+        ?string $tts = null,
+        ?string $sts = null,
+        ?string $subagent = null,
+        ?string $voice = null,
+        ?string $thinking = null,
+        ?float $temperature = null,
+        ?int $maxOutputTokens = null,
+        ?string $verbosity = null,
+    ): SessionRow {
+        $request = new SessionSettingsRequest($llm, $stt, $tts, $sts, $subagent, $voice, $thinking, $temperature, $maxOutputTokens, $verbosity);
+        return SessionRow::fromArray(Json::asObject($this->client->patch('/v1/agents/sessions/{id}/settings', ['id' => $this->id()], $request->toArray())));
     }
 
     /**

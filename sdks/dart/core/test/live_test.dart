@@ -103,7 +103,7 @@ void main() {
         expect(session.turns.last.text.toLowerCase(), contains('throw'));
       });
 
-      test('a rewound session carries on from the response kept, and forks from it', () async {
+      test('a fork at a response branches off it and leaves the original as it was', () async {
         final session = await chat();
         session.send('My name is Ada. Reply with one word.');
         await _until(() => session.state == ConversationState.idle && session.turns.length >= 2);
@@ -114,13 +114,11 @@ void main() {
         final kept = (await session.responses.list()).first;
         expect(kept.said, contains('Ada'));
 
-        await session.rewind(kept.id);
-        expect((await session.responses.list()).map((r) => r.id), [kept.id]);
-
         final fork = await session.fork(ForkOptions(responseId: kept.id));
         opened.add(fork);
         expect(fork.id, isNot(session.id));
         expect((await agents.sessions.get(fork.id)).forkedFrom, session.id);
+        expect(await session.responses.list(), hasLength(2));
       });
 
       test('a response created over HTTP is read back item by item', () async {

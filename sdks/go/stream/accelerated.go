@@ -82,8 +82,7 @@ type Config struct {
 // created. The harness, cost and memory fields are rendered from an agent's configuration
 // before it joins.
 type Call struct {
-	PersistConversation bool
-	ConversationID      string
+	ConversationID string
 	// ID is the call to join. Empty holds the conversation in writing instead.
 	ID string
 	// Type is the Stream call type. Empty leaves the backend's default.
@@ -101,13 +100,12 @@ type Call struct {
 	// are searched.
 	Title       string
 	Description string
-	// Project groups conversations, and is carried as a cost label too.
-	Project string
+	// ProjectID groups conversations, and is carried as a cost label too.
+	ProjectID string
 	// Custom is the caller's own labels, handed back untouched and queryable.
 	Custom map[string]any
 	// Incognito holds the conversation and keeps nothing: no session row, no turns, no
-	// transcript whatever PersistConversation says. It cannot be found afterwards, which is
-	// the point of it.
+	// transcript. It cannot be found afterwards, which is the point of it.
 	Incognito bool
 	// ModelOverwrites changes the models for this conversation alone, over whatever the
 	// agent config decided.
@@ -338,7 +336,7 @@ func (p *Pipeline) ready() (*acceleration.ClientWithResponses, error) {
 	return backend.Client()
 }
 
-// abandon closes a session nothing here can watch. Whatever went wrong on the way to
+// abandon stops a session nothing here can watch. Whatever went wrong on the way to
 // watching it has already been reported, so a second failure here is nothing to add.
 func (p *Pipeline) abandon(ctx context.Context, id string) {
 	backend, err := p.backend.Resolve()
@@ -349,7 +347,7 @@ func (p *Pipeline) abandon(ctx context.Context, id string) {
 	if err != nil {
 		return
 	}
-	_, _ = client.CloseSessionWithResponse(ctx, id)
+	_, _ = client.StopSessionWithResponse(ctx, id)
 }
 
 // Events yields what the backend did until the call ends, when the channel closes.
@@ -369,16 +367,6 @@ func (p *Pipeline) Say(text string, interrupt bool) error {
 		}
 	}
 	return p.command(Frame{"type": "say", "text": text})
-}
-
-// Respond answers text through the model, as though it had been said on the call.
-func (p *Pipeline) Respond(text string, interrupt bool) error {
-	if interrupt {
-		if err := p.command(Frame{"type": "interrupt"}); err != nil {
-			return err
-		}
-	}
-	return p.command(Frame{"type": "respond", "text": text})
 }
 
 // Interrupt abandons the reply being spoken.
@@ -408,7 +396,7 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 		failure = socket.Send(Frame{"type": "close"})
 	} else if backend, err := p.backend.Resolve(); err == nil {
 		if client, err := backend.Client(); err == nil {
-			_, failure = client.CloseSessionWithResponse(ctx, session.Id)
+			_, failure = client.StopSessionWithResponse(ctx, session.Id)
 		}
 	}
 
@@ -429,13 +417,8 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 		request.CallId = &call.ID
 	}
 
-	// An incognito conversation writes no transcript by definition, so asking for one is a
-	// contradiction the router refuses rather than quietly honours. Dropped here so a caller
-	// that set both gets the conversation they asked for rather than a 400.
 	if call.Incognito {
 		request.Incognito = &call.Incognito
-	} else {
-		request.PersistConversation = &call.PersistConversation
 	}
 	if len(call.Custom) > 0 {
 		custom := call.Custom
@@ -453,7 +436,7 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	setString(&request.Instructions, call.Instructions)
 	setString(&request.Title, call.Title)
 	setString(&request.Description, call.Description)
-	setString(&request.Project, call.Project)
+	setString(&request.ProjectId, call.ProjectID)
 	setString(&request.Agent, p.config.Agent)
 	setString(&request.ConfigId, p.config.ConfigID)
 	setString(&request.Llm, p.config.LLM)

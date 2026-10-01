@@ -1,4 +1,6 @@
 import Foundation
+import HTTPTypes
+import OpenAPIRuntime
 import Testing
 
 @testable import VisionAgentsCore
@@ -129,11 +131,57 @@ import Testing
     private let backend = Backend(
         url: URL(string: "http://localhost:8080")!, customerID: "acme")
 
-    @Test func everyRequestSaysItComesFromADevice() {
+    @Test func everyRequestSaysItComesFromADevice() async throws {
         // Without this the router treats a caller with no proxy in front of it as a backend,
         // which would hand a phone the paths that rewrite an agent.
-        #expect(backend.headers["Stream-Auth-Type"] == "jwt")
-        #expect(backend.headers["X-Customer-Id"] == "acme")
+        let headers = try await backend.headers()
+        #expect(headers["Stream-Auth-Type"] == "jwt")
+        #expect(headers["X-Customer-Id"] == "acme")
+    }
+
+    @Test func anAPIKeyReachesStreamsHostedRouter() {
+        #expect(Backend(apiKey: "key").url.absoluteString == "https://accelerate.gcp.stream-io-api.com")
+    }
+
+    @Test func anAPIKeyWithNoUserSendsNothing() async {
+        await #expect(throws: AgentsError.self) { try await Backend(apiKey: "key").headers() }
+    }
+
+    @Test func theUsersTokenIsSentAsTheirs() async throws {
+        let backend = Backend(apiKey: "key")
+        backend.setUser(User(id: "jlahey"), token: "t1")
+
+        let headers = try await backend.headers()
+        #expect(headers["Authorization"] == "Bearer t1")
+        #expect(headers["Stream-Auth-Type"] == "jwt")
+        #expect(headers["X-Customer-Id"] == nil)
+    }
+
+    @Test func aTokenIsAskedForOnceUntilItExpires() async throws {
+        let backend = Backend(apiKey: "key")
+        let minted = Minted()
+        backend.setUser(User(id: "jlahey")) { "t\(await minted.next())" }
+
+        async let first = backend.headers()
+        async let second = backend.headers()
+        #expect(try await [first["Authorization"], second["Authorization"]] == ["Bearer t1", "Bearer t1"])
+
+        #expect(backend.expireToken())
+        #expect(try await backend.headers()["Authorization"] == "Bearer t2")
+    }
+
+    @Test func aRejectedTokenIsReplacedAndTheRequestSentAgain() async throws {
+        let backend = Backend(apiKey: "key", url: URL(string: "https://router.example.com")!)
+        let minted = Minted()
+        backend.setUser(User(id: "jlahey")) { "t\(await minted.next())" }
+        let router = ExpiringRouter()
+
+        let output = try await backend.client(transport: router).listSessions(.init())
+
+        #expect(throws: Never.self) { try output.ok.body.json }
+        let sent = await router.requests
+        #expect(sent.map { $0.headerFields[.authorization] } == ["Bearer t1", "Bearer t2"])
+        #expect(sent.allSatisfy { $0.path?.contains("api_key=key") == true })
     }
 
     @Test func aSocketURLSwitchesSchemeAndCarriesTheCustomer() {
@@ -141,6 +189,15 @@ import Testing
             path: "/v1/agents/sessions/s1/events", query: ["decisions": "false"])
 
         #expect(url.absoluteString == "ws://localhost:8080/v1/agents/sessions/s1/events?customer_id=acme&decisions=false")
+    }
+
+    @Test func aSocketURLCarriesTheKeyButNeverTheToken() {
+        let backend = Backend(apiKey: "key")
+        backend.setUser(User(id: "jlahey"), token: "secret-token")
+
+        let url = backend.socketURL(path: "/v1/agents/sessions/s1/events")
+
+        #expect(url.absoluteString == "wss://accelerate.gcp.stream-io-api.com/v1/agents/sessions/s1/events?api_key=key")
     }
 
     @Test func aSecureRouterGetsASecureSocket() {
@@ -181,5 +238,35 @@ import Testing
     @Test func a403IsRecognisedAsAServerSideOnlyPath() {
         #expect(AgentsError.http(status: 403, message: "server-side only").isServerSideOnly)
         #expect(!AgentsError.http(status: 404, message: "no such session").isServerSideOnly)
+    }
+}
+
+/// Counts the tokens a provider hands out, across the actor boundary it is called on.
+private actor Minted {
+    private var count = 0
+
+    func next() -> Int {
+        count += 1
+        return count
+    }
+}
+
+/// A router that refuses the first token it sees, and answers with no sessions after that.
+private actor ExpiringRouter: ClientTransport {
+    private(set) var requests: [HTTPRequest] = []
+
+    func send(
+        _ request: HTTPRequest,
+        body: HTTPBody?,
+        baseURL: URL,
+        operationID: String
+    ) async throws -> (HTTPResponse, HTTPBody?) {
+        requests.append(request)
+        var headers = HTTPFields()
+        headers[.contentType] = "application/json"
+        if requests.count == 1 {
+            return (HTTPResponse(status: .unauthorized, headerFields: headers), HTTPBody(#"{"error":"token expired"}"#))
+        }
+        return (HTTPResponse(status: .ok, headerFields: headers), HTTPBody("[]"))
     }
 }

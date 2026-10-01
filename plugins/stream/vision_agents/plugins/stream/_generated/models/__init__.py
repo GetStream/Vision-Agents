@@ -45,6 +45,18 @@ from .chat_token import ChatToken
 from .chat_token_request import ChatTokenRequest
 from .claim_guest_request import ClaimGuestRequest
 from .claim_guest_result import ClaimGuestResult
+from .classify_answer import ClassifyAnswer
+from .classify_answer_legend import ClassifyAnswerLegend
+from .classify_answer_probabilities import ClassifyAnswerProbabilities
+from .classify_question import ClassifyQuestion
+from .classify_question_options import ClassifyQuestionOptions
+from .classify_question_type import ClassifyQuestionType
+from .classify_request import ClassifyRequest
+from .classify_request_questions import ClassifyRequestQuestions
+from .classify_request_tags import ClassifyRequestTags
+from .classify_result import ClassifyResult
+from .classify_result_answers import ClassifyResultAnswers
+from .classify_usage import ClassifyUsage
 from .command_receipt import CommandReceipt
 from .connector_authorization import ConnectorAuthorization
 from .connector_connection import ConnectorConnection
@@ -244,6 +256,7 @@ from .tts_options import TtsOptions
 from .tts_options_overwrites import TtsOptionsOverwrites
 from .tts_options_pronunciations import TtsOptionsPronunciations
 from .turn_stats_bucket import TurnStatsBucket
+from .video_source import VideoSource
 from .voice import Voice
 from .voice_binding import VoiceBinding
 from .voice_binding_state import VoiceBindingState
@@ -300,6 +313,18 @@ __all__ = (
     "ChatTokenRequest",
     "ClaimGuestRequest",
     "ClaimGuestResult",
+    "ClassifyAnswer",
+    "ClassifyAnswerLegend",
+    "ClassifyAnswerProbabilities",
+    "ClassifyQuestion",
+    "ClassifyQuestionOptions",
+    "ClassifyQuestionType",
+    "ClassifyRequest",
+    "ClassifyRequestQuestions",
+    "ClassifyRequestTags",
+    "ClassifyResult",
+    "ClassifyResultAnswers",
+    "ClassifyUsage",
     "CommandReceipt",
     "ConnectorAuthorization",
     "ConnectorConnection",
@@ -497,6 +522,7 @@ __all__ = (
     "TtsOptionsOverwrites",
     "TtsOptionsPronunciations",
     "TurnStatsBucket",
+    "VideoSource",
     "Voice",
     "VoiceBinding",
     "VoiceBindingState",

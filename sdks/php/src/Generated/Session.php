@@ -21,8 +21,6 @@ final readonly class Session
         public \DateTimeImmutable $createdAt,
         // Stream Chat CID to resume; returned for persistent text sessions.
         public ?string $conversationId = null,
-        // Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-        public ?bool $persistConversation = null,
         // Older history was omitted from the model context.
         public ?bool $contextTruncated = null,
         // The conversation is held in writing rather than on a call.
@@ -77,7 +75,6 @@ final readonly class Session
             state: Json::enum($data, 'state', SessionState::class),
             createdAt: Json::date($data, 'created_at'),
             conversationId: array_key_exists('conversation_id', $data) && $data['conversation_id'] !== null ? Json::string($data, 'conversation_id') : null,
-            persistConversation: array_key_exists('persist_conversation', $data) && $data['persist_conversation'] !== null ? Json::bool($data, 'persist_conversation') : null,
             contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
             text: array_key_exists('text', $data) && $data['text'] !== null ? Json::bool($data, 'text') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
@@ -120,9 +117,6 @@ final readonly class Session
         $out['created_at'] = Json::dateValue($this->createdAt);
         if ($this->conversationId !== null) {
             $out['conversation_id'] = $this->conversationId;
-        }
-        if ($this->persistConversation !== null) {
-            $out['persist_conversation'] = $this->persistConversation;
         }
         if ($this->contextTruncated !== null) {
             $out['context_truncated'] = $this->contextTruncated;

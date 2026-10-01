@@ -1,252 +1,229 @@
+//go:build integration
+
 package api
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	"context"
+	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/suite"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// MessageHookSuite covers what the message hook does with what Stream sends it.
-//
-// There is no store here, so the assertions are about authentication and about which
-// messages are let through to be routed at all. That a message reaches the right customer's
-// worker needs a database to say whose channel it is, and is covered in the integration
-// suite.
-type MessageHookSuite struct {
-	suite.Suite
-	pool    *dispatch.Pool
-	handler http.Handler
+type MessageHooksSuite struct {
+	RouterSuite
+
+	// channelID is the channel written in, which is also the agent id a session opens on.
+	// It is unique, because a channel is looked up by it alone, and it is not named
+	// support-<uuid>, which is the namespace durable session commands own.
+	channelID string
 }
 
-func TestMessageHookSuite(t *testing.T) {
-	suite.Run(t, new(MessageHookSuite))
+func TestMessageHooksSuite(t *testing.T) {
+	runSuite(t, new(MessageHooksSuite))
 }
 
-func (s *MessageHookSuite) SetupTest() {
-	s.pool = dispatch.NewPool()
-	s.handler = s.serverWith(hookSecret)
+func (s *MessageHooksSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+	s.channelID = "chat-" + s.utils.uuid()
 }
 
-func (s *MessageHookSuite) serverWith(secret string) http.Handler {
-	config, err := routing.DefaultConfig()
-	s.Require().NoError(err)
+func (s *MessageHooksSuite) TestAMessageOnAChannelAConversationAlreadyRanOnReachesItsOwner() {
+	configID := s.holds()
+	s.ran(configID)
+	worker, release := s.dispatch.Register(s.customerID(), 1)
+	defer release()
 
-	speech, err := sttrouter.New(sttrouter.Options{
-		Config:   config[routing.STT],
-		Registry: sttrouter.DefaultRegistry(),
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(speech.Close)
+	s.Require().Equal(http.StatusOK, s.wrote(""))
 
-	server, err := NewServer(Options{
-		Routers:      map[routing.Modality]routing.Inspector{routing.STT: speech},
-		Dispatch:     s.pool,
-		StreamSecret: secret,
-	})
-	s.Require().NoError(err)
-	return server.Handler()
+	select {
+	case message := <-worker.Messages():
+		s.Equal(s.channelID, message.ChannelID)
+		s.Equal(s.channelID, message.AgentID, "a session opened on anything else answers elsewhere")
+		s.Equal(configID, message.ConfigID)
+		s.Equal("sam", message.UserID)
+		s.Equal("does the react sdk retry a failed upload?", message.Text)
+	case <-time.After(settleFor):
+		s.Fail("the message never reached the worker")
+	}
 }
 
-// deliver posts a body signed the way Stream signs one.
-func (s *MessageHookSuite) deliver(handler http.Handler, body string) *httptest.ResponseRecorder {
-	mac := hmac.New(sha256.New, []byte(hookSecret))
-	mac.Write([]byte(body))
-	return s.deliverSigned(handler, body, hex.EncodeToString(mac.Sum(nil)))
+func (s *MessageHooksSuite) TestAChannelThatNamesItsConfigIsAnsweredWithoutEverHavingHeldAConversation() {
+	// This is a conversation that starts in writing: somebody opened a support chat
+	// rather than ringing a number, so there is no call row to say whose channel it is.
+	// Without the channel saying, nobody could ever be written to first.
+	configID := s.holds()
+	worker, release := s.dispatch.Register(s.customerID(), 1)
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{"%s": "%s"}`, ConfigField, configID)))
+
+	select {
+	case message := <-worker.Messages():
+		s.Equal(s.channelID, message.ChannelID)
+		s.Equal(configID, message.ConfigID, "the worker has to know which agent was written to")
+	case <-time.After(settleFor):
+		s.Fail("the message never reached the worker")
+	}
 }
 
-func (s *MessageHookSuite) deliverSigned(
-	handler http.Handler, body, signature string,
-) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(
-		http.MethodPost, "/v1/chat/hooks/stream", strings.NewReader(body))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Signature", signature)
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, request)
-	return recorder
+func (s *MessageHooksSuite) TestWhatTheChannelWasCreatedWithIsCarriedToTheWorker() {
+	// This service has no opinion about an organization or a locale and should not need
+	// one. It carries what the channel was created with, and the worker, which is where
+	// the agent runs, decides what any of it means.
+	configID := s.holds()
+	worker, release := s.dispatch.Register(s.customerID(), 1)
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(
+		`{"%s": "%s", "organization_id": "1234", "locale": "en-GB", "seats": 12}`,
+		ConfigField, configID)))
+
+	select {
+	case message := <-worker.Messages():
+		s.Equal("1234", message.Custom["organization_id"])
+		s.Equal("en-GB", message.Custom["locale"])
+		s.NotContains(message.Custom, "seats",
+			"Stream takes arbitrary JSON here and a worker reads strings; a number rendered into one would be believed")
+	case <-time.After(settleFor):
+		s.Fail("the message never reached the worker")
+	}
 }
 
-// typed is what Stream sends when a person writes to an agent's channel.
-const typed = `{
+func (s *MessageHooksSuite) TestAChannelCannotSendItsMessagesToAnotherCustomersWorkers() {
+	// Whoever creates a channel decides what is on it, so the customer is worked out from
+	// the config rather than read off the channel. A channel naming somebody else's config
+	// is answered by that somebody else, and a channel claiming a customer is not answered
+	// on that claim at all.
+	configID := s.holds()
+	somebodyElse, release := s.dispatch.Register(s.utils.uuid(), 1)
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(
+		`{"customer_id": "somebody-else", "%s": "%s"}`, ConfigField, configID)))
+
+	s.nothingReaches(somebodyElse.Messages(), "a message was misrouted")
+}
+
+func (s *MessageHooksSuite) TestAChannelNamingAConfigNobodyHoldsIsAcceptedAndDropped() {
+	worker, release := s.dispatch.Register(s.customerID(), 1)
+	defer release()
+
+	s.Require().Equal(http.StatusOK,
+		s.wrote(fmt.Sprintf(`{"%s": "config-nobody-has"}`, ConfigField)),
+		"Stream retries a non-2xx, and no retry finds an owner")
+
+	s.nothingReaches(worker.Messages(), "a message naming a config nobody holds was answered")
+}
+
+func (s *MessageHooksSuite) TestAChannelWithNoHistoryAndNoConfigIsAcceptedAndDropped() {
+	// Every message in the app arrives at this hook. One in a channel nothing claims is
+	// not answerable on a retry either.
+	worker, release := s.dispatch.Register(s.customerID(), 1)
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.wrote(""))
+
+	s.nothingReaches(worker.Messages(), "a message nothing says the owner of was answered")
+}
+
+func (s *MessageHooksSuite) TestAConfigThatWasDeletedNoLongerClaimsAChannel() {
+	configID := s.holds()
+	s.Require().NoError(s.store.DeleteAgentConfig(context.Background(), s.customerID(), configID))
+	worker, release := s.dispatch.Register(s.customerID(), 1)
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{"%s": "%s"}`, ConfigField, configID)))
+
+	s.nothingReaches(worker.Messages(), "a message naming a deleted config was answered")
+}
+
+func (s *MessageHooksSuite) TestAnUnsignedMessageIsRefused() {
+	status, _ := s.deliver("/v1/chat/hooks/stream", s.writing(""), "")
+
+	s.Equal(http.StatusUnauthorized, status)
+}
+
+func (s *MessageHooksSuite) TestAMessageSignedWithTheWrongSecretIsRefused() {
+	body := s.writing("")
+
+	status, _ := s.deliver("/v1/chat/hooks/stream", body, sign(body, "somebody-elses-secret"))
+
+	s.Equal(http.StatusUnauthorized, status)
+}
+
+func (s *MessageHooksSuite) TestATamperedMessageIsRefused() {
+	body := s.writing("")
+	signature := sign(body, suiteStreamSecret)
+	tampered := strings.Replace(body, "sam", "mallory", 1)
+
+	status, _ := s.deliver("/v1/chat/hooks/stream", tampered, signature)
+
+	s.Equal(http.StatusUnauthorized, status)
+}
+
+func (s *MessageHooksSuite) TestSomethingThatIsNotAMessageEventIsAccepted() {
+	// Every event in the app arrives here, and one this hook has no use for is not an
+	// outage worth retrying.
+	s.Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
+		`{"type":"reaction.new","cid":"agent:somewhere"}`))
+}
+
+// holds stores an agent config for the suite's app and returns its id.
+func (s *MessageHooksSuite) holds() string {
+	config := store.AgentConfig{
+		CustomerID: s.customerID(), Name: "config-" + s.utils.uuid(), Mode: "text",
+	}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	return config.ID
+}
+
+// ran records a conversation having been held on the channel, which is what a call leaves
+// behind.
+func (s *MessageHooksSuite) ran(configID string) {
+	s.Require().NoError(s.store.StartCall(context.Background(), &store.Call{
+		ID:         s.utils.uuid(),
+		CustomerID: s.customerID(),
+		CallID:     s.utils.callID(),
+		AgentID:    s.channelID,
+		ConfigID:   configID,
+		StartedAt:  time.Now().UTC(),
+	}))
+}
+
+// wrote delivers a signed message.new for the channel, as Stream would. The custom data is
+// whatever the channel was created with.
+func (s *MessageHooksSuite) wrote(custom string) int {
+	return s.signedly("/v1/chat/hooks/stream", s.writing(custom))
+}
+
+func (s *MessageHooksSuite) writing(custom string) string {
+	if custom == "" {
+		custom = "{}"
+	}
+	return fmt.Sprintf(`{
   "type": "message.new",
-  "cid": "agent:call-1",
-  "channel_id": "call-1",
+  "cid": "agent:%s",
+  "channel_id": "%s",
   "channel_type": "agent",
-  "created_at": "2026-09-08T12:00:00Z",
+  "channel_custom": %s,
   "message": {
     "id": "message-1",
-    "text": "is my invoice reissuable to another company?",
+    "text": "does the react sdk retry a failed upload?",
     "user": {"id": "sam", "name": "Sam"}
   }
-}`
-
-func (s *MessageHookSuite) TestAnUnsignedMessageEventIsRefused() {
-	recorder := s.deliverSigned(s.handler, typed, "")
-
-	s.Equal(http.StatusUnauthorized, recorder.Code)
+}`, s.channelID, s.channelID, custom)
 }
 
-func (s *MessageHookSuite) TestAMessageEventSignedWithTheWrongSecretIsRefused() {
-	mac := hmac.New(sha256.New, []byte("somebody-elses-secret"))
-	mac.Write([]byte(typed))
-
-	recorder := s.deliverSigned(s.handler, typed, hex.EncodeToString(mac.Sum(nil)))
-
-	s.Equal(http.StatusUnauthorized, recorder.Code)
-}
-
-func (s *MessageHookSuite) TestATamperedMessageEventIsRefused() {
-	mac := hmac.New(sha256.New, []byte(hookSecret))
-	mac.Write([]byte(typed))
-	signature := hex.EncodeToString(mac.Sum(nil))
-
-	tampered := strings.Replace(typed, "call-1", "somebody-elses-call", -1)
-	recorder := s.deliverSigned(s.handler, tampered, signature)
-
-	s.Equal(http.StatusUnauthorized, recorder.Code)
-}
-
-func (s *MessageHookSuite) TestWithoutASecretThereIsNoHookAtAll() {
-	// A hook that cannot check a signature would answer anyone who found the url, and this
-	// path starts agents.
-	recorder := s.deliver(s.serverWith(""), typed)
-
-	s.Equal(http.StatusNotFound, recorder.Code)
-}
-
-func (s *MessageHookSuite) TestASignedMessageEventIsAccepted() {
-	recorder := s.deliver(s.handler, typed)
-
-	s.Equal(http.StatusOK, recorder.Code)
-}
-
-func (s *MessageHookSuite) TestAMessageNobodyCouldAnswerIsStillAccepted() {
-	// Nothing here can say whose channel this is, so nobody is woken. Stream retries a
-	// non-2xx, and no retry is going to find a worker that is not there.
-	recorder := s.deliver(s.handler, typed)
-
-	s.Equal(http.StatusOK, recorder.Code)
-	s.Empty(s.pool.Workers("acme"))
-}
-
-// written parses a delivery the way the hook does, so the assertions below are on what the
-// hook would act on rather than on an intermediate of the test's own making.
-func (s *MessageHookSuite) written(body string) messageEvent {
-	var event messageEvent
-	s.Require().NoError(json.Unmarshal([]byte(body), &event))
-	return event
-}
-
-func (s *MessageHookSuite) TestSomethingSomebodyTypedToAnAgentIsAddressedToIt() {
-	s.True(addressed(s.written(typed)))
-}
-
-func (s *MessageHookSuite) TestSessionCommandChannelsNeverTriggerFromChatWebhooks() {
-	const channel = "support-5a99bf2a-5e42-4d07-9891-798744f18a35"
-	body := strings.ReplaceAll(typed, "call-1", channel)
-	// A valid signed delivery without a source marker is still acknowledged but
-	// excluded from routing, whether this is its first delivery or a retry.
-	for range 2 {
-		s.Equal(http.StatusOK, s.deliver(s.handler, body).Code)
-		s.False(addressed(s.written(body)))
+// nothingReaches fails when a message arrives on a channel that should stay empty.
+func (s *MessageHooksSuite) nothingReaches(messages <-chan dispatch.Message, complaint string) {
+	select {
+	case message := <-messages:
+		s.Failf(complaint, "%s reached a worker", message.ChannelID)
+	case <-time.After(dropped):
 	}
-	for _, custom := range []string{`{"source":""}`, `{"support_trigger":"webhook"}`} {
-		forged := strings.Replace(body, `"id": "message-1",`, `"id": "message-1", "custom": `+custom+`,`, 1)
-		s.False(addressed(s.written(forged)))
-	}
-}
-
-func (s *MessageHookSuite) TestAMessageOutsideAnAgentChannelIsNotAddressedToOne() {
-	// Every message in the app arrives here, and a team's own channel is not a way to
-	// reach an agent.
-	elsewhere := strings.Replace(typed, `"channel_type": "agent"`, `"channel_type": "messaging"`, 1)
-
-	s.False(addressed(s.written(elsewhere)))
-}
-
-func (s *MessageHookSuite) TestSpeechTheAgentHasAlreadyAnsweredIsNotAddressedToIt() {
-	// The agent writes what it heard into the same channel. Answering that would be the
-	// agent replying to a question it answered as it was asked.
-	heard := strings.Replace(typed,
-		`"user": {"id": "sam", "name": "Sam"}`,
-		`"user": {"id": "sam", "name": "Sam"}, "custom": {"source": "speech"}`, 1)
-
-	s.False(addressed(s.written(heard)))
-}
-
-func (s *MessageHookSuite) TestTheAgentsOwnReplyIsNotAddressedToIt() {
-	// Otherwise every answer is a new question, and the agent talks to itself forever.
-	reply := strings.Replace(typed,
-		`"user": {"id": "sam", "name": "Sam"}`,
-		`"user": {"id": "support-agent"}, "custom": {"source": "agent", "generating": false}`, 1)
-
-	s.False(addressed(s.written(reply)))
-}
-
-func (s *MessageHookSuite) TestAReplyStillBeingWrittenIsNotAddressedToTheAgentEither() {
-	// A streamed reply is stored the moment it starts and updated as it goes, so the
-	// first piece of every answer arrives here while the model is still writing it.
-	partial := strings.Replace(typed,
-		`"user": {"id": "sam", "name": "Sam"}`,
-		`"user": {"id": "support-agent"}, "custom": {"source": "agent", "generating": true}`, 1)
-
-	s.False(addressed(s.written(partial)))
-}
-
-func (s *MessageHookSuite) TestAMessageWithNothingWrittenInItIsNotAddressedToAnAgent() {
-	// An attachment on its own is this: there is nothing to answer.
-	empty := strings.Replace(typed,
-		`"text": "is my invoice reissuable to another company?"`, `"text": ""`, 1)
-
-	s.False(addressed(s.written(empty)))
-}
-
-func (s *MessageHookSuite) TestAnEventTypeThisVersionHasNeverHeardOfIsAccepted() {
-	unknown := `{"type":"message.something_new","channel_type":"agent","channel_id":"call-1"}`
-
-	recorder := s.deliver(s.handler, unknown)
-
-	s.Equal(http.StatusOK, recorder.Code, "a new event type must not look like an outage to Stream")
-}
-
-func (s *MessageHookSuite) TestAnEventTheHookDoesNotActOnIsAccepted() {
-	updated := `{"type":"message.updated","channel_type":"agent","channel_id":"call-1",` +
-		`"message":{"id":"message-1","text":"edited","user":{"id":"sam"}}}`
-
-	recorder := s.deliver(s.handler, updated)
-
-	s.Equal(http.StatusOK, recorder.Code)
-}
-
-func (s *MessageHookSuite) TestSomethingThatIsNotAMessageEventIsRefused() {
-	// Correctly signed, but there is no event in it to act on.
-	recorder := s.deliver(s.handler, `{"not":"an event"}`)
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-}
-
-func (s *MessageHookSuite) TestTheHookIsNotReachedWithTheCustomerHeaderMissingOrPresent() {
-	// Stream is not a customer, so the header is neither required nor read.
-	request := httptest.NewRequest(
-		http.MethodPost, "/v1/chat/hooks/stream", strings.NewReader(typed))
-	mac := hmac.New(sha256.New, []byte(hookSecret))
-	mac.Write([]byte(typed))
-	request.Header.Set("X-Signature", hex.EncodeToString(mac.Sum(nil)))
-	request.Header.Set(CustomerHeader, "globex")
-	recorder := httptest.NewRecorder()
-
-	s.handler.ServeHTTP(recorder, request)
-
-	s.Equal(http.StatusOK, recorder.Code)
 }

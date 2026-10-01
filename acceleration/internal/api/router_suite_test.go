@@ -1,0 +1,893 @@
+//go:build integration
+
+package api
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+	"github.com/hibiken/asynq"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun/driver/pgdriver"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+)
+
+// suiteConnections caps each suite's pool, so ten suites at once stay well inside the
+// hundred connections Postgres allows.
+const suiteConnections = 5
+
+// settleFor is how long a test waits for something crossing a socket or a queue to arrive.
+const settleFor = 5 * time.Second
+
+// migrated runs the migrations once for every suite in the run: they set goose's globals
+// and attach triggers, neither of which two suites may do at once.
+var migrated struct {
+	sync.Once
+	err error
+}
+
+// redisDB hands each suite a Redis database of its own, so the queues one suite works
+// through are not read by another. Redis serves sixteen; the first is left to whatever
+// else is on the machine.
+var redisDB atomic.Int32
+
+// runSuite runs a suite beside the others. Every suite has its own router, sessions,
+// queues and connections, and shares only Postgres, where every row a test makes has an id
+// of its own.
+func runSuite(t *testing.T, s suite.TestingSuite) {
+	t.Parallel()
+	suite.Run(t, s)
+}
+
+// suiteKEK seals the secrets of the keys the suite makes. It is the same for every suite,
+// so a fixture one suite loaded opens in another.
+const suiteKEK = "router suite"
+
+// The Stream app the suite mints call tokens for. Minting signs a token rather than
+// fetching one, so a made-up app is enough to exercise the join paths.
+const (
+	suiteStreamKey    = "suite-stream-key"
+	suiteStreamSecret = "suite-stream-secret"
+)
+
+// suiteDashboardURL is where a browser is sent back to once a connector login finishes. No
+// browser follows it here, so a made-up dashboard is enough to read the redirect.
+const suiteDashboardURL = "https://dashboard.test/connections?config_id=agent"
+
+// RouterSuite runs the whole router against Postgres and Redis with real API key auth, for
+// suites to embed. A suite picks the app its clients call in its SetupTest:
+// s.useFixture("standard") for the app most tests share, or s.useApp(s.data.createApp())
+// for one of its own.
+//
+// Nothing is cleaned up. Every row a test makes has a fresh UUID, so nothing an earlier
+// test or run left in Postgres gets in its way.
+type RouterSuite struct {
+	suite.Suite
+
+	store  *store.Store
+	live   *live.Client
+	sealer *auth.Sealer
+	server *httptest.Server
+	app    testApp
+
+	// unauthenticatedClient sends no credentials. The rest hold the app's key:
+	// anonymousClient goes by a name nothing proves, guestClient and client are signed-in
+	// end users, a guest and a permanent one, and serverClient is the app's own backend.
+	unauthenticatedClient *testClient
+	anonymousClient       *testClient
+	guestClient           *testClient
+	client                *testClient
+	serverClient          *testClient
+
+	// The stubs standing in for providers, for a test to read back what the router asked
+	// them for. model answers questions, vision is the one that can see, voice keeps what
+	// it was told to say, knowledge keeps the passages written to it.
+	model     *scriptedLLM
+	vision    *scriptedLLM
+	voice     *recordingTTS
+	ears      *quietSTT
+	knowledge *knowledgeBase
+	memories  *keptMemories
+
+	// outbox is where the conversations service queues what it could not write down.
+	outbox string
+
+	// dispatch is the pool the hooks hand an arriving call or message to, for a test to
+	// register a worker in and read back what it was given.
+	dispatch *dispatch.Pool
+
+	// messagesPerDay is what one end user may spend, for a suite about the cap to set
+	// before it starts the harness. Zero is a cap nothing reaches.
+	messagesPerDay int64
+
+	// memoryStore is where sessions remember, for a suite about memory to set before it
+	// starts the harness. Nil keeps them in memories.
+	memoryStore memory.Store
+
+	// oauthHTTP is what the router reaches a connector's OAuth provider with, for a suite
+	// about connectors to set before it starts the harness so a provider answering in
+	// process may be reached. Nil is the router's own client, which reaches only public
+	// HTTPS hosts.
+	oauthHTTP *http.Client
+
+	// withoutCredentialSealer starts the router with no key to seal connector credentials
+	// with, for a suite about what a deployment that never configured one can still do.
+	withoutCredentialSealer bool
+
+	utils testUtils
+	data  testData
+}
+
+// testDatabase is the suites' own database, whatever a local router is pointed at. These
+// tests write apps, sessions and change rows by the hundred, and a running router reading
+// the same tables is a router answering with a test's data.
+func testDatabase(t *testing.T, dsn string) string {
+	parsed, err := url.Parse(dsn)
+	require.NoError(t, err)
+	name := strings.TrimPrefix(parsed.Path, "/")
+	if strings.HasSuffix(name, "_test") {
+		return dsn
+	}
+	parsed.Path = "/" + name + "_test"
+	own := parsed.String()
+
+	parsed.Path = "/postgres"
+	admin := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(parsed.String())))
+	defer admin.Close() //nolint:errcheck // the error on the way out says nothing
+	_, err = admin.ExecContext(context.Background(), `CREATE DATABASE "`+name+`_test"`)
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		require.NoError(t, err)
+	}
+	return own
+}
+
+// testApp is an app with an organization and an API key to call it with.
+type testApp struct {
+	organization store.Organization
+	app          store.App
+	key, secret  string
+}
+
+func (s *RouterSuite) SetupSuite() {
+	dsn, redisAddr := os.Getenv("ROUTER_POSTGRES_DSN"), os.Getenv("ROUTER_REDIS_ADDR")
+	if dsn == "" || redisAddr == "" {
+		s.T().Skip("ROUTER_POSTGRES_DSN and ROUTER_REDIS_ADDR must be set")
+	}
+	ctx := context.Background()
+	logger := slog.New(slog.DiscardHandler)
+
+	pgStore, err := store.Open(testDatabase(s.T(), dsn))
+	s.Require().NoError(err)
+	pgStore.DB().SetMaxOpenConns(suiteConnections)
+	migrated.Do(func() { migrated.err = pgStore.Migrate(ctx) })
+	s.Require().NoError(migrated.err)
+	s.store = pgStore
+	s.T().Cleanup(func() { s.Require().NoError(pgStore.Close()) })
+
+	liveClient, err := live.New(live.Options{Address: redisAddr})
+	s.Require().NoError(err)
+	s.live = liveClient
+	s.T().Cleanup(liveClient.Close)
+
+	s.sealer, err = auth.NewSealer(suiteKEK)
+	s.Require().NoError(err)
+	s.data = testData{suite: s}
+
+	limiter := s.quota(liveClient, logger)
+	streams := s.routers(limiter, logger)
+	sessions := s.sessionManager(streams, logger)
+	s.dispatch = dispatch.NewPool()
+
+	// The listener is opened before the router is built, because connector logins send the
+	// provider back to where the router says it is reachable, and that is this address.
+	s.server = httptest.NewUnstartedServer(nil)
+	s.T().Cleanup(s.server.Close)
+	credentials := s.sealer
+	if s.withoutCredentialSealer {
+		credentials = nil
+	}
+
+	server, err := NewServer(Options{
+		Routers: map[routing.Modality]routing.Inspector{
+			routing.LLM:    streams.LLM,
+			routing.STT:    streams.STT,
+			routing.TTS:    streams.TTS,
+			routing.STS:    streams.STS,
+			routing.Search: streams.Search,
+			routing.LCM:    streams.LCM,
+			routing.Image:  streams.Image,
+		},
+		Streams:          streams,
+		Sessions:         sessions,
+		Store:            pgStore,
+		CredentialSealer: credentials,
+		Live:             liveClient,
+		Auth:             s.authenticator(pgStore),
+		AuthMode:         auth.APIKey,
+		Phone:            s.telephony(logger),
+		Campaigns:        s.campaigns(sessions, logger),
+		Simulations:      s.simulations(sessions, streams, logger),
+		Knowledge:        s.knowledgeWriter(),
+		KnowledgeURLs:    s.pages(redisAddr),
+		Voices:           s.voiceService(),
+		VoiceLibrary:     voices.NewCatalogue(),
+		Dispatch:         s.dispatch,
+		Policies:         s.policies(logger),
+		Quota:            limiter,
+		StreamKey:        suiteStreamKey,
+		StreamSecret:     suiteStreamSecret,
+		PublicURL:        "http://" + s.server.Listener.Addr().String(),
+		DashboardURL:     suiteDashboardURL,
+		DataRetention:    time.Hour,
+		Logger:           logger,
+	})
+	s.Require().NoError(err)
+	if s.oauthHTTP != nil {
+		server.oauth.HTTP = s.oauthHTTP
+	}
+	s.server.Config.Handler = server.Handler()
+	s.server.Start()
+}
+
+// routers builds every modality against stubs that answer in process. What a real vendor
+// makes of real audio is that provider package's own suite; what is under test here is the
+// HTTP surface in front of it.
+func (s *RouterSuite) routers(limiter *quota.Limiter, logger *slog.Logger) *Streams {
+	s.ears = &quietSTT{emitter: stt.NewEmitter(64)}
+	hearing := sttrouter.NewRegistry()
+	hearing.Register("stub", func(routing.Spec) (stt.STT, error) { return s.ears, nil })
+	transcriber, err := sttrouter.New(sttrouter.Options{
+		Config: routableConfig(), Registry: hearing, Store: s.store, Live: s.live, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(transcriber.Close)
+
+	// A session opens a model for the conversation and another for its flow controller,
+	// and two sessions sharing one stub would each consume the other's turns. The first
+	// open is the one a test reads back.
+	s.model = &scriptedLLM{reply: "Hello."}
+	var opened int
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
+		defer func() { opened++ }()
+		if opened == 0 {
+			return s.model, nil
+		}
+		return &scriptedLLM{}, nil
+	})
+	s.vision = &scriptedLLM{reply: "Two roses.", sees: true}
+	reasoning.Register("vision", func(routing.Spec) (llmrouter.Provider, error) { return s.vision, nil })
+	reasoning.Register("echo", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{echoes: true}, nil })
+	reasoning.Register("noted", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{reply: "Noted."}, nil })
+
+	// A model that is a while in the writing, for a command that has to still be running
+	// when the test asks it to stop.
+	reasoning.Register("slow", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Here it is.", takes: time.Second}, nil
+	})
+
+	// A model that reaches for the caller's own tool on its first turn. One of these per
+	// session rather than one for the suite, so a test reads back its own turn.
+	reasoning.Register("tooling", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Let me check.", calls: []llm.ToolCall{{
+			ID: store.NewID(), Name: lookupOrder, Arguments: `{"order":"12"}`,
+		}}}, nil
+	})
+	reasoner, err := llmrouter.New(llmrouter.Options{
+		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
+		Quota: limiter, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(reasoner.Close)
+
+	s.voice = &recordingTTS{emitter: tts.NewEmitter(64)}
+	speaking := ttsrouter.NewRegistry()
+	speaking.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speaker, err := ttsrouter.New(ttsrouter.Options{
+		Config: routableConfig(), Registry: speaking, Store: s.store, Live: s.live, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speaker.Close)
+
+	transcriptions, err := sttrouter.NewRecordings(sttrouter.Options{
+		Config:       routableConfig(),
+		Transcribers: transcriberRegistry(),
+		Store:        s.store,
+		Live:         s.live,
+		Logger:       logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(transcriptions.Close)
+
+	recordings, err := ttsrouter.NewRecordings(ttsrouter.Options{
+		Config:    routableConfig(),
+		Recorders: recorderRegistry(),
+		Store:     s.store,
+		Live:      s.live,
+		Logger:    logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(recordings.Close)
+
+	finding, err := searchrouter.New(searchrouter.Options{
+		Config: routableConfig(), Registry: searchRegistry(), Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(finding.Close)
+
+	judging, err := lcmrouter.New(lcmrouter.Options{
+		Config: classifyConfig(), Registry: classifierRegistry(), Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(judging.Close)
+
+	imaging, err := imagerouter.New(imagerouter.Options{
+		Config: imageConfig(), Registry: painterRegistry(), Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(imaging.Close)
+
+	conversing, err := stsrouterStub()
+	s.Require().NoError(err)
+	s.T().Cleanup(conversing.Close)
+
+	return &Streams{
+		STT: transcriber, TTS: speaker, LLM: reasoner, STS: conversing,
+		Search: finding, LCM: judging, Image: imaging,
+		Transcriptions: transcriptions, Speech: recordings,
+	}
+}
+
+// sessionManager runs conversations, writing them down in Stream Chat through a stand-in
+// for the chat backend: what a session records is under test, what Stream does with it is
+// not.
+func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *session.Manager {
+	s.outbox = s.T().TempDir()
+	conversations, err := conversation.NewForChat(s.outbox, chattest.Client(s.T()))
+	s.Require().NoError(err)
+	s.T().Cleanup(conversations.Close)
+
+	s.memories = &keptMemories{}
+	var remembering memory.Store = s.memories
+	if s.memoryStore != nil {
+		remembering = s.memoryStore
+	}
+	sessions, err := session.NewManager(session.ManagerOptions{
+		LLM:           streams.LLM,
+		STT:           streams.STT,
+		TTS:           streams.TTS,
+		Memory:        remembering,
+		Conversations: conversations,
+		Store:         s.store,
+		Logger:        logger,
+		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
+			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
+		},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = sessions.Shutdown() })
+	return sessions
+}
+
+// authenticator resolves a key the way a deployment in api_key mode does: the row is read
+// from Postgres and its secret unsealed, so the credentials a test holds are real ones.
+func (s *RouterSuite) authenticator(pgStore *store.Store) auth.Authenticator {
+	authenticator, err := auth.New(auth.APIKey, func(ctx context.Context, key string) (auth.App, error) {
+		if !auth.ValidKey(key) {
+			return auth.App{}, auth.ErrUnauthenticated
+		}
+		owner, err := pgStore.LiveAPIKey(ctx, key)
+		if err != nil {
+			return auth.App{}, auth.ErrUnauthenticated
+		}
+		secret, err := s.sealer.Open(owner.Sealed)
+		if err != nil {
+			return auth.App{}, err
+		}
+		return auth.App{
+			OrganizationID: owner.OrganizationID,
+			AppID:          owner.AppID,
+			Secret:         secret,
+			Levels: auth.Levels{
+				NoAnonymous: !owner.Settings.AnonymousAllowed(),
+				NoGuest:     !owner.Settings.GuestAllowed(),
+			},
+		}, nil
+	})
+	s.Require().NoError(err)
+	return authenticator
+}
+
+// telephony serves the phone paths against the real vendor registry with no credentials
+// behind it, which is what a deployment that has bought no numbers yet looks like.
+func (s *RouterSuite) telephony(logger *slog.Logger) *phone.Service {
+	// Every vendor the router knows is declared, and none of them has credentials: what a
+	// vendor does with a real number is its own package's suite, and what is under test
+	// here is the HTTP surface in front of them.
+	config, err := phone.DefaultConfig()
+	s.Require().NoError(err)
+
+	service, err := phone.NewService(phone.ServiceOptions{
+		Registry: vendors.Registry(config),
+		Store:    s.store,
+		Recorder: routing.NewRecorder(routing.Phone, s.store, s.live, logger),
+		Logger:   logger,
+	})
+	s.Require().NoError(err)
+	return service
+}
+
+func (s *RouterSuite) campaigns(sessions *session.Manager, logger *slog.Logger) *campaign.Runner {
+	runner, err := campaign.New(campaign.Options{
+		Store: s.store, Phone: s.telephony(logger), Sessions: sessions, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(runner.Close)
+	return runner
+}
+
+func (s *RouterSuite) simulations(sessions *session.Manager, streams *Streams, logger *slog.Logger) *simulation.Runner {
+	runner, err := simulation.New(simulation.Options{
+		Store: s.store, Sessions: sessions, LLM: streams.LLM,
+		TTS: streams.TTS, STT: streams.STT, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(runner.Close)
+	return runner
+}
+
+func (s *RouterSuite) knowledgeWriter() *knowledgeBase {
+	s.knowledge = newKnowledgeBase()
+	return s.knowledge
+}
+
+// pages keeps the knowledge bases filled from pages published elsewhere. Its queue is in a
+// Redis database of its own, so neither another suite nor a router running against the
+// same Redis takes the jobs for itself.
+func (s *RouterSuite) pages(redisAddr string) *urls.Service {
+	service, err := urls.New(urls.Options{
+		Store:         s.store,
+		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(redisDB.Add(1))%15 + 1},
+		Reader:        pageReader{},
+		Writer:        newKnowledgeBase(),
+		CheckInterval: 10 * time.Millisecond,
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(service.Start())
+	s.T().Cleanup(func() { s.Require().NoError(service.Close()) })
+	return service
+}
+
+// voiceService keeps the voices a customer brought with them in a directory of its own,
+// and clones them at a provider answering in process.
+func (s *RouterSuite) voiceService() *voices.Service {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/text-to-speech/") {
+			_, _ = w.Write([]byte("spoken"))
+			return
+		}
+		_, _ = w.Write([]byte(`{"voice_id":"el-cloned"}`))
+	}))
+	s.T().Cleanup(provider.Close)
+
+	bucket, err := blob.Open(context.Background(), "file://"+s.T().TempDir())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(bucket.Close()) })
+
+	cloner, err := voices.NewElevenLabs(voices.ElevenLabsOptions{APIKey: "secret", BaseURL: provider.URL})
+	s.Require().NoError(err)
+	cloners := voices.NewRegistry()
+	cloners.Register("elevenlabs", cloner)
+
+	service, err := voices.NewService(voices.Options{Store: s.store, Bucket: bucket, Cloners: cloners})
+	s.Require().NoError(err)
+	return service
+}
+
+func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
+	enforcer, err := policy.New(s.store, logger)
+	s.Require().NoError(err)
+	return enforcer
+}
+
+// quota caps what one end user may spend in a day. The default is high enough that nothing
+// a test does reaches it; a suite about the cap sets messagesPerDay before it starts the
+// harness.
+func (s *RouterSuite) quota(liveClient *live.Client, logger *slog.Logger) *quota.Limiter {
+	allowed := s.messagesPerDay
+	if allowed == 0 {
+		allowed = 1_000_000
+	}
+	limiter, err := quota.New(liveClient.Redis(), quota.Limits{MessagesPerDay: allowed}, logger)
+	s.Require().NoError(err)
+	return limiter
+}
+
+// useFixture points the clients at the app of the fixture called name, with client signed
+// in as the fixture's user.
+func (s *RouterSuite) useFixture(name string) {
+	loaded := s.requireFixture(name)
+	s.useApp(loaded.testApp)
+	s.client = s.data.signedInAs(loaded.userID)
+}
+
+// useApp points the clients at an app, each as a new caller of its kind.
+func (s *RouterSuite) useApp(app testApp) {
+	s.app = app
+	s.unauthenticatedClient = &testClient{suite: s, header: http.Header{}, kind: unauthenticated}
+	s.anonymousClient = s.data.createAnonymous()
+	s.guestClient = s.data.createGuest()
+	s.client = s.data.createUser()
+	s.serverClient = s.signedIn(jwt.MapClaims{"server": true}, auth.AuthTypeServer, server, "")
+}
+
+// customerID is the tenant the suite's clients are, which is the app an API key belongs
+// to. It is what the rows a test writes straight into Postgres have to be filed under to
+// be the ones an endpoint reads back.
+func (s *RouterSuite) customerID() string { return s.app.app.ID }
+
+// signedFor is a token for an end user signed with secret, for a test presenting one that
+// was signed with the wrong one.
+func (s *RouterSuite) signedFor(secret string) string {
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": s.utils.uuid(), "exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString([]byte(secret))
+	s.Require().NoError(err)
+	return token
+}
+
+// signedIn is a client holding the app's key and a token signed with its secret.
+func (s *RouterSuite) signedIn(claims jwt.MapClaims, authType string, kind callerKind, userID string) *testClient {
+	claims["exp"] = time.Now().Add(time.Hour).Unix()
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.app.secret))
+	s.Require().NoError(err)
+
+	header := http.Header{}
+	header.Set(auth.APIKeyHeader, s.app.key)
+	header.Set("Authorization", "Bearer "+token)
+	header.Set(auth.AuthTypeHeader, authType)
+	return &testClient{suite: s, header: header, kind: kind, userID: userID, token: token}
+}
+
+// testClient calls the router with one set of credentials. Its helpers expect the call to
+// succeed; do is for asserting on a status.
+type testClient struct {
+	suite  *RouterSuite
+	header http.Header
+	kind   callerKind
+	// userID is who the client acts for, empty for the backend and the unauthenticated.
+	userID string
+	// token is what signs for the client, which a socket sends in its query string.
+	token string
+}
+
+// actingFor is the backend naming user as who it acts for, so what it opens is theirs.
+func (c *testClient) actingFor(user *testClient) *testClient {
+	named := *c
+	named.header = c.header.Clone()
+	named.header.Set(auth.UserHeader, user.userID)
+	named.userID = user.userID
+	return &named
+}
+
+// do sends body as JSON and decodes the answer into into, when there is one to decode.
+func (c *testClient) do(method, path string, body, into any) int {
+	status, payload := c.call(method, path, body)
+	if into != nil && status < http.StatusBadRequest {
+		c.suite.Require().NoError(json.Unmarshal(payload, into), string(payload))
+	}
+	return status
+}
+
+// call is do without decoding, for a test reading the error it was answered with.
+func (c *testClient) call(method, path string, body any) (int, []byte) {
+	require := c.suite.Require()
+	payload := bytes.NewReader(nil)
+	if body != nil {
+		encoded, err := encode(body)
+		require.NoError(err)
+		payload = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequest(method, c.suite.server.URL+path, payload)
+	require.NoError(err)
+	request.Header = c.header.Clone()
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := c.suite.server.Client().Do(request)
+	require.NoError(err)
+	defer response.Body.Close()
+	answered, err := readAll(response)
+	require.NoError(err)
+	return response.StatusCode, answered
+}
+
+// failure is what the router said was wrong, for a test asserting on the message as well
+// as the status.
+func (c *testClient) failure(method, path string, body any) (int, string) {
+	status, payload := c.call(method, path, body)
+	var answered Error
+	if err := json.Unmarshal(payload, &answered); err != nil {
+		return status, string(payload)
+	}
+	return status, answered.Error
+}
+
+// watch opens a socket, with the client's credentials in the query string as well as in
+// the headers: a browser cannot set headers on one and an SDK can, and a backend has to,
+// since nothing in a query string may say a caller is one.
+//
+// It returns the status when the handshake is refused.
+func (c *testClient) watch(path string) (*websocket.Conn, int) {
+	address := "ws" + strings.TrimPrefix(c.suite.server.URL, "http") + path
+	query := url.Values{}
+	if key := c.header.Get(auth.APIKeyHeader); key != "" {
+		query.Set(auth.APIKeyParam, key)
+		query.Set(auth.TokenParam, c.token)
+	}
+	if c.kind == anonymous && c.userID != "" {
+		query.Set(auth.UserParam, c.userID)
+	}
+	if len(query) > 0 {
+		if strings.Contains(address, "?") {
+			address += "&" + query.Encode()
+		} else {
+			address += "?" + query.Encode()
+		}
+	}
+
+	connection, response, err := websocket.DefaultDialer.Dial(address, c.header.Clone())
+	if err != nil {
+		c.suite.Require().NotNil(response, "dialling %s: %v", path, err)
+		return nil, response.StatusCode
+	}
+	c.suite.T().Cleanup(func() { _ = connection.Close() })
+	return connection, response.StatusCode
+}
+
+// opens a socket the handshake must accept.
+func (c *testClient) opens(path string) *websocket.Conn {
+	connection, status := c.watch(path)
+	c.suite.Require().NotNil(connection, "the handshake for %s answered %d", path, status)
+	return connection
+}
+
+// createSession opens a session the router must accept.
+func (c *testClient) createSession(request CreateSessionRequest) Session {
+	var created Session
+	c.suite.Require().Equal(http.StatusCreated,
+		c.do(http.MethodPost, "/v1/agents/sessions", request, &created))
+	return created
+}
+
+// getSession reads one back.
+func (c *testClient) getSession(id string) Session {
+	var read Session
+	c.suite.Require().Equal(http.StatusOK, c.do(http.MethodGet, "/v1/agents/sessions/"+id, nil, &read))
+	return read
+}
+
+// updateSession renames or re-describes one.
+func (c *testClient) updateSession(id string, request UpdateSessionRequest) Session {
+	var updated Session
+	c.suite.Require().Equal(http.StatusOK,
+		c.do(http.MethodPatch, "/v1/agents/sessions/"+id, request, &updated))
+	return updated
+}
+
+// stopSession ends one, and waits for it to be gone from the live set, because stopping is
+// what frees its id for another session to take.
+func (c *testClient) stopSession(id string) {
+	c.suite.Require().Equal(http.StatusNoContent,
+		c.do(http.MethodPost, "/v1/agents/sessions/"+id+"/stop", nil, nil))
+}
+
+// deleteSession deletes one, with its turns and what it remembered.
+func (c *testClient) deleteSession(id string) {
+	c.suite.Require().Equal(http.StatusNoContent,
+		c.do(http.MethodDelete, "/v1/agents/sessions/"+id, nil, nil))
+}
+
+// querySessions lists what the caller may see.
+func (c *testClient) querySessions(query SessionQuery) SessionPage {
+	var page SessionPage
+	c.suite.Require().Equal(http.StatusOK,
+		c.do(http.MethodPost, "/v1/agents/sessions/query", query, &page))
+	return page
+}
+
+// testUtils makes the values a test needs to be unique.
+type testUtils struct{}
+
+// uuid is a fresh UUIDv7, the kind the router gives its own rows.
+func (testUtils) uuid() string {
+	return uuid.Must(uuid.NewV7()).String()
+}
+
+// callID is a call nobody else is on.
+func (u testUtils) callID() string {
+	return "call-" + u.uuid()
+}
+
+// number is an E.164 number nobody else holds.
+func (testUtils) number() string {
+	return fmt.Sprintf("+1512%07d", time.Now().UnixNano()%10_000_000)
+}
+
+// testData makes what a test runs against. Nothing it makes is cleaned up.
+type testData struct {
+	suite *RouterSuite
+}
+
+// createApp makes an organization and an app with a key, none of which any other test sees.
+func (d testData) createApp() testApp {
+	s, ctx := d.suite, context.Background()
+	organization := store.Organization{Name: "organization-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateOrganization(ctx, &organization))
+	app := store.App{OrganizationID: organization.ID, Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(ctx, &app))
+	return d.keyed(organization, app)
+}
+
+// createAppAdmitting is an app of its own that takes only some levels of end user, for a
+// test about a caller an app turns away.
+func (d testData) createAppAdmitting(settings store.AppSettings) testApp {
+	s, ctx := d.suite, context.Background()
+	organization := store.Organization{Name: "organization-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateOrganization(ctx, &organization))
+	app := store.App{OrganizationID: organization.ID, Name: "app-" + s.utils.uuid(), Settings: settings}
+	s.Require().NoError(s.store.CreateApp(ctx, &app))
+	return d.keyed(organization, app)
+}
+
+// keyed mints a credential for an app and stores it sealed, the way the router's own keys
+// are held.
+func (d testData) keyed(organization store.Organization, app store.App) testApp {
+	s, ctx := d.suite, context.Background()
+	key, secret, err := auth.NewCredential(auth.Test)
+	s.Require().NoError(err)
+	sealed, err := s.sealer.Seal(secret)
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.CreateAPIKey(ctx, &store.APIKey{
+		ID: key, AppID: app.ID, Name: "router suite", Env: string(auth.Test),
+		Sealed: sealed, KEKVersion: auth.KEKVersion, Last4: auth.Last4(secret), CreatedBy: "router suite",
+	}))
+	return testApp{organization: organization, app: app, key: key, secret: secret}
+}
+
+// createAgentConfig is an agent of the suite's app, for the endpoints that need one to
+// name. The models are the stub the suite routes to.
+func (d testData) createAgentConfig() AgentConfig {
+	var created AgentConfig
+	d.suite.Require().Equal(http.StatusCreated, d.suite.serverClient.do(
+		http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+			Name: "agent-" + d.suite.utils.uuid(),
+			Llm:  pointerTo("llm-flow"), Instructions: pointerTo("be brief"),
+		}, &created))
+	return created
+}
+
+// createUser is a client signed in as a new end user of the suite's app.
+func (d testData) createUser() *testClient {
+	return d.signedInAs(d.suite.utils.uuid())
+}
+
+// signedInAs is a client signed in as the end user id.
+func (d testData) signedInAs(id string) *testClient {
+	return d.suite.signedIn(jwt.MapClaims{"user_id": id}, auth.AuthTypeJWT, user, id)
+}
+
+// createGuest is a client signed in as a new guest, a user Stream issued a temporary account.
+func (d testData) createGuest() *testClient {
+	id := d.suite.utils.uuid()
+	return d.suite.signedIn(jwt.MapClaims{"user_id": id, "role": "guest"}, auth.AuthTypeJWT, guest, id)
+}
+
+// createAnonymous is a client going by a new name, with a token that proves nothing about it.
+func (d testData) createAnonymous() *testClient {
+	return d.claiming(d.suite.utils.uuid())
+}
+
+// claiming is an anonymous client going by name, whoever else goes by it.
+func (d testData) claiming(name string) *testClient {
+	client := d.suite.signedIn(jwt.MapClaims{}, auth.AuthTypeAnonymous, anonymous, name)
+	client.header.Set(auth.UserHeader, name)
+	client.userID = name
+	return client
+}
+
+// backendOfAnotherApp is the server of an app this test has nothing to do with, for
+// checking that one customer's rows do not reach another's.
+func (d testData) backendOfAnotherApp() *testClient {
+	s := d.suite
+	mine := s.app
+	s.app = d.createApp()
+	stranger := s.signedIn(jwt.MapClaims{"server": true}, auth.AuthTypeServer, server, "")
+	s.app = mine
+	return stranger
+}
+
+// pointerTo is an optional field set to a value, which the generated requests take as a
+// pointer because the absent key means something other than the zero one.
+func pointerTo[T any](value T) *T { return &value }
+
+// textSession asks for a conversation in writing, which needs no call.
+func textSession(id *string) CreateSessionRequest {
+	target, text := "en-low-latency", true
+	return CreateSessionRequest{Id: id, Text: &text, Llm: &target}
+}
+
+// inProject lists the sessions in one project, which is how a test sharing a fixture's app
+// finds its own.
+func inProject(project string) SessionQuery {
+	equals := Equals(project)
+	return SessionQuery{Filter: &SessionFilter{ProjectID: &equals}}
+}
+
+// ids is the ids of a list of sessions, in order.
+func ids(sessions []Session) []string {
+	listed := make([]string, 0, len(sessions))
+	for _, one := range sessions {
+		listed = append(listed, one.Id)
+	}
+	return listed
+}
+
+// encode marshals a body, passing a string through as the JSON it already is so a test can
+// send something the generated types cannot hold.
+func encode(body any) ([]byte, error) {
+	if raw, ok := body.(string); ok {
+		return []byte(raw), nil
+	}
+	return json.Marshal(body)
+}
+
+func readAll(response *http.Response) ([]byte, error) {
+	var buffer bytes.Buffer
+	_, err := buffer.ReadFrom(response.Body)
+	return buffer.Bytes(), err
+}

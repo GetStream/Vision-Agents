@@ -272,3 +272,16 @@ Reject it if it:
 - opens two readers on one socket;
 - asserts that a method was called, or replaces the test server with a stubbed `fetch`;
 - hand-edits `src/generated/api.ts`.
+
+## Pagination
+
+`sessions.query`, `sessions.search`, `responses.list` and `items.list` take a `cursor` and return
+the page, `{items, has_more, next_cursor}`. `items.unwind` follows `next_cursor` until `has_more`
+is false. See the `pagination` skill.
+
+## Pending: session update (Go is done)
+
+The Go SDK moved to `PATCH /v1/agents/sessions/{id}` (`updateSession`), which changes title,
+description, custom, instructions, models and voice in one call. Regenerate, then expose
+`session.update(...)` and `agent.sessions.update(id, ...)`; drop `updateSettings`. See "Updating a session" in the `sdk` skill. The `/settings` and
+`/instructions` endpoints are deprecated.

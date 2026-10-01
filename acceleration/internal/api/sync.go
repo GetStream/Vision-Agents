@@ -4,74 +4,183 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// SyncAgent stores an agent directory: its instructions, skills and knowledge, and the
-// settings its declaration decided.
+// SyncAgentRequest is an agent directory as it is on disk.
+type SyncAgentRequest struct {
+	Name          string                     `json:"name" doc:"What the config is called, which is also the directory's name."`
+	Hash          string                     `json:"hash" doc:"A fingerprint of the directory. A second sync with the same hash does nothing."`
+	Instructions  *string                    `json:"instructions,omitempty"`
+	Guardrail     *string                    `json:"guardrail,omitempty" doc:"The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered."`
+	Skills        *[]SkillRequest            `json:"skills,omitempty"`
+	Knowledge     *[]KnowledgeDocument       `json:"knowledge,omitempty"`
+	KnowledgeUrls *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty" doc:"The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both."`
+	Simulations   *[]SimulationDeclaration   `json:"simulations,omitempty" doc:"The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone."`
+	Mode          *AgentMode                 `json:"mode,omitempty"`
+	Stt           *string                    `json:"stt,omitempty"`
+	Tts           *string                    `json:"tts,omitempty"`
+	Sts           *string                    `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
+	Voice         *string                    `json:"voice,omitempty"`
+	Llm           *string                    `json:"llm,omitempty"`
+	Video         *SessionVideo              `json:"video,omitempty"`
+	Subagent      *string                    `json:"subagent,omitempty"`
+	Search        *string                    `json:"search,omitempty"`
+	Greeting      *string                    `json:"greeting,omitempty"`
+	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" doc:"The directory's declarative connector bindings. Full sync replaces these bindings; connected accounts remain separate resources."`
+	Keyterms      *[]string                  `json:"keyterms,omitempty"`
+	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
+	Tags          *map[string]string         `json:"tags,omitempty"`
+}
+
+func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "An agent directory as it is on disk. Everything after the simulations " +
+		"is what the directory's declaration decides rather than what it holds, and a setting " +
+		"left out leaves whatever is stored, so a model chosen in the dashboard survives a sync " +
+		"that says nothing about it."
+	return schema
+}
+
+// KnowledgeUrlDeclaration is a page an agent directory declares.
+type KnowledgeUrlDeclaration struct {
+	Url         string  `json:"url" example:"https://example.com/pricing"`
+	Title       *string `json:"title,omitempty" example:"Pricing"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (*KnowledgeUrlDeclaration) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "A page an agent directory declares, in the knowledge base named after it."
+	return schema
+}
+
+// SimulationDeclaration is one simulation an agent directory declares. It runs against the
+// agent being synced, so it names no config.
+type SimulationDeclaration struct {
+	Name         string             `json:"name" minLength:"1" doc:"Unique among the agent's simulations, and what a sync finds it again by."`
+	Scenario     string             `json:"scenario" minLength:"1" doc:"What the caller wants, in your own words and over as many turns as it takes."`
+	Assertion    string             `json:"assertion" minLength:"1" doc:"What has to be true at the end for a run to have passed."`
+	Mode         *string            `json:"mode,omitempty" enum:"text,audio" doc:"Text when left out."`
+	Variations   *int               `json:"variations,omitempty" minimum:"1" maximum:"10" doc:"How many ways of asking the same thing one run tries."`
+	MaxTurns     *int               `json:"max_turns,omitempty" minimum:"1" maximum:"200" doc:"How many times the caller may speak. Twelve when left out."`
+	CallerTarget *string            `json:"caller_target,omitempty"`
+	JudgeTarget  *string            `json:"judge_target,omitempty"`
+	CallerStt    *string            `json:"caller_stt,omitempty"`
+	CallerTts    *string            `json:"caller_tts,omitempty"`
+	CallerVoice  *string            `json:"caller_voice,omitempty"`
+	Tags         *map[string]string `json:"tags,omitempty"`
+}
+
+func (*SimulationDeclaration) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "A simulation an agent directory declares in simulations/*.yaml. It " +
+		"runs against the agent being synced."
+	return schema
+}
+
+// SyncAgentResult is the config a sync left stored.
+type SyncAgentResult struct {
+	Unchanged bool        `json:"unchanged" doc:"True when the hash matched and nothing was written."`
+	Config    AgentConfig `json:"config"`
+}
+
+type syncAgentRequest struct {
+	Body SyncAgentRequest
+}
+
+type syncAgentResponse struct {
+	Body SyncAgentResult
+}
+
+func (s *Server) registerSync(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "syncAgent",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sync",
+		Summary:     "Store an agent directory's instructions, skills, knowledge, simulations and settings",
+		Description: "Reads as \"this is what the agent is\", from a directory of agent.yaml, " +
+			"instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of " +
+			"that directory: a second call with the same hash does nothing, so a process that " +
+			"syncs on startup is cheap when nothing has changed.\n\n" +
+			"agent.yaml decides the models, the voice and the rest of a config, so an agent kept " +
+			"in a repository needs nothing written by hand. A setting it leaves out is left alone " +
+			"rather than blanked.\n\n" +
+			"knowledge/ is the whole of the knowledge base named after the agent, and simulations/ " +
+			"the whole of its simulations: a file taken out of the directory is taken out of the " +
+			"backend on the next sync.\n\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The config as stored, or as it already was"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict},
+	}, s.syncAgent)
+}
+
+// syncAgent stores an agent directory: its instructions, skills, knowledge and simulations,
+// and the settings its declaration decided.
 //
 // The hash is a fingerprint of that directory. A second call with the same hash does
 // nothing, so a process that syncs on startup is cheap when nothing has changed.
-func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) (SyncAgentResponseObject, error) {
+func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syncAgentResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return SyncAgent401JSONResponse{missingCustomer()}, nil
-	}
-	if request.Body == nil {
-		return SyncAgent400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 
-	body := *request.Body
+	body := request.Body
 	name := strings.TrimSpace(body.Name)
 	hash := strings.TrimSpace(body.Hash)
 	if name == "" {
-		return SyncAgent400JSONResponse{badRequest("an agent config needs a name")}, nil
+		return nil, huma.Error400BadRequest("an agent config needs a name")
 	}
 	if hash == "" {
-		return SyncAgent400JSONResponse{badRequest("a hash is required, so a second sync can do nothing")}, nil
+		return nil, huma.Error400BadRequest("a hash is required, so a second sync can do nothing")
 	}
 
 	if s.store == nil {
-		return SyncAgent400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 	existing, found, err := s.store.AgentConfigByName(ctx, customerID, name)
 	if err != nil {
 		return nil, err
 	}
 	if found && body.Connectors == nil && len(existing.Connectors) > 0 {
-		return SyncAgent409JSONResponse{ConflictJSONResponse{Error: "this config uses connector bindings; include connectors when syncing it"}}, nil
+		return nil, huma.Error409Conflict("this config uses connector bindings; include connectors when syncing it")
 	}
 	if message, ok := syncComplaint(body); !ok {
-		return SyncAgent400JSONResponse{badRequest(message)}, nil
+		return nil, huma.Error400BadRequest(message)
 	}
 	if message, err := s.connectorDefinitionComplaint(ctx, customerID, body.Connectors); err != nil {
 		return nil, err
 	} else if message != "" {
-		return SyncAgent400JSONResponse{badRequest(message)}, nil
+		return nil, huma.Error400BadRequest(message)
 	}
 
 	if found && existing.SyncHash == hash {
-		return SyncAgent200JSONResponse{Unchanged: true, Config: agentConfigOf(existing)}, nil
+		return &syncAgentResponse{Body: SyncAgentResult{Unchanged: true, Config: agentConfigOf(existing)}}, nil
 	}
 
 	documents := documentsOf(body.Knowledge)
 	namespace := ""
 	if len(documents) > 0 {
 		if s.knowledge == nil {
-			return SyncAgent400JSONResponse{badRequest(noKnowledge)}, nil
+			return nil, huma.Error400BadRequest(noKnowledge)
 		}
 		namespace = name
 		if _, _, err := s.fillKnowledge(ctx, customerID, namespace, documents, nil); err != nil {
-			return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
+			return nil, huma.Error400BadRequest(err.Error())
 		}
 	}
 	if body.KnowledgeUrls != nil && len(*body.KnowledgeUrls) > 0 {
 		if s.pages == nil {
-			return SyncAgent400JSONResponse{badRequest(noKnowledgeURLs)}, nil
+			return nil, huma.Error400BadRequest(noKnowledgeURLs)
 		}
 		namespace = name
 		for _, page := range *body.KnowledgeUrls {
@@ -79,7 +188,7 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 			wanted.Title = value(page.Title)
 			wanted.Description = value(page.Description)
 			if _, err := s.pages.Add(ctx, customerID, wanted); err != nil {
-				return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
+				return nil, huma.Error400BadRequest(err.Error())
 			}
 		}
 	}
@@ -110,22 +219,27 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 
 	if found {
 		if err := s.store.UpdateAgentConfig(ctx, &config); err != nil {
-			return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
+			return nil, huma.Error400BadRequest(err.Error())
 		}
 	} else {
 		if err := s.store.CreateAgentConfig(ctx, &config); err != nil {
-			return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
+			return nil, huma.Error400BadRequest(err.Error())
 		}
 	}
 
-	// The skills belong to the config, so they are written after it: a new agent has no
-	// id to hang them off until it has been stored.
+	// The skills and simulations belong to the config, so they are written after it: a new
+	// agent has no id to hang them off until it has been stored.
 	if len(skills) > 0 {
 		if err := s.upsertSkills(ctx, customerID, config.ID, skills); err != nil {
-			return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
+			return nil, huma.Error400BadRequest(err.Error())
 		}
 	}
-	return SyncAgent200JSONResponse{Unchanged: false, Config: agentConfigOf(config)}, nil
+	if body.Simulations != nil {
+		if err := s.replaceSimulations(ctx, customerID, config.ID, *body.Simulations); err != nil {
+			return nil, err
+		}
+	}
+	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config)}}, nil
 }
 
 // syncComplaint reports what is wrong with the settings a directory declared, if
@@ -147,7 +261,81 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	if complaint, ok := connectorBindingsComplaint(body.Connectors); !ok {
 		return complaint, false
 	}
+	// Simulations are checked here, before anything is written, since a config stored under
+	// the new hash would make the next sync skip the simulations that failed.
+	named := map[string]bool{}
+	for _, simulation := range simulationsOf(body.Simulations) {
+		name := strings.TrimSpace(simulation.Name)
+		if named[name] {
+			return fmt.Sprintf("two simulations are called %q", name), false
+		}
+		named[name] = true
+		if simulation.Tags != nil {
+			if err := routing.Tags(*simulation.Tags).Validate(); err != nil {
+				return fmt.Sprintf("simulation %q: %s", name, err), false
+			}
+		}
+	}
 	return "", true
+}
+
+// replaceSimulations makes the config's simulations exactly the ones declared, finding each
+// by name so its runs stay attached to it.
+func (s *Server) replaceSimulations(ctx context.Context, customerID, configID string, declared []SimulationDeclaration) error {
+	all, err := s.store.CustomerSimulations(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	stored := map[string]store.Simulation{}
+	for _, simulation := range all {
+		if simulation.ConfigID == configID {
+			stored[simulation.Name] = simulation
+		}
+	}
+
+	for _, declaration := range declared {
+		simulation := storedSimulation(SimulationRequest{
+			Name:         declaration.Name,
+			ConfigId:     configID,
+			Scenario:     declaration.Scenario,
+			Assertion:    declaration.Assertion,
+			Mode:         (*SimulationRequestMode)(declaration.Mode),
+			Variations:   declaration.Variations,
+			MaxTurns:     declaration.MaxTurns,
+			CallerTarget: declaration.CallerTarget,
+			JudgeTarget:  declaration.JudgeTarget,
+			CallerStt:    declaration.CallerStt,
+			CallerTts:    declaration.CallerTts,
+			CallerVoice:  declaration.CallerVoice,
+			Tags:         declaration.Tags,
+		}, customerID)
+		existing, ok := stored[simulation.Name]
+		delete(stored, simulation.Name)
+		if ok {
+			simulation.ID = existing.ID
+			if err := s.store.UpdateSimulation(ctx, &simulation); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := s.store.CreateSimulation(ctx, &simulation); err != nil {
+			return err
+		}
+	}
+
+	for _, simulation := range stored {
+		if err := s.store.DeleteSimulation(ctx, customerID, simulation.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func simulationsOf(list *[]SimulationDeclaration) []SimulationDeclaration {
+	if list == nil {
+		return nil
+	}
+	return *list
 }
 
 // applySettings writes onto a config what the directory's declaration decided. Only what

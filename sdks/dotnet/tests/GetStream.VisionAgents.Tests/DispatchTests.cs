@@ -89,7 +89,7 @@ public sealed class DispatchTests
         Assert.Single(agents.Distinct());
         var opened = router.Only("POST", "/v1/agents/sessions").Body;
         Assert.Equal(("support", "support-ch1"), (opened.Text("agent"), opened.Text("agent_id")));
-        Assert.True(opened!["persist_conversation"]!.GetValue<bool>());
+        Assert.Null(opened!["incognito"]);
         Assert.True(opened["text"]!.GetValue<bool>());
     }
 

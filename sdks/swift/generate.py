@@ -38,12 +38,16 @@ GENERATED = TARGET / "Generated"
 # the session socket, which is hand-written rather than generated.
 OPERATIONS = [
     "closeSession",
+    "createResponse",
     "createSession",
     "forkSession",
+    "getSession",
+    "listResponseItems",
     "listResponses",
     "listSessions",
     "rewindSession",
     "search",
+    "searchSessions",
 ]
 
 CONFIG = {

@@ -5,6 +5,8 @@ from ._backend import Backend
 from ._generated.models import (
     AttachedNumber,
     GuestUser,
+    ImageSource,
+    ImageSourceDetail,
     ModelOverwrites,
     ModelOverwritesThinking,
     ModelOverwritesVerbosity,
@@ -32,6 +34,7 @@ from .sessions import (
     Session,
     SessionEvent,
     SessionOptions,
+    SessionSettings,
     Sessions,
 )
 from .sts import STS
@@ -51,6 +54,8 @@ __all__ = [
     "ForkOptions",
     "GuestOptions",
     "GuestUser",
+    "ImageSource",
+    "ImageSourceDetail",
     "InboundCall",
     "InboundMessage",
     "Items",
@@ -76,6 +81,7 @@ __all__ = [
     "Session",
     "SessionEvent",
     "SessionOptions",
+    "SessionSettings",
     "Sessions",
     "SkippedVendor",
     "TTS",

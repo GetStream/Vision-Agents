@@ -227,6 +227,16 @@ func (h *Harness) Remember(response llm.Response) {
 	h.stored.identity = response.Provider + "/" + response.Model
 }
 
+// Forget drops what a provider that keeps its replies is known to have read, because a
+// reply was asked for and then thrown away unread. Respond recorded that input as sent, so
+// without this the next turn with the same words would send nothing new and continue from
+// a reply that never saw them. The next turn sends the whole conversation instead.
+func (h *Harness) Forget() {
+	h.mu.Lock()
+	h.stored = stored{}
+	h.mu.Unlock()
+}
+
 // resume works out how much of the input still has to be sent, and what to continue from.
 //
 // It returns the whole input and no previous response whenever the shortcut cannot be
@@ -534,6 +544,14 @@ func (h *Harness) act(turnID string, found directive) {
 		return
 	}
 	h.mu.Unlock()
+	// The model is told a colleague is already looking at what the caller sent, and asks
+	// for it anyway. Its copy has none of the images, so it would only replace the task
+	// that does.
+	if h.tasks != nil && h.tasks.Attached(skill.Name, turnID) {
+		h.logger.Debug("the caller's attachments are already being looked at",
+			"skill", skill.Name, "prompt", found.body)
+		return
+	}
 
 	if skill.CaptureVideo {
 		skill.VideoSource = found.source

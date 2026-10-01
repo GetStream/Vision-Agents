@@ -2,6 +2,7 @@ package exa
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -14,6 +15,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 )
 
+// fixtures are what Exa answers with, one file per answer, shared by every test that
+// needs that answer and changed by none.
+//
+//go:embed testdata/*.json
+var fixtures embed.FS
+
 // web stands in for Exa's API so the wire contract can be tested without a key.
 type web struct {
 	server *httptest.Server
@@ -22,13 +29,12 @@ type web struct {
 	key    string
 	body   map[string]any
 	status int
-	// respond is the JSON the stub answers with. No results is the default because a
-	// search that found nothing is the case worth not crashing on.
-	respond string
+	// respond is the JSON the stub answers with.
+	respond []byte
 }
 
 func newWeb() *web {
-	stub := &web{status: http.StatusOK, respond: `{"results":[]}`}
+	stub := &web{}
 	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		stub.path = r.URL.Path
 		stub.key = r.Header.Get("x-api-key")
@@ -39,11 +45,13 @@ func newWeb() *web {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(stub.status)
-		_, _ = w.Write([]byte(stub.respond))
+		_, _ = w.Write(stub.respond)
 	}))
 	return stub
 }
 
+// ExaSuite runs every test against one stub, started once and never stopped: it holds
+// nothing a later test could trip over, and the process ending takes it down.
 type ExaSuite struct {
 	suite.Suite
 	ctx      context.Context
@@ -55,10 +63,9 @@ func TestExaSuite(t *testing.T) {
 	suite.Run(t, new(ExaSuite))
 }
 
-func (s *ExaSuite) SetupTest() {
+func (s *ExaSuite) SetupSuite() {
 	s.ctx = context.Background()
 	s.web = newWeb()
-	s.T().Cleanup(s.web.server.Close)
 
 	provider, err := New(Options{
 		APIKey:  "test-key",
@@ -67,6 +74,21 @@ func (s *ExaSuite) SetupTest() {
 	})
 	s.Require().NoError(err)
 	s.provider = provider
+}
+
+// SetupTest has Exa find nothing unless a test says otherwise, because a search that found
+// nothing is the case worth not crashing on, and forgets the last request so each test
+// sees only its own.
+func (s *ExaSuite) SetupTest() {
+	s.answer(http.StatusOK, "search_nothing.json")
+	s.web.path, s.web.key, s.web.body = "", "", nil
+}
+
+// answer has the stub reply with a fixture.
+func (s *ExaSuite) answer(status int, fixture string) {
+	body, err := fixtures.ReadFile("testdata/" + fixture)
+	s.Require().NoError(err)
+	s.web.status, s.web.respond = status, body
 }
 
 func (s *ExaSuite) TestAKeyIsRequired() {
@@ -105,10 +127,7 @@ func (s *ExaSuite) TestASearchAsksForHighlightsRatherThanWholePages() {
 func (s *ExaSuite) TestSearchReturnsTheSourcesAndNoSummary() {
 	// Exa writes no answer of its own, which is what makes it the quick option: nothing
 	// here waits on a model. The prompt renders the sources alone.
-	s.web.respond = `{"results":[
-		{"title":"COtrip","url":"https://cotrip.org","highlights":["No closures reported."],"score":0.9},
-		{"title":"CDOT","url":"https://codot.gov","text":"Chain law is off.","score":0.4}
-	]}`
+	s.answer(http.StatusOK, "search_traffic.json")
 
 	found, err := s.provider.Search(s.ctx, search.Query{Text: "traffic on I-70"})
 	s.Require().NoError(err)
@@ -131,8 +150,7 @@ func (s *ExaSuite) TestAQuestionWithNothingInItIsNotSent() {
 }
 
 func (s *ExaSuite) TestARefusedSearchSaysWhatCameBack() {
-	s.web.status = http.StatusUnauthorized
-	s.web.respond = `{"error":"bad key"}`
+	s.answer(http.StatusUnauthorized, "refused_bad_key.json")
 
 	_, err := s.provider.Search(s.ctx, search.Query{Text: "traffic"})
 
@@ -141,10 +159,7 @@ func (s *ExaSuite) TestARefusedSearchSaysWhatCameBack() {
 }
 
 func (s *ExaSuite) TestReadingAPageReturnsItAsMarkdown() {
-	s.web.respond = `{
-		"results":[{"url":"https://example.com/pricing","title":"Pricing","text":"# Pricing\n\nA call costs a penny."}],
-		"statuses":[{"id":"https://example.com/pricing","status":"success"}]
-	}`
+	s.answer(http.StatusOK, "contents_pricing.json")
 
 	page, err := s.provider.Read(s.ctx, "https://example.com/pricing")
 	s.Require().NoError(err)
@@ -159,11 +174,7 @@ func (s *ExaSuite) TestReadingAPageReturnsItAsMarkdown() {
 func (s *ExaSuite) TestAPageThatCouldNotBeReadIsAnErrorEvenThoughTheCallSucceeded() {
 	// This endpoint reports a failed url in the body rather than in the status, so a
 	// caller trusting the 200 would store an empty page as though it had worked.
-	s.web.respond = `{
-		"results":[],
-		"statuses":[{"id":"https://example.com/gone","status":"error",
-			"error":{"tag":"CRAWL_NOT_FOUND","httpStatusCode":404}}]
-	}`
+	s.answer(http.StatusOK, "contents_not_found.json")
 
 	_, err := s.provider.Read(s.ctx, "https://example.com/gone")
 
@@ -172,7 +183,7 @@ func (s *ExaSuite) TestAPageThatCouldNotBeReadIsAnErrorEvenThoughTheCallSucceede
 }
 
 func (s *ExaSuite) TestAPageWithNothingOnItIsNotWorthStoring() {
-	s.web.respond = `{"results":[{"url":"https://example.com/blank","title":"Blank","text":"  "}]}`
+	s.answer(http.StatusOK, "contents_blank.json")
 
 	_, err := s.provider.Read(s.ctx, "https://example.com/blank")
 

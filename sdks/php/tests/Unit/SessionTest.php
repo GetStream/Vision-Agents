@@ -93,6 +93,16 @@ final class SessionTest extends TestCase
         self::assertSame(['title' => 'Take two', 'response_id' => 'resp_1'], $this->router->to('POST', '/v1/agents/sessions/ses_1/fork')[0]->json());
     }
 
+    public function testUpdateSettingsChangesTheModelsOfOneSession(): void
+    {
+        $this->router->answer('PATCH', '/v1/agents/sessions/ses_1/settings', 200, Rows::session('ses_1', ['llm' => 'llm-thinking']));
+
+        $updated = $this->session->updateSettings(llm: 'llm-thinking', thinking: 'high', sts: '');
+
+        self::assertSame('llm-thinking', $updated->llm);
+        self::assertSame(['llm' => 'llm-thinking', 'sts' => '', 'thinking' => 'high'], $this->router->to('PATCH', '/v1/agents/sessions/ses_1/settings')[0]->json());
+    }
+
     public function testCloseIsIdempotentAndIgnoresAGoneSession(): void
     {
         $this->router->answer('DELETE', '/v1/agents/sessions/ses_1', 404, ['error' => 'gone']);

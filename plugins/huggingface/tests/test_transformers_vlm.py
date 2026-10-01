@@ -1,7 +1,10 @@
 """Tests for TransformersVLM - local vision-language model inference."""
 
+import asyncio
 import fractions
 import os
+import threading
+import time
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -11,7 +14,6 @@ from av import VideoFrame
 from conftest import skip_blockbuster, skip_if_huggingface_model_unavailable
 from vision_agents.testing import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.llm.llm import LLMResponseFinal
 from vision_agents.plugins.huggingface.transformers_vlm import (
     TransformersVLM,
     VLMResources,
@@ -121,6 +123,40 @@ class TestTransformersVLM:
 
         assert final.text == ""
         assert deltas == []
+
+    async def test_interrupt_stops_in_flight_generation(self, vlm):
+        generation_started = threading.Event()
+        generated_token_counts: list[int] = []
+
+        def cancellable_generate(*args, **kwargs):
+            input_ids = kwargs["input_ids"]
+            output = input_ids.clone()
+            stopping_criteria = kwargs["stopping_criteria"]
+            generation_started.set()
+
+            for _ in range(500):
+                if stopping_criteria(output, None):
+                    break
+                output = torch.cat(
+                    (output, torch.ones((1, 1), dtype=output.dtype)), dim=1
+                )
+                time.sleep(0.001)
+
+            generated_token_counts.append(output.shape[-1] - input_ids.shape[-1])
+            return output
+
+        vlm._resources.model.generate.side_effect = cancellable_generate
+        response_task = asyncio.create_task(
+            collect_simple_response(vlm.simple_response(text="describe"))
+        )
+
+        started = await asyncio.to_thread(generation_started.wait, 1)
+        assert started
+        await vlm.interrupt()
+
+        _, final = await asyncio.wait_for(response_task, timeout=1)
+        assert final.text == "A cat on a couch"
+        assert generated_token_counts[0] < 20
 
     async def test_processor_fallback(self, vlm):
         """When apply_chat_template fails, falls back to direct processor call."""
@@ -297,22 +333,44 @@ class TestTransformersVLMIntegration:
 
         vlm._frame_buffer.append(_random_video_frame())
 
-        deltas = []
-        final = None
-        async for item in vlm.simple_response(
-            text="Describe in extreme detail every single object you can see"
-        ):
-            if isinstance(item, LLMResponseFinal):
-                final = item
-            else:
-                deltas.append(item)
-                if len(deltas) == 1:
-                    await vlm.interrupt()
+        generation_started = threading.Event()
+        generated_token_counts: list[int] = []
+        original_generate = resources.model.generate
 
-        assert final is not None
-        # Without interrupt the response would run for hundreds of tokens.
-        # With interrupt fired after the first delta, the rest of the run
-        # produces only a handful more tokens before generation exits.
-        assert len(deltas) < 20
+        def signaling_generate(*args, **kwargs):
+            generation_started.set()
+            output = original_generate(*args, **kwargs)
+            generated_token_counts.append(
+                output.shape[-1] - kwargs["input_ids"].shape[-1]
+            )
+            return output
 
-        vlm.unload()
+        setattr(resources.model, "generate", signaling_generate)
+
+        response_task = asyncio.create_task(
+            collect_simple_response(
+                vlm.simple_response(
+                    text="Describe in extreme detail every single object you can see"
+                )
+            )
+        )
+
+        try:
+            started = await asyncio.to_thread(generation_started.wait, 10)
+            assert started, "model.generate did not start within 10 seconds"
+
+            await vlm.interrupt()
+            _, final = await asyncio.wait_for(response_task, timeout=10)
+
+            assert final is not None
+            assert generated_token_counts
+            assert generated_token_counts[0] < 20
+        finally:
+            if not response_task.done():
+                await vlm.interrupt()
+                try:
+                    await asyncio.wait_for(response_task, timeout=10)
+                except asyncio.TimeoutError:
+                    response_task.cancel()
+                    await asyncio.gather(response_task, return_exceptions=True)
+            vlm.unload()

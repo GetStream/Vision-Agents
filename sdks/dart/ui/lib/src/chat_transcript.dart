@@ -6,7 +6,7 @@ import 'transcript_view.dart';
 
 /// The Stream Chat channel a conversation is kept in, or null for one that is not.
 ///
-/// A session opened with `persistConversation` names its channel as `type:id`. Reading it
+/// A text session that is not incognito names its channel as `type:id`. Reading it
 /// takes a chat client connected as the person holding the conversation, which the app's
 /// backend mints a Chat token for.
 Channel? conversationChannel(StreamChatClient client, Session session) {

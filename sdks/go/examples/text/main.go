@@ -35,16 +35,6 @@ func main() {
 func run(ctx context.Context) error {
 	llm := stream.Accelerated(stream.Config{LLM: "llm-fast"})
 
-	if err := agents.RegisterFunction(llm, "get_weather",
-		"Get the current weather for a location",
-		func(_ context.Context, in struct {
-			Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
-		}) (any, error) {
-			return fmt.Sprintf("It is 20 degrees and sunny in %s.", in.Location), nil
-		}); err != nil {
-		return err
-	}
-
 	agent, err := agents.New(agents.Options{
 		Name:         "jean",
 		Instructions: "You are Jean, a friendly assistant. Keep answers to a sentence or two.",
@@ -54,6 +44,9 @@ func run(ctx context.Context) error {
 		MemoryFilter: map[string]string{"user_id": "123"},
 	})
 	if err != nil {
+		return err
+	}
+	if err := agent.Tools().Add(GetWeather{}); err != nil {
 		return err
 	}
 
@@ -72,11 +65,22 @@ func run(ctx context.Context) error {
 		if question == "" {
 			continue
 		}
-		if err := session.Respond(question); err != nil {
+		if _, err := session.Responses.Create(ctx, question); err != nil {
 			return err
 		}
 	}
 	return lines.Err()
+}
+
+// GetWeather is the one tool Jean has. Its field is what the model fills in.
+type GetWeather struct {
+	Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
+}
+
+func (GetWeather) Name() string        { return "get_weather" }
+func (GetWeather) Description() string { return "Get the current weather for a location" }
+func (w GetWeather) Run(context.Context) (any, error) {
+	return fmt.Sprintf("It is 20 degrees and sunny in %s.", w.Location), nil
 }
 
 // printReplies writes what the agent said as it says it.

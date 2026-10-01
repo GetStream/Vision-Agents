@@ -38,7 +38,8 @@ export interface SessionQuery {
   createdBefore?: Date | string;
   /** Up to 200. Omitted is 25. */
   limit?: number;
-  offset?: number;
+  /** The `next_cursor` of the page before, sent with the same filters. */
+  cursor?: string;
 }
 
 /**
@@ -99,7 +100,7 @@ export class Sessions {
    * not the same as holding one, and most of these are over. `responses` reads the turns of
    * one, and `create({ conversation_id })` opens a new conversation on its transcript.
    */
-  query(query: SessionQuery = {}): Promise<readonly Schemas["Session"][]> {
+  query(query: SessionQuery = {}): Promise<Schemas["SessionPage"]> {
     return this.client.get("/v1/agents/sessions", { query: this.filter(query) });
   }
 
@@ -110,7 +111,7 @@ export class Sessions {
    * remembers a conversation by. Nothing about an incognito session is searchable, because
    * nothing about it was written down.
    */
-  search(text: string, query: SessionQuery = {}): Promise<readonly Schemas["Session"][]> {
+  search(text: string, query: SessionQuery = {}): Promise<Schemas["SessionPage"]> {
     return this.client.get("/v1/agents/sessions/search", {
       query: { ...this.filter(query), q: text },
     });
@@ -132,6 +133,14 @@ export class Sessions {
     return this.client.get("/v1/agents/sessions/{id}", { path: { id } });
   }
 
+  /**
+   * Deletes what one conversation remembered, running or ended, and leaves the rest of the
+   * user's memories alone. Server side only.
+   */
+  deleteMemories(id: string): Promise<void> {
+    return this.client.delete("/v1/agents/sessions/{id}/memories", { path: { id } });
+  }
+
   /** The query as the wire spells it, with the agent's own name always in it. */
   private filter(query: SessionQuery): Record<string, string | number | undefined> {
     return {
@@ -143,7 +152,7 @@ export class Sessions {
       created_after: timestamp(query.createdAfter),
       created_before: timestamp(query.createdBefore),
       limit: query.limit,
-      offset: query.offset,
+      cursor: query.cursor,
     };
   }
 }

@@ -8,6 +8,7 @@ from deepgram import AsyncDeepgramClient
 from deepgram.core import EventType
 from deepgram.listen import ListenV2CloseStream
 from deepgram.listen.v2.socket_client import AsyncV2SocketClient
+from deepgram.listen.v2.types import ListenV2TurnInfo
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
@@ -180,9 +181,10 @@ class STT(stt.STT):
 
         TODO: errors in this function are hidden silently. Not sure why this happens.
         """
-        # v2 listen messages are delivered as plain dicts
-        if not isinstance(message, dict):
-            logger.warning(f"Received unexpected message: {message}")
+        # SDK 7.7+ delivers typed models; older 7.x builds used plain dicts.
+        if isinstance(message, ListenV2TurnInfo):
+            message = message.model_dump()
+        elif not isinstance(message, dict):
             return
 
         # Handle TurnInfo messages (v2 API)

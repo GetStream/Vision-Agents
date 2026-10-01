@@ -349,6 +349,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 		gate = policies
 	}
 
+	if settings.Agent.SpeculativeReplies {
+		logger.Info("starting replies before the flow controller rules on them",
+			"env", "ROUTER_SPECULATIVE_REPLIES")
+	}
+
 	trustedProxies, err := api.TrustedProxies(settings.TrustedProxies)
 	if err != nil {
 		return err
@@ -464,6 +469,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 		defer judging.Close()
 		routers[routing.LCM] = judging
+		streams.LCM = judging
 	}
 
 	if section, ok := capabilities[routing.LLM]; ok {
@@ -831,7 +837,7 @@ func openStore(ctx context.Context, settings config.Config, logger *slog.Logger)
 // migrate brings the schema up to date, transferring the supported accounts out of the
 // old plugin storage before the migration that removes it.
 func migrate(ctx context.Context, pgStore *store.Store, settings config.Config, logger *slog.Logger) error {
-	if err := pgStore.MigrateUpTo(ctx, 20260929150000); err != nil {
+	if err := pgStore.MigrateUpTo(ctx, 20260929200000); err != nil {
 		return err
 	}
 	var legacyTable sql.NullString
@@ -908,6 +914,9 @@ func buildSessions(
 		Search:     finding,
 		Classifier: judging,
 		Phone:      telephony,
+		// Off unless the deployment asks: a reply started before its ruling is paid for
+		// whether or not it is spoken.
+		SpeculativeReplies: settings.Agent.SpeculativeReplies,
 		// The same app secret that verifies Stream's inbound hooks, now signing one going
 		// the other way. A customer who wants to decide for themselves whether a turn may
 		// be answered already holds it, so there is no second secret to hand out.

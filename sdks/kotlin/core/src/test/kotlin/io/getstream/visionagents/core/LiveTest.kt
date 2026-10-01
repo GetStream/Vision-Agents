@@ -85,7 +85,7 @@ class LiveTest {
     }
 
     @Test
-    fun `a rewound session carries on from the response kept, and a fork branches off it`() = runBlocking {
+    fun `a fork at a response branches off it and leaves the original as it was`() = runBlocking {
         val chat = agents.chat(options)
 
         chat.send("My name is Ada. Reply with one word.")
@@ -98,12 +98,10 @@ class LiveTest {
         assertTrue(kept.said.contains("Ada"))
         assertTrue(chat.responses.items(kept.id).isNotEmpty())
 
-        chat.responses.rewind(kept)
-        assertEquals(listOf(kept.id), chat.responses.list().map { it.id })
-
         val fork = chat.fork(ForkOptions(responseId = kept.id))
         assertNotEquals(chat.id, fork.id)
         assertEquals(chat.id, fork.forkedFrom)
+        assertEquals(2, chat.responses.list().size)
         agents.sessions.close(fork.id)
         chat.close()
     }

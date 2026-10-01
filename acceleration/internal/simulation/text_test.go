@@ -3,6 +3,7 @@ package simulation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -12,28 +13,32 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
-// answer is one thing the agent under test says back, and how long it takes about it.
+// answer is one thing the agent under test says back, and how long it takes about it. An
+// answer with a call asks for that tool instead of saying anything.
 type answer struct {
 	text  string
+	call  llm.ToolCall
 	after time.Duration
 }
 
-// agentModel is the model inside the agent being tested. It answers what the test queued,
-// which is how a turn that arrives in several pieces is arranged.
+// agentModel is the model inside the agent being tested. Each reply it is asked for is the
+// next one the test queued, which is how a turn that arrives in several pieces is arranged.
 type agentModel struct {
 	mu      sync.Mutex
-	answers []answer
+	replies [][]answer
 	// writing are the replies still being written, so closing the model settles them and
 	// whoever is draining one is let go of.
 	writing []*llmtest.Script
@@ -49,8 +54,11 @@ func (m *agentModel) Create(_ context.Context, params llm.ResponseParams) (*llm.
 	})
 
 	m.mu.Lock()
-	queued := m.answers
-	m.answers = nil
+	var queued []answer
+	if len(m.replies) > 0 {
+		queued = m.replies[0]
+		m.replies = m.replies[1:]
+	}
 	m.writing = append(m.writing, script)
 	m.mu.Unlock()
 
@@ -62,6 +70,10 @@ func (m *agentModel) Create(_ context.Context, params llm.ResponseParams) (*llm.
 		for _, said := range queued {
 			if said.after > 0 {
 				time.Sleep(said.after)
+			}
+			if said.call.Name != "" {
+				script.ToolCalls(said.call)
+				continue
 			}
 			script.OutputText(said.text)
 		}
@@ -85,10 +97,42 @@ func (m *agentModel) Close() error {
 	return nil
 }
 
+// says queues the model's next reply.
 func (m *agentModel) says(answers ...answer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.answers = answers
+	m.replies = append(m.replies, answers)
+}
+
+// kitchen runs the agent's place_order tool the way a caller's own tool is run: it watches
+// the session for the request and answers it.
+type kitchen struct {
+	mu     sync.Mutex
+	orders []string
+}
+
+func (k *kitchen) serve(created *session.Session) {
+	events, detach := created.Watch()
+	go func() {
+		defer detach()
+		for event := range events {
+			call, ok := event.(session.ToolCall)
+			if !ok || call.Cancel || call.Name != "place_order" {
+				continue
+			}
+			k.mu.Lock()
+			k.orders = append(k.orders, call.Arguments)
+			placed := len(k.orders)
+			k.mu.Unlock()
+			created.ResolveTool(call.ID, fmt.Sprintf("order %d placed", placed), "")
+		}
+	}()
+}
+
+func (k *kitchen) placed() []string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return append([]string(nil), k.orders...)
 }
 
 // deafSTT and mutedTTS are what a manager insists on having even for a conversation with no
@@ -202,12 +246,12 @@ func (s *TextSuite) SetupTest() {
 	s.T().Cleanup(func() { _ = manager.Shutdown() })
 }
 
-// talks opens a conversation in writing against the scripted agent.
-func (s *TextSuite) talks(greeting string) *written {
+// talks opens a conversation in writing against the scripted agent, offering it the tools.
+func (s *TextSuite) talks(greeting string, tools ...harness.Tool) *written {
 	runner := &Runner{sessions: s.manager, logger: slog.New(slog.DiscardHandler)}
 
 	over, err := runner.speak(s.ctx, session.Spec{
-		Text: true, CustomerID: "customer-1", Greeting: greeting,
+		Text: true, CustomerID: "customer-1", Greeting: greeting, Tools: tools,
 		LLMTarget: "scripted/scripted-model", SubagentTarget: "scripted/scripted-model",
 	})
 	s.Require().NoError(err)
@@ -281,4 +325,54 @@ func (s *TextSuite) TestTheGreetingIsSaidByTheConversationRatherThanBeforeItIsWa
 
 	s.Require().NoError(err)
 	s.Equal("Certainly.", reply.Text)
+}
+
+func (s *TextSuite) TestWhatTheAgentDidWithItsToolsIsKeptWithWhatItSaid() {
+	held := s.talks("", placeOrder)
+	orders := &kitchen{}
+	orders.serve(held.Session())
+	s.Equal([]string{"place_order"}, held.Session().Tools())
+
+	s.model.says(answer{call: llm.ToolCall{
+		ID: "call-1", Name: "place_order", Arguments: `{"item":"pizza hawaii"}`,
+	}})
+	s.model.says(answer{text: "Your pizza hawaii is on its way."})
+	reply, err := held.Say(s.ctx, "Make that a pizza hawaii instead.")
+
+	s.Require().NoError(err)
+	s.Equal("Your pizza hawaii is on its way.", reply.Text)
+	s.Equal([]store.SimulationTool{{
+		Name: "place_order", Arguments: `{"item":"pizza hawaii"}`, Result: "order 1 placed",
+	}}, reply.Tools)
+	s.Equal([]string{`{"item":"pizza hawaii"}`}, orders.placed())
+}
+
+func (s *TextSuite) TestAToolFromAnEarlierTurnIsNotCreditedToTheNextOne() {
+	held := s.talks("", placeOrder)
+	(&kitchen{}).serve(held.Session())
+
+	s.model.says(answer{call: llm.ToolCall{
+		ID: "call-1", Name: "place_order", Arguments: `{"item":"pasta bolognese"}`,
+	}})
+	s.model.says(answer{text: "One bolognese."})
+	first, err := held.Say(s.ctx, "A pasta bolognese please.")
+	s.Require().NoError(err)
+	s.Len(first.Tools, 1)
+
+	s.model.says(answer{text: "About twenty minutes."})
+	second, err := held.Say(s.ctx, "How long is the wait?")
+
+	s.Require().NoError(err)
+	s.Empty(second.Tools)
+}
+
+// placeOrder is the tool an order-taking agent is tested on.
+var placeOrder = harness.Tool{
+	Name:        "place_order",
+	Description: "Place the caller's order with the kitchen.",
+	Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"item": map[string]any{"type": "string"}},
+		"required":   []string{"item"},
+	},
 }

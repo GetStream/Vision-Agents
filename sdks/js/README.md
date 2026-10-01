@@ -228,8 +228,9 @@ const branch = await session.fork({ response_id: items[2].response_id, title: "a
 ```
 
 `rewind` takes a response, a response's id, or any item of one. The model forgets the later
-turns, and they drop out of what `responses` reads back. A conversation kept in Stream Chat
-cannot be rewound, since the channel would still hold the later turns: fork it at the
+turns, and they drop out of what `responses` reads back. A text conversation is kept in
+Stream Chat unless it is incognito, and so cannot be rewound, since the channel would still
+hold the later turns: fork it at the
 response instead, which starts a new session carrying the history only that far. Both work
 from a browser as well as a server.
 
@@ -256,8 +257,9 @@ for await (const message of socket.messages()) {
 ```
 
 Credentials go in the query string, because a browser WebSocket carries no headers of its
-own. `Stream-Auth-Type` has no query counterpart on purpose, which is why a socket opened
-from a browser cannot claim to be a backend.
+own. A socket never says it is a backend: `Stream-Auth-Type: server` has no query
+counterpart on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is how
+it reads a user's token.
 
 ## Working on this package
 

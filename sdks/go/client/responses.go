@@ -2,8 +2,15 @@ package client
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
@@ -73,13 +80,13 @@ func (i *Items) Unwind(ctx context.Context, page int) *ItemStream {
 
 	go func() {
 		defer close(items)
-		for offset := 0; ; {
-			read, err := i.List(ctx, page, offset)
+		for cursor := ""; ; {
+			read, err := i.List(ctx, page, cursor)
 			if err != nil {
 				stream.failed = err
 				return
 			}
-			for _, item := range read {
+			for _, item := range read.Items {
 				select {
 				case items <- item:
 				case <-ctx.Done():
@@ -87,21 +94,18 @@ func (i *Items) Unwind(ctx context.Context, page int) *ItemStream {
 					return
 				}
 			}
-			// A short page is the last page. Asking again to see an empty one would double
-			// the requests for every conversation that happens to be a multiple of the page
-			// size, which is not worth avoiding one extra round trip in the rare exact fit.
-			if len(read) < page {
+			if !read.HasMore || read.NextCursor == nil {
 				return
 			}
-			offset += len(read)
+			cursor = *read.NextCursor
 		}
 	}()
 	return stream
 }
 
-// List is one page of items, for a caller doing its own paging. A limit or offset of zero
-// leaves the router's own.
-func (i *Items) List(ctx context.Context, limit, offset int) ([]acceleration.AgentResponseItem, error) {
+// List is one page of items, for a caller doing its own paging. A limit of zero leaves the
+// router's own; an empty cursor is the first page, and the page's NextCursor the next.
+func (i *Items) List(ctx context.Context, limit int, cursor string) (*acceleration.AgentResponseItemPage, error) {
 	api, err := i.client.api()
 	if err != nil {
 		return nil, err
@@ -110,7 +114,7 @@ func (i *Items) List(ctx context.Context, limit, offset int) ([]acceleration.Age
 	params := acceleration.ListResponseItemsParams{
 		ResponseId: pointer(i.responseID),
 		Limit:      pointer(limit),
-		Offset:     pointer(offset),
+		Cursor:     pointer(cursor),
 	}
 	listed, err := api.ListResponseItemsWithResponse(ctx, i.sessionID, &params)
 	if err != nil {
@@ -118,9 +122,9 @@ func (i *Items) List(ctx context.Context, limit, offset int) ([]acceleration.Age
 	}
 	if listed.JSON200 == nil {
 		return nil, failure("reading the items of "+i.sessionID, listed.Status(),
-			listed.JSON401, listed.JSON403, listed.JSON404)
+			listed.JSON400, listed.JSON401, listed.JSON403, listed.JSON404)
 	}
-	return *listed.JSON200, nil
+	return listed.JSON200, nil
 }
 
 // All is everything in one slice, for a conversation short enough to hold.
@@ -166,22 +170,94 @@ type Responses struct {
 
 	client    *Client
 	sessionID string
+	// kept is a conversation stored in Stream Chat, whose every question is a command the
+	// router answers at most once.
+	kept bool
 }
 
-// Create asks the agent something and names the turn it answers as.
+// Input is something shown to the agent along with what is asked: an Image or a Clip.
+type Input interface {
+	attachTo(request *acceleration.CreateResponseRequest)
+}
+
+// Image is a picture to show the agent, by HTTP(S) URL or as a base64 data URI.
+type Image struct {
+	URL string
+	// Detail is how closely the model looks. Empty lets the model decide.
+	Detail acceleration.ImageSourceDetail
+}
+
+func (i Image) attachTo(request *acceleration.CreateResponseRequest) {
+	source := acceleration.ImageSource{Url: i.URL}
+	if i.Detail != "" {
+		source.Detail = &i.Detail
+	}
+	request.Images = appended(request.Images, source)
+}
+
+// Clip is a recorded video to show the agent, by public HTTPS URL or as a base64 data URI,
+// at most 50 MB either way.
+//
+// No model takes a video whole, so the router samples it into frames spread evenly across
+// the clip and shows the agent those, each with the moment it was taken.
+type Clip struct {
+	URL string
+	// MaxFrames is how many frames to sample, up to 32. Zero is the router's default of 8.
+	MaxFrames int
+}
+
+func (v Clip) attachTo(request *acceleration.CreateResponseRequest) {
+	source := acceleration.VideoSource{Url: v.URL}
+	if v.MaxFrames > 0 {
+		source.MaxFrames = &v.MaxFrames
+	}
+	request.Videos = appended(request.Videos, source)
+}
+
+// ClipFile is a video on disk, sent inline so the router needs no way to reach it.
+func ClipFile(path string) (Clip, error) {
+	clip, err := os.ReadFile(path)
+	if err != nil {
+		return Clip{}, fmt.Errorf("client: reading %s: %w", path, err)
+	}
+	kind := mime.TypeByExtension(filepath.Ext(path))
+	if !strings.HasPrefix(kind, "video/") {
+		kind = "video/mp4"
+	}
+	return Clip{URL: "data:" + kind + ";base64," + base64.StdEncoding.EncodeToString(clip)}, nil
+}
+
+func appended[T any](list *[]T, item T) *[]T {
+	if list == nil {
+		list = &[]T{}
+	}
+	*list = append(*list, item)
+	return list
+}
+
+// Create asks the agent something and names the turn it answers as, showing it any images
+// and videos given.
 //
 // It returns once the agent has started answering. An incognito session records nothing, so
 // the turn it hands back has no id: there is nothing to read back afterwards, which is what
 // incognito means.
-func (r *Responses) Create(ctx context.Context, text string, images ...acceleration.ImageSource) (*AgentResponse, error) {
+func (r *Responses) Create(ctx context.Context, text string, inputs ...Input) (*AgentResponse, error) {
 	api, err := r.client.api()
 	if err != nil {
 		return nil, err
 	}
 
 	request := acceleration.CreateResponseRequest{Text: text}
-	if len(images) > 0 {
-		request.Images = &images
+	for _, input := range inputs {
+		input.attachTo(&request)
+	}
+	// A command carries text only, so a question showing the agent something goes without one.
+	if r.kept && request.Images == nil && request.Videos == nil {
+		id := make([]byte, 16)
+		if _, err := rand.Read(id); err != nil {
+			return nil, err
+		}
+		request.CommandId = pointer(hex.EncodeToString(id))
 	}
 
 	created, err := api.CreateResponseWithResponse(ctx, r.sessionID, request)
@@ -198,23 +274,24 @@ func (r *Responses) Create(ctx context.Context, text string, images ...accelerat
 	}, nil
 }
 
-// List is the turns so far, oldest first. A limit or offset of zero leaves the router's own.
-func (r *Responses) List(ctx context.Context, limit, offset int) ([]acceleration.AgentResponse, error) {
+// List is a page of the turns so far, oldest first. A limit of zero leaves the router's own;
+// an empty cursor is the first page, and the page's NextCursor the next.
+func (r *Responses) List(ctx context.Context, limit int, cursor string) (*acceleration.AgentResponsePage, error) {
 	api, err := r.client.api()
 	if err != nil {
 		return nil, err
 	}
 
-	params := acceleration.ListResponsesParams{Limit: pointer(limit), Offset: pointer(offset)}
+	params := acceleration.ListResponsesParams{Limit: pointer(limit), Cursor: pointer(cursor)}
 	listed, err := api.ListResponsesWithResponse(ctx, r.sessionID, &params)
 	if err != nil {
 		return nil, fmt.Errorf("client: reading the turns of %s: %w", r.sessionID, err)
 	}
 	if listed.JSON200 == nil {
 		return nil, failure("reading the turns of "+r.sessionID, listed.Status(),
-			listed.JSON401, listed.JSON403, listed.JSON404)
+			listed.JSON400, listed.JSON401, listed.JSON403, listed.JSON404)
 	}
-	return *listed.JSON200, nil
+	return listed.JSON200, nil
 }
 
 // Rewind goes back to a response and carries on from there.
@@ -222,8 +299,8 @@ func (r *Responses) List(ctx context.Context, limit, offset int) ([]acceleration
 // The reply being spoken is abandoned and the conversation continues as though nothing after
 // that response had been said: later turns are no longer listed, and the next question is
 // answered from that point. The response itself is kept. Pass a response's ID, or an item's
-// ResponseId to go back to the turn it was part of. A persistent conversation cannot be
-// rewound, because its transcript lives in Chat; fork it at the response instead.
+// ResponseId to go back to the turn it was part of. A text conversation cannot be rewound,
+// because its transcript lives in Chat; fork it at the response instead.
 func (r *Responses) Rewind(ctx context.Context, responseID string) error {
 	if responseID == "" {
 		return fmt.Errorf("client: rewinding %s: that response has no id, which is what a "+

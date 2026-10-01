@@ -87,6 +87,9 @@ type ManagerOptions struct {
 	Classifier *lcmrouter.Router
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
+	// SpeculativeReplies has every agent start its reply before the flow controller has
+	// ruled on the words, and hold it until the ruling says to answer.
+	SpeculativeReplies bool
 	// WebhookSecret signs a guardrail's outbound webhook. It is the app secret that
 	// already verifies Stream's inbound hooks, so a customer asking to decide for
 	// themselves has the key to check it with and there is no second secret to store.
@@ -186,17 +189,41 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		m.mu.Unlock()
 		return nil, errors.New("session: the manager is shut down")
 	}
+	_, live := m.sessions[spec.ID]
 	m.mu.Unlock()
+	if live {
+		return nil, ErrSessionExists
+	}
+	// The id is the row's primary key whoever owns it, so one somebody already used would
+	// write this session over theirs.
+	if m.options.Store != nil {
+		taken, err := m.options.Store.SessionExists(ctx, spec.ID)
+		if err != nil {
+			return nil, err
+		}
+		if taken {
+			return nil, ErrSessionExists
+		}
+	}
 
 	var remembering memory.Store
 	if spec.Memory.UserID != "" {
 		if m.options.Memory == nil {
-			return nil, errors.New("session: memory is unavailable; configure the backend memory provider")
+			return nil, ErrNoMemory
 		}
 		remembering = m.options.Memory
 	}
 
 	opened := false
+	// A new text conversation is kept in Stream Chat by default, but a deployment without Chat
+	// credentials still holds it: what was said is worth keeping, not worth refusing the
+	// conversation for. Resuming or forking one needs the channel, so those still fail.
+	if spec.PersistConversation && spec.Text && spec.ConversationID == "" && spec.Recall == nil {
+		if _, err := m.Conversations(); err != nil {
+			m.logger.Warn("not keeping the conversation in Stream Chat", "error", err)
+			spec.PersistConversation = false
+		}
+	}
 	var conv *persistent.Conversation
 	var previous []llm.Message
 	if spec.PersistConversation {
@@ -296,16 +323,22 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	created := &Session{
-		logs:                 m.logs,
-		persisted:            conv,
-		id:                   newID(),
-		spec:                 spec,
-		created:              time.Now(),
+		logs:      m.logs,
+		persisted: conv,
+		id:        spec.ID,
+		spec:      spec,
+		// Postgres keeps microseconds. The live session sorts by the same instant as its
+		// row, or a cursor taken from one would hand the other back on the next page.
+		created:              time.Now().UTC().Truncate(time.Microsecond),
 		logger:               m.logger,
 		watchers:             map[uint64]*watcher{},
 		state:                Live,
+		modality:             store.ModalityVoice,
 		connectorUnavailable: connectorUnavailable,
 		skills:               skills,
+	}
+	if spec.Text {
+		created.modality = store.ModalityText
 	}
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
@@ -332,7 +365,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, err
 	}
 
-	runner := callers
+	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
 	if connectorMCP != nil {
 		runner = &connectorToolRunner{mcp: connectorMCP, next: runner}
 		created.closers = append(created.closers, connectorMCP.Close)
@@ -396,7 +429,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Search:             m.options.Search,
 		SearchTarget:       spec.SearchTarget,
 		Guardrail:          screening,
+		SpeculativeReplies: m.options.SpeculativeReplies,
 		AppID:              spec.Memory.AppID,
+		SessionID:          spec.ID,
+		Incognito:          spec.Incognito,
 		MemoryUserID:       spec.Memory.UserID,
 		MemoryFilter:       spec.Memory.Filter,
 		Store:              m.options.Store,
@@ -416,7 +452,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		})
 	}
 
-	if m.options.Transcript != nil && conv == nil {
+	if m.options.Transcript != nil && conv == nil && !spec.Incognito {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
 		transcript, err := m.options.Transcript(spec, m.logger)
@@ -505,6 +541,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		m.mu.Unlock()
 		created.Close()
 		return nil, errors.New("session: the manager is shut down")
+	}
+	if _, raced := m.sessions[created.id]; raced {
+		m.mu.Unlock()
+		created.Close()
+		return nil, ErrSessionExists
 	}
 	m.sessions[created.id] = created
 	m.mu.Unlock()
@@ -713,8 +754,8 @@ func (f Found) ID() string {
 	return ""
 }
 
-// Query returns the sessions an owner may have, newest first, including ones that have
-// already ended.
+// Query returns the sessions an owner may have, most recently updated first, including ones
+// that have already ended.
 //
 // The live sessions and the stored rows are one list rather than two, deduplicated by id,
 // because a caller asking for their conversations does not care which of them this process
@@ -748,15 +789,12 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 
 	found := make([]Found, 0, filter.Limit)
 	seen := map[string]int{}
-	// Live sessions come first so a running conversation beats the row describing it, and
-	// so a deployment with no store still answers with what is happening now.
+	// Only a live session nothing records is listed from memory. A recorded one is listed
+	// by its row, so it sorts and pages on the row's updated_at like every other.
 	for _, live := range m.List(owner) {
-		if !matchesLive(live, filter) {
-			continue
-		}
 		// A live session has no title to search, so a search skips them unless the row
 		// behind them matches. Whatever the store turns up is merged in below.
-		if text != "" {
+		if text != "" || live.records != nil || !matchesLive(live, filter) {
 			continue
 		}
 		seen[live.ID()] = len(found)
@@ -764,6 +802,13 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 	}
 
 	if m.options.Store != nil {
+		// Rows are written behind the conversation, so a session opened a moment ago is
+		// only listed once the writer has caught up with it.
+		if m.records != nil {
+			if err := m.records.Flush(ctx); err != nil {
+				return nil, err
+			}
+		}
 		var rows []store.AgentSession
 		var err error
 		if text != "" {
@@ -791,61 +836,72 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 		}
 	}
 
-	// A search is already ranked by the store, so only a plain query is sorted here.
+	// A search is already ranked by the store, so only a plain query is sorted here, on
+	// the same keys as the store so a cursor from either half holds for both.
 	if text == "" {
-		sort.SliceStable(found, func(i, j int) bool {
-			return found[i].startedAt().After(found[j].startedAt())
+		sort.Slice(found, func(i, j int) bool {
+			a, b := found[i].updatedAt(), found[j].updatedAt()
+			if !a.Equal(b) {
+				return a.After(b)
+			}
+			return found[i].ID() > found[j].ID()
 		})
 	}
-	if limit := filter.Limit; limit > 0 && len(found) > limit {
+	// One more than the page, which is how the caller tells there is another.
+	if limit := store.SessionLimit(filter.Limit) + 1; len(found) > limit {
 		found = found[:limit]
 	}
 	return found, nil
 }
 
-// startedAt is when the conversation began, from whichever half knows.
-func (f Found) startedAt() time.Time {
+// Position is where the session sits in the list it was found in, which is what a cursor
+// holds.
+func (f Found) Position() store.SessionPosition {
+	position := store.SessionPosition{UpdatedAt: f.updatedAt(), ID: f.ID()}
+	if f.Stored != nil {
+		position.Rank = f.Stored.Rank
+	}
+	return position
+}
+
+// updatedAt is what the list sorts on: the row's updated_at, or when it began for a session
+// nothing records, which has no later change written anywhere to sort by.
+func (f Found) updatedAt() time.Time {
+	if f.Stored != nil {
+		return f.Stored.UpdatedAt
+	}
 	if f.Live != nil {
 		return f.Live.CreatedAt()
-	}
-	if f.Stored != nil {
-		return f.Stored.CreatedAt
 	}
 	return time.Time{}
 }
 
 // matchesLive applies the filter to a session that has not been written down, so a query
 // answers the same way with a store and without one.
-//
-// Only the fields a live session actually has are checked. Title, description and custom
-// labels are the caller's own and are on the row; a live session carries them on its spec,
-// so they are checked from there.
 func matchesLive(live *Session, filter store.SessionFilter) bool {
 	spec := live.Spec()
 	switch {
 	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
 		return false
-	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
-		return false
 	case filter.AgentName != "" && spec.AgentName != filter.AgentName:
 		return false
 	case filter.Project != "" && spec.Project != filter.Project:
 		return false
-	// Every session this process holds is running, so asking for the closed ones excludes
-	// all of them rather than none.
-	case filter.State == store.SessionClosed:
+	case filter.Modality != "" && live.Modality() != filter.Modality:
 		return false
-	case !filter.After.IsZero() && live.CreatedAt().Before(filter.After):
+	case filter.Cursor != nil && !before(live.CreatedAt(), live.ID(), *filter.Cursor):
 		return false
-	case !filter.Before.IsZero() && !live.CreatedAt().Before(filter.Before):
-		return false
-	}
-	for key, want := range filter.Custom {
-		if held, ok := spec.Custom[key]; !ok || fmt.Sprint(held) != want {
-			return false
-		}
 	}
 	return true
+}
+
+// before is the store's (updated_at, id) < (?, ?), for a session that has no row to ask.
+// Ids are lowercase hex, which Postgres collates the same way Go compares bytes.
+func before(updated time.Time, id string, cursor store.SessionPosition) bool {
+	if !updated.Equal(cursor.UpdatedAt) {
+		return updated.Before(cursor.UpdatedAt)
+	}
+	return id < cursor.ID
 }
 
 // Close ends a session its owner may have, reporting whether they had one by that id.
@@ -860,6 +916,49 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	m.mu.Unlock()
 
 	return true, found.Close()
+}
+
+// Delete stops a session if it is running and deletes it: its row, its turns, and what it
+// taught the memory store. Whoever asks has to have checked the session is the owner's, since
+// one that ended is no longer here to check against.
+func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
+	if _, err := m.Close(id, owner); err != nil {
+		return err
+	}
+	// The row is written behind the conversation, so a session opened a moment ago may not
+	// have one yet; deleting before it lands would leave it to be written afterwards.
+	if m.records != nil {
+		if err := m.records.Flush(ctx); err != nil {
+			return err
+		}
+	}
+	if m.options.Memory != nil {
+		if err := m.options.Memory.ForgetRun(ctx, owner.CustomerID, id); err != nil {
+			return err
+		}
+	}
+	if m.options.Store == nil {
+		return nil
+	}
+	return m.options.Store.DeleteSession(ctx, owner.CustomerID, id)
+}
+
+// TruncateMemories deletes everything remembered about one of the customer's users, from
+// every session and every agent.
+func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID string) error {
+	if m.options.Memory == nil {
+		return ErrNoMemory
+	}
+	return m.options.Memory.Truncate(ctx, customerID, userID)
+}
+
+// ForgetSession deletes what one session learned. Whoever asks has to have checked the
+// session is the customer's: the id alone says nothing about whose it is.
+func (m *Manager) ForgetSession(ctx context.Context, customerID, sessionID string) error {
+	if m.options.Memory == nil {
+		return ErrNoMemory
+	}
+	return m.options.Memory.ForgetRun(ctx, customerID, sessionID)
 }
 
 // Shutdown ends every session, which is what a router does on its way down rather than
@@ -983,8 +1082,14 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 	}), nil
 }
 
-// newID is the handle a caller holds a session by. It is random rather than sequential
-// because it is the only thing standing between two customers who both guessed at an id.
+// ErrSessionExists is a session asked for by an id some session already has.
+var ErrSessionExists = errors.New("session: a session with that id already exists")
+
+// ErrNoMemory is memory asked of a deployment with no memory provider.
+var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
+
+// newID is a handle for an agent or a turn. It is random rather than sequential because it
+// is the only thing standing between two customers who both guessed at an id.
 func newID() string {
 	raw := make([]byte, 16)
 	// rand.Read on crypto/rand never returns an error, which is why the result is not

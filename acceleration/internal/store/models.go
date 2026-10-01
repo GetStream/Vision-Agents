@@ -951,8 +951,19 @@ type SimulationLine struct {
 	// Intended is what the agent meant to say, where that differs from what the caller
 	// heard. Only an audio simulation has both, and the difference is the whole point of
 	// running one.
-	Intended string    `json:"intended,omitempty"`
-	At       time.Time `json:"at"`
+	Intended string `json:"intended,omitempty"`
+	// Tools are what the agent did on this turn rather than said, which is what a question
+	// about whether something was actually done is settled by.
+	Tools []SimulationTool `json:"tools,omitempty"`
+	At    time.Time        `json:"at"`
+}
+
+// SimulationTool is one tool the agent ran during a simulated conversation.
+type SimulationTool struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Result    string `json:"result"`
+	Error     string `json:"error,omitempty"`
 }
 
 // SimulationRunFilter narrows which runs are listed. Every field is optional, and an empty
@@ -1123,6 +1134,14 @@ const (
 	SessionClosed = "closed"
 )
 
+// How the user took part in a session. It only moves up: a session that has seen video
+// stays video.
+const (
+	ModalityText  = "text"
+	ModalityVoice = "voice"
+	ModalityVideo = "video"
+)
+
 // ModelOverwrites is what a caller asked to change about the models for one session.
 //
 // It is one object rather than a dozen top-level fields because it is one idea: everything
@@ -1192,13 +1211,37 @@ type AgentSession struct {
 	CallID              string                      `bun:"call_id,nullzero"`
 	CallType            string                      `bun:"call_type,nullzero"`
 	// ForkedFrom is the session this one continued from, empty for one opened fresh.
-	ForkedFrom string    `bun:"forked_from,nullzero"`
-	State      string    `bun:"state,notnull"`
-	CreatedAt  time.Time `bun:"created_at,notnull"`
-	UpdatedAt  time.Time `bun:"updated_at,notnull"`
+	ForkedFrom string `bun:"forked_from,nullzero"`
+	State      string `bun:"state,notnull"`
+	// Modality is ModalityText, ModalityVoice or ModalityVideo.
+	Modality  string    `bun:"modality,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
 	// ClosedAt is nil while the session is still running.
 	ClosedAt       *time.Time `bun:"closed_at"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
+	// Rank is how well a search matched, zero outside a search.
+	Rank float32 `bun:"rank,scanonly"`
+}
+
+// SessionPosition is the last session of a page, by every key the list is sorted on.
+type SessionPosition struct {
+	UpdatedAt time.Time `json:"u"`
+	ID        string    `json:"id"`
+	Rank      float32   `json:"r,omitempty"`
+}
+
+// ResponsePosition is the last turn of a page.
+type ResponsePosition struct {
+	CreatedAt time.Time `json:"t"`
+	ID        string    `json:"id"`
+}
+
+// ItemPosition is the last item of a page.
+type ItemPosition struct {
+	At         time.Time `json:"t"`
+	ResponseID string    `json:"r"`
+	Ordinal    int       `json:"o"`
 }
 
 // SessionConnectorSelection records a connection ID selected for an agent binding. It
@@ -1216,19 +1259,12 @@ type SessionConnectorSelection struct {
 // filter at all.
 type SessionFilter struct {
 	UserID    string
-	ConfigID  string
 	AgentName string
 	Project   string
-	// State is running or closed. Empty is both.
-	State string
-	// Custom matches sessions whose custom object contains every one of these pairs, which
-	// is what makes custom worth writing: a caller that labelled a session can find it
-	// again by the label.
-	Custom map[string]string
-	Before time.Time
-	After  time.Time
-	Limit  int
-	Offset int
+	Modality  string
+	Limit     int
+	// Cursor starts the page after this session. Nil is the first page.
+	Cursor *SessionPosition
 }
 
 // What became of one response.

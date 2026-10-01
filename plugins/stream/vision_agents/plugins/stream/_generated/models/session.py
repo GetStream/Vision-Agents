@@ -33,8 +33,6 @@ class Session:
         state (SessionState): Whether the agent is still in the call.
         created_at (datetime.datetime):
         conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
-        persist_conversation (bool | Unset): Persist a text conversation in Stream Chat, creating a channel when no CID
-            is supplied.
         context_truncated (bool | Unset): Older history was omitted from the model context.
         text (bool | Unset): The conversation is held in writing rather than on a call.
         llm (str | Unset): The provider and model answering, once routing has picked one.
@@ -78,7 +76,6 @@ class Session:
     state: SessionState
     created_at: datetime.datetime
     conversation_id: str | Unset = UNSET
-    persist_conversation: bool | Unset = UNSET
     context_truncated: bool | Unset = UNSET
     text: bool | Unset = UNSET
     llm: str | Unset = UNSET
@@ -119,8 +116,6 @@ class Session:
         created_at = self.created_at.isoformat()
 
         conversation_id = self.conversation_id
-
-        persist_conversation = self.persist_conversation
 
         context_truncated = self.context_truncated
 
@@ -193,8 +188,6 @@ class Session:
         )
         if conversation_id is not UNSET:
             field_dict["conversation_id"] = conversation_id
-        if persist_conversation is not UNSET:
-            field_dict["persist_conversation"] = persist_conversation
         if context_truncated is not UNSET:
             field_dict["context_truncated"] = context_truncated
         if text is not UNSET:
@@ -264,8 +257,6 @@ class Session:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         conversation_id = d.pop("conversation_id", UNSET)
-
-        persist_conversation = d.pop("persist_conversation", UNSET)
 
         context_truncated = d.pop("context_truncated", UNSET)
 
@@ -350,7 +341,6 @@ class Session:
             state=state,
             created_at=created_at,
             conversation_id=conversation_id,
-            persist_conversation=persist_conversation,
             context_truncated=context_truncated,
             text=text,
             llm=llm,

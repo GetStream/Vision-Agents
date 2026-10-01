@@ -179,6 +179,10 @@ public sealed class Session : IAsyncDisposable
     public Task SetInstructionsAsync(string instructions, CancellationToken cancellationToken = default) =>
         SendAsync(Frames.Of("instructions", ("instructions", instructions)), cancellationToken);
 
+    /// <summary>Changes the models and how they answer, from the next turn. A field left null is left as it is.</summary>
+    public Task<Models.Session> UpdateSettingsAsync(SessionSettingsRequest settings, CancellationToken cancellationToken = default) =>
+        _client.PatchAsync<Models.Session>($"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}/settings", settings, cancellationToken);
+
     /// <summary>
     /// Carries the conversation on in a new session, leaving this one as it was.
     /// </summary>

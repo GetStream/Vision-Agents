@@ -19,28 +19,29 @@ export STREAM_ACCELERATION_CUSTOMER_ID=acme
 ## In writing
 
 ```go
-llm := stream.Accelerated(stream.Config{Agent: "jean"})
+type GetWeather struct {
+    Location string `json:"location" schema:"the city and state"`
+}
 
-agents.RegisterFunction(llm, "get_weather",
-    "Get current weather for a location",
-    func(ctx context.Context, in struct {
-        Location string `json:"location" schema:"the city and state"`
-    }) (any, error) {
-        return weatherAt(ctx, in.Location)
-    })
+func (GetWeather) Name() string        { return "get_weather" }
+func (GetWeather) Description() string { return "Get current weather for a location" }
+func (w GetWeather) Run(ctx context.Context) (any, error) {
+    return weatherAt(ctx, w.Location)
+}
 
 agent, err := agents.New(agents.Options{
     Name:         "jean",
-    LLM:          llm,
+    LLM:          stream.Accelerated(stream.Config{Agent: "jean"}),
     Harness:      agents.DefaultHarness(),
     CostTracking: map[string]string{"customer_id": "123"},
     MemoryFilter: map[string]string{"user_id": "123"},
 })
+agent.Tools().Add(GetWeather{})
 
 session, err := agent.Chat(ctx)
 defer session.Close(ctx)
 
-session.Respond("What is the weather in Boulder?")
+session.Responses.Create(ctx, "What is the weather in Boulder?")
 for event := range session.Events() {
     fmt.Println(event.Kind, event.Text)
 }
@@ -69,10 +70,9 @@ api, _ := client.New(stream.Backend{})
 docs := api.Agent("docs")
 
 session, _ := docs.Sessions.Create(ctx, client.SessionOptions{
-    Title:   "Is Stream better than Sendbird?",
-    Project: "docs",
-    Custom:  map[string]any{"ticket": "4721"},
-    Persist: true,
+    Title:     "Is Stream better than Sendbird?",
+    ProjectID: "docs",
+    Custom:    map[string]any{"ticket": "4721"},
 })
 defer session.Close(ctx)
 
@@ -92,16 +92,18 @@ finished, because a model takes seconds. `Items` is what the backend wrote down,
 the same during the conversation and a week after it ended; `session.Events()` is still the
 live view, and the two answer different questions.
 
-Old conversations are found by filter or by phrase:
+Old conversations are listed most recently updated first, or found by phrase, best match
+first:
 
 ```go
-recent, _ := docs.Sessions.Query(ctx, client.Query{Project: "docs", Limit: 20})
+recent, _ := docs.Sessions.Query(ctx, client.Query{ProjectID: "docs", Limit: 20})
 found, _ := docs.Sessions.Search(ctx, "sendbird comparison", client.Query{})
 ```
 
-`Incognito: true` holds the conversation and keeps nothing: no row, no turns, no transcript,
-whatever `Persist` says. It cannot be listed, searched or forked afterwards, which is the
-point of it.
+Every text conversation is kept in a Stream Chat channel, and `session.ConversationID()` is
+the one to pass back as `ConversationID` to resume it. `Incognito: true` holds the
+conversation and keeps nothing: no row, no turns, no transcript. It cannot be listed,
+searched or forked afterwards, which is the point of it.
 
 `Fork` continues a conversation as a new one — the same question asked of a harder model, or
 of a different agent, with the parent left untouched and each writing its own transcript:
@@ -115,6 +117,21 @@ harder, _ := session.Fork(ctx, client.ForkOptions{
 
 `ModelOverwrites` is also a `SessionOptions` field, so one conversation can overrule the
 config's models without a config of its own.
+
+`Update` changes a session in place and returns it as it now is: its title, description,
+custom labels, instructions, models or voice. It is server side only. A nil field is left
+alone, an empty `Sts` makes the session a cascade again, and an empty `Voice` returns to the
+provider's default. The id, the call and incognito cannot change. Instructions, models and
+voice take over from the next turn and need the session running; a conversation that ended
+can still be renamed through `Sessions.Update` by id:
+
+```go
+_, err := session.Update(ctx, client.SessionUpdate{
+    Title: pointer("Pricing"),
+    Llm:   pointer("openai/gpt-5"),
+})
+_, err = agent.Sessions.Update(ctx, "session-id", client.SessionUpdate{Title: pointer("Pricing")})
+```
 
 Somebody who has not signed up yet is a guest. `api.GuestUser` mints one with a token to
 hold, `api.AsGuest` is a client acting for them, and `api.ClaimGuestUser` moves their
@@ -154,8 +171,8 @@ is still open and knows what has been said; only a channel nothing is answering 
 
 Nothing is waited for after `Respond`, because the answer is written into the channel by the
 backend as it is generated: the person who wrote is already reading it. Questions on one
-channel are answered one at a time, since `Session.Respond` interrupts, and two messages
-written in quick succession would otherwise throw the first answer away half-written.
+channel are answered one at a time, so a second message written in quick succession waits
+for the first answer rather than landing on top of it.
 
 Several workers can wait at once, in which case the router shares the work between them.
 `Capacity` is a promise about what this process can hold: a full worker is passed over
@@ -238,7 +255,7 @@ number, _ := agent.PurchaseAnyNumber(ctx, agents.NumberSearch{Vendor: "twilio", 
 call, _ := agent.WaitForCall(ctx, number)
 defer call.Close(ctx)
 
-call.Respond("Say hello and let them know you are a voice AI.")
+call.Responses.Create(ctx, "Say hello and let them know you are a voice AI.")
 fmt.Println(call.MonitorURL())
 ```
 
@@ -299,6 +316,7 @@ agents/jean/
   skills/think.md       frontmatter (name, description, deadline) and a body
   knowledge/*.md        what the agent may look things up in
   knowledge/urls.yaml   pages to keep that filled from, as urls or url/title/description
+  simulations/*.yaml    each a list of simulations (name, scenario, assertion, variations, ...)
   .agent_sync           written by Sync: the hash last synced and when
 ```
 
@@ -308,9 +326,12 @@ agent.Sync(ctx)
 ```
 
 `Sync` sends the whole directory in one request: the skills, the files and pages for a
-knowledge base named after the agent, and what `agent.yaml` declares. A key `agent.yaml`
-does not know is refused. The request carries a hash of the directory, the same one the
-Python SDK takes, and `.agent_sync` records it, so running `Sync` again on an unchanged
+knowledge base named after the agent, the simulations, and what `agent.yaml` declares. A key
+`agent.yaml` or a simulation file does not know is refused. The simulations in `simulations/`
+are the whole of the agent's: one taken out is deleted on the next sync, and a directory
+without `simulations/` leaves the stored ones alone. The request carries a hash of the
+directory, the same one the Python SDK takes for a directory without simulations, and
+`.agent_sync` records it, so running `Sync` again on an unchanged
 directory only reads the config back. What is written in code wins over what the directory
 says, so a directory is a starting point rather than an override.
 

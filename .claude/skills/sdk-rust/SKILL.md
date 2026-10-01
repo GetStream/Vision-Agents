@@ -140,3 +140,16 @@ Reject it if it:
 - handles a tool call anywhere a caller must be reading events for it to run;
 - treats an unknown frame as fatal, or adds reconnection;
 - replaces the axum server with a mock, or asserts on calls rather than on the wire.
+
+## Pending: cursor pagination
+
+Go has moved; this SDK still needs to. `listSessions`, `searchSessions`, `listResponses` and
+`listResponseItems` take `cursor` instead of `offset` and return `{items, has_more,
+next_cursor}` instead of an array. See the `pagination` skill and `sdks/go/client`.
+
+## Pending: session update (Go is done)
+
+The Go SDK moved to `PATCH /v1/agents/sessions/{id}` (`updateSession`), which changes title,
+description, custom, instructions, models and voice in one call. Regenerate, then expose
+`session.update(...)` and `agent.sessions().update(id, ...)`; drop `update_settings`. See "Updating a session" in the `sdk` skill. The `/settings` and
+`/instructions` endpoints are deprecated.

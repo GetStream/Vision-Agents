@@ -1388,6 +1388,19 @@ impl Client {
         )
         .await
     }
+    /// Ask a classifier typed questions about a piece of text
+    ///
+    /// `POST /v1/classify` (`classify`).
+    pub async fn classify(&self, body: &types::ClassifyRequest) -> Result<types::ClassifyResult> {
+        self.send(
+            Method::POST,
+            "/v1/classify",
+            None::<&()>,
+            Some(body),
+            "classify",
+        )
+        .await
+    }
     /// What has happened to this app's rows since a cursor
     ///
     /// `GET /v1/data/changes` (`listDataChanges`).

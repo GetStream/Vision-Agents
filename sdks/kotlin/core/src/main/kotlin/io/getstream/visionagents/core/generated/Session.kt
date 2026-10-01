@@ -48,7 +48,6 @@ import kotlinx.serialization.encoding.Encoder
  * @param state 
  * @param createdAt 
  * @param conversationId Stream Chat CID to resume; returned for persistent text sessions.
- * @param persistConversation Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
  * @param contextTruncated Older history was omitted from the model context.
  * @param text The conversation is held in writing rather than on a call.
  * @param llm The provider and model answering, once routing has picked one.
@@ -101,10 +100,6 @@ internal data class Session (
     /* Stream Chat CID to resume; returned for persistent text sessions. */
     @SerialName(value = "conversation_id")
     val conversationId: kotlin.String? = null,
-
-    /* Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
-    @SerialName(value = "persist_conversation")
-    val persistConversation: kotlin.Boolean? = null,
 
     /* Older history was omitted from the model context. */
     @SerialName(value = "context_truncated")

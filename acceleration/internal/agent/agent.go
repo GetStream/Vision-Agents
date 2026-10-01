@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -41,6 +42,9 @@ import (
 
 // eventBuffer is how many events may queue before a slow consumer applies backpressure.
 const eventBuffer = 64
+
+// appLabel is the memory label a caller's own app id is kept under.
+const appLabel = "app_id"
 
 // replyBuffer is how many deltas may queue across every reply being generated before the
 // goroutine draining one waits on the goroutine that speaks.
@@ -142,6 +146,12 @@ type Options struct {
 	VideoSource    string
 	VideoMaxFrames int
 
+	// SpeculativeReplies starts the reply to a settled turn while the flow controller is
+	// still deciding whether it was meant for the agent, and holds it until the ruling says
+	// to answer. It takes the ruling's round trip off every answered turn, and costs the
+	// tokens of the replies a ruling throws away. Off by default.
+	SpeculativeReplies bool
+
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
 	// LanguageHints narrow the candidates in every modality.
@@ -159,9 +169,14 @@ type Options struct {
 	// Memory carries what earlier conversations established into this one. Without it
 	// the agent starts every call knowing nothing but its instructions.
 	Memory memory.Store
-	// AppID scopes memories to the application using this service, so two deployments
-	// sharing one memory account do not read each other's.
+	// AppID narrows memories within the customer, so two deployments of one customer do
+	// not read each other's. It is kept as a label rather than as the app id, which is
+	// always the customer, so it can never reach another customer's.
 	AppID string
+	// SessionID is the session memories are learned in.
+	SessionID string
+	// Incognito recalls memories but writes none: what is said here is not kept anywhere.
+	Incognito bool
 	// MemoryUserID is who the memories are about. Empty means the customer, which is
 	// what a caller with no user of its own to scope by gets.
 	MemoryUserID string
@@ -226,6 +241,9 @@ type Agent struct {
 	// the event loop and the floor until Cerebras answered.
 	generatingCancel map[string]context.CancelFunc
 	toolCancels      map[string]context.CancelFunc
+	// speculations are replies started before the flow controller ruled on their words,
+	// held until it does, by candidate.
+	speculations map[string]*speculation
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -412,6 +430,36 @@ func New(options Options) (*Agent, error) {
 	if err := options.Tags.Validate(); err != nil {
 		return nil, err
 	}
+	// Memories belong to the customer unless the caller named someone more specific, and
+	// are always kept under the customer as the app id, so no caller can reach another
+	// customer's and a customer's can be deleted without knowing how its callers labelled
+	// them. A caller's own app id narrows like any other label.
+	scope := memory.Scope{
+		AppID:   options.CustomerID,
+		UserID:  options.CustomerID,
+		AgentID: options.ConfigID,
+		RunID:   options.SessionID,
+		Extra:   options.MemoryFilter,
+	}
+	if options.AppID != "" {
+		scope.Extra = maps.Clone(scope.Extra)
+		if scope.Extra == nil {
+			scope.Extra = map[string]string{}
+		}
+		scope.Extra[appLabel] = options.AppID
+	}
+	if options.MemoryUserID != "" {
+		scope.UserID = options.MemoryUserID
+	}
+	// A session spelled out rather than started from a config is its own agent.
+	if scope.AgentID == "" {
+		scope.AgentID = options.AgentID
+	}
+	if options.Memory != nil {
+		if err := scope.Validate(); err != nil {
+			return nil, err
+		}
+	}
 
 	logger := options.Logger.With("customer", options.CustomerID)
 	owner := routing.Owner{
@@ -435,6 +483,7 @@ func New(options Options) (*Agent, error) {
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
+		speculations:     map[string]*speculation{},
 		cadence:          settling,
 		duplex:           listening,
 	}
@@ -454,20 +503,12 @@ func New(options Options) (*Agent, error) {
 	agent.nativeMode.Store(native)
 
 	if options.Memory != nil {
-		// Memories belong to the customer unless the caller named someone more specific,
-		// and are recorded as a modality of their own so what remembering costs is
+		// Memory is recorded as a modality of its own so what remembering costs is
 		// reported alongside what the models cost.
-		scope := memory.Scope{
-			AppID:  options.AppID,
-			UserID: options.CustomerID,
-			Extra:  options.MemoryFilter,
-		}
-		if options.MemoryUserID != "" {
-			scope.UserID = options.MemoryUserID
-		}
 		agent.memory = newMemoryWriter(
 			options.Memory,
 			scope,
+			options.Incognito,
 			owner,
 			routing.NewRecorder(routing.Memory, options.Store, options.Live, logger),
 			logger,
@@ -609,7 +650,11 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			image.Data = append([]byte(nil), image.Data...)
-			metadata, _ := json.Marshal(map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()})
+			described := map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()}
+			if image.Caption != "" {
+				described["caption"] = image.Caption
+			}
+			metadata, _ := json.Marshal(described)
 			parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 		}
 		if _, err := current.Delegate("vision", text, id, parts, nil); err != nil {
@@ -620,6 +665,9 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	id := replyPrefix + turnStamp()
 	return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", nil)
 }
+
+// VideoFramesTool is the caller's tool the agent reads frames of the user's video through.
+const VideoFramesTool = "get_video_frames"
 
 func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest) ([]llm.ContentPart, error) {
 	if a.options.ToolRunner == nil {
@@ -639,7 +687,7 @@ func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest
 	if err != nil {
 		return nil, err
 	}
-	return a.options.ToolRunner.Run(ctx, llm.ToolCall{ID: request.TaskID + "-capture", Name: "get_video_frames", Arguments: string(arguments)})
+	return a.options.ToolRunner.Run(ctx, llm.ToolCall{ID: request.TaskID + "-capture", Name: VideoFramesTool, Arguments: string(arguments)})
 }
 
 // Ask answers a piece of text in writing and says none of it.
@@ -1172,6 +1220,7 @@ func (a *Agent) perform(action Action) {
 		a.checkIn(action.Participant, action.Text)
 
 	case ActSupersede:
+		a.dropSpeculation(action.TurnID)
 		if err := a.harness.CancelDecision(action.TurnID); err != nil {
 			a.fail(err, "flow")
 		}
@@ -1180,6 +1229,7 @@ func (a *Agent) perform(action Action) {
 		a.ask(action.Candidate)
 
 	case ActInterrupt:
+		a.dropSpeculations()
 		a.abandon(action.TurnID)
 		a.mu.Lock()
 		for _, cancel := range a.toolCancels {
@@ -1198,6 +1248,9 @@ func (a *Agent) perform(action Action) {
 
 	case ActAnswer:
 		a.abandon(action.Supersede)
+		if a.adoptSpeculation(action.Candidate, action.Clarify) {
+			return
+		}
 		if err := a.respondCandidate(action.Candidate, action.Clarify); err != nil {
 			a.fail(err, "llm")
 		}
@@ -1232,6 +1285,7 @@ func (a *Agent) ask(ready candidate) {
 	// agent counts as speaking until it has drained.
 	speaking = speaking || a.speechPending()
 
+	a.speculate(current, ready, speaking, anotherVoice)
 	if err := current.Decide(harness.FlowTurn{
 		ID:           ready.ID,
 		Instructions: instructions,
@@ -1243,6 +1297,7 @@ func (a *Agent) ask(ready candidate) {
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 	}); err != nil {
+		a.dropSpeculation(ready.ID)
 		a.converse.Unasked(ready.ID)
 		a.fail(err, "flow")
 	}
@@ -2024,6 +2079,9 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 		switch typed := event.(type) {
 		case harness.Decided:
 			a.act(a.converse.Ruled(typed, a.floor()))
+			// An answer took the reply started for these words; any other ruling leaves it
+			// unwanted.
+			a.dropSpeculation(typed.CandidateID)
 
 		case harness.Compacted:
 			a.applyCompaction(typed)

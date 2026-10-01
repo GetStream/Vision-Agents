@@ -37,6 +37,24 @@ Open `https://local.getstream.io:3011/organization/<orgId>/<appId>/agents/` (not
 the dev proxy sets, with Volt's
 CORS origin. Rebuild the router after pulling router changes.
 
+For connector OAuth tests, the router also needs a persistent high-entropy
+`ROUTER_AUTH_KEK`, an HTTPS `ROUTER_PUBLIC_URL` reachable by the provider, and
+`DASHBOARD_BASE_URL` set to the complete scoped Volt Connections URL, including
+the organization/app path and config query. Keep the encryption key in
+the ignored local environment and preserve it across restarts. Slack additionally
+requires `SLACK_MCP_CLIENT_ID` and `SLACK_MCP_CLIENT_SECRET`; register
+`<ROUTER_PUBLIC_URL>/v1/agents/connectors/oauth/callback` with the OAuth app.
+Enable Slack MCP under the app's Agents settings and PKCE under OAuth settings.
+Enabling MCP adds Slack's default scopes: remove scopes the test does not need
+before requesting installation. For channel and DM sending, use `chat:write`
+and `im:write`, plus `channels:read` for public-channel lookup and `users:read`
+for user profiles. Workspace installation approval and the user's OAuth consent
+are separate steps. Start consent from Volt so its callback state is present.
+If using a temporary tunnel with the local noauth router, expose only OAuth
+launch/callback and `/.well-known/oauth-client-metadata`, never its management
+API. Verify the callback returns to the scoped Volt Connections page before
+starting consent. Restart the router after changing these environment values.
+
 ## How Agents is wired
 
 - Dev-only. `src/api/agents.ts` throws outside `import.meta.env.DEV`.

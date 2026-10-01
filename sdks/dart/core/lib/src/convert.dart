@@ -91,7 +91,6 @@ api.CreateSessionRequest createRequestOf(SessionOptions options, {String? callId
       project: options.project,
       custom: options.custom,
       incognito: options.incognito,
-      persistConversation: options.persistConversation,
       conversationId: _set(options.conversationId),
       modelOverwrites: overwritesOf(options.modelOverwrites),
       tools: options.tools.isEmpty

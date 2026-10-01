@@ -1,0 +1,190 @@
+//go:build integration
+
+package api
+
+import (
+	"net/http"
+	"slices"
+	"testing"
+	"time"
+)
+
+type SessionListSuite struct {
+	RouterSuite
+}
+
+func TestSessionListSuite(t *testing.T) {
+	runSuite(t, new(SessionListSuite))
+}
+
+// SetupTest gives every test an app of its own, because a list is everything an app holds.
+func (s *SessionListSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+func (s *SessionListSuite) TestAUserIsListedTheirOwnSessionsAndTheBackendEveryone() {
+	alice := s.client.createSession(textSession(nil))
+	bob := s.data.createUser().createSession(textSession(nil))
+	server := s.serverClient.createSession(textSession(nil))
+
+	s.Equal([]string{alice.Id}, ids(s.client.querySessions(SessionQuery{}).Items))
+	s.ElementsMatch([]string{alice.Id, bob.Id, server.Id}, ids(s.serverClient.querySessions(SessionQuery{}).Items))
+}
+
+func (s *SessionListSuite) TestPagesFollowTheCursorMostRecentlyUpdatedFirstWithoutRepeatsOrGaps() {
+	var created []string
+	for range 5 {
+		created = append(created, s.serverClient.createSession(textSession(nil)).Id)
+	}
+	slices.Reverse(created)
+
+	var listed []string
+	var sizes []int
+	query := SessionQuery{Limit: 2}
+	for {
+		page := s.serverClient.querySessions(query)
+		listed = append(listed, ids(page.Items)...)
+		sizes = append(sizes, len(page.Items))
+		if !page.HasMore {
+			s.Nil(page.NextCursor, "the last page has nowhere to go next")
+			break
+		}
+		s.Require().NotNil(page.NextCursor)
+		query.Cursor = *page.NextCursor
+	}
+
+	s.Equal([]int{2, 2, 1}, sizes)
+	s.Equal(created, listed)
+}
+
+func (s *SessionListSuite) TestARenamedSessionMovesToTheTop() {
+	first := s.serverClient.createSession(textSession(nil))
+	s.serverClient.createSession(textSession(nil))
+
+	title := "Picked up again"
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/sessions/"+first.Id,
+		UpdateSessionRequest{Title: &title}, nil))
+
+	s.Require().Eventually(func() bool {
+		return ids(s.serverClient.querySessions(SessionQuery{}).Items)[0] == first.Id
+	}, 5*time.Second, 20*time.Millisecond, "renaming a session did not move it up")
+}
+
+func (s *SessionListSuite) TestAProjectNarrowsTheList() {
+	support, sales := "support", "sales"
+	ticketed := textSession(nil)
+	ticketed.ProjectId = &support
+	wanted := s.serverClient.createSession(ticketed)
+
+	other := textSession(nil)
+	other.ProjectId = &sales
+	s.serverClient.createSession(other)
+
+	project := Equals("support")
+	s.Equal([]string{wanted.Id},
+		ids(s.serverClient.querySessions(SessionQuery{Filter: &SessionFilter{ProjectID: &project}}).Items))
+
+	var page SessionPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/query",
+		map[string]any{"filter": map[string]any{"project_id": map[string]any{"$eq": "support"}}}, &page))
+	s.Equal([]string{wanted.Id}, ids(page.Items), "$eq is the long way of writing the same filter")
+}
+
+func (s *SessionListSuite) TestAWrittenSessionIsListedAsText() {
+	written := s.serverClient.createSession(textSession(nil))
+	s.Equal(SessionModalityText, written.Modality)
+
+	text, voice := Equals("text"), Equals("voice")
+	listed := s.serverClient.querySessions(SessionQuery{Filter: &SessionFilter{Modality: &text}}).Items
+	s.Require().Equal([]string{written.Id}, ids(listed))
+	s.Equal(SessionModalityText, listed[0].Modality)
+	s.Empty(s.serverClient.querySessions(SessionQuery{Filter: &SessionFilter{Modality: &voice}}).Items)
+}
+
+func (s *SessionListSuite) TestATextSearchFindsWhatTheSessionWasCalled() {
+	refunds, pages := textSession(nil), textSession(nil)
+	refundsTitle, pagesTitle := "Refund for a duplicate charge", "Paginating a channel list"
+	refunds.Title, pages.Title = &refundsTitle, &pagesTitle
+	wanted := s.serverClient.createSession(refunds)
+	s.serverClient.createSession(pages)
+
+	s.Require().Eventually(func() bool {
+		found := s.serverClient.querySessions(SessionQuery{Filter: &SessionFilter{Text: &TextMatch{Q: "refund"}}})
+		return slices.Equal([]string{wanted.Id}, ids(found.Items))
+	}, 5*time.Second, 20*time.Millisecond, "the search never found the session by its title")
+}
+
+func (s *SessionListSuite) TestAStoppedSessionIsListedWithWhenItEnded() {
+	closing := s.serverClient.createSession(textSession(nil))
+
+	s.serverClient.stopSession(closing.Id)
+
+	s.Require().Eventually(func() bool {
+		for _, one := range s.serverClient.querySessions(SessionQuery{}).Items {
+			if one.Id == closing.Id {
+				return one.ClosedAt != nil && one.State == Ended
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond, "the closed session was never listed as closed")
+}
+
+func (s *SessionListSuite) TestAFieldNobodyMayFilterOnIsRefused() {
+	s.assertRefused(map[string]any{"filter": map[string]any{"state": "closed"}})
+}
+
+func (s *SessionListSuite) TestAnOperatorTheFieldDoesNotTakeIsRefused() {
+	s.assertRefused(map[string]any{
+		"filter": map[string]any{"project_id": map[string]any{"$in": []string{"a"}}}})
+}
+
+func (s *SessionListSuite) TestASearchNarrowedToAProjectIsRefused() {
+	s.assertRefused(map[string]any{"filter": map[string]any{
+		"text": map[string]any{"$q": "refund"}, "project_id": "support"}})
+}
+
+func (s *SessionListSuite) TestRelevanceWithoutASearchIsRefused() {
+	s.assertRefused(map[string]any{"sort": []any{map[string]any{"field": "relevance"}}})
+}
+
+func (s *SessionListSuite) TestASearchInAnyOrderButRelevanceIsRefused() {
+	s.assertRefused(map[string]any{
+		"filter": map[string]any{"text": map[string]any{"$q": "refund"}},
+		"sort":   []any{map[string]any{"field": "updated_at"}}})
+}
+
+func (s *SessionListSuite) TestOldestFirstIsRefused() {
+	s.assertRefused(map[string]any{
+		"sort": []any{map[string]any{"field": "updated_at", "direction": 1}}})
+}
+
+func (s *SessionListSuite) TestACursorTheRouterNeverIssuedIsRefused() {
+	s.assertRefused(map[string]any{"cursor": "nonsense"})
+}
+
+func (s *SessionListSuite) TestAModalityThereIsNotIsRefused() {
+	s.assertRefused(map[string]any{"filter": map[string]any{"modality": "smoke signals"}})
+}
+
+// assertRefused checks a query the endpoint takes none of.
+func (s *SessionListSuite) assertRefused(query map[string]any) {
+	s.Equal(http.StatusBadRequest,
+		s.serverClient.do(http.MethodPost, "/v1/agents/sessions/query", query, nil))
+}
+
+func (s *SessionListSuite) TestACursorFromOneOrderIsRefusedByAnother() {
+	for range 2 {
+		s.serverClient.createSession(textSession(nil))
+	}
+	page := s.serverClient.querySessions(SessionQuery{Limit: 1})
+	s.Require().NotNil(page.NextCursor)
+
+	s.Equal(http.StatusBadRequest, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/query",
+		SessionQuery{Filter: &SessionFilter{Text: &TextMatch{Q: "refund"}}, Cursor: *page.NextCursor}, nil))
+}
+
+func (s *SessionListSuite) TestNobodyIsListedAnythingWithoutCredentials() {
+	s.serverClient.createSession(textSession(nil))
+
+	s.Equal(http.StatusUnauthorized, s.unauthenticatedClient.do(http.MethodPost, "/v1/agents/sessions/query", SessionQuery{}, nil))
+}
