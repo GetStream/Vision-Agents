@@ -2,6 +2,7 @@ package egress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -41,6 +42,12 @@ var nonPublicPrefixes = mustParsePrefixes([]string{
 	"ff00::/8",
 })
 
+// ipv6GlobalUnicast is the only IPv6 space IANA allocates for global unicast. Outside it
+// sit IPv4-compatible (::/96) and IPv4-translated (::ffff:0:0:0/96) forms of local hosts.
+var ipv6GlobalUnicast = netip.MustParsePrefix("2000::/3")
+
+var errCrossHostRedirect = errors.New("egress: redirect to another host refused")
+
 // ValidatePublicHTTPSURL checks a tenant-provided remote service address before it is
 // stored. The dialer repeats address checks when opening each outbound connection.
 func ValidatePublicHTTPSURL(ctx context.Context, raw string) error {
@@ -52,7 +59,8 @@ func ValidatePublicHTTPSURL(ctx context.Context, raw string) error {
 	return publicAddresses(ctx, parsed.Hostname())
 }
 
-// NewPublicHTTPClient creates an HTTP client that only dials globally routable IPs.
+// NewPublicHTTPClient creates an HTTP client that only dials globally routable IPs and
+// follows redirects only within the same scheme, host and port.
 // It does not use environment proxies, because a proxy would bypass local address checks.
 func NewPublicHTTPClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -61,8 +69,14 @@ func NewPublicHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Transport: publicRoundTripper{transport: transport},
 		Timeout:   timeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
+		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			if request.URL.Scheme != via[0].URL.Scheme || request.URL.Host != via[0].URL.Host {
+				return errCrossHostRedirect
+			}
+			if len(via) >= 10 {
+				return errors.New("egress: stopped after 10 redirects")
+			}
+			return nil
 		},
 	}
 }
@@ -130,10 +144,14 @@ func publicAddresses(ctx context.Context, host string) error {
 }
 
 func isPublic(ip netip.Addr) bool {
-	if !ip.IsValid() {
+	// A zoned address never matches a netip.Prefix, so it would skip the list below.
+	if !ip.IsValid() || ip.Zone() != "" {
 		return false
 	}
 	ip = ip.Unmap()
+	if ip.Is6() && !ipv6GlobalUnicast.Contains(ip) {
+		return false
+	}
 	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
 		return false
 	}
