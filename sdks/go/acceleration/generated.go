@@ -1463,6 +1463,7 @@ type AgentConfig struct {
 	Sandbox *Sandbox  `json:"sandbox,omitempty"`
 	Search  *string   `json:"search,omitempty"`
 	Skills  *[]string `json:"skills,omitempty"`
+	Speed   *float64  `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string `json:"sts,omitempty"`
@@ -1497,9 +1498,12 @@ type AgentConfigPatch struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox  *Sandbox           `json:"sandbox,omitempty"`
-	Search   *string            `json:"search,omitempty"`
-	Skills   *[]string          `json:"skills,omitempty"`
+	Sandbox *Sandbox  `json:"sandbox,omitempty"`
+	Search  *string   `json:"search,omitempty"`
+	Skills  *[]string `json:"skills,omitempty"`
+
+	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
+	Speed    *float64           `json:"speed,omitempty"`
 	Sts      *string            `json:"sts,omitempty"`
 	Stt      *string            `json:"stt,omitempty"`
 	Subagent *string            `json:"subagent,omitempty"`
@@ -1543,6 +1547,12 @@ type AgentConfigRequest struct {
 
 	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
 	Skills *[]string `json:"skills,omitempty"`
+
+	// Speed Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
+	//
+	//
+	// Example: 0.9
+	Speed *float64 `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts *string `json:"sts,omitempty"`
@@ -3956,6 +3966,9 @@ type SyncAgentRequest struct {
 	// Simulations The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone.
 	Simulations *[]SimulationDeclaration `json:"simulations,omitempty"`
 	Skills      *[]SkillRequest          `json:"skills,omitempty"`
+
+	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
+	Speed *float64 `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string            `json:"sts,omitempty"`

@@ -401,6 +401,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		VideoSource:        spec.VideoSource,
 		VideoMaxFrames:     spec.VideoMaxFrames,
 		Voice:              spec.Voice,
+		Speed:              spec.Speed,
 		LanguageHints:      spec.LanguageHints,
 		Keyterms:           spec.Keyterms,
 		MaxTokens:          spec.MaxTokens,

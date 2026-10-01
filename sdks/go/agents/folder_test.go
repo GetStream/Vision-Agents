@@ -241,6 +241,7 @@ func TestTheDeclarationSaysWhatTheAgentIsCalledAndRunsOn(t *testing.T) {
 llm: openai/gpt-5.6
 sts: ""
 keyterms: [Vision Agents]
+speed: 0.9
 video:
   source: camera
 `)
@@ -253,7 +254,7 @@ video:
 		t.Errorf("the agent is called %q", folder.Name)
 	}
 	settings := folder.Settings
-	if settings.LLM != "openai/gpt-5.6" || settings.Keyterms[0] != "Vision Agents" {
+	if settings.LLM != "openai/gpt-5.6" || settings.Keyterms[0] != "Vision Agents" || settings.Speed != 0.9 {
 		t.Errorf("the declaration read as %+v", settings)
 	}
 	if settings.STS == nil || *settings.STS != "" {
