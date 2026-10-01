@@ -79,6 +79,11 @@ type PolicyDocument struct {
 	DataPolicy options.DataPolicy `json:"data_policy,omitzero"`
 	// PromptInjection screens what an LLM is asked for injection attempts.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
+	// AllowedModels are the "provider/model" names requests may be routed to. Nil allows
+	// every model, and an empty list allows none.
+	AllowedModels *[]string `json:"allowed_models,omitempty"`
+	// Tags are laid over the request's own on every row of usage.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // Policy is one scope's stored document.

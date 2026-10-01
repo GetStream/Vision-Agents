@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -67,11 +68,41 @@ type VoiceResolver interface {
 	ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error)
 }
 
+// ErrModelNotAllowed says the customer's policies allow none of the models a request could
+// be routed to.
+var ErrModelNotAllowed = errors.New("routing: your policy does not allow this model")
+
 // Gate is what an organization's and an app's policies say about a customer's request
 // before anything is routed. Admit refuses a customer who has spent their budget, and
-// otherwise returns the data policy every request of theirs is held to on top of its own.
+// otherwise returns what every request of theirs is held to on top of its own.
 type Gate interface {
-	Admit(ctx context.Context, customerID string) (options.DataPolicy, error)
+	Admit(ctx context.Context, customerID string) (Admission, error)
+}
+
+// Admission is what a customer's policies hold every request of theirs to.
+type Admission struct {
+	// DataPolicy is the floor every request is held to, on top of whatever it asked for.
+	DataPolicy options.DataPolicy
+	// Models are the "provider/model" names the customer may be routed to. Nil allows
+	// every model, and an empty list allows none.
+	Models []string
+	// Tags are laid over the request's own on every row its work records, so a request
+	// cannot relabel what its policies attribute.
+	Tags Tags
+}
+
+// Labelled returns the tags with the policies' laid over them, leaving the ones passed in
+// untouched.
+func (a Admission) Labelled(tags Tags) Tags {
+	if len(a.Tags) == 0 {
+		return tags
+	}
+	merged := maps.Clone(tags)
+	if merged == nil {
+		merged = Tags{}
+	}
+	maps.Copy(merged, a.Tags)
+	return merged
 }
 
 // Options configures a Router. Store, Live and Voices are optional: without them the
@@ -208,7 +239,7 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		modality: options.Modality,
 		config:   options.Config,
 		registry: options.Registry,
-		recorder: NewRecorder(options.Modality, options.Store, options.Live, logger),
+		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, logger),
 		live:     options.Live,
 		voices:   options.Voices,
 		gate:     options.Gate,
@@ -295,13 +326,21 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		return zero, ProviderConfig{}, err
 	}
 
-	floor, err := r.Admit(ctx, request.CustomerID)
+	admission, err := r.Admit(ctx, request.CustomerID)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
-	request.DataPolicy = request.DataPolicy.Stricter(floor)
+	// Every row is recorded under the merged tags, so they have to fit what a row carries.
+	if err := admission.Labelled(request.Tags).Validate(); err != nil {
+		return zero, ProviderConfig{}, err
+	}
+	request.DataPolicy = request.DataPolicy.Stricter(admission.DataPolicy)
 
 	candidates, err := r.Candidates(ctx, request)
+	if err != nil {
+		return zero, ProviderConfig{}, err
+	}
+	candidates, err = allowed(candidates, admission.Models)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
@@ -339,12 +378,12 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		request.Target, errors.Join(failures...))
 }
 
-// Admit asks the customer's policies whether they may spend anything, and what data policy
-// their requests are held to. A modality whose session serves many units of work asks it
-// again before each one, since a budget can run out mid-session.
-func (r *Router[P]) Admit(ctx context.Context, customerID string) (options.DataPolicy, error) {
+// Admit asks the customer's policies whether they may spend anything, and what their
+// requests are held to. A modality whose session serves many units of work asks it again
+// before each one, since a budget can run out mid-session.
+func (r *Router[P]) Admit(ctx context.Context, customerID string) (Admission, error) {
 	if r.gate == nil {
-		return options.DataPolicy{}, nil
+		return Admission{}, nil
 	}
 	return r.gate.Admit(ctx, customerID)
 }
@@ -569,6 +608,28 @@ func serving(candidates []Candidate, terms []options.Term) ([]Candidate, error) 
 		unserved = []string{"that combination of terms"}
 	}
 	return nil, fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", "))
+}
+
+// allowed narrows candidates to the models the customer's policies allow. A request none of
+// whose candidates is allowed is refused rather than sent somewhere else, since an
+// allowlist that fell back to any model would not be one.
+func allowed(candidates []Candidate, models []string) ([]Candidate, error) {
+	if models == nil {
+		return candidates, nil
+	}
+
+	kept := make([]Candidate, 0, len(candidates))
+	asked := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		asked = append(asked, candidate.Config.Name())
+		if slices.Contains(models, candidate.Config.Name()) {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, fmt.Errorf("%w: it allows none of %s", ErrModelNotAllowed, strings.Join(asked, ", "))
+	}
+	return kept, nil
 }
 
 // permitted narrows candidates to the ones allowed to do this work at all.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -17,18 +18,20 @@ const (
 		"X-Stream-Organization-Id, or an API key belonging to one"
 )
 
-// Policy is what an organization or an app decided about spend, data handling and prompt
-// injection.
+// Policy is what an organization or an app decided about spend, data handling, prompt
+// injection, which models may be used and how usage is labelled.
 type Policy struct {
-	Budget          *Budget     `json:"budget,omitempty"`
-	DataPolicy      *DataPolicy `json:"data_policy,omitempty"`
-	PromptInjection *bool       `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
+	Budget          *Budget           `json:"budget,omitempty"`
+	DataPolicy      *DataPolicy       `json:"data_policy,omitempty"`
+	PromptInjection *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
+	AllowedModels   *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
+	Tags            map[string]string `json:"tags,omitempty" example:"{\"application\":\"support\"}" doc:"Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags."`
 }
 
 func (*Policy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "What an organization or an app decided about spend, data handling " +
-		"and prompt injection. Every field is optional, and a field left out is no opinion " +
-		"rather than off."
+	schema.Description = "What an organization or an app decided about spend, data handling, " +
+		"prompt injection, which models may be used and how usage is labelled. Every field " +
+		"is optional, and a field left out is no opinion rather than off."
 	return schema
 }
 
@@ -78,10 +81,12 @@ func (s *Server) registerPolicies(api huma.API) {
 		OperationID: "getAppPolicy",
 		Method:      http.MethodGet,
 		Path:        "/v1/policies/app",
-		Summary:     "The calling app's budget, data policy and prompt injection setting",
+		Summary:     "The calling app's policy",
 		Description: "What the app itself decided. Its organization's policy applies as well, " +
 			"as a floor the app can tighten and cannot loosen: both budgets are enforced, the " +
-			"stricter data policy wins, and prompt injection is screened if either turns it on.",
+			"stricter data policy wins, prompt injection is screened if either turns it on, " +
+			"only a model both allow may be routed to, and the organization's tags win over " +
+			"the app's.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The app's policy, with what its budget has spent so far"},
 		},
@@ -197,6 +202,8 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 	document := store.PolicyDocument{
 		DataPolicy:      dataPolicyOf(sent.DataPolicy),
 		PromptInjection: sent.PromptInjection,
+		AllowedModels:   sent.AllowedModels,
+		Tags:            sent.Tags,
 	}
 	if !document.DataPolicy.Valid() {
 		return Policy{}, fmt.Errorf("retention is none or a duration such as 30d, not %q",
@@ -211,6 +218,14 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 			return Policy{}, fmt.Errorf("a budget resets hourly, daily, weekly or monthly, not %q", budget.Interval)
 		}
 		document.Budget = &budget
+	}
+	if err := routing.Tags(sent.Tags).Validate(); err != nil {
+		return Policy{}, err
+	}
+	for _, model := range value(sent.AllowedModels) {
+		if !s.routes(model) {
+			return Policy{}, fmt.Errorf("allowed_models names %q, which is not a provider/model this deployment routes", model)
+		}
 	}
 	if err := s.policies.Save(ctx, scope, id, document); err != nil {
 		return Policy{}, err
@@ -227,6 +242,8 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 	policy := Policy{
 		DataPolicy:      dataPolicyFor(document.DataPolicy),
 		PromptInjection: document.PromptInjection,
+		AllowedModels:   document.AllowedModels,
+		Tags:            document.Tags,
 	}
 	if document.Budget != nil {
 		spent, resets, err := s.policies.Spent(ctx, scope, id, *document.Budget)
@@ -241,4 +258,14 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 		}
 	}
 	return policy, nil
+}
+
+// routes reports whether a "provider/model" is one some modality here routes to.
+func (s *Server) routes(model string) bool {
+	for _, router := range s.routers {
+		if _, ok := router.Config().Provider(model); ok {
+			return true
+		}
+	}
+	return false
 }

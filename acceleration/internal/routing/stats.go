@@ -69,6 +69,9 @@ type Recorder struct {
 	store    *store.Store
 	live     *live.Client
 	logger   *slog.Logger
+	// gate is where the tags a customer's policies lay over every row come from. Nil lays
+	// none.
+	gate Gate
 
 	queue chan store.Request
 	done  chan struct{}
@@ -80,11 +83,16 @@ type Recorder struct {
 
 // NewRecorder starts the background writer.
 func NewRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, logger *slog.Logger) *Recorder {
+	return newRecorder(modality, pgStore, liveClient, nil, logger)
+}
+
+func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, gate Gate, logger *slog.Logger) *Recorder {
 	r := &Recorder{
 		modality: modality,
 		store:    pgStore,
 		live:     liveClient,
 		logger:   logger,
+		gate:     gate,
 		queue:    make(chan store.Request, statQueueSize),
 		done:     make(chan struct{}),
 	}
@@ -166,6 +174,12 @@ func (r *Recorder) run() {
 }
 
 func (r *Recorder) write(ctx context.Context, request store.Request) {
+	if r.gate != nil {
+		// Only the tags are wanted here. A refusal is the budget, which the work being
+		// recorded has already got past.
+		admission, _ := r.gate.Admit(ctx, request.CustomerID)
+		request.Tags = admission.Labelled(request.Tags)
+	}
 	if r.store != nil {
 		if err := r.store.RecordRequest(ctx, &request); err != nil {
 			r.logger.Error("could not record request", "error", err)
