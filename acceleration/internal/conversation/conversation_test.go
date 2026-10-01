@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -32,6 +34,10 @@ type chatStore struct {
 	events          []sentEvent
 	fail            bool
 	failAfterCreate bool
+	// rateLimited refuses live (ephemeral) updates with a 429, as Stream does when its
+	// throttle is spent; liveAttempts counts every live update tried.
+	rateLimited  bool
+	liveAttempts int
 }
 
 // sentEvent is a channel event as the fake received it, with the stored updates made before it.
@@ -106,6 +112,13 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 			id := parts[len(parts)-1]
 			if id == "ephemeral" {
 				id = parts[len(parts)-2]
+				db.liveAttempts++
+				if db.rateLimited {
+					w.Header().Set("Retry-After", "1")
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = w.Write([]byte(`{"code":9,"message":"Too many requests","StatusCode":429}`))
+					return
+				}
 				db.patches = append(db.patches, body["set"].(map[string]any))
 			} else if r.Method == "PUT" {
 				db.updates++
@@ -288,7 +301,7 @@ func TestQueuedUserMessageKeepsItsAcceptedAuthorAfterRestart(t *testing.T) {
 			db.mu.Lock()
 			db.fail = true
 			db.mu.Unlock()
-			receipt, err := c.BeginCommand("accepted-command", "queued question")
+			receipt, err := c.BeginCommand("accepted-command", "queued question", "")
 			require.NoError(t, err)
 			s.Close()
 			snapshot, err := loadDisk(c.dir())
@@ -526,7 +539,7 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	alice, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
 	require.NoError(t, err)
 	cid := alice.CID()
-	aliceReceipt, err := alice.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
+	aliceReceipt, err := alice.BeginCommand("alice-command", "Remember TEAM_CANVAS_42", "")
 	require.NoError(t, err)
 	alice.Observe(agent.ResponseDelta{Text: "Remembered TEAM_CANVAS_42"})
 	alice.Observe(agent.Responded{})
@@ -559,7 +572,7 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	require.Contains(t, previous[1].Content, "TEAM_CANVAS_42")
 	require.Contains(t, previous[1].Content, `"user_id":"alice","display_name":"Alice"`)
 	require.NoError(t, bob.CheckCaller(t.Context(), "bob"))
-	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
+	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42", "")
 	require.ErrorIs(t, err, ErrCommandNotFound)
 	_, err = bob.Command("alice-command")
 	require.ErrorIs(t, err, ErrCommandNotFound)
@@ -567,7 +580,7 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	require.ErrorIs(t, err, ErrCommandNotFound)
 	_, err = s.CommandForCaller(t.Context(), "customer", "agent", cid, "bob", "alice-command")
 	require.ErrorIs(t, err, ErrCommandNotFound)
-	bobReceipt, err := bob.BeginCommand("bob-command", "What is the codeword?")
+	bobReceipt, err := bob.BeginCommand("bob-command", "What is the codeword?", "")
 	require.NoError(t, err)
 	bob.Observe(agent.ResponseDelta{Text: "TEAM_CANVAS_42"})
 	bob.Observe(agent.Responded{})
@@ -581,11 +594,11 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	bob, previous, _, err = restarted.OpenForCaller(t.Context(), "customer", "agent", cid, "bob")
 	require.NoError(t, err)
 	require.Len(t, previous, 5)
-	duplicate, err := bob.BeginCommand("bob-command", "What is the codeword?")
+	duplicate, err := bob.BeginCommand("bob-command", "What is the codeword?", "")
 	require.NoError(t, err)
 	require.True(t, duplicate.Duplicate)
 	require.Equal(t, bobReceipt.UserMessageID, duplicate.UserMessageID)
-	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
+	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42", "")
 	require.ErrorIs(t, err, ErrCommandNotFound)
 	reconciled, err := restarted.CommandForCaller(t.Context(), "customer", "agent", cid, "alice", "alice-command")
 	require.NoError(t, err)
@@ -643,7 +656,7 @@ func TestEmptyCallerOwnedChannelInitializesCommandLedgerWithoutRecreatingIt(t *t
 	t.Cleanup(service.Close)
 	conversation, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee")
 	require.NoError(t, err)
-	receipt, err := conversation.BeginCommand("external-command", "Question")
+	receipt, err := conversation.BeginCommand("external-command", "Question", "")
 	require.NoError(t, err)
 	require.Equal(t, "thinking", receipt.State)
 	conversation.Release()
@@ -674,7 +687,7 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	receipts := make([]CommandReceipt, 16)
 	errors := make([]error, len(receipts))
 	for i := range receipts {
-		workers.Go(func() { receipts[i], errors[i] = c.BeginCommand("submission-1", "one question") })
+		workers.Go(func() { receipts[i], errors[i] = c.BeginCommand("submission-1", "one question", "") })
 	}
 	workers.Wait()
 	started := 0
@@ -693,9 +706,9 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	require.Equal(t, receipts[0].UserMessageID, snapshot.Pending[0].Message.ID)
 	require.Equal(t, receipts[0].AssistantMessageID, snapshot.Pending[1].Message.ID)
 	require.Equal(t, receipts[0].AssistantMessageID, snapshot.Commands["submission-1"].AssistantMessageID)
-	_, err = c.BeginCommand("submission-1", "different question")
+	_, err = c.BeginCommand("submission-1", "different question", "")
 	require.ErrorIs(t, err, ErrCommandConflict)
-	_, err = c.BeginCommand("submission-2", "another question")
+	_, err = c.BeginCommand("submission-2", "another question", "")
 	require.ErrorContains(t, err, "already running")
 	db.mu.Lock()
 	db.fail = false
@@ -710,7 +723,7 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	t.Cleanup(recovered.Close)
 	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
 	require.NoError(t, err)
-	replay, err := c.BeginCommand("submission-1", "one question")
+	replay, err := c.BeginCommand("submission-1", "one question", "")
 	require.NoError(t, err)
 	require.True(t, replay.Duplicate)
 	require.Equal(t, "completed", replay.State)
@@ -726,7 +739,7 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	t.Cleanup(other.Close)
 	remote, _, _, err := other.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
 	require.NoError(t, err)
-	_, err = remote.BeginCommand("submission-1", "one question")
+	_, err = remote.BeginCommand("submission-1", "one question", "")
 	require.ErrorContains(t, err, "ledger is unavailable")
 }
 
@@ -737,7 +750,7 @@ func TestInterruptedCommandNeverReceivesASecondExecutionClaim(t *testing.T) {
 	require.NoError(t, err)
 	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
 	require.NoError(t, err)
-	first, err := c.BeginCommand("interrupted", "question")
+	first, err := c.BeginCommand("interrupted", "question", "")
 	require.NoError(t, err)
 	service.Close() // No terminal model event, as after an interrupted worker.
 	recovered, err := newService(root, client)
@@ -745,7 +758,7 @@ func TestInterruptedCommandNeverReceivesASecondExecutionClaim(t *testing.T) {
 	defer recovered.Close()
 	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
 	require.NoError(t, err)
-	replay, err := c.BeginCommand("interrupted", "question")
+	replay, err := c.BeginCommand("interrupted", "question", "")
 	require.NoError(t, err)
 	require.True(t, replay.Duplicate)
 	require.Equal(t, "interrupted", replay.State)
@@ -789,7 +802,7 @@ func TestFailedAcceptanceDoesNotGrantAClaimOrPublishUncommittedWrites(t *testing
 	statePath := filepath.Join(c.dir(), "state.json")
 	require.NoError(t, os.Remove(statePath))
 	require.NoError(t, os.MkdirAll(statePath, 0700))
-	_, err = c.BeginCommand("failed-write", "question")
+	_, err = c.BeginCommand("failed-write", "question", "")
 	require.Error(t, err)
 	require.False(t, c.flush())
 	db.mu.Lock()
@@ -798,7 +811,7 @@ func TestFailedAcceptanceDoesNotGrantAClaimOrPublishUncommittedWrites(t *testing
 	require.Zero(t, count)
 	require.NoError(t, os.Remove(statePath))
 	// Once persistence recovers, a retry exposes failure rather than another claim.
-	replay, err := c.BeginCommand("failed-write", "question")
+	replay, err := c.BeginCommand("failed-write", "question", "")
 	require.NoError(t, err)
 	require.True(t, replay.Duplicate)
 	require.Equal(t, "failed", replay.State)
@@ -812,14 +825,14 @@ func TestBlankConversationRetainsItsLedgerAcrossRestart(t *testing.T) {
 	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
 	require.NoError(t, err)
 	service.Close()
-	_, err = c.BeginCommand("after-close", "must not write")
+	_, err = c.BeginCommand("after-close", "must not write", "")
 	require.Error(t, err)
 	recovered, err := newService(root, client)
 	require.NoError(t, err)
 	defer recovered.Close()
 	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
 	require.NoError(t, err)
-	receipt, err := c.BeginCommand("first-submission", "question")
+	receipt, err := c.BeginCommand("first-submission", "question", "")
 	require.NoError(t, err)
 	require.False(t, receipt.Duplicate)
 }
@@ -833,14 +846,14 @@ func TestCommandLookupDoesNotAcceptOrChangeTheActiveReply(t *testing.T) {
 	require.NoError(t, err)
 	_, err = c.Command("missing")
 	require.ErrorIs(t, err, ErrCommandNotFound)
-	first, err := c.BeginCommand("first", "Question one")
+	first, err := c.BeginCommand("first", "Question one", "")
 	require.NoError(t, err)
 	known, err := c.Command("first")
 	require.NoError(t, err)
 	require.Equal(t, first, known)
 	c.Observe(agent.ResponseDelta{Text: "Answer one"})
 	c.Observe(agent.Responded{})
-	second, err := c.BeginCommand("second", "Question two")
+	second, err := c.BeginCommand("second", "Question two", "")
 	require.NoError(t, err)
 	terminal, err := c.Command("first")
 	require.NoError(t, err)
@@ -866,7 +879,7 @@ func TestCancelCommandPreservesOtherCommandsAndDurableReceipts(t *testing.T) {
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	first, err := c.BeginCommand("first-stop", "Question one")
+	first, err := c.BeginCommand("first-stop", "Question one", "")
 	require.NoError(t, err)
 	cancelled, err := c.CancelCommand(first.CommandID)
 	require.NoError(t, err)
@@ -875,7 +888,7 @@ func TestCancelCommandPreservesOtherCommandsAndDurableReceipts(t *testing.T) {
 	snapshot, err := loadDisk(c.dir())
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", snapshot.Commands[first.CommandID].State)
-	second, err := c.BeginCommand("second-stop", "Question two")
+	second, err := c.BeginCommand("second-stop", "Question two", "")
 	require.NoError(t, err)
 	replayed, err := c.CancelCommand(first.CommandID)
 	require.NoError(t, err)
@@ -894,7 +907,7 @@ func TestCancelCommandPersistenceFailureRemainsUnconfirmedUntilRetry(t *testing.
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	accepted, err := c.BeginCommand("stop-persist", "Question")
+	accepted, err := c.BeginCommand("stop-persist", "Question", "")
 	require.NoError(t, err)
 	statePath := filepath.Join(c.dir(), "state.json")
 	c.mu.Lock()
@@ -922,7 +935,7 @@ func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	_, err = c.BeginCommand("stopped", "First question")
+	_, err = c.BeginCommand("stopped", "First question", "")
 	require.NoError(t, err)
 	c.BindTurn("stopped", "turn-first")
 	c.Observe(agent.ResponseDelta{TurnID: "turn-first", Text: "Partial answer"})
@@ -930,7 +943,7 @@ func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", cancelled.State)
 
-	next, err := c.BeginCommand("next", "Second question")
+	next, err := c.BeginCommand("next", "Second question", "")
 	require.NoError(t, err)
 	c.BindTurn("next", "turn-second")
 	// The interrupted generation is still running where the model is, so its events keep
@@ -965,7 +978,7 @@ func TestACommandIsReconcilableAfterItsConversationClosed(t *testing.T) {
 	require.NoError(t, err)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	accepted, err := c.BeginCommand("abandoned", "Question")
+	accepted, err := c.BeginCommand("abandoned", "Question", "")
 	require.NoError(t, err)
 	cid := c.CID()
 
@@ -1001,7 +1014,7 @@ func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	_, err = c.BeginCommand("old", "First question")
+	_, err = c.BeginCommand("old", "First question", "")
 	require.NoError(t, err)
 	var workers sync.WaitGroup
 	failures := make(chan error, 16)
@@ -1011,7 +1024,7 @@ func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
 	var next CommandReceipt
 	require.Eventually(t, func() bool {
 		var err error
-		next, err = c.BeginCommand("next", "Second question")
+		next, err = c.BeginCommand("next", "Second question", "")
 		return err == nil
 	}, time.Second, time.Millisecond)
 	workers.Wait()
@@ -1080,7 +1093,8 @@ func TestSharedHistoryPreservesAuthorsAsUserData(t *testing.T) {
 
 // TestProgressIsLiveUntilTheReplySettles covers what a watcher sees while a reply works:
 // tool steps and the model's thinking arrive as ephemeral updates, the only stored write
-// is the finished reply, and the thinking is never part of what is stored.
+// is the finished reply with its steps, and of the thinking only a round's opening is
+// ever stored.
 func TestProgressIsLiveUntilTheReplySettles(t *testing.T) {
 	db, client := newChat(t)
 	root := t.TempDir()
@@ -1092,7 +1106,8 @@ func TestProgressIsLiveUntilTheReplySettles(t *testing.T) {
 	id := current(c).ID
 	require.Eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.created[id] }, 3*time.Second, 20*time.Millisecond)
 
-	c.Observe(agent.ReasoningDelta{Text: "Weighing the two options."})
+	thinking := "Weighing the two options. " + strings.Repeat("Considering more. ", 40) + "PRIVATE TAIL"
+	c.Observe(agent.ReasoningDelta{Text: thinking})
 	c.Observe(agent.ToolStarted{ID: "one", Tool: "athena_start_task", StartedAt: time.Now().UTC()})
 	c.Progress("one", "searching")
 	c.Observe(agent.ToolRan{ID: "one", Result: `{}`})
@@ -1100,7 +1115,7 @@ func TestProgressIsLiveUntilTheReplySettles(t *testing.T) {
 		db.mu.Lock()
 		defer db.mu.Unlock()
 		raw, _ := json.Marshal(db.patches)
-		return strings.Contains(string(raw), "Weighing the two options.") && strings.Contains(string(raw), `"status":"completed"`)
+		return strings.Contains(string(raw), "PRIVATE TAIL") && strings.Contains(string(raw), `"status":"completed"`)
 	}, 3*time.Second, 20*time.Millisecond)
 	db.mu.Lock()
 	require.Zero(t, db.updates, "tool progress was stored before the reply settled")
@@ -1110,7 +1125,8 @@ func TestProgressIsLiveUntilTheReplySettles(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(c.dir(), "state.json"))
 	require.NoError(t, err)
 	require.Contains(t, string(raw), "athena_start_task")
-	require.NotContains(t, string(raw), "Weighing the two options.")
+	require.Contains(t, string(raw), `"summary":"Weighing the two options."`)
+	require.NotContains(t, string(raw), "PRIVATE TAIL")
 
 	c.Observe(agent.ResponseDelta{Text: "The answer."})
 	c.Observe(agent.Responded{})
@@ -1120,9 +1136,190 @@ func TestProgressIsLiveUntilTheReplySettles(t *testing.T) {
 	require.Equal(t, 1, db.updates)
 	stored, _ := json.Marshal(db.messages[id])
 	require.Contains(t, string(stored), "athena_start_task")
-	require.NotContains(t, string(stored), "Weighing the two options.")
+	require.Contains(t, string(stored), `"type":"ai_reasoning"`)
+	require.Contains(t, string(stored), `"summary":"Weighing the two options."`)
+	require.NotContains(t, string(stored), "PRIVATE TAIL")
 	c.Release()
 	s.Close()
+}
+
+// TestThinkingStreamsInWindows covers the cost of showing thinking live: it is sent in
+// windows a watcher appends, thinking alone goes out at the gentler pace, the reply is
+// not republished for it, and the last thoughts still arrive once the reply settles.
+func TestThinkingStreamsInWindows(t *testing.T) {
+	db, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	require.Eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.created[id] }, 3*time.Second, 20*time.Millisecond)
+	sequence := current(c).Sequence
+
+	var thinking strings.Builder
+	begun := time.Now()
+	for i := 0; time.Since(begun) < time.Second; i++ {
+		piece := fmt.Sprintf("thought %d. ", i)
+		thinking.WriteString(piece)
+		c.Observe(agent.ReasoningDelta{Text: piece})
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.Equal(t, sequence+1, current(c).Sequence, "only opening the reasoning step changes the reply")
+	c.Observe(agent.ReasoningDelta{Text: "Last thought."})
+	thinking.WriteString("Last thought.")
+	c.Observe(agent.ResponseDelta{Text: "The answer."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	windows := func() []reasoningWindow {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		var all []reasoningWindow
+		for _, patch := range db.patches {
+			if raw, ok := patch["reasoning"]; ok {
+				var w reasoningWindow
+				b, _ := json.Marshal(raw)
+				require.NoError(t, json.Unmarshal(b, &w))
+				all = append(all, w)
+			}
+		}
+		return all
+	}
+	require.Eventually(t, func() bool {
+		all := windows()
+		return len(all) > 0 && all[len(all)-1].Length == utf8.RuneCountInString(thinking.String())
+	}, 3*time.Second, 20*time.Millisecond, "the last thoughts never arrived")
+
+	var w watcher
+	sent := 0
+	for _, window := range windows() {
+		w.apply(window)
+		sent += len(window.Text)
+	}
+	require.Equal(t, thinking.String(), w.text)
+	// About five updates a second while only thinking, plus the settled reply's last one.
+	require.LessOrEqual(t, len(windows()), 9, "thinking alone was sent at the answer's pace")
+	require.Less(t, sent, 2*thinking.Len(), "windows repeated thinking already sent")
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	// The settled reply keeps the round's opening as its step, and none of the rest.
+	stored, _ := json.Marshal(db.messages[id])
+	require.Contains(t, string(stored), `"summary":"thought 0."`)
+	require.NotContains(t, string(stored), "Last thought.")
+	require.NotContains(t, string(stored), "thought 99.")
+}
+
+// TestTheAnswerStaysWithinStreamsThrottle covers the answer's live pace: Stream throttles
+// message.updated to 10 a second per channel, and the answer goes out at most every
+// answerEvery so the channel's other updates fit too.
+func TestTheAnswerStaysWithinStreamsThrottle(t *testing.T) {
+	db, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	require.Eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.created[id] }, 3*time.Second, 20*time.Millisecond)
+
+	db.mu.Lock()
+	before := len(db.patches)
+	db.mu.Unlock()
+	begun := time.Now()
+	for time.Since(begun) < time.Second {
+		c.Observe(agent.ResponseDelta{Text: "word "})
+		time.Sleep(5 * time.Millisecond)
+	}
+	db.mu.Lock()
+	sent := len(db.patches) - before
+	db.mu.Unlock()
+	require.GreaterOrEqual(t, sent, 3, "the answer stopped streaming")
+	require.LessOrEqual(t, sent, int(time.Second/answerEvery)+1, "the answer outpaced answerEvery")
+	c.Observe(agent.Responded{})
+	saved(t, c)
+}
+
+// TestLiveUpdatesWaitOutARateLimit covers Stream refusing live updates: the runtime waits
+// for its Retry-After instead of trying again every tick, then resumes with nothing lost,
+// and the stored reply is unaffected.
+func TestLiveUpdatesWaitOutARateLimit(t *testing.T) {
+	db, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	require.Eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.created[id] }, 3*time.Second, 20*time.Millisecond)
+
+	db.mu.Lock()
+	db.rateLimited = true
+	db.liveAttempts = 0
+	db.mu.Unlock()
+	var thinking strings.Builder
+	begun := time.Now()
+	for time.Since(begun) < 1500*time.Millisecond {
+		piece := "thinking it over. "
+		thinking.WriteString(piece)
+		c.Observe(agent.ReasoningDelta{Text: piece})
+		time.Sleep(10 * time.Millisecond)
+	}
+	db.mu.Lock()
+	attempts := db.liveAttempts
+	db.rateLimited = false
+	db.mu.Unlock()
+	// One refused, then a second after Retry-After, rather than one every tick.
+	require.LessOrEqual(t, attempts, 3, "live updates kept hammering a rate-limited Stream")
+	require.GreaterOrEqual(t, attempts, 1)
+
+	windows := func() []reasoningWindow {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		var all []reasoningWindow
+		for _, patch := range db.patches {
+			if raw, ok := patch["reasoning"]; ok {
+				var w reasoningWindow
+				b, _ := json.Marshal(raw)
+				require.NoError(t, json.Unmarshal(b, &w))
+				all = append(all, w)
+			}
+		}
+		return all
+	}
+	require.Eventually(t, func() bool {
+		all := windows()
+		return len(all) > 0 && all[len(all)-1].Length == utf8.RuneCountInString(thinking.String())
+	}, 5*time.Second, 20*time.Millisecond, "the thinking held back never arrived")
+	var w watcher
+	for _, window := range windows() {
+		w.apply(window)
+	}
+	require.Equal(t, thinking.String(), w.text, "thinking was lost while Stream refused updates")
+
+	c.Observe(agent.ResponseDelta{Text: "The answer."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+}
+
+func TestLiveBackoffFollowsStream(t *testing.T) {
+	now := time.Unix(1_790_000_000, 0)
+	limited := func(retryAfter time.Duration, reset int64) error {
+		return &getstream.StreamError{StatusCode: http.StatusTooManyRequests, RetryAfter: retryAfter,
+			RateLimit: &getstream.RateLimitInfo{Reset: reset}}
+	}
+	require.Equal(t, 3*time.Second, liveBackoff(limited(3*time.Second, 0), 1, now), "Retry-After first")
+	require.Equal(t, 20*time.Second, liveBackoff(limited(0, now.Add(20*time.Second).Unix()), 1, now), "then the window's reset")
+	require.Equal(t, maxLivePause, liveBackoff(limited(0, now.Add(10*time.Minute).Unix()), 1, now), "never past a minute")
+	other := errors.New("connection reset")
+	require.Equal(t, time.Second, liveBackoff(other, 1, now))
+	require.Equal(t, 2*time.Second, liveBackoff(other, 2, now))
+	require.Equal(t, 8*time.Second, liveBackoff(other, 4, now))
+	require.Equal(t, 8*time.Second, liveBackoff(other, 12, now))
 }
 
 // TestRepliesFollowStreamAIProtocol covers what Stream's AI components need from a reply:

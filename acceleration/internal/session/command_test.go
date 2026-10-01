@@ -93,7 +93,7 @@ func (s *SessionSuite) commands() *Session {
 func (s *SessionSuite) TestPersistentToolResultsStayBoundToTheirCommandAndTurn() {
 	s.persists()
 	running := s.commands()
-	receipt, err := running.persisted.BeginCommand("command-a", "Question")
+	receipt, err := running.persisted.BeginCommand("command-a", "Question", "")
 	s.Require().NoError(err)
 	running.persisted.BindTurn(receipt.CommandID, "turn-a")
 	events, detach := running.Watch()
@@ -141,7 +141,7 @@ func (s *SessionSuite) TestStoppingACommandLeavesALaterOneAnsweringItsOwnQuestio
 	s.persists()
 	running := s.commands()
 
-	first, err := running.RespondCommand(s.ctx, "command-a", "First question")
+	first, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
 	s.Require().NoError(err)
 	s.Equal("First question", s.asked())
 
@@ -150,7 +150,7 @@ func (s *SessionSuite) TestStoppingACommandLeavesALaterOneAnsweringItsOwnQuestio
 	s.Equal("cancelled", stopped.State)
 	s.Equal(first.AssistantMessageID, stopped.AssistantMessageID)
 
-	second, err := running.RespondCommand(s.ctx, "command-b", "Second question")
+	second, err := running.RespondCommand(s.ctx, "command-b", "Second question", "")
 	s.Require().NoError(err)
 	s.NotEqual(first.AssistantMessageID, second.AssistantMessageID)
 	s.Equal("Second question", s.asked())
@@ -183,7 +183,7 @@ func (s *SessionSuite) TestStoppingACommandInTheAcceptanceGapLeavesNothingToRun(
 
 	// No wait for the model here: the stop is decided in the gap between the command
 	// being accepted and its execution producing anything.
-	accepted, err := running.RespondCommand(s.ctx, "command-a", "First question")
+	accepted, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
 	s.Require().NoError(err)
 	s.Equal("thinking", accepted.State)
 
@@ -208,7 +208,7 @@ func (s *SessionSuite) TestRepeatedStopsAndFinishedCommandsConvergeOnOneReceipt(
 	running := s.commands()
 	s.gated.answers(1)
 
-	finished, err := running.RespondCommand(s.ctx, "command-a", "First question")
+	finished, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
 	s.Require().NoError(err)
 	s.Equal("First question", s.asked())
 	s.eventually(func() bool {
@@ -223,7 +223,7 @@ func (s *SessionSuite) TestRepeatedStopsAndFinishedCommandsConvergeOnOneReceipt(
 	s.Equal("completed", replayed.State)
 	s.Equal(finished.AssistantMessageID, replayed.AssistantMessageID)
 
-	live, err := running.RespondCommand(s.ctx, "command-b", "Second question")
+	live, err := running.RespondCommand(s.ctx, "command-b", "Second question", "")
 	s.Require().NoError(err)
 	s.Equal("Second question", s.asked())
 
@@ -253,7 +253,7 @@ func (s *SessionSuite) TestAStopThatCouldNotBeRecordedIsNotReportedAsStopped() {
 	s.persists()
 	running := s.commands()
 
-	accepted, err := running.RespondCommand(s.ctx, "command-a", "First question")
+	accepted, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
 	s.Require().NoError(err)
 	s.Equal("First question", s.asked())
 
@@ -279,7 +279,7 @@ func (s *SessionSuite) TestConcurrentStopsAndSubmissionsKeepEachCommandSeparate(
 	running := s.commands()
 	s.gated.answers(8)
 
-	first, err := running.RespondCommand(s.ctx, "command-a", "First question")
+	first, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
 	s.Require().NoError(err)
 
 	var workers sync.WaitGroup
@@ -294,7 +294,7 @@ func (s *SessionSuite) TestConcurrentStopsAndSubmissionsKeepEachCommandSeparate(
 	}
 	var second persistent.CommandReceipt
 	s.eventually(func() bool {
-		second, err = running.RespondCommand(s.ctx, "command-b", "Second question")
+		second, err = running.RespondCommand(s.ctx, "command-b", "Second question", "")
 		return err == nil
 	}, "a new command should be accepted once the stopped one is terminal")
 	workers.Wait()
@@ -359,7 +359,7 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	s.Require().NoError(err)
 	_, detachAlice := alice.Watch()
 	defer detachAlice()
-	_, err = alice.RespondCommand(s.ctx, "alice-command", "The team codeword is TEAM_CANVAS_42")
+	_, err = alice.RespondCommand(s.ctx, "alice-command", "The team codeword is TEAM_CANVAS_42", "")
 	s.Require().NoError(err)
 	s.eventually(func() bool {
 		messages := s.stored(alice)
@@ -385,7 +385,7 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	// Hold Bob's durable command before model output, exposing a late callback
 	// that incorrectly interrupts the reused conversation from Alice's old session.
-	_, err = bob.persisted.BeginCommand("bob-pending", "Still answering")
+	_, err = bob.persisted.BeginCommand("bob-pending", "Still answering", "")
 	s.Require().NoError(err)
 	detachAlice()
 	s.Require().Never(func() bool {
@@ -394,16 +394,16 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	}, 150*time.Millisecond, 5*time.Millisecond, "Alice's late detach must not cancel Bob's command")
 	_, err = bob.InterruptCommand("bob-pending")
 	s.Require().NoError(err)
-	_, err = bob.RespondCommand(s.ctx, "bob-command", "What is our codeword?")
+	_, err = bob.RespondCommand(s.ctx, "bob-command", "What is our codeword?", "")
 	s.Require().NoError(err)
 	setMembers("alice")
-	_, err = bob.RespondCommand(s.ctx, "removed-command", "This must not run")
+	_, err = bob.RespondCommand(s.ctx, "removed-command", "This must not run", "")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	_, err = bob.Command("bob-command")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	_, err = bob.InterruptCommand("bob-command")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
-	_, err = alice.RespondCommand(s.ctx, "stale-session-command", "An old session must not act as Bob")
+	_, err = alice.RespondCommand(s.ctx, "stale-session-command", "An old session must not act as Bob", "")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	detachBob()
 	s.eventually(func() bool { return bob.State() == Ended }, "Bob's detached session should close")
@@ -428,7 +428,7 @@ func (s *SessionSuite) TestAVoiceSessionRestoresChatHistoryWithoutPersisting() {
 		Caller:              routing.Caller{UserID: "employee-1"},
 	})
 	s.Require().NoError(err)
-	_, err = written.RespondCommand(s.ctx, "seed-1", "The project name is Nimbus")
+	_, err = written.RespondCommand(s.ctx, "seed-1", "The project name is Nimbus", "")
 	s.Require().NoError(err)
 	cid := written.Spec().ConversationID
 	s.eventually(func() bool {

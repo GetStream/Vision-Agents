@@ -2603,6 +2603,8 @@ export type components = {
          */
         readonly RecordingStatus: "queued" | "running" | "completed" | "failed";
         readonly RespondRequest: {
+            /** @description The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it. */
+            readonly client_id?: string;
             /** @description Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference. */
             readonly command_id?: string;
             readonly text: string;
@@ -2838,6 +2840,13 @@ export type components = {
         readonly SessionTool: {
             /** @description What the model is told the tool does, which is the whole of how it decides when to reach for one. */
             readonly description: string;
+            /** @description What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment. */
+            readonly display_title?: string;
+            /**
+             * @description Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+             * @enum {string}
+             */
+            readonly executor?: "server" | "client";
             readonly name: string;
             /** @description A JSON Schema object describing the arguments. */
             readonly parameters?: {
