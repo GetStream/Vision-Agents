@@ -1200,9 +1200,12 @@ type ItemPosition struct {
 type SessionFilter struct {
 	UserID    string
 	AgentName string
+	AgentID   string
 	Project   string
 	Modality  string
-	Limit     int
+	// State is SessionRunning or SessionClosed.
+	State string
+	Limit int
 	// Cursor starts the page after this session. Nil is the first page.
 	Cursor *SessionPosition
 }

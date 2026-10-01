@@ -301,6 +301,12 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.Modality != "" {
 		query = query.Where("modality = ?", filter.Modality)
 	}
+	if filter.AgentID != "" {
+		query = query.Where("agent_id = ?", filter.AgentID)
+	}
+	if filter.State != "" {
+		query = query.Where("state = ?", filter.State)
+	}
 	return query
 }
 

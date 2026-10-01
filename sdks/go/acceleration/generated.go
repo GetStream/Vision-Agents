@@ -3345,12 +3345,18 @@ type SessionFilter struct {
 	// Agent Matches one value exactly: "value" is short for {"$eq": "value"}.
 	Agent *Equals `json:"agent,omitempty"`
 
+	// AgentId Matches one value exactly: "value" is short for {"$eq": "value"}.
+	AgentId *Equals `json:"agent_id,omitempty"`
+
 	// Modality Matches one value exactly: "value" is short for {"$eq": "value"}.
 	Modality *Equals `json:"modality,omitempty"`
 
 	// ProjectId Matches one value exactly: "value" is short for {"$eq": "value"}.
-	ProjectId *Equals    `json:"project_id,omitempty"`
-	Text      *TextMatch `json:"text,omitempty"`
+	ProjectId *Equals `json:"project_id,omitempty"`
+
+	// State Matches one value exactly: "value" is short for {"$eq": "value"}.
+	State *Equals    `json:"state,omitempty"`
+	Text  *TextMatch `json:"text,omitempty"`
 
 	// UserId Matches one value exactly: "value" is short for {"$eq": "value"}.
 	UserId *Equals `json:"user_id,omitempty"`
@@ -5704,7 +5710,7 @@ type ClientInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -5721,7 +5727,7 @@ type ClientInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -7791,7 +7797,7 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -7818,7 +7824,7 @@ func (c *Client) QuerySessionsWithBody(ctx context.Context, contentType string, 
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -16556,7 +16562,7 @@ type ClientWithResponsesInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -16573,7 +16579,7 @@ type ClientWithResponsesInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -26934,7 +26940,7 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -26957,7 +26963,7 @@ func (c *ClientWithResponses) QuerySessionsWithBodyWithResponse(ctx context.Cont
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `user_id` and `modality` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
