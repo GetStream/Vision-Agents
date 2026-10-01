@@ -8,7 +8,134 @@ use axum::http::Method;
 use serde_json::json;
 use support::{Server, session};
 use tokio::sync::mpsc;
-use vision_agents::{Agent, Dispatch, Error, InboundCall};
+use vision_agents::{Agent, Dispatch, Error, InboundCall, Tools};
+
+fn investigate_sdk() -> Tools {
+    let tools = Tools::new();
+    tools.register(
+        "investigate_sdk",
+        "Read SDK source",
+        json!({"type": "object", "properties": {"sdk": {"type": "string"}}}),
+        async |arguments| {
+            if arguments["sdk"] == "slow" {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+            Ok::<_, String>(format!("read {}", arguments["sdk"].as_str().unwrap_or("")))
+        },
+    );
+    tools
+}
+
+#[tokio::test]
+async fn a_hosted_function_is_declared_and_answered_over_the_dispatch_socket() {
+    let server = Server::start().await;
+    let dispatch = Dispatch::new(server.client());
+    dispatch.host(
+        "stream-support",
+        investigate_sdk(),
+        Some(Duration::from_secs(60)),
+    );
+
+    let running = {
+        let dispatch = dispatch.clone();
+        tokio::spawn(async move { dispatch.run().await })
+    };
+    let mut socket = server.accept().await;
+    socket
+        .send(json!({"type": "ready", "worker_id": "w-1"}))
+        .await;
+    assert_eq!(
+        socket.expect("host_tools").await,
+        json!({
+            "type": "host_tools",
+            "agent_id": "stream-support",
+            "tools": [{
+                "name": "investigate_sdk",
+                "description": "Read SDK source",
+                "parameters": {"type": "object", "properties": {"sdk": {"type": "string"}}},
+            }],
+            "timeout_ms": 60000,
+        })
+    );
+    socket
+        .send(
+            json!({"type": "hosting", "agent_id": "stream-support", "tools": ["investigate_sdk"]}),
+        )
+        .await;
+
+    socket
+        .send(json!({"type": "tool_call", "id": "call-1", "session_id": "s", "name": "investigate_sdk", "arguments": r#"{"sdk":"slow"}"#}))
+        .await;
+    socket
+        .send(json!({"type": "tool_call", "id": "call-2", "session_id": "s", "name": "investigate_sdk", "arguments": r#"{"sdk":"android"}"#}))
+        .await;
+    socket
+        .send(json!({"type": "tool_call", "id": "call-3", "session_id": "s", "name": "deploy", "arguments": "{}"}))
+        .await;
+
+    let mut answered = Vec::new();
+    for _ in 0..3 {
+        answered.push(socket.expect("tool_result").await);
+    }
+    assert_eq!(
+        answered,
+        vec![
+            json!({"type": "tool_result", "id": "call-3", "error": "this worker does not run deploy"}),
+            json!({"type": "tool_result", "id": "call-2", "output": "read android"}),
+            json!({"type": "tool_result", "id": "call-1", "output": "read slow"}),
+        ]
+    );
+
+    dispatch.stop();
+    running.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_worker_tells_the_router_what_it_hosts_every_time_it_is_ready() {
+    let server = Server::start().await;
+    let dispatch = Dispatch::new(server.client());
+    dispatch.host("stream-support", investigate_sdk(), None);
+
+    let running = {
+        let dispatch = dispatch.clone();
+        tokio::spawn(async move { dispatch.run().await })
+    };
+    let mut socket = server.accept().await;
+    for worker in ["w-1", "w-2"] {
+        socket
+            .send(json!({"type": "ready", "worker_id": worker}))
+            .await;
+        let declared = socket.expect("host_tools").await;
+        assert_eq!(declared["agent_id"], "stream-support");
+        assert_eq!(declared["timeout_ms"], 0);
+    }
+
+    dispatch.stop();
+    running.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_worker_whose_tools_are_refused_stops_waiting() {
+    let server = Server::start().await;
+    let dispatch = Dispatch::new(server.client());
+    dispatch.host("stream-support", investigate_sdk(), None);
+
+    let running = {
+        let dispatch = dispatch.clone();
+        tokio::spawn(async move { dispatch.run().await })
+    };
+    let mut socket = server.accept().await;
+    socket
+        .send(json!({"type": "hosting_refused", "agent_id": "stream-support", "reason": "hosting no tools is not hosting"}))
+        .await;
+
+    let refused = running.await.unwrap().unwrap_err();
+    assert!(matches!(refused, Error::Failed { .. }));
+    assert_eq!(
+        refused.to_string(),
+        "dispatch: the router refused to host tools for agent stream-support: hosting no tools is not hosting"
+    );
+}
 
 #[tokio::test]
 async fn a_worker_answers_calls_and_tells_the_router_how_each_went() {

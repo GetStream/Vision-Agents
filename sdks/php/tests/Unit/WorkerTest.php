@@ -8,6 +8,8 @@ use Amp\Websocket\WebsocketClient;
 use GetStream\VisionAgents\Agent;
 use GetStream\VisionAgents\Backend;
 use GetStream\VisionAgents\Client;
+use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\VisionAgents\Exception\HostingRefusedException;
 use GetStream\VisionAgents\Exception\RealtimeException;
 use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Generated\Session as SessionRow;
@@ -20,6 +22,7 @@ use GetStream\VisionAgents\Session;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\LocalSocketServer;
 use GetStream\VisionAgents\Tests\Support\Rows;
+use GetStream\VisionAgents\Tools;
 use GetStream\VisionAgents\Worker\Dispatch;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -118,6 +121,97 @@ final class WorkerTest extends TestCase
         $load = $server->sent('load')[0];
         self::assertSame(0, $load['active_agents']);
         self::assertGreaterThan(0, $load['latency_ms']);
+    }
+
+    public function testDispatchDeclaresAndAnswersHostedTools(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'ready', 'worker_id' => 'w-1']);
+            $server->next($socket);
+            LocalSocketServer::send($socket, ['type' => 'hosting', 'agent_id' => 'my-agent']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't1', 'session_id' => 'ses_1', 'name' => 'slow', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't2', 'session_id' => 'ses_1', 'name' => 'weather_lookup', 'arguments' => '{"location":"Boulder, Colorado"}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't3', 'session_id' => 'ses_1', 'name' => 'broken', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't4', 'session_id' => 'ses_1', 'name' => 'read_source', 'arguments' => '{}']);
+            while (count($server->sent('tool_result')) < 4 && $server->next($socket) !== null) {
+            }
+            $socket->close();
+        });
+        $tools = (new Tools())
+            ->register('weather_lookup', 'The weather somewhere', ['type' => 'object', 'properties' => ['location' => ['type' => 'string']]], static fn (array $args): array => ['location' => $args['location'], 'sky' => 'sunny'])
+            ->register('slow', 'Takes a while', [], static function (array $args): string {
+                delay(0.2);
+                return 'done';
+            })
+            ->register('broken', 'Always fails', [], static fn (array $args): string => throw new RuntimeException('the weather service is down'));
+        $dispatch = (new Dispatch(client: $server->client()))->host('my-agent', $tools, timeoutMs: 30000);
+
+        $dispatch->run();
+
+        self::assertSame([[
+            'type' => 'host_tools',
+            'agent_id' => 'my-agent',
+            'tools' => [
+                ['name' => 'weather_lookup', 'description' => 'The weather somewhere', 'parameters' => ['type' => 'object', 'properties' => ['location' => ['type' => 'string']]]],
+                ['name' => 'slow', 'description' => 'Takes a while'],
+                ['name' => 'broken', 'description' => 'Always fails'],
+            ],
+            'timeout_ms' => 30000,
+        ]], $server->sent('host_tools'));
+        self::assertSame(['my-agent'], $dispatch->hosting);
+        $results = [];
+        foreach ($server->sent('tool_result') as $result) {
+            $results[Json::string($result, 'id')] = $result;
+        }
+        self::assertSame(['type' => 'tool_result', 'id' => 't2', 'output' => '{"location":"Boulder, Colorado","sky":"sunny"}'], $results['t2']);
+        self::assertSame(['type' => 'tool_result', 'id' => 't3', 'error' => 'the weather service is down'], $results['t3']);
+        self::assertSame(['type' => 'tool_result', 'id' => 't4', 'error' => 'this worker does not run read_source'], $results['t4']);
+        self::assertSame(['type' => 'tool_result', 'id' => 't1', 'output' => 'done'], $results['t1']);
+        self::assertSame('t1', array_key_last($results), 'a slow tool held up the calls behind it');
+        self::assertSame(0, $dispatch->active());
+    }
+
+    public function testDispatchHostsAgainOnEveryConnection(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'ready', 'worker_id' => 'w-' . count($server->handshakes)]);
+            $server->next($socket);
+            $socket->close();
+        });
+        $tools = (new Tools())->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
+        $dispatch = (new Dispatch(client: $server->client()))->host('my-agent', $tools);
+
+        $dispatch->run();
+        $dispatch->run();
+
+        self::assertSame('w-2', $dispatch->workerId);
+        self::assertCount(2, $server->handshakes);
+        self::assertSame([0, 0], array_map(static fn (array $frame): mixed => $frame['timeout_ms'], $server->sent('host_tools')));
+    }
+
+    public function testDispatchStopsWhenHostingIsRefused(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'hosting_refused', 'agent_id' => 'my-agent', 'reason' => 'hosting no tools is not hosting']);
+            while ($server->next($socket) !== null) {
+            }
+        });
+        $dispatch = (new Dispatch(client: $server->client()))->host('my-agent', new Tools());
+
+        try {
+            $dispatch->run();
+            self::fail('a worker nobody will call kept waiting');
+        } catch (HostingRefusedException $refused) {
+            self::assertSame('my-agent', $refused->agentId);
+            self::assertSame('hosting no tools is not hosting', $refused->reason);
+            self::assertSame('the router refused to host tools for agent my-agent: hosting no tools is not hosting', $refused->getMessage());
+        }
+    }
+
+    public function testDispatchNeedsAHandlerOrHostedTools(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        (new Dispatch(client: new Client(new Backend(url: 'http://127.0.0.1:1', customerId: 'examples'))))->run();
     }
 
     public function testWatchAnswersToolCallsAndYieldsEvents(): void

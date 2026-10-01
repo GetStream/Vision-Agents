@@ -183,13 +183,16 @@ public sealed class Peer : IAsyncDisposable
         return await _audio.Reader.ReadAsync(patience.Token);
     }
 
-    public async Task CloseAsync()
+    /// <summary>Ends the connection without a close frame, the way a router being replaced does.</summary>
+    public void Abort() => _socket.Abort();
+
+    public async Task CloseAsync(WebSocketCloseStatus status = WebSocketCloseStatus.NormalClosure)
     {
         if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
         {
             try
             {
-                await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                await _socket.CloseAsync(status, "", CancellationToken.None);
             }
             catch (WebSocketException)
             {
@@ -233,9 +236,9 @@ public sealed class Peer : IAsyncDisposable
                 }
             }
         }
-        catch (WebSocketException)
+        catch (Exception failure) when (failure is WebSocketException or OperationCanceledException or ObjectDisposedException)
         {
-            // Gone without a close, which ends the read the same way.
+            // Gone without a close, or aborted here, which ends the read the same way.
         }
         finally
         {

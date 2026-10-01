@@ -1,10 +1,11 @@
 import type { Agent } from "./agent.js";
 import type { BackendOptions } from "./backend.js";
 import { Client } from "./client.js";
-import { ConfigurationError } from "./errors.js";
+import { ConfigurationError, HostingRefusedError } from "./errors.js";
 import { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbound.js";
 import type { Session } from "./session.js";
-import { Socket, number as numberOf } from "./socket.js";
+import { Socket, number as numberOf, text, type Frame } from "./socket.js";
+import type { Tools } from "./tools.js";
 
 /** How many calls a worker takes at once when it does not say. */
 const DEFAULT_CAPACITY = 4;
@@ -34,6 +35,18 @@ export type CallHandler = (call: InboundCall) => void | Promise<void>;
 
 /** What to do with a message written to an agent that is not running. */
 export type MessageHandler = (message: InboundMessage) => void | Promise<void>;
+
+export interface HostOptions {
+  /** How long the router gives one call. Left out, the router's default. */
+  timeoutMs?: number;
+}
+
+/** One set of functions this worker runs for every session under an agent id. */
+interface Hosting {
+  agentId: string;
+  tools: Tools;
+  timeoutMs: number;
+}
 
 /**
  * Waits for inbound calls and messages, and runs a handler for each one.
@@ -79,6 +92,7 @@ export class Dispatch {
   private readonly answering = new Map<string, Session>();
   private onCallHandler: CallHandler | undefined;
   private onMessageHandler: MessageHandler | undefined;
+  private readonly hosted: Hosting[] = [];
   private socket: Socket | undefined;
   private pong: ((at: number) => void) | undefined;
   /** The last round trip measured, from this side, because this is the side audio crosses. */
@@ -117,6 +131,19 @@ export class Dispatch {
   }
 
   /**
+   * Runs these functions for every session opened under an agent id, whoever opened it.
+   *
+   * A session's own functions run in the process that opened it, which is no use to a
+   * conversation opened from a browser that wants to read a source tree. Hosting is the
+   * other direction: the router offers these functions to each session naming the agent and
+   * sends every call to a worker hosting them. Call before `run`.
+   */
+  host(agentId: string, tools: Tools, options: HostOptions = {}): this {
+    this.hosted.push({ agentId, tools, timeoutMs: options.timeoutMs ?? 0 });
+    return this;
+  }
+
+  /**
    * The session answering on this message's channel, started if none is.
    *
    * A channel is one conversation. The second message on it goes to the session that
@@ -143,12 +170,14 @@ export class Dispatch {
    * Waits for calls and messages until the router closes the connection or `signal` aborts.
    *
    * Work still being handled is waited for on the way out, because dropping a call would
-   * hang up on whoever is talking.
+   * hang up on whoever is talking. Throws `HostingRefusedError` if the router refuses the
+   * tools this worker hosts: a worker nobody will call should say so rather than sit
+   * connected looking healthy.
    */
   async run(signal?: AbortSignal): Promise<void> {
-    if (!this.onCallHandler && !this.onMessageHandler) {
+    if (!this.onCallHandler && !this.onMessageHandler && this.hosted.length === 0) {
       throw new ConfigurationError(
-        "register a handler with onCall or onMessage before running",
+        "register a handler with onCall or onMessage, or host tools, before running",
       );
     }
 
@@ -166,6 +195,7 @@ export class Dispatch {
       close();
     }
     const reporting = setInterval(() => void this.report(), this.reportEveryMs);
+    const stopping = signal ?? new AbortController().signal;
 
     try {
       for await (const message of socket.messages()) {
@@ -182,7 +212,16 @@ export class Dispatch {
             break;
           case "ready":
             this.workerId = typeof message["worker_id"] === "string" ? message["worker_id"] : "";
+            this.declare();
             break;
+          case "tool_call":
+            this.runHosted(message, stopping);
+            break;
+          case "hosting":
+            // The router took the offer. Nothing changes here: the calls simply start.
+            break;
+          case "hosting_refused":
+            throw new HostingRefusedError(text(message, "agent_id"), text(message, "reason"));
           case "pong":
             this.pong?.(numberOf(message, "at"));
             break;
@@ -249,6 +288,46 @@ export class Dispatch {
       return;
     }
     this.track(Promise.resolve(handler(message)).then(() => undefined));
+  }
+
+  /** Tells the router what this worker runs, every time it says it is listening. */
+  private declare(): void {
+    for (const offer of this.hosted) {
+      this.tell({
+        type: "host_tools",
+        agent_id: offer.agentId,
+        tools: offer.tools.declared(),
+        timeout_ms: offer.timeoutMs,
+      });
+    }
+  }
+
+  /**
+   * Answers one hosted call, on its own for the same reason a call is: an investigation
+   * takes a minute, and the socket it arrived on is also what delivers the next.
+   */
+  private runHosted(frame: Frame, signal: AbortSignal): void {
+    const id = text(frame, "id");
+    const name = text(frame, "name");
+    const offer = this.hosted.find((one) =>
+      one.tools.declared().some((tool) => tool.name === name),
+    );
+    if (!offer) {
+      this.tell({ type: "tool_result", id, error: `this worker does not run ${name}` });
+      return;
+    }
+
+    this.track(
+      (async () => {
+        const result: Record<string, unknown> = { type: "tool_result", id };
+        try {
+          result["output"] = await offer.tools.call(name, text(frame, "arguments"), signal);
+        } catch (cause) {
+          result["error"] = cause instanceof Error ? cause.message : String(cause);
+        }
+        this.tell(result);
+      })(),
+    );
   }
 
   private track(work: Promise<void>): void {

@@ -66,6 +66,15 @@ public sealed class Tools
         }
     }
 
+    /// <summary>Whether a function by this name is registered.</summary>
+    internal bool Runs(string name)
+    {
+        lock (_lock)
+        {
+            return _registered.ContainsKey(name);
+        }
+    }
+
     /// <summary>The functions as the session request declares them.</summary>
     internal List<SessionTool> Declared()
     {
