@@ -34,6 +34,8 @@ type StreamEdgeIntegrationSuite struct {
 	callType string
 	// pin is the coordinator options every edge joins with: STREAMEDGE_SFU_ID's SFU.
 	pin []coordinator.Option
+	// joinOptions are the join options every edge joins with: STREAMEDGE_JOIN_FLOW's flow.
+	joinOptions []rtc.JoinOption
 }
 
 func TestStreamEdgeIntegrationSuite(t *testing.T) {
@@ -56,6 +58,11 @@ func (s *StreamEdgeIntegrationSuite) SetupSuite() {
 	if sfuID := os.Getenv("STREAMEDGE_SFU_ID"); sfuID != "" {
 		s.pin = []coordinator.Option{coordinator.WithJoinQuery(url.Values{"sfu_id": {sfuID}})}
 	}
+	// The edge joins fast by default; legacy is kept to benchmark the fast join against.
+	if flow := os.Getenv("STREAMEDGE_JOIN_FLOW"); flow != "" {
+		s.Require().Contains([]rtc.JoinFlow{rtc.JoinFlowFast, rtc.JoinFlowLegacy}, rtc.JoinFlow(flow))
+		s.joinOptions = []rtc.JoinOption{rtc.WithJoinFlow(rtc.JoinFlow(flow))}
+	}
 }
 
 func (s *StreamEdgeIntegrationSuite) SetupTest() {
@@ -66,7 +73,7 @@ func (s *StreamEdgeIntegrationSuite) SetupTest() {
 // join puts one participant in the test's call.
 func (s *StreamEdgeIntegrationSuite) join(userID string) *Edge {
 	edge, err := New(Options{CallID: s.callID, CallType: s.callType, User: User{ID: userID, Name: userID},
-		coordinatorOptions: s.pin})
+		coordinatorOptions: s.pin, joinOptions: s.joinOptions})
 	s.Require().NoError(err)
 	s.Require().NoError(edge.Join(s.ctx))
 	s.T().Cleanup(func() { _ = edge.Leave() })

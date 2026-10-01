@@ -14,6 +14,7 @@ import (
 	"time"
 
 	rtc "github.com/GetStream/getstream-go-webrtc"
+	"github.com/GetStream/getstream-go-webrtc/jointrace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 )
@@ -57,6 +58,11 @@ type remoteJoin struct {
 	Run  int    `json:"run"`
 	Flow string `json:"flow"`
 	SFU  string `json:"sfu"`
+	// AgentStart is when the agent's join started: once the caller's first RTP was sent
+	// ("publishing") or as soon as the caller's Join returned ("join").
+	AgentStart string `json:"agent_start"`
+	// CallerReadyMs is from the caller's Join call to the agent's join starting.
+	CallerReadyMs float64 `json:"caller_ready_ms"`
 	// JoinMs is how long Edge.Join took.
 	JoinMs             float64            `json:"join_ms"`
 	PublishToMediaMs   *float64           `json:"publish_to_media_ms"`
@@ -81,17 +87,29 @@ func (s *StreamEdgeIntegrationSuite) measureRemoteJoin(run int) remoteJoin {
 	s.callID = fmt.Sprintf("go-edge-%d", time.Now().UnixNano())
 
 	caller, err := New(Options{CallID: s.callID, CallType: s.callType, User: User{ID: "go-edge-caller", Name: "go-edge-caller"},
-		coordinatorOptions: s.pin})
+		coordinatorOptions: s.pin, joinOptions: s.joinOptions})
 	s.Require().NoError(err)
+	callerStarted := time.Now()
 	if err := caller.Join(ctx); err != nil {
 		m.Error = fmt.Sprintf("caller join: %v", err)
 		return m
 	}
 	defer caller.Leave()
 	s.speak(ctx, caller, 48_000)
+	// Joined before the caller's audio reaches the SFU, the agent's join has nothing to
+	// subscribe to and the subscriber offer comes later: that measures the caller's
+	// connection, not the agent's join. STREAMEDGE_AGENT_START=join starts it at once.
+	m.AgentStart = "publishing"
+	if os.Getenv("STREAMEDGE_AGENT_START") == "join" {
+		m.AgentStart = "join"
+	} else if err := callerPublishing(ctx, caller); err != nil {
+		m.Error = err.Error()
+		return m
+	}
+	m.CallerReadyMs = float64(time.Since(callerStarted).Microseconds()) / 1000
 
 	agentEdge, err := New(Options{CallID: s.callID, CallType: s.callType, User: User{ID: "go-edge-agent", Name: "go-edge-agent"},
-		coordinatorOptions: s.pin})
+		coordinatorOptions: s.pin, joinOptions: s.joinOptions})
 	s.Require().NoError(err)
 	started := time.Now()
 	if err := agentEdge.Join(ctx); err != nil {
@@ -148,6 +166,26 @@ func (s *StreamEdgeIntegrationSuite) measureRemoteJoin(run int) remoteJoin {
 		m.Error = errors.Join(callerErr, agentErr).Error()
 	}
 	return m
+}
+
+// callerPublishing waits for the caller's first RTP packet to be sent, which its join
+// trace records as pub.rtp.
+func callerPublishing(ctx context.Context, caller *Edge) error {
+	deadline := time.After(audioArrivesWithin)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if _, sent := caller.Call().JoinTrace().Span(jointrace.PubRTP); sent {
+			return nil
+		}
+		select {
+		case <-tick.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline:
+			return fmt.Errorf("the caller sent no audio within %s", audioArrivesWithin)
+		}
+	}
 }
 
 // heardFrom waits for a tone from the given user.

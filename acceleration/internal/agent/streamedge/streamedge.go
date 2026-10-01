@@ -95,6 +95,8 @@ type Options struct {
 	// coordinatorOptions are added to BaseURL's coordinator options, so a test can pin the
 	// SFU. The SDK keeps only the last rtc.WithCoordinatorOptions, so clientOptions cannot.
 	coordinatorOptions []coordinator.Option
+	// joinOptions are added to the call's join options, so a test can pick the join flow.
+	joinOptions []rtc.JoinOption
 }
 
 // User is who the agent is in the call.
@@ -218,10 +220,11 @@ func (e *Edge) Join(ctx context.Context) error {
 	call := client.Call(e.options.CallType, e.options.CallID)
 	// Set before Join, which starts the trace.
 	call.OnJoinTrace(func(trace jointrace.Trace) { e.onJoinTrace(trace, call.JoinFlow()) })
-	joined, err := call.Join(ctx, rtc.WithLocation(e.location), rtc.WithTrack(info, voice),
+	joinOptions := append([]rtc.JoinOption{rtc.WithLocation(e.location), rtc.WithTrack(info, voice),
 		rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 			e.listen(remote)
-		})))
+		}))}, e.options.joinOptions...)
+	joined, err := call.Join(ctx, joinOptions...)
 	if err != nil {
 		return fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err)
 	}
