@@ -185,6 +185,9 @@ components:
           items:
             type: string
           type: array
+        speed:
+          format: double
+          type: number
         sts:
           description: |
             A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
@@ -254,6 +257,11 @@ components:
           items:
             type: string
           type: array
+        speed:
+          description: The voice's rate of delivery, 1 being its own. Zero leaves it there.
+          format: double
+          minimum: 0
+          type: number
         sts:
           type: string
         stt:
@@ -317,6 +325,13 @@ components:
           items:
             type: string
           type: array
+        speed:
+          description: |
+            Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
+          example: 0.9
+          format: double
+          minimum: 0
+          type: number
         sts:
           description: |
             A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
@@ -3992,6 +4007,11 @@ components:
           items:
             $ref: '#/components/schemas/SkillRequest'
           type: array
+        speed:
+          description: The voice's rate of delivery, 1 being its own. Zero leaves it there.
+          format: double
+          minimum: 0
+          type: number
         sts:
           description: 'A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.'
           type: string

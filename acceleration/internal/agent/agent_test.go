@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -449,6 +450,7 @@ func stubConfig() routing.ModalityConfig {
 			Model:     "stub-model",
 			Languages: []string{"en"},
 			Realtime:  true,
+			Terms:     []options.Term{options.Speed},
 		}},
 		Aliases: map[string]routing.Alias{
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
@@ -533,6 +535,10 @@ type AgentSuite struct {
 	records *store.Store
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
+	// speed is the voice's rate of delivery the agent joins with, and voiceAsked is what
+	// the voice was opened with.
+	speed      float64
+	voiceAsked routing.Spec
 
 	agent  *Agent
 	events *collector
@@ -680,7 +686,10 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	}
 
 	speech := ttsrouter.NewRegistry()
-	speech.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speech.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
+		s.voiceAsked = spec
+		return s.voice, nil
+	})
 	speaker, err := ttsrouter.New(ttsrouter.Options{
 		Config: stubConfig(), Registry: speech, Logger: logger,
 	})
@@ -735,6 +744,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		STTTarget:          "en-low-latency",
 		TTS:                speaker,
 		TTSTarget:          "en-low-latency",
+		Speed:              s.speed,
 		Memory:             remembering,
 		Knowledge:          reading,
 		KnowledgeNamespace: s.namespace,
@@ -892,6 +902,20 @@ func (s *AgentSuite) TestJoiningEntersTheCall() {
 
 	s.eventually(func() bool { return countOf[Joined](s.reported()) == 1 }, "the agent never joined")
 	s.True(s.edge.joined)
+}
+
+func (s *AgentSuite) TestTheVoiceIsOpenedAtTheSpeedTheAgentWasGiven() {
+	s.speed = 0.9
+	s.join(true)
+
+	s.Require().NotNil(s.voiceAsked.TTS.Speed)
+	s.Equal(0.9, *s.voiceAsked.TTS.Speed)
+}
+
+func (s *AgentSuite) TestAVoiceWithNoSpeedIsNotAskedForOne() {
+	s.join(true)
+
+	s.Nil(s.voiceAsked.TTS.Speed, "naming a speed narrows the voices that may answer")
 }
 
 func (s *AgentSuite) TestJoiningTwiceIsRejected() {

@@ -329,6 +329,8 @@ type AgentConfig struct {
 	Search         string `bun:"search,notnull"`
 	Instructions   string `bun:"instructions,notnull"`
 	Greeting       string `bun:"greeting,notnull"`
+	// Speed is the voice's rate of delivery, 1 being its own. Zero leaves it there.
+	Speed float64 `bun:"speed,notnull"`
 	// Guardrail is a guardrail.md: frontmatter saying how to screen a turn, then the
 	// policy in prose. Empty, which most configs are, means every turn is answered.
 	Guardrail string `bun:"guardrail,notnull"`

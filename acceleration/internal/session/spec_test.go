@@ -34,6 +34,12 @@ func (s *SpecSuite) TestAConfigsKeytermsBecomeTheSessions() {
 	s.Equal([]string{"Vision Agents", "Stream"}, spec.Keyterms)
 }
 
+func (s *SpecSuite) TestAConfigsSpeedBecomesTheSessions() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Speed: 0.9})
+
+	s.Equal(0.9, spec.Speed)
+}
+
 func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
 	spec := FromConfig(store.AgentConfig{
 		CustomerID: "acme",
