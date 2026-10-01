@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -23,9 +24,15 @@ func TestConnectorSealerSuite(t *testing.T) {
 }
 
 func (s *ConnectorSealerSuite) SetupTest() {
-	for _, variable := range []string{
-		authKEKEnvVar, authKEKVersionEnvVar, authKEKEnvVar + "_V1", authKEKEnvVar + "_V2",
-	} {
+	// The keyring is read from every ROUTER_AUTH_KEK_V<n> in the environment, so any the
+	// shell running the tests happens to hold are cleared too.
+	variables := []string{authKEKEnvVar, authKEKVersionEnvVar}
+	for _, variable := range os.Environ() {
+		if name, _, _ := strings.Cut(variable, "="); strings.HasPrefix(name, authKEKEnvVar+"_V") {
+			variables = append(variables, name)
+		}
+	}
+	for _, variable := range variables {
 		s.T().Setenv(variable, "")
 		s.Require().NoError(os.Unsetenv(variable))
 	}
@@ -108,6 +115,51 @@ func (s *ConnectorSealerSuite) TestAVersionThatIsNotANumberIsRefused() {
 
 	_, err := newConnectorSealer(s.settings)
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_VERSION to be a positive integer")
+}
+
+func (s *ConnectorSealerSuite) TestAKeyPastedIntoTheVersionIsNotRepeatedInTheError() {
+	s.settings.Connectors.Enabled = true
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "pasted-key-encryption-key")
+
+	_, err := newConnectorSealer(s.settings)
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "pasted-key-encryption-key")
+}
+
+func (s *ConnectorSealerSuite) TestMovingTheVersionBackKeepsNewerKeysLoaded() {
+	s.settings.Connectors.Enabled = true
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_V2", "second-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
+	forward, err := newConnectorSealer(s.settings)
+	s.Require().NoError(err)
+	sealed, err := forward.SealWithAAD("connector secret", []byte("connection"))
+	s.Require().NoError(err)
+
+	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "1")
+	back, err := newConnectorSealer(s.settings)
+	s.Require().NoError(err)
+	s.Equal(1, back.CurrentVersion())
+	opened, err := back.OpenWithAADVersion(sealed, []byte("connection"), 2)
+	s.Require().NoError(err)
+	s.Equal("connector secret", opened)
+}
+
+func (s *ConnectorSealerSuite) TestOnlyThePlainSpellingOfAVersionIsAKey() {
+	s.settings.Connectors.Enabled = true
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_V01", "another-key")
+
+	sealer, err := newConnectorSealer(s.settings)
+	s.Require().NoError(err)
+	sealed, err := sealer.SealWithAAD("connector secret", nil)
+	s.Require().NoError(err)
+	withFirst, err := auth.NewSealerWithKeyring(1, map[int]string{1: "first-key"})
+	s.Require().NoError(err)
+	opened, err := withFirst.OpenWithAADVersion(sealed, nil, 1)
+	s.Require().NoError(err)
+	s.Equal("connector secret", opened)
 }
 
 func (s *ConnectorSealerSuite) TestTwoDifferentVersionOneKeysAreRefused() {

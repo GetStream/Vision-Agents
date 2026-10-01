@@ -200,9 +200,11 @@ func logLevel(settings config.Config) slog.Level {
 // when connectors are off. It does not depend on auth.mode: a proxy deployment holds
 // connector credentials as much as an api_key one does.
 //
-// The keyring is ROUTER_AUTH_KEK_V1, _V2 and so on, with ROUTER_AUTH_KEK_VERSION naming
-// the one that seals new rows. auth.kek is version 1, so a deployment that already has it
-// needs nothing more.
+// The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
+// ROUTER_AUTH_KEK_VERSION naming the one that seals new rows. That variable picks the
+// writer and is never a ceiling: moving it back to an older key must leave the newer ones
+// loaded, or the rows sealed under them stop opening. auth.kek is version 1, so a
+// deployment that already has it needs nothing more.
 func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 	if !settings.Connectors.Enabled {
 		return nil, nil
@@ -211,18 +213,24 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 	if configured := os.Getenv(authKEKVersionEnvVar); configured != "" {
 		version, err := strconv.Atoi(configured)
 		if err != nil || version < 1 {
-			return nil, fmt.Errorf("connectors.enabled needs %s to be a positive integer, got %q",
-				authKEKVersionEnvVar, configured)
+			// The value is left out on purpose: a key pasted into the wrong variable would
+			// otherwise reach the logs and Sentry with this error.
+			return nil, fmt.Errorf("connectors.enabled needs %s to be a positive integer",
+				authKEKVersionEnvVar)
 		}
 		current = version
 	}
-	keys := make(map[int]string, current)
+	keys := make(map[int]string)
 	if settings.Auth.KEK != "" {
 		keys[1] = settings.Auth.KEK
 	}
-	for version := 1; version <= current; version++ {
-		key := os.Getenv(fmt.Sprintf("%s_V%d", authKEKEnvVar, version))
-		if key == "" {
+	for _, variable := range os.Environ() {
+		name, key, _ := strings.Cut(variable, "=")
+		suffix, ok := strings.CutPrefix(name, authKEKEnvVar+"_V")
+		version, err := strconv.Atoi(suffix)
+		// Only the plain spelling counts, so _V01 cannot stand in for _V1 and
+		// ROUTER_AUTH_KEK_VERSION is not read as a key.
+		if !ok || err != nil || version < 1 || strconv.Itoa(version) != suffix || key == "" {
 			continue
 		}
 		if version == 1 && keys[1] != "" && keys[1] != key {
