@@ -1927,8 +1927,8 @@ export type paths = {
             readonly cookie?: never;
         };
         /**
-         * The calling app's budget, data policy and prompt injection setting
-         * @description What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+         * The calling app's policy
+         * @description What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
          */
         readonly get: operations["getAppPolicy"];
         /**
@@ -3539,12 +3539,28 @@ export type components = {
             /** @enum {string} */
             readonly status: "pending" | "connected" | "failed";
         };
-        /** @description What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and a field left out is no opinion rather than off. */
+        /** @description What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. */
         readonly Policy: {
+            /**
+             * @description The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one.
+             * @example [
+             *       "deepseek/DeepSeek-V4-Flash-0731"
+             *     ]
+             */
+            readonly allowed_models?: readonly string[];
             readonly budget?: components["schemas"]["Budget"];
             readonly data_policy?: components["schemas"]["DataPolicy"];
             /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
             readonly prompt_injection?: boolean;
+            /**
+             * @description Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
+             * @example {
+             *       "application": "support"
+             *     }
+             */
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
         };
         readonly PrepareVoiceRequest: {
             /** @description Which providers to teach the voice to. Empty means every provider this deployment can clone with. */

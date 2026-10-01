@@ -10,7 +10,6 @@ import (
 	"github.com/openai/openai-go/v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -33,7 +32,7 @@ type Session struct {
 	// admit asks the owner's policies before each response, and screen judges what each
 	// response is asked. Both are nil on a fallback child, which serves a response its
 	// parent already admitted and screened.
-	admit  func(context.Context, string) (options.DataPolicy, error)
+	admit  func(context.Context, string) (routing.Admission, error)
 	screen Screen
 }
 

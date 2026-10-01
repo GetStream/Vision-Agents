@@ -2912,8 +2912,13 @@ type PluginConnection struct {
 // PluginConnectionStatus defines model for PluginConnection.Status.
 type PluginConnectionStatus string
 
-// Policy What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and a field left out is no opinion rather than off.
+// Policy What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
 type Policy struct {
+	// AllowedModels The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one.
+	//
+	// Example: ["deepseek/DeepSeek-V4-Flash-0731"]
+	AllowedModels *[]string `json:"allowed_models,omitempty"`
+
 	// Budget A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
 	Budget *Budget `json:"budget,omitempty"`
 
@@ -2922,6 +2927,11 @@ type Policy struct {
 
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
+
+	// Tags Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
+	//
+	// Example: {"application":"support"}
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // PrepareVoiceRequest defines model for PrepareVoiceRequest.
@@ -6405,9 +6415,9 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/phone/vendors (the `ListPhoneVendors` operationId).
 	ListPhoneVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAppPolicy The calling app's budget, data policy and prompt injection setting
+	// GetAppPolicy The calling app's policy
 	//
-	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 	//
 	// Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
 	GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9338,9 +9348,9 @@ func (c *Client) ListPhoneVendors(ctx context.Context, reqEditors ...RequestEdit
 	return c.Client.Do(req)
 }
 
-// GetAppPolicy The calling app's budget, data policy and prompt injection setting
+// GetAppPolicy The calling app's policy
 //
-// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 //
 // Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
 func (c *Client) GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17321,9 +17331,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/phone/vendors (the `ListPhoneVendors` operationId).
 	ListPhoneVendorsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPhoneVendorsResponse, error)
 
-	// GetAppPolicyWithResponse The calling app's budget, data policy and prompt injection setting
+	// GetAppPolicyWithResponse The calling app's policy
 	//
-	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28207,9 +28217,9 @@ func (c *ClientWithResponses) ListPhoneVendorsWithResponse(ctx context.Context, 
 	return ParseListPhoneVendorsResponse(rsp)
 }
 
-// GetAppPolicyWithResponse The calling app's budget, data policy and prompt injection setting
+// GetAppPolicyWithResponse The calling app's policy
 //
-// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 //
 // Returns a wrapper object for the known response body format(s).
 //

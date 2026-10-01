@@ -115,10 +115,10 @@ func (s *PolicySuite) router(provider *classifier) *lcmrouter.Router {
 }
 
 func (s *PolicySuite) TestACustomerWithNoPolicyIsAdmitted() {
-	floor, err := s.enforcer.Admit(s.ctx, s.app)
+	admitted, err := s.enforcer.Admit(s.ctx, s.app)
 
 	s.NoError(err)
-	s.False(floor.Asks())
+	s.False(admitted.DataPolicy.Asks())
 }
 
 func (s *PolicySuite) TestAnAppThatSpentItsBudgetIsRefused() {
@@ -160,12 +160,68 @@ func (s *PolicySuite) TestAnAppCanTightenItsOrganizationsDataPolicyButNotLoosenI
 		DataPolicy: options.DataPolicy{AllowTraining: &yes, Retention: options.RetentionNone},
 	})
 
-	floor, err := s.enforcer.Admit(s.ctx, s.app)
+	admitted, err := s.enforcer.Admit(s.ctx, s.app)
 
 	s.Require().NoError(err)
-	s.Require().NotNil(floor.AllowTraining)
-	s.False(*floor.AllowTraining, "the organization forbade training")
-	s.Equal(options.RetentionNone, floor.Retention, "the app asked for less retention")
+	s.Require().NotNil(admitted.DataPolicy.AllowTraining)
+	s.False(*admitted.DataPolicy.AllowTraining, "the organization forbade training")
+	s.Equal(options.RetentionNone, admitted.DataPolicy.Retention, "the app asked for less retention")
+}
+
+func (s *PolicySuite) TestACustomerWithNoAllowlistMayUseAnyModel() {
+	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Nil(admitted.Models)
+}
+
+func (s *PolicySuite) TestAnAppMayUseOnlyTheModelsItAndItsOrganizationBothAllow() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{
+		AllowedModels: &[]string{"deepseek/DeepSeek-V4-Flash-0731", "openai/gpt-5.6-luna"},
+	})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{
+		AllowedModels: &[]string{"openai/gpt-5.6-luna", "anthropic/claude-opus-5"},
+	})
+
+	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"openai/gpt-5.6-luna"}, admitted.Models)
+}
+
+func (s *PolicySuite) TestAnOrganizationsAllowlistAppliesToAnAppWithoutOne() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{
+		AllowedModels: &[]string{"deepseek/DeepSeek-V4-Flash-0731"},
+	})
+
+	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"deepseek/DeepSeek-V4-Flash-0731"}, admitted.Models)
+}
+
+func (s *PolicySuite) TestAnEmptyAllowlistIsKeptAsAllowingNothing() {
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{AllowedModels: &[]string{}})
+
+	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.NotNil(admitted.Models)
+	s.Empty(admitted.Models)
+}
+
+func (s *PolicySuite) TestAnOrganizationsTagsWinOverItsAppsTags() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{
+		Tags: map[string]string{"cost_center": "research", "environment": "production"},
+	})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{
+		Tags: map[string]string{"application": "athena", "environment": "test"},
+	})
+
+	admitted, err := s.enforcer.Admit(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.Equal(routing.Tags{"application": "athena", "cost_center": "research", "environment": "production"}, admitted.Tags)
 }
 
 func (s *PolicySuite) TestNothingIsScreenedUnlessAPolicyTurnsItOn() {
