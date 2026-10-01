@@ -188,9 +188,7 @@ class TestAccelerated:
             url=router.url,
             customer_id="acme",
             connector_bindings=[
-                stream.SessionConnectorBinding(
-                    name="crm", connection_id="conn_alice"
-                )
+                stream.SessionConnectorBinding(name="crm", connection_id="conn_alice")
             ],
         )
         await llm.join_remote(call)
