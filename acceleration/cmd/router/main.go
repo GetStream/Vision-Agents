@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -239,13 +241,19 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 		}
 		keys[version] = key
 	}
-	sealer, err := auth.NewSealerWithKeyring(current, keys)
-	if err != nil {
-		return nil, fmt.Errorf("connectors.enabled needs a key encryption keyring to seal "+
-			"connector credentials: set %s_V%d (%s is version 1): %w",
-			authKEKEnvVar, current, authKEKEnvVar, err)
+	if keys[current] == "" {
+		if os.Getenv(authKEKVersionEnvVar) == "" {
+			return nil, fmt.Errorf("connectors.enabled needs a key encryption keyring to seal "+
+				"connector credentials: set %s_V1 (%s is version 1)", authKEKEnvVar, authKEKEnvVar)
+		}
+		// The version is not named: an all-digit key pasted into ROUTER_AUTH_KEK_VERSION
+		// parses as one, and naming it would send the key to the logs and Sentry. The
+		// versions that are set come from variable names, never from values.
+		return nil, fmt.Errorf("connectors.enabled needs a key for the version %s names: "+
+			"set the matching %s_V<n> (versions set: %v)",
+			authKEKVersionEnvVar, authKEKEnvVar, slices.Sorted(maps.Keys(keys)))
 	}
-	return sealer, nil
+	return auth.NewSealerWithKeyring(current, keys)
 }
 
 // newAuthenticator builds the authenticator the deployment's mode asks for.

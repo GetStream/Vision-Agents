@@ -105,7 +105,8 @@ func (s *ConnectorSealerSuite) TestAVersionWithoutItsKeyIsRefused() {
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
 
 	_, err := newConnectorSealer(s.settings)
-	s.ErrorContains(err, "ROUTER_AUTH_KEK_V2")
+	s.ErrorContains(err, "needs a key for the version ROUTER_AUTH_KEK_VERSION names")
+	s.ErrorContains(err, "versions set: [1]")
 }
 
 func (s *ConnectorSealerSuite) TestAVersionThatIsNotANumberIsRefused() {
@@ -125,6 +126,16 @@ func (s *ConnectorSealerSuite) TestAKeyPastedIntoTheVersionIsNotRepeatedInTheErr
 	_, err := newConnectorSealer(s.settings)
 	s.Require().Error(err)
 	s.NotContains(err.Error(), "pasted-key-encryption-key")
+}
+
+func (s *ConnectorSealerSuite) TestAnAllDigitKeyPastedIntoTheVersionIsNotRepeatedInTheError() {
+	s.settings.Connectors.Enabled = true
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "8473019385746201")
+
+	_, err := newConnectorSealer(s.settings)
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "8473019385746201")
 }
 
 func (s *ConnectorSealerSuite) TestMovingTheVersionBackKeepsNewerKeysLoaded() {
