@@ -309,6 +309,46 @@ func (s *DisplaySuite) TestThePublicProgressBoundarySurvivesHistory() {
 	s.Equal("The final answer.\n\nSecond paragraph.", string([]rune(m.Text)[m.AnswerStart:]))
 }
 
+func (s *DisplaySuite) TestOnlyAStrictStoredReceiptStoresAnArtifact() {
+	canvas := `{"schema_version":1,"status":"stored","attachment":{"type":"canvas","artifact_id":"canvas_01","revision":1,"title":"Analysis","sha256":"abc"},"publication":"pending"}`
+	image := `{"schema_version":1,"status":"stored","attachment":{"type":"image","artifact_id":"img_01","revision":2,"title":"Sketch","alt":"A sketch"}}`
+
+	s.Equal([]ArtifactAttachment{{Type: "canvas", ArtifactID: "canvas_01", Revision: 1, Title: "Analysis"}}, StoredArtifacts(canvas))
+	s.Equal([]ArtifactAttachment{{Type: "image", ArtifactID: "img_01", Revision: 2, Title: "Sketch", Alt: "A sketch"}}, StoredArtifacts(image))
+	s.Empty(StoredArtifacts(`{"status":"answered","citations":[]}`))
+	s.Empty(StoredArtifacts(`{"schema_version":1,"status":"stored","attachment":{"type":"pdf","artifact_id":"../x","revision":1,"title":"Report"}}`))
+	s.Empty(StoredArtifacts(`{"schema_version":1,"status":"stored","attachment":{"type":"Bad Type","artifact_id":"x","revision":1,"title":"Report"}}`))
+	s.Empty(StoredArtifacts(`{"schema_version":1,"status":"stored","attachment":{"type":"pdf","artifact_id":"x","revision":0,"title":"Report"}}`))
+	s.Empty(StoredArtifacts(`{"schema_version":1,"status":"stored","attachment":{"type":"canvas","artifact_id":"canvas_01","revision":1,"title":"Analysis"},"publication":"pending","secret":"no"}`))
+	s.Empty(StoredArtifacts(`{"schema_version":1,"status":"stored","attachment":{"type":"canvas","artifact_id":"canvas_01","revision":1,"title":"Analysis"},"publication":"published"}`))
+}
+
+func (s *DisplaySuite) TestAVisibleToolsStoredArtifactIsAttachedToTheReplyAndRestored() {
+	c := s.open("athena")
+	c.ShowTools([]string{"save_*"})
+	receipt, err := c.BeginCommand("command-a", "Save a canvas")
+	s.Require().NoError(err)
+	stored := `{"schema_version":1,"status":"stored","attachment":{"type":"canvas","artifact_id":"%s","revision":1,"title":"Analysis","sha256":"not-for-chat"},"publication":"pending"}`
+
+	c.Observe(agent.ToolStarted{ID: "save", Tool: "save_canvas", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "save", Tool: "save_canvas", Result: strings.ReplaceAll(stored, "%s", "canvas_01")})
+	c.Observe(agent.ToolStarted{ID: "hidden", Tool: "export_crm", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "hidden", Tool: "export_crm", Result: strings.ReplaceAll(stored, "%s", "crm_dump")})
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	raw := s.raw(receipt.AssistantMessageID)
+	s.Contains(raw, `"type":"canvas"`)
+	s.Contains(raw, `"artifact_id":"canvas_01"`)
+	s.NotContains(raw, "crm_dump")
+	s.NotContains(raw, "not-for-chat")
+	c.Release()
+	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "athena", c.CID(), "", "employee")
+	s.Require().NoError(err)
+	s.Require().Len(page.Messages, 2)
+	s.Equal([]ArtifactAttachment{{Type: "canvas", ArtifactID: "canvas_01", Revision: 1, Title: "Analysis"}}, page.Messages[1].Artifacts)
+}
+
 func (s *DisplaySuite) open(agentID string) *Conversation {
 	c, _, _, err := s.service.OpenForCaller(s.T().Context(), "customer", agentID, "", "employee")
 	s.Require().NoError(err)
