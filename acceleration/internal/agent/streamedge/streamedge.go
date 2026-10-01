@@ -89,6 +89,11 @@ type Options struct {
 
 	Logger *slog.Logger
 
+	// Clients, when set, holds the SDK client the Edge joins with, shared with the other
+	// Edges of the same agent and kept open after Leave. Without it the Edge builds a
+	// client of its own and closes it at Leave.
+	Clients *Clients
+
 	// clientOptions are passed to the SDK client as they are, so a test can add a network
 	// delay.
 	clientOptions []rtc.Option
@@ -123,7 +128,9 @@ type Edge struct {
 	speaker *speaker
 
 	client *rtc.Client
-	call   *rtc.Call
+	// release gives the client back: closes it, or returns it to Options.Clients.
+	release func()
+	call    *rtc.Call
 
 	mu sync.Mutex
 	// listening holds what stops the decoding of each subscribed track, so a track that
@@ -209,11 +216,11 @@ func (e *Edge) Join(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	client, err := e.connect()
+	client, release, err := e.connect()
 	if err != nil {
 		return err
 	}
-	e.client = client
+	e.client, e.release = client, release
 
 	// Kept off the edge until the join succeeds: leaving a call that never connected panics
 	// in the SDK, which has no signaling client yet to report its stats through.
@@ -300,8 +307,8 @@ func (e *Edge) leave() error {
 			failures = append(failures, fmt.Errorf("streamedge: leave: %w", err))
 		}
 	}
-	if e.client != nil {
-		e.client.Close()
+	if e.release != nil {
+		e.release()
 	}
 	return errors.Join(failures...)
 }
@@ -340,13 +347,30 @@ func joinTrace(trace jointrace.Trace, flow rtc.JoinFlow) (agent.JoinTrace, error
 	}, nil
 }
 
-// connect builds the SDK client, preferring a token over a secret.
+// connect returns the SDK client, shared through Options.Clients or built for this Edge,
+// and what to call once done with it.
+func (e *Edge) connect() (*rtc.Client, func(), error) {
+	if e.options.Clients == nil {
+		client, err := e.newClient()
+		if err != nil {
+			return nil, nil, err
+		}
+		return client, func() { _ = client.Close() }, nil
+	}
+	return e.options.Clients.acquire(clientKey{
+		apiKey: e.options.APIKey, apiSecret: e.options.APISecret, userToken: e.options.UserToken,
+		baseURL: e.options.BaseURL, wsURL: e.options.WSURL,
+		userID: e.options.User.ID, userName: e.options.User.Name,
+	}, e.newClient)
+}
+
+// newClient builds the SDK client, preferring a token over a secret.
 //
 // The coordinator websocket stays on even though the agent reads none of its events: its
 // connect is what registers the agent as a user, and the coordinator refuses to let a user it
 // has never seen join a call. The SDK connects it in the background and the join does not wait
 // for it, except the very first join of a new agent user.
-func (e *Edge) connect() (*rtc.Client, error) {
+func (e *Edge) newClient() (*rtc.Client, error) {
 	user := rtc.User{ID: e.options.User.ID, Name: e.options.User.Name}
 	if user.Name == "" {
 		user.Name = user.ID

@@ -23,7 +23,8 @@ func (s *StreamEdgeIntegrationSuite) TestTheAgentsJoinAgainstARemoteDeployment()
 	// Against a real deployment (staging), pinned to STREAMEDGE_SFU_ID, over the network's
 	// own round trips: nothing is injected. It reports rather than asserts a budget, since
 	// the round trip is whatever the runner has. Each run prints one "agentjoin: {json}"
-	// line on stdout.
+	// line on stdout. The agent's sessions share one SDK client, as the router's do, unless
+	// STREAMEDGE_AGENT_CLIENTS=own gives each its own.
 	sfuID := os.Getenv("STREAMEDGE_SFU_ID")
 	if sfuID == "" || os.Getenv("LOCAL_STACK") != "" {
 		s.T().Skip("needs a remote deployment and STREAMEDGE_SFU_ID")
@@ -35,12 +36,18 @@ func (s *StreamEdgeIntegrationSuite) TestTheAgentsJoinAgainstARemoteDeployment()
 		runs = parsed
 	}
 
+	var clients *Clients
+	if os.Getenv("STREAMEDGE_AGENT_CLIENTS") != "own" {
+		clients = NewClients()
+		defer clients.Close()
+	}
+
 	// The first join of a new user and the first call on an SFU pay for setup a running
 	// agent has already done.
-	s.reportRemoteJoin(s.measureRemoteJoin(-1))
+	s.reportRemoteJoin(s.measureRemoteJoin(-1, clients))
 	var failed []string
 	for run := range runs {
-		m := s.measureRemoteJoin(run)
+		m := s.measureRemoteJoin(run, clients)
 		s.reportRemoteJoin(m)
 		if m.Error != "" {
 			failed = append(failed, fmt.Sprintf("run %d: %s", run, m.Error))
@@ -58,6 +65,8 @@ type remoteJoin struct {
 	Run  int    `json:"run"`
 	Flow string `json:"flow"`
 	SFU  string `json:"sfu"`
+	// AgentClient is "shared" when the agent's sessions share one SDK client, else "own".
+	AgentClient string `json:"agent_client"`
 	// AgentStart is when the agent's join started: once the caller's first RTP was sent
 	// ("publishing") or as soon as the caller's Join returned ("join").
 	AgentStart string `json:"agent_start"`
@@ -79,9 +88,13 @@ type remoteJoin struct {
 
 // measureRemoteJoin puts a caller who is already talking in a call of its own, joins the
 // agent and waits for its join trace, which the SDK reports once media flows both ways. A
-// failure is recorded in the result, so one bad run does not lose the others.
-func (s *StreamEdgeIntegrationSuite) measureRemoteJoin(run int) remoteJoin {
-	m := remoteJoin{Run: run}
+// failure is recorded in the result, so one bad run does not lose the others. The agent
+// takes its SDK client from clients, when set.
+func (s *StreamEdgeIntegrationSuite) measureRemoteJoin(run int, clients *Clients) remoteJoin {
+	m := remoteJoin{Run: run, AgentClient: "own"}
+	if clients != nil {
+		m.AgentClient = "shared"
+	}
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 	s.callID = fmt.Sprintf("go-edge-%d", time.Now().UnixNano())
@@ -109,7 +122,7 @@ func (s *StreamEdgeIntegrationSuite) measureRemoteJoin(run int) remoteJoin {
 	m.CallerReadyMs = float64(time.Since(callerStarted).Microseconds()) / 1000
 
 	agentEdge, err := New(Options{CallID: s.callID, CallType: s.callType, User: User{ID: "go-edge-agent", Name: "go-edge-agent"},
-		coordinatorOptions: s.pin, joinOptions: s.joinOptions})
+		Clients: clients, coordinatorOptions: s.pin, joinOptions: s.joinOptions})
 	s.Require().NoError(err)
 	started := time.Now()
 	if err := agentEdge.Join(ctx); err != nil {

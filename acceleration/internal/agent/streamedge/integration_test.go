@@ -215,11 +215,11 @@ func (s *StreamEdgeIntegrationSuite) TestTheAgentsJoinReachesMediaWithinItsRound
 	}
 	// The first join of a new user and the first call on an SFU pay for setup a running
 	// agent has already done.
-	s.measureJoin(-1)
+	s.measureJoin(-1, nil)
 
 	measured := make([]joinMeasurement, 0, joinRuns)
 	for run := range joinRuns {
-		measured = append(measured, s.measureJoin(run))
+		measured = append(measured, s.measureJoin(run, nil))
 	}
 	s.record(measured)
 
@@ -236,6 +236,46 @@ func (s *StreamEdgeIntegrationSuite) TestTheAgentsJoinReachesMediaWithinItsRound
 	s.LessOrEqual(publish, budget, "the agent's audio reaches the SFU within %.1f RTT", joinBudgetRTTs)
 	s.LessOrEqual(subscribe, budget, "the caller's audio reaches the agent within %.1f RTT", joinBudgetRTTs)
 }
+
+func (s *StreamEdgeIntegrationSuite) TestTheAgentsNextSessionReachesMediaWithinItsWarmBudget() {
+	// TestTheAgentsJoinReachesMediaWithinItsRoundTripBudget for an agent whose sessions
+	// share one SDK client, as the router's do: each session after the first joins on
+	// connections to the coordinator and the SFU that are already open.
+	if os.Getenv("LOCAL_STACK") == "" {
+		s.T().Skip(`needs the 3RTT local stack: eval "$(local-stack.sh env)"`)
+	}
+	clients := NewClients()
+	defer clients.Close()
+	s.measureJoin(-1, clients)
+
+	measured := make([]joinMeasurement, 0, joinRuns)
+	for run := range joinRuns {
+		measured = append(measured, s.measureJoin(run, clients))
+	}
+	if path := os.Getenv("STREAMEDGE_WARM_JOIN_OUT"); path != "" {
+		s.recordTo(path, measured)
+	}
+
+	publish := median(measured, func(m joinMeasurement) float64 { return m.PublishToMediaMs })
+	subscribe := median(measured, func(m joinMeasurement) float64 { return m.SubscribeToMediaMs })
+	rtt := median(measured, func(m joinMeasurement) float64 { return m.RTTMs["sfu"] })
+	s.T().Logf("median of %d warm joins at %s: publish to media %.0f ms (%.1f RTT), subscribe to media %.0f ms (%.1f RTT), RTT_s %.1f ms",
+		joinRuns, joinRTT, publish, publish/rtt, subscribe, subscribe/rtt, rtt)
+
+	for _, m := range measured {
+		s.Equal(string(rtc.JoinFlowFast), m.Flow, "run %d fell back to the legacy join", m.Run)
+		s.NotContains(m.CriticalPath, "sfu.ws", "run %d waited for the SFU websocket", m.Run)
+	}
+	budget := warmJoinBudgetRTTs*float64(joinRTT.Milliseconds()) + 30
+	s.LessOrEqual(publish, budget, "the agent's audio reaches the SFU within %.1f RTT", warmJoinBudgetRTTs)
+	s.LessOrEqual(subscribe, budget, "the caller's audio reaches the agent within %.1f RTT", warmJoinBudgetRTTs)
+}
+
+// warmJoinBudgetRTTs bounds the median time to media both ways of an agent session after
+// the first, in round trips, plus 30 ms: one round trip each to the coordinator and the
+// SFU, then ICE, DTLS and the first packet. The subscriber's DTLS still costs a round trip
+// the 3.5 RTT goal does not have.
+const warmJoinBudgetRTTs = 4.5
 
 // joinRTT is the round trip the measured agent's connections are given, as in the 3RTT
 // benches.
@@ -263,8 +303,9 @@ type joinMeasurement struct {
 
 // measureJoin puts a caller who is already talking in a call of its own, then joins the
 // agent over a delayed network and waits for its join trace, which the SDK reports once
-// media flows both ways. Both sides must then hear each other.
-func (s *StreamEdgeIntegrationSuite) measureJoin(run int) joinMeasurement {
+// media flows both ways. Both sides must then hear each other. The agent takes its SDK
+// client from clients, when set.
+func (s *StreamEdgeIntegrationSuite) measureJoin(run int, clients *Clients) joinMeasurement {
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 	s.callID = fmt.Sprintf("go-edge-%d", time.Now().UnixNano())
@@ -273,7 +314,7 @@ func (s *StreamEdgeIntegrationSuite) measureJoin(run int) joinMeasurement {
 	s.speak(ctx, caller, 48_000)
 
 	agentEdge, err := New(Options{CallID: s.callID, CallType: s.callType, User: User{ID: "go-edge-agent", Name: "go-edge-agent"},
-		clientOptions: []rtc.Option{rtc.WithNetworkDelay(joinRTT)}})
+		Clients: clients, clientOptions: []rtc.Option{rtc.WithNetworkDelay(joinRTT)}})
 	s.Require().NoError(err)
 	started := time.Now()
 	s.Require().NoError(agentEdge.Join(s.ctx))
@@ -313,10 +354,12 @@ func (s *StreamEdgeIntegrationSuite) measureJoin(run int) joinMeasurement {
 
 // record writes the measurements as JSON lines to STREAMEDGE_JOIN_OUT, when it is set.
 func (s *StreamEdgeIntegrationSuite) record(measured []joinMeasurement) {
-	path := os.Getenv("STREAMEDGE_JOIN_OUT")
-	if path == "" {
-		return
+	if path := os.Getenv("STREAMEDGE_JOIN_OUT"); path != "" {
+		s.recordTo(path, measured)
 	}
+}
+
+func (s *StreamEdgeIntegrationSuite) recordTo(path string, measured []joinMeasurement) {
 	out, err := os.Create(path)
 	s.Require().NoError(err)
 	defer out.Close()
