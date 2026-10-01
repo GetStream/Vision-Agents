@@ -63,14 +63,15 @@ type Config struct {
 	RoutingConfig string `koanf:"routing_config"`
 	PhoneConfig   string `koanf:"phone_config"`
 	// VoicesBucketURL is where the recordings behind a customer's own voice are kept.
-	VoicesBucketURL string    `koanf:"voices_bucket_url"`
-	Postgres        Postgres  `koanf:"postgres"`
-	Redis           Redis     `koanf:"redis"`
-	Auth            Auth      `koanf:"auth"`
-	RateLimit       RateLimit `koanf:"rate_limit"`
-	DataMove        DataMove  `koanf:"data_move"`
-	Stream          Stream    `koanf:"stream"`
-	Agent           Agent     `koanf:"agent"`
+	VoicesBucketURL string     `koanf:"voices_bucket_url"`
+	Postgres        Postgres   `koanf:"postgres"`
+	Redis           Redis      `koanf:"redis"`
+	Auth            Auth       `koanf:"auth"`
+	RateLimit       RateLimit  `koanf:"rate_limit"`
+	DataMove        DataMove   `koanf:"data_move"`
+	Stream          Stream     `koanf:"stream"`
+	Agent           Agent      `koanf:"agent"`
+	Connectors      Connectors `koanf:"connectors"`
 }
 
 // Postgres is where everything worth keeping is written. An empty DSN is a router that
@@ -127,6 +128,13 @@ type Agent struct {
 	SpeculativeReplies bool `koanf:"speculative_replies"`
 }
 
+// Connectors is whether agents may reach the customer's accounts elsewhere.
+type Connectors struct {
+	// Enabled builds the versioned key encryption keyring that seals connector
+	// credentials, in every auth mode, and refuses to start without one. Off by default.
+	Enabled bool `koanf:"enabled"`
+}
+
 // variables maps each setting to the environment variable that has always carried it.
 // Both directions are read from here: the variable wins over the file on the way in, and
 // the effective value is written back to it on the way out.
@@ -154,6 +162,7 @@ var variables = map[string]string{
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
 	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
+	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -302,6 +311,7 @@ func (c Config) export() error {
 		"rate_limit.messages_per_day": fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":   fmt.Sprint(c.RateLimit.TokensPerDay),
 		"agent.speculative_replies":   fmt.Sprint(c.Agent.SpeculativeReplies),
+		"connectors.enabled":          fmt.Sprint(c.Connectors.Enabled),
 	}
 	for key, value := range values {
 		if value == "" {
