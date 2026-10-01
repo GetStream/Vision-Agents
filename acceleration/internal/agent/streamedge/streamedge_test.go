@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/jointrace"
 	"github.com/stretchr/testify/suite"
 
@@ -33,6 +34,8 @@ func (s *StreamEdgeSuite) SetupTest() {
 	s.T().Setenv("STREAM_API_KEY", "")
 	s.T().Setenv("STREAM_API_SECRET", "")
 	s.T().Setenv("STREAM_USER_TOKEN", "")
+	s.T().Setenv("STREAM_BASE_URL", "")
+	s.T().Setenv("STREAM_WS_URL", "")
 }
 
 // speech returns a tone at the given rate, which is what a voice provider hands over.
@@ -119,6 +122,42 @@ func (s *StreamEdgeSuite) TestTheRegionComesFromTheEnvironment() {
 
 	s.Require().NoError(err)
 	s.Equal("AMS", edge.location)
+}
+
+func (s *StreamEdgeSuite) TestWithoutABaseURLTheSDKsDefaultIsJoined() {
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
+
+	s.Require().NoError(err)
+	s.Empty(edge.options.BaseURL)
+	s.Empty(edge.options.WSURL)
+}
+
+func (s *StreamEdgeSuite) TestTheWebsocketFollowsTheBaseURL() {
+	s.T().Setenv("STREAM_BASE_URL", "https://chat-edge-us-east1-ce1.gcp.stream-io-api.com/")
+
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
+
+	s.Require().NoError(err)
+	s.Equal("https://chat-edge-us-east1-ce1.gcp.stream-io-api.com/", edge.options.BaseURL)
+	s.Equal("wss://chat-edge-us-east1-ce1.gcp.stream-io-api.com/api/v2/connect", edge.options.WSURL)
+}
+
+func (s *StreamEdgeSuite) TestAWebsocketOnItsOwnPortComesFromTheEnvironment() {
+	// The local stack serves its websocket on another port than its REST API.
+	s.T().Setenv("STREAM_BASE_URL", "http://127.0.0.1:3030")
+	s.T().Setenv("STREAM_WS_URL", "ws://127.0.0.1:8800/api/v2/connect")
+
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
+
+	s.Require().NoError(err)
+	s.Equal("ws://127.0.0.1:8800/api/v2/connect", edge.options.WSURL)
+}
+
+func (s *StreamEdgeSuite) TestABaseURLMustBeHTTP() {
+	_, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret",
+		BaseURL: "ftp://example.com"})
+
+	s.ErrorContains(err, "want http or https")
 }
 
 func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {
@@ -395,8 +434,10 @@ func (s *StreamEdgeSuite) TestPublishingAfterLeavingFails() {
 	s.NoError(talker.Close(), "closing twice is safe")
 }
 
-// joinTimeline is a first join as the SDK records it: the coordinator, the SFU, then the
-// publish and subscribe branches in parallel, at 50 ms to every peer.
+// joinTimeline is a first join as the SDK records it on the fast join: the coordinator's
+// fast_join alongside building the peer connections, the SFU's FastJoin alongside the
+// websocket dial, then the publish and subscribe branches in parallel once the websocket
+// has delivered the SFU's candidates, at 50 ms to every peer.
 func joinTimeline(started time.Time) jointrace.Trace {
 	at := func(ms float64) time.Time { return started.Add(time.Duration(ms * float64(time.Millisecond))) }
 	rec := jointrace.NewRecorder(started)
@@ -406,22 +447,21 @@ func joinTimeline(started time.Time) jointrace.Trace {
 	step := func(name string, after []string, from, to float64, kind jointrace.Kind, peer jointrace.Peer) {
 		rec.Add(jointrace.Span{Name: name, After: after, Start: at(from), End: at(to), Kind: kind, Peer: peer})
 	}
-	step(jointrace.CoordJoin, nil, 0, 200, jointrace.KindNet, jointrace.PeerCoordinator)
-	step(jointrace.PCsCreate, []string{jointrace.CoordJoin}, 200, 202, jointrace.KindLocal, jointrace.PeerLocal)
-	step(jointrace.SFUWSDial, []string{jointrace.PCsCreate}, 202, 352, jointrace.KindNet, jointrace.PeerSFU)
-	step(jointrace.SFUJoin, []string{jointrace.SFUWSDial}, 352, 402, jointrace.KindNet, jointrace.PeerSFU)
-	step(jointrace.PubDebounce, []string{jointrace.SFUJoin}, 402, 403, jointrace.KindTimer, jointrace.PeerLocal)
-	step(jointrace.PubOffer, []string{jointrace.PubDebounce}, 403, 405, jointrace.KindLocal, jointrace.PeerLocal)
-	step(jointrace.PubSetPublisher, []string{jointrace.PubOffer}, 405, 455, jointrace.KindNet, jointrace.PeerSFU)
-	step(jointrace.PubICE, []string{jointrace.PubSetPublisher}, 456, 506, jointrace.KindNet, jointrace.PeerUDP)
-	step(jointrace.PubDTLS, []string{jointrace.PubICE}, 506, 556, jointrace.KindNet, jointrace.PeerUDP)
-	step(jointrace.PubRTP, []string{jointrace.PubDTLS}, 556, 560, jointrace.KindLocal, jointrace.PeerLocal)
-	step(jointrace.SubDebounce, []string{jointrace.SFUJoin}, 402, 480, jointrace.KindTimer, jointrace.PeerSFU)
-	step(jointrace.SubOffer, []string{jointrace.SubDebounce}, 480, 505, jointrace.KindNet, jointrace.PeerSFU)
-	step(jointrace.SubSendAnswer, []string{jointrace.SubOffer}, 505, 556, jointrace.KindNet, jointrace.PeerSFU)
-	step(jointrace.SubICE, []string{jointrace.SubSendAnswer}, 507, 557, jointrace.KindNet, jointrace.PeerUDP)
-	step(jointrace.SubDTLS, []string{jointrace.SubICE}, 557, 607, jointrace.KindNet, jointrace.PeerUDP)
-	step(jointrace.SubRTP, []string{jointrace.SubDTLS}, 607, 630, jointrace.KindNet, jointrace.PeerUDP)
+	step(jointrace.CoordFastJoin, nil, 0, 100, jointrace.KindNet, jointrace.PeerCoordinator)
+	step(jointrace.PCsCreate, nil, 0, 1, jointrace.KindLocal, jointrace.PeerLocal)
+	step(jointrace.SFUFastJoin, []string{jointrace.CoordFastJoin, jointrace.PCsCreate}, 100, 150, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.SFUWSDial, []string{jointrace.CoordFastJoin}, 100, 200, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.SubAnswer, []string{jointrace.SFUFastJoin}, 150, 151, jointrace.KindLocal, jointrace.PeerLocal)
+	step(jointrace.SubSendAnswer, []string{jointrace.SubAnswer}, 151, 201, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.SFUWS, []string{jointrace.SFUWSDial, jointrace.SFUFastJoin}, 200, 250, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.PubSFUCandidates, []string{jointrace.SFUWS}, 250, 250, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.SubSFUCandidates, []string{jointrace.SFUWS}, 250, 250, jointrace.KindNet, jointrace.PeerSFU)
+	step(jointrace.PubICE, []string{jointrace.SFUFastJoin, jointrace.PubSFUCandidates}, 250, 300, jointrace.KindNet, jointrace.PeerUDP)
+	step(jointrace.SubICE, []string{jointrace.SubAnswer, jointrace.SubSFUCandidates}, 250, 300, jointrace.KindNet, jointrace.PeerUDP)
+	step(jointrace.PubDTLS, []string{jointrace.PubICE}, 300, 400, jointrace.KindNet, jointrace.PeerUDP)
+	step(jointrace.SubDTLS, []string{jointrace.SubICE}, 300, 400, jointrace.KindNet, jointrace.PeerUDP)
+	step(jointrace.PubRTP, []string{jointrace.PubDTLS}, 400, 402, jointrace.KindLocal, jointrace.PeerLocal)
+	step(jointrace.SubRTP, []string{jointrace.SubDTLS}, 400, 430, jointrace.KindNet, jointrace.PeerUDP)
 	trace := rec.Trace()
 	trace.JoinAt = started
 	return trace
@@ -430,17 +470,17 @@ func joinTimeline(started time.Time) jointrace.Trace {
 func (s *StreamEdgeSuite) TestTheJoinTraceIsTheSDKsReportUnchanged() {
 	trace := joinTimeline(time.Now())
 
-	joined, err := joinTrace(trace)
+	joined, err := joinTrace(trace, rtc.JoinFlowFast)
 	s.Require().NoError(err)
 
 	want, err := json.Marshal(trace)
 	s.Require().NoError(err)
 	s.JSONEq(string(want), string(joined.Trace), "the agent forwards what the SDK recorded")
-	s.Equal("coord.join > pcs.create > sfu.ws.dial > sfu.join > sub.debounce > sub.offer > "+
-		"sub.sendanswer > sub.ice > sub.dtls > sub.rtp", joined.CriticalPath,
-		"the subscriber finishes last, so its branch is the critical path")
-	s.Equal(630.0, joined.CriticalMs)
-	s.InDelta(4+3+1+0.5+1.02+0.02+1+0.46, joined.CriticalRTTs, 0.01)
+	s.Equal("fast", joined.Flow)
+	s.Equal("coord.fastjoin > sfu.ws.dial > sfu.ws > sub.sfu.candidates > sub.ice > sub.dtls > sub.rtp",
+		joined.CriticalPath, "the subscriber finishes last, and waits for the candidates the websocket carries")
+	s.Equal(430.0, joined.CriticalMs)
+	s.InDelta(2+2+1+0+1+2+0.6, joined.CriticalRTTs, 0.01)
 }
 
 func (s *StreamEdgeSuite) TestTheJoinTraceIsReportedOnce() {
@@ -449,13 +489,13 @@ func (s *StreamEdgeSuite) TestTheJoinTraceIsReportedOnce() {
 	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
 	s.Require().NoError(err)
 
-	go edge.onJoinTrace(joinTimeline(time.Now()))
+	go edge.onJoinTrace(joinTimeline(time.Now()), rtc.JoinFlowLegacy)
 
 	select {
 	case joined := <-edge.JoinTraces():
 		var report jointrace.Report
 		s.Require().NoError(json.Unmarshal(joined.Trace, &report))
-		s.Len(report.Spans, 16)
+		s.Len(report.Spans, 15)
 		s.Equal(jointrace.SubRTP, report.CriticalPath[len(report.CriticalPath)-1])
 	case <-time.After(time.Second):
 		s.FailNow("the join trace was not reported")

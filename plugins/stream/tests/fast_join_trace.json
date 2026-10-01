@@ -1,0 +1,412 @@
+{
+  "origin_unix_ms": 1790811671815.304,
+  "join_at_ms": 0,
+  "rtt_ms": {
+    "coordinator": 100.17,
+    "sfu": 100.29,
+    "udp": 100.46
+  },
+  "spans": [
+    {
+      "name": "pcs.create",
+      "kind": "local",
+      "peer": "local",
+      "start_ms": 0,
+      "end_ms": 1.17,
+      "ms": 1.17,
+      "rtts": 0,
+      "note": "includes the publisher offer, in parallel with coord.fastjoin"
+    },
+    {
+      "name": "coord.ws.dial",
+      "kind": "net",
+      "peer": "coordinator",
+      "start_ms": 0.05,
+      "end_ms": 201.22,
+      "ms": 201.17,
+      "rtts": 2.01
+    },
+    {
+      "name": "coord.ws.dial.tcp",
+      "parent": "coord.ws.dial",
+      "kind": "net",
+      "peer": "coordinator",
+      "start_ms": 0.05,
+      "end_ms": 101.04,
+      "ms": 100.98,
+      "rtts": 1.01
+    },
+    {
+      "name": "coord.fastjoin",
+      "kind": "net",
+      "peer": "coordinator",
+      "start_ms": 0.13,
+      "end_ms": 207.99,
+      "ms": 207.86,
+      "rtts": 2.08,
+      "critical": true,
+      "cost_ms": 207.86,
+      "wait_ms": 0.13
+    },
+    {
+      "name": "coord.fastjoin.tcp",
+      "parent": "coord.fastjoin",
+      "kind": "net",
+      "peer": "coordinator",
+      "start_ms": 0.16,
+      "end_ms": 101.03,
+      "ms": 100.87,
+      "rtts": 1.01
+    },
+    {
+      "name": "coord.fastjoin.request",
+      "parent": "coord.fastjoin",
+      "kind": "local",
+      "peer": "coordinator",
+      "start_ms": 101.04,
+      "end_ms": 101.08,
+      "ms": 0.04,
+      "rtts": 0
+    },
+    {
+      "name": "coord.ws.dial.request",
+      "parent": "coord.ws.dial",
+      "kind": "local",
+      "peer": "coordinator",
+      "start_ms": 101.04,
+      "end_ms": 101.05,
+      "ms": 0.01,
+      "rtts": 0
+    },
+    {
+      "name": "coord.ws.dial.first_byte",
+      "parent": "coord.ws.dial",
+      "kind": "net",
+      "peer": "coordinator",
+      "start_ms": 101.05,
+      "end_ms": 201.22,
+      "ms": 100.17,
+      "rtts": 1
+    },
+    {
+      "name": "coord.fastjoin.first_byte",
+      "parent": "coord.fastjoin",
+      "kind": "net",
+      "peer": "coordinator",
+      "start_ms": 101.08,
+      "end_ms": 207.71,
+      "ms": 106.63,
+      "rtts": 1.06
+    },
+    {
+      "name": "coord.fastjoin.server",
+      "parent": "coord.fastjoin",
+      "kind": "local",
+      "peer": "coordinator",
+      "start_ms": 151.3,
+      "end_ms": 157.49,
+      "ms": 6.19,
+      "rtts": 0,
+      "note": "server-timing: call;dur=2.57, session;dur=1.58, geoip;dur=0.01, order;dur=1.60, credentials;dur=0.34, total;dur=6.19"
+    },
+    {
+      "name": "coord.ws.auth",
+      "after": [
+        "coord.ws.dial"
+      ],
+      "kind": "net",
+      "peer": "coordinator",
+      "start_ms": 201.22,
+      "end_ms": 302.5,
+      "ms": 101.28,
+      "rtts": 1.01
+    },
+    {
+      "name": "sfu.fastjoin",
+      "after": [
+        "coord.fastjoin",
+        "pcs.create"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 208,
+      "end_ms": 410.96,
+      "ms": 202.96,
+      "rtts": 2.02,
+      "critical": true,
+      "cost_ms": 202.96
+    },
+    {
+      "name": "sfu.ws.dial",
+      "after": [
+        "coord.fastjoin"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 208.02,
+      "end_ms": 408.6,
+      "ms": 200.58,
+      "rtts": 2
+    },
+    {
+      "name": "sfu.ws.dial.tcp",
+      "parent": "sfu.ws.dial",
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 208.04,
+      "end_ms": 308.4,
+      "ms": 100.36,
+      "rtts": 1
+    },
+    {
+      "name": "sfu.fastjoin.tcp",
+      "parent": "sfu.fastjoin",
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 208.09,
+      "end_ms": 308.38,
+      "ms": 100.29,
+      "rtts": 1
+    },
+    {
+      "name": "sfu.fastjoin.request",
+      "parent": "sfu.fastjoin",
+      "kind": "local",
+      "peer": "sfu",
+      "start_ms": 308.39,
+      "end_ms": 308.42,
+      "ms": 0.04,
+      "rtts": 0
+    },
+    {
+      "name": "sfu.ws.dial.request",
+      "parent": "sfu.ws.dial",
+      "kind": "local",
+      "peer": "sfu",
+      "start_ms": 308.4,
+      "end_ms": 308.42,
+      "ms": 0.01,
+      "rtts": 0
+    },
+    {
+      "name": "sfu.ws.dial.first_byte",
+      "parent": "sfu.ws.dial",
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 308.42,
+      "end_ms": 408.57,
+      "ms": 100.16,
+      "rtts": 1
+    },
+    {
+      "name": "sfu.fastjoin.first_byte",
+      "parent": "sfu.fastjoin",
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 308.42,
+      "end_ms": 410.87,
+      "ms": 102.45,
+      "rtts": 1.02
+    },
+    {
+      "name": "sfu.fastjoin.server",
+      "parent": "sfu.fastjoin",
+      "kind": "local",
+      "peer": "sfu",
+      "start_ms": 358.57,
+      "end_ms": 360.73,
+      "ms": 2.16,
+      "rtts": 0,
+      "note": "server_timings: grant=0.226 call=0.005 participant=1.19 publisher=0.506 subscriber=0.212 total=2.16"
+    },
+    {
+      "name": "sub.answer",
+      "after": [
+        "sfu.fastjoin"
+      ],
+      "kind": "local",
+      "peer": "local",
+      "start_ms": 410.97,
+      "end_ms": 411.18,
+      "ms": 0.2,
+      "rtts": 0,
+      "note": "sent without waiting"
+    },
+    {
+      "name": "sfu.ws",
+      "after": [
+        "sfu.ws.dial",
+        "sfu.fastjoin"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 411.05,
+      "end_ms": 511.54,
+      "ms": 100.48,
+      "rtts": 1,
+      "critical": true,
+      "cost_ms": 100.48,
+      "wait_ms": 0.09,
+      "note": "attach; nothing waits for it but the SFU's candidates"
+    },
+    {
+      "name": "sub.ice",
+      "after": [
+        "sub.answer",
+        "sub.sfu.candidates"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 411.15,
+      "end_ms": 813.66,
+      "ms": 402.51,
+      "rtts": 4.01,
+      "critical": true,
+      "cost_ms": 302.12
+    },
+    {
+      "name": "pub.ice",
+      "after": [
+        "sfu.fastjoin",
+        "pub.sfu.candidates"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 411.17,
+      "end_ms": 813.56,
+      "ms": 402.39,
+      "rtts": 4.01
+    },
+    {
+      "name": "sub.sendanswer",
+      "after": [
+        "sub.answer"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 411.18,
+      "end_ms": 511.63,
+      "ms": 100.45,
+      "rtts": 1,
+      "note": "not awaited"
+    },
+    {
+      "name": "sub.sendanswer.request",
+      "parent": "sub.sendanswer",
+      "kind": "local",
+      "peer": "sfu",
+      "start_ms": 411.21,
+      "end_ms": 411.22,
+      "ms": 0.01,
+      "rtts": 0,
+      "note": "reused connection"
+    },
+    {
+      "name": "sub.sendanswer.first_byte",
+      "parent": "sub.sendanswer",
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 411.22,
+      "end_ms": 511.59,
+      "ms": 100.37,
+      "rtts": 1
+    },
+    {
+      "name": "sub.sfu.candidates",
+      "after": [
+        "sfu.ws"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 511.54,
+      "end_ms": 511.55,
+      "ms": 0.01,
+      "rtts": 0,
+      "critical": true,
+      "cost_ms": 0.01,
+      "note": "trickled on the websocket once it attaches"
+    },
+    {
+      "name": "pub.sfu.candidates",
+      "after": [
+        "sfu.ws"
+      ],
+      "kind": "net",
+      "peer": "sfu",
+      "start_ms": 511.54,
+      "end_ms": 511.54,
+      "ms": 0,
+      "rtts": 0,
+      "note": "trickled on the websocket once it attaches"
+    },
+    {
+      "name": "pub.dtls",
+      "after": [
+        "pub.ice"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 813.56,
+      "end_ms": 1016.28,
+      "ms": 202.72,
+      "rtts": 2.02
+    },
+    {
+      "name": "sub.dtls",
+      "after": [
+        "sub.ice"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 813.66,
+      "end_ms": 1016.26,
+      "ms": 202.6,
+      "rtts": 2.02,
+      "critical": true,
+      "cost_ms": 202.6
+    },
+    {
+      "name": "sub.rtp",
+      "after": [
+        "sub.dtls"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 1016.26,
+      "end_ms": 1130.32,
+      "ms": 114.05,
+      "rtts": 1.14,
+      "critical": true,
+      "cost_ms": 114.05
+    },
+    {
+      "name": "pub.rtp",
+      "after": [
+        "pub.dtls"
+      ],
+      "kind": "net",
+      "peer": "udp",
+      "start_ms": 1016.28,
+      "end_ms": 1031.35,
+      "ms": 15.07,
+      "rtts": 0.15
+    }
+  ],
+  "critical_path": [
+    "coord.fastjoin",
+    "sfu.fastjoin",
+    "sfu.ws",
+    "sub.sfu.candidates",
+    "sub.ice",
+    "sub.dtls",
+    "sub.rtp"
+  ],
+  "critical_ms": 1130.09,
+  "critical_rtts": 11.26,
+  "critical_net_ms": 1130.09,
+  "critical_timer_ms": 0,
+  "critical_local_ms": 0,
+  "critical_wait_ms": 0.23,
+  "publish_to_media_ms": 1081.57,
+  "subscribe_to_media_ms": 1130.32
+}

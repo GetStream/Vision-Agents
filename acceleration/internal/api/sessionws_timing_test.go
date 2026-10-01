@@ -22,7 +22,7 @@ func TestModelCallTimingReachesSessionSocket(t *testing.T) {
 
 func TestJoinTraceReachesSessionSocketUnchanged(t *testing.T) {
 	trace := json.RawMessage(`{"critical_path":["sfu.ws.dial","sfu.join"],"critical_ms":150,"spans":[]}`)
-	frame, ok := frameOf(agent.Connection{JoinTrace: agent.JoinTrace{Trace: trace, CriticalMs: 150}})
+	frame, ok := frameOf(agent.Connection{JoinTrace: agent.JoinTrace{Trace: trace, Flow: "fast", CriticalMs: 150}})
 	if !ok || frame["type"] != "connection" {
 		t.Fatalf("connection frame = %#v, ok=%v", frame, ok)
 	}
@@ -34,10 +34,10 @@ func TestJoinTraceReachesSessionSocketUnchanged(t *testing.T) {
 	if err := json.Unmarshal(encoded, &got); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(`{"type":"connection","trace":`+string(trace)+`}`), &want); err != nil {
+	if err := json.Unmarshal([]byte(`{"type":"connection","flow":"fast","trace":`+string(trace)+`}`), &want); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("connection frame = %s, want the trace as it came", encoded)
+		t.Fatalf("connection frame = %s, want the flow and the trace as it came", encoded)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -21,11 +22,11 @@ import (
 	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/audio/opus"
 	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
+	"github.com/GetStream/getstream-go-webrtc/coordinator"
 	"github.com/GetStream/getstream-go-webrtc/jointrace"
 	"github.com/GetStream/getstream-go-webrtc/track"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
-	"github.com/GetStream/protocol/protobuf/video/sfu/signal_rpc"
 	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 
@@ -40,6 +41,8 @@ const (
 	apiSecretEnvVar = "STREAM_API_SECRET"
 	userTokenEnvVar = "STREAM_USER_TOKEN"
 	regionEnvVar    = "STREAM_REGION"
+	baseURLEnvVar   = "STREAM_BASE_URL"
+	wsURLEnvVar     = "STREAM_WS_URL"
 )
 
 // defaultCallType is the call type an agent joins under.
@@ -77,7 +80,18 @@ type Options struct {
 	// near it; without one, near the address the agent connects from.
 	Region string
 
+	// BaseURL is the coordinator to join through. It defaults to STREAM_BASE_URL, which the
+	// rest of the service's Stream clients also read, and then to Stream's production API.
+	BaseURL string
+	// WSURL is the coordinator's websocket. It defaults to STREAM_WS_URL, and then to
+	// BaseURL's /api/v2/connect.
+	WSURL string
+
 	Logger *slog.Logger
+
+	// clientOptions are passed to the SDK client as they are, so a test can add a network
+	// delay.
+	clientOptions []rtc.Option
 }
 
 // User is who the agent is in the call.
@@ -109,10 +123,7 @@ type Edge struct {
 	mu sync.Mutex
 	// listening holds what stops the decoding of each subscribed track, so a track that
 	// goes away stops being decoded.
-	listening map[string]chan struct{}
-	// subscribed is the whole subscription list, because the SFU replaces it wholesale on
-	// every update rather than adding to it.
-	subscribed  []*signal_rpc.TrackSubscriptionDetails
+	listening   map[string]chan struct{}
 	unregisters []func()
 	left        bool
 
@@ -156,6 +167,19 @@ func New(options Options) (*Edge, error) {
 	if !known {
 		options.Logger.Warn("streamedge: unknown region, placing the agent by its address", "region", options.Region)
 	}
+	if options.BaseURL == "" {
+		options.BaseURL = os.Getenv(baseURLEnvVar)
+	}
+	if options.WSURL == "" {
+		options.WSURL = os.Getenv(wsURLEnvVar)
+	}
+	if options.WSURL == "" && options.BaseURL != "" {
+		wsURL, err := websocketURL(options.BaseURL)
+		if err != nil {
+			return nil, err
+		}
+		options.WSURL = wsURL
+	}
 
 	return &Edge{
 		options:   options,
@@ -170,10 +194,16 @@ func New(options Options) (*Edge, error) {
 	}, nil
 }
 
-// Join connects, subscribes to what the participants are already saying, and publishes the
-// agent's own audio track.
+// Join connects and joins the call, publishing the agent's own audio track from the join.
+//
+// There is nothing to subscribe to: the SFU sends every participant everyone else's audio,
+// what is already being published at the join and whatever is published later.
 func (e *Edge) Join(ctx context.Context) error {
 	started := time.Now()
+	info, voice, err := e.voice()
+	if err != nil {
+		return err
+	}
 	client, err := e.connect()
 	if err != nil {
 		return err
@@ -184,46 +214,28 @@ func (e *Edge) Join(ctx context.Context) error {
 	// in the SDK, which has no signaling client yet to report its stats through.
 	call := client.Call(e.options.CallType, e.options.CallID)
 	// Set before Join, which starts the trace.
-	call.OnJoinTrace(e.onJoinTrace)
-	signalingStarted := time.Now()
-	joined, err := call.Join(ctx, rtc.WithLocation(e.location), rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
-		e.listen(remote)
-	})))
+	call.OnJoinTrace(func(trace jointrace.Trace) { e.onJoinTrace(trace, call.JoinFlow()) })
+	joined, err := call.Join(ctx, rtc.WithLocation(e.location), rtc.WithTrack(info, voice),
+		rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
+			e.listen(remote)
+		})))
 	if err != nil {
 		return fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err)
 	}
 	e.call = call
-	signalingMs := float64(time.Since(signalingStarted).Microseconds()) / 1000
 
-	// Joining subscribes to nothing, so the SFU has to be told what to forward: whatever is
-	// already being published, and then whatever is published later.
-	e.mu.Lock()
-	e.subscribed = audioSubscriptions(joined.GetCallState(), e.options.User.ID)
-	subscriptions := slices.Clone(e.subscribed)
-	e.mu.Unlock()
-
-	subscribeStarted := time.Now()
-	if err := e.call.SubscribeToTracks(ctx, subscriptions...); err != nil {
-		return fmt.Errorf("streamedge: subscribe: %w", err)
-	}
-	subscribeMs := float64(time.Since(subscribeStarted).Microseconds()) / 1000
-	e.watchForNewTracks(ctx)
 	// Registered before the people already here are reported, so somebody arriving during
 	// this is reported once rather than not at all.
 	e.watchAttendance()
 	e.reportPresent(joined.GetCallState())
 
-	publishStarted := time.Now()
-	if err := e.publish(); err != nil {
-		return err
+	flow := call.JoinFlow()
+	e.logger.Info("joined the call", "user", e.options.User.ID, "session", e.call.SessionID.Load(),
+		"flow", flow, "join_ms", float64(time.Since(started).Microseconds())/1000)
+	if flow != rtc.JoinFlowFast {
+		// The SDK falls back without failing the join, so this is the only word of it.
+		e.logger.Warn("joined without the fast join: the deployment does not offer it", "flow", flow)
 	}
-	e.logger.Info("call connection timing", "signaling_ms", signalingMs,
-		"subscribe_ms", subscribeMs,
-		"publish_ms", float64(time.Since(publishStarted).Microseconds())/1000,
-		"join_ms", float64(time.Since(started).Microseconds())/1000)
-
-	e.logger.Info("joined the call",
-		"user", e.options.User.ID, "session", e.call.SessionID.Load(), "tracks", len(subscriptions))
 	return nil
 }
 
@@ -293,21 +305,21 @@ func (e *Edge) JoinTraces() <-chan agent.JoinTrace { return e.tracing.Events() }
 
 // onJoinTrace hands the SDK's record of the join to the agent, unchanged. The SDK calls it
 // once, on its own goroutine, when media flows both ways or after rtc.JoinTraceTimeout.
-func (e *Edge) onJoinTrace(trace jointrace.Trace) {
-	joined, err := joinTrace(trace)
+func (e *Edge) onJoinTrace(trace jointrace.Trace, flow rtc.JoinFlow) {
+	joined, err := joinTrace(trace, flow)
 	if err != nil {
 		e.logger.Warn("join trace not reported", "error", err)
 		return
 	}
-	e.logger.Info("join trace", "critical_ms", joined.CriticalMs, "critical_rtts", joined.CriticalRTTs,
-		"critical_path", joined.CriticalPath)
+	e.logger.Info("join trace", "flow", joined.Flow, "critical_ms", joined.CriticalMs,
+		"critical_rtts", joined.CriticalRTTs, "critical_path", joined.CriticalPath)
 	e.logger.Debug("join DAG\n" + trace.String())
 	e.tracing.Send(joined)
 }
 
-// joinTrace is the SDK's trace as the agent carries it: the SDK's own JSON report, and the
-// critical path pulled out of it for logs.
-func joinTrace(trace jointrace.Trace) (agent.JoinTrace, error) {
+// joinTrace is the SDK's trace as the agent carries it: the SDK's own JSON report, the flow
+// the join took, and the critical path pulled out of it for logs.
+func joinTrace(trace jointrace.Trace, flow rtc.JoinFlow) (agent.JoinTrace, error) {
 	report := trace.Report()
 	encoded, err := json.Marshal(report)
 	if err != nil {
@@ -315,6 +327,7 @@ func joinTrace(trace jointrace.Trace) (agent.JoinTrace, error) {
 	}
 	return agent.JoinTrace{
 		Trace:        encoded,
+		Flow:         string(flow),
 		CriticalPath: strings.Join(report.CriticalPath, " > "),
 		CriticalMs:   report.CriticalMs,
 		CriticalRTTs: report.CriticalRTTs,
@@ -332,25 +345,52 @@ func (e *Edge) connect() (*rtc.Client, error) {
 	if user.Name == "" {
 		user.Name = user.ID
 	}
+	options := slices.Clone(e.options.clientOptions)
+	if e.options.BaseURL != "" {
+		options = append(options, rtc.WithCoordinatorOptions(
+			coordinator.ApiURL(e.options.BaseURL), coordinator.WithWsURL(e.options.WSURL)))
+	}
 
 	if e.options.UserToken != "" {
-		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken))
+		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken), options...)
 		if err != nil {
 			return nil, fmt.Errorf("streamedge: connect: %w", err)
 		}
 		return client, nil
 	}
 
-	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, rtc.WithUser(user))
+	clientOptions := []rtc.ClientOption{rtc.WithUser(user)}
+	for _, option := range options {
+		clientOptions = append(clientOptions, option)
+	}
+	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, clientOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("streamedge: connect: %w", err)
 	}
 	return client, nil
 }
 
-// publish adds the agent's Opus track. The track starts pulling frames from the speaker as
-// soon as the transceiver is bound.
-func (e *Edge) publish() error {
+// websocketURL is the coordinator websocket that goes with a coordinator base URL.
+func websocketURL(base string) (string, error) {
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("streamedge: %s %q: %w", baseURLEnvVar, base, err)
+	}
+	switch parsed.Scheme {
+	case "https":
+		parsed.Scheme = "wss"
+	case "http":
+		parsed.Scheme = "ws"
+	default:
+		return "", fmt.Errorf("streamedge: %s %q: want http or https", baseURLEnvVar, base)
+	}
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/api/v2/connect"
+	return parsed.String(), nil
+}
+
+// voice is the agent's Opus track, which the join publishes. The track starts pulling frames
+// from the speaker as soon as the transceiver is bound.
+func (e *Edge) voice() (*sfu_models.TrackInfo, webrtc.TrackLocal, error) {
 	info := &sfu_models.TrackInfo{
 		TrackId:   uuid.NewString(),
 		TrackType: sfu_models.TrackType_TRACK_TYPE_AUDIO,
@@ -361,12 +401,9 @@ func (e *Edge) publish() error {
 		Channels:  opusNegotiatedChannels,
 	})
 	if err != nil {
-		return fmt.Errorf("streamedge: build audio track: %w", err)
+		return nil, nil, fmt.Errorf("streamedge: build audio track: %w", err)
 	}
-	if _, err := e.call.AddTrack(info, voice); err != nil {
-		return fmt.Errorf("streamedge: publish audio track: %w", err)
-	}
-	return nil
+	return info, voice, nil
 }
 
 // listen decodes one participant's track into the audio the agent listens to. Reading the
@@ -376,9 +413,9 @@ func (e *Edge) listen(remote rtc.OnTrackReceived) {
 	if remote.TrackType != sfu_models.TrackType_TRACK_TYPE_AUDIO {
 		return
 	}
-	// Subscribing skips the agent's own user, but the SFU forwards what it forwards. A
-	// second instance of the same agent left behind in the call arrives here and is heard
-	// as a caller, and the two then answer each other until nobody else can get a word in.
+	// The SFU forwards every other session's audio. A second instance of the same agent
+	// left behind in the call arrives here and is heard as a caller, and the two then
+	// answer each other until nobody else can get a word in.
 	if string(remote.ParticipantID.UserID) == e.options.User.ID {
 		e.logger.Warn("another instance of this agent is in the call, ignoring it",
 			"user", e.options.User.ID, "session", string(remote.ParticipantID.SessionID))
@@ -442,42 +479,6 @@ func (e *Edge) hear(reader *audiortc.TrackReader, participant stt.Participant, s
 	}
 }
 
-// watchForNewTracks subscribes to whatever is published after the agent joined, which is
-// how someone who joins later gets heard.
-func (e *Edge) watchForNewTracks(ctx context.Context) {
-	unregister := rtc.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_TrackPublished) {
-		published := event.TrackPublished
-		if published.GetUserId() == e.options.User.ID {
-			return
-		}
-		if published.GetType() != sfu_models.TrackType_TRACK_TYPE_AUDIO {
-			return
-		}
-
-		e.mu.Lock()
-		if e.left {
-			e.mu.Unlock()
-			return
-		}
-		e.subscribed = append(e.subscribed, &signal_rpc.TrackSubscriptionDetails{
-			UserId:    published.GetUserId(),
-			SessionId: published.GetSessionId(),
-			TrackType: published.GetType(),
-		})
-		subscriptions := slices.Clone(e.subscribed)
-		e.mu.Unlock()
-
-		if err := e.call.SubscribeToTracks(ctx, subscriptions...); err != nil {
-			e.logger.Error("could not subscribe to a new track",
-				"participant", published.GetUserId(), "error", err)
-		}
-	})
-
-	e.mu.Lock()
-	e.unregisters = append(e.unregisters, unregister)
-	e.mu.Unlock()
-}
-
 // watchAttendance reports arrivals and departures.
 //
 // The SFU says who is there whether or not they have published anything, which is the point:
@@ -525,26 +526,4 @@ func (e *Edge) report(participant *sfu_models.Participant, joined bool) {
 		},
 		Joined: joined,
 	})
-}
-
-// audioSubscriptions asks for the audio every other participant is already publishing.
-// Video is deliberately left alone: the agent listens and talks.
-func audioSubscriptions(state *sfu_models.CallState, selfUserID string) []*signal_rpc.TrackSubscriptionDetails {
-	var subscriptions []*signal_rpc.TrackSubscriptionDetails
-	for _, participant := range state.GetParticipants() {
-		if participant.GetUserId() == selfUserID {
-			continue
-		}
-		for _, trackType := range participant.GetPublishedTracks() {
-			if trackType != sfu_models.TrackType_TRACK_TYPE_AUDIO {
-				continue
-			}
-			subscriptions = append(subscriptions, &signal_rpc.TrackSubscriptionDetails{
-				UserId:    participant.GetUserId(),
-				SessionId: participant.GetSessionId(),
-				TrackType: trackType,
-			})
-		}
-	}
-	return subscriptions
 }

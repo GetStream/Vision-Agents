@@ -424,7 +424,7 @@ func frameOf(event session.Event) (frame, bool) {
 
 	case agent.Connection:
 		// The transport's trace goes out as it recorded it.
-		return frame{"type": "connection", "trace": typed.Trace}, true
+		return frame{"type": "connection", "flow": typed.Flow, "trace": typed.Trace}, true
 
 	case agent.ModelCall:
 		return frame{

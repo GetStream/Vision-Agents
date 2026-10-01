@@ -166,6 +166,11 @@ class TestAccelerated:
         return trace
 
     @pytest.fixture
+    def fast_join_trace(self) -> dict[str, Any]:
+        """A fast join the SDK reported against the local stack at 100 ms RTT."""
+        return json.loads((Path(__file__).parent / "fast_join_trace.json").read_text())
+
+    @pytest.fixture
     async def joined(
         self, llm: stream.Accelerated, call: RemoteCall
     ) -> AsyncIterator[stream.Accelerated]:
@@ -395,6 +400,43 @@ class TestAccelerated:
         ) in text
         assert "publish to media: 585.0 ms from Join" in text
         assert "subscribe to media: 630.0 ms from Join" in text
+
+    async def test_a_fast_join_frame_prints_its_flow_and_dag(
+        self,
+        router: Router,
+        joined: stream.Accelerated,
+        fast_join_trace: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ):
+        joined.log_latency = True
+        caplog.set_level("INFO")
+        await router.send(
+            {"type": "connection", "flow": "fast", "trace": fast_join_trace}
+        )
+
+        async def printed() -> None:
+            while "critical path:" not in caplog.text:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(printed(), SETTLE)
+        text = caplog.text
+        assert "join DAG (webrtc, fast join) RTT coordinator 100.2 ms" in text
+        rows = {
+            line.split()[1] if line.startswith("*") else line.split()[0]: line
+            for line in text.splitlines()
+            if line[:1] in ("*", " ") and "|" in line
+        }
+        assert rows["pcs.create"].split()[1] == "-", (
+            "built alongside fast_join, it waits for nothing"
+        )
+        assert rows["sfu.fastjoin"].startswith("* sfu.fastjoin"), "on the critical path"
+        assert "coord.fastjoin,pcs.create" in rows["sfu.fastjoin"]
+        assert "not awaited" in rows["sub.sendanswer"]
+        assert (
+            "critical path: coord.fastjoin > sfu.fastjoin > sfu.ws > "
+            "sub.sfu.candidates > sub.ice > sub.dtls > sub.rtp"
+        ) in text
+        assert "subscribe to media: 1,130.3 ms from Join" in text
 
     async def test_a_connection_frame_without_steps_says_so(
         self,

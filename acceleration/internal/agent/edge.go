@@ -39,6 +39,9 @@ type JoinTrace struct {
 	// call it is the SDK's join DAG (jointrace.Report): every step with what it waited for,
 	// its kind and peer, its times and round trips, and the critical path.
 	Trace json.RawMessage
+	// Flow is how the transport joined. For a Stream call "fast", or "legacy" where the
+	// deployment has no fast join and the SDK fell back to the coordinator's join.
+	Flow string
 	// CriticalPath names the critical path's steps, for logs, for example
 	// "sfu.ws.dial > sfu.join > pub.offer".
 	CriticalPath string

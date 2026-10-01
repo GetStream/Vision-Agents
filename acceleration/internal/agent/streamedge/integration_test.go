@@ -4,12 +4,15 @@ package streamedge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
+	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -24,8 +27,9 @@ const audioArrivesWithin = 30 * time.Second
 
 type StreamEdgeIntegrationSuite struct {
 	suite.Suite
-	ctx    context.Context
-	callID string
+	ctx      context.Context
+	callID   string
+	callType string
 }
 
 func TestStreamEdgeIntegrationSuite(t *testing.T) {
@@ -37,6 +41,10 @@ func (s *StreamEdgeIntegrationSuite) SetupSuite() {
 		s.T().Skip("STREAM_API_KEY and STREAM_API_SECRET must be set")
 	}
 	s.ctx = context.Background()
+	// The 3RTT local stack's app has no "agent" call type.
+	if os.Getenv("LOCAL_STACK") != "" {
+		s.callType = "default"
+	}
 }
 
 func (s *StreamEdgeIntegrationSuite) SetupTest() {
@@ -46,7 +54,7 @@ func (s *StreamEdgeIntegrationSuite) SetupTest() {
 
 // join puts one participant in the test's call.
 func (s *StreamEdgeIntegrationSuite) join(userID string) *Edge {
-	edge, err := New(Options{CallID: s.callID, User: User{ID: userID, Name: userID}})
+	edge, err := New(Options{CallID: s.callID, CallType: s.callType, User: User{ID: userID, Name: userID}})
 	s.Require().NoError(err)
 	s.Require().NoError(edge.Join(s.ctx))
 	s.T().Cleanup(func() { _ = edge.Leave() })
@@ -176,6 +184,140 @@ func (s *StreamEdgeIntegrationSuite) TestAnotherInstanceOfTheAgentIsNotHeard() {
 		s.Equal("go-edge-outsider", heard.Participant.UserID,
 			"the agent heard itself, which is the two of them talking in a loop")
 	}
+}
+
+func (s *StreamEdgeIntegrationSuite) TestTheAgentsJoinReachesMediaWithinItsRoundTripBudget() {
+	// Against the 3RTT local stack with fast join (a coordinator with fast_join and SFUs
+	// with FastJoin), with every connection of the agent's given a real network's round
+	// trip, so its join is counted in round trips as it would be against a remote
+	// deployment.
+	if os.Getenv("LOCAL_STACK") == "" {
+		s.T().Skip(`needs the 3RTT local stack: eval "$(local-stack.sh env)"`)
+	}
+	// The first join of a new user and the first call on an SFU pay for setup a running
+	// agent has already done.
+	s.measureJoin(-1)
+
+	measured := make([]joinMeasurement, 0, joinRuns)
+	for run := range joinRuns {
+		measured = append(measured, s.measureJoin(run))
+	}
+	s.record(measured)
+
+	publish := median(measured, func(m joinMeasurement) float64 { return m.PublishToMediaMs })
+	subscribe := median(measured, func(m joinMeasurement) float64 { return m.SubscribeToMediaMs })
+	rtt := median(measured, func(m joinMeasurement) float64 { return m.RTTMs["sfu"] })
+	s.T().Logf("median of %d cold joins at %s: publish to media %.0f ms (%.1f RTT), subscribe to media %.0f ms (%.1f RTT), RTT_s %.1f ms",
+		joinRuns, joinRTT, publish, publish/rtt, subscribe, subscribe/rtt, rtt)
+
+	for _, m := range measured {
+		s.Equal(string(rtc.JoinFlowFast), m.Flow, "run %d fell back to the legacy join", m.Run)
+	}
+	budget := joinBudgetRTTs*float64(joinRTT.Milliseconds()) + 30
+	s.LessOrEqual(publish, budget, "the agent's audio reaches the SFU within %.1f RTT", joinBudgetRTTs)
+	s.LessOrEqual(subscribe, budget, "the caller's audio reaches the agent within %.1f RTT", joinBudgetRTTs)
+}
+
+// joinRTT is the round trip the measured agent's connections are given, as in the 3RTT
+// benches.
+const joinRTT = 100 * time.Millisecond
+
+// joinRuns is how many joins a measurement takes the median of.
+const joinRuns = 10
+
+// joinBudgetRTTs bounds the median time to media both ways of a cold agent join, in round
+// trips, plus 30 ms. The legacy join took about 14.5.
+const joinBudgetRTTs = 12.5
+
+// joinMeasurement is one measured join of the agent: the SDK's join trace, and how long
+// Edge.Join took.
+type joinMeasurement struct {
+	Run                int                `json:"run"`
+	Flow               string             `json:"flow"`
+	JoinMs             float64            `json:"join_ms"`
+	PublishToMediaMs   float64            `json:"publish_to_media_ms"`
+	SubscribeToMediaMs float64            `json:"subscribe_to_media_ms"`
+	RTTMs              map[string]float64 `json:"rtt_ms"`
+	CriticalPath       []string           `json:"critical_path"`
+	Trace              json.RawMessage    `json:"trace"`
+}
+
+// measureJoin puts a caller who is already talking in a call of its own, then joins the
+// agent over a delayed network and waits for its join trace, which the SDK reports once
+// media flows both ways. Both sides must then hear each other.
+func (s *StreamEdgeIntegrationSuite) measureJoin(run int) joinMeasurement {
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	s.callID = fmt.Sprintf("go-edge-%d", time.Now().UnixNano())
+	caller := s.join("go-edge-caller")
+	defer caller.Leave()
+	s.speak(ctx, caller, 48_000)
+
+	agentEdge, err := New(Options{CallID: s.callID, CallType: s.callType, User: User{ID: "go-edge-agent", Name: "go-edge-agent"},
+		clientOptions: []rtc.Option{rtc.WithNetworkDelay(joinRTT)}})
+	s.Require().NoError(err)
+	started := time.Now()
+	s.Require().NoError(agentEdge.Join(s.ctx))
+	joinMs := float64(time.Since(started).Microseconds()) / 1000
+	defer agentEdge.Leave()
+	s.speak(ctx, agentEdge, 24_000)
+
+	var joined agent.JoinTrace
+	select {
+	case joined = <-agentEdge.JoinTraces():
+	case <-time.After(rtc.JoinTraceTimeout + 5*time.Second):
+		s.FailNow("the agent reported no join trace")
+	}
+	var report struct {
+		PublishToMediaMs   *float64           `json:"publish_to_media_ms"`
+		SubscribeToMediaMs *float64           `json:"subscribe_to_media_ms"`
+		RTTMs              map[string]float64 `json:"rtt_ms"`
+		CriticalPath       []string           `json:"critical_path"`
+	}
+	s.Require().NoError(json.Unmarshal(joined.Trace, &report))
+	s.Require().NotNil(report.PublishToMediaMs, "the agent's audio never reached the SFU")
+	s.Require().NotNil(report.SubscribeToMediaMs, "the caller's audio never reached the agent")
+
+	s.Equal("go-edge-agent", s.hear(caller).Participant.UserID)
+	s.Equal("go-edge-caller", s.hear(agentEdge).Participant.UserID)
+	return joinMeasurement{
+		Run:                run,
+		Flow:               joined.Flow,
+		JoinMs:             joinMs,
+		PublishToMediaMs:   *report.PublishToMediaMs,
+		SubscribeToMediaMs: *report.SubscribeToMediaMs,
+		RTTMs:              report.RTTMs,
+		CriticalPath:       report.CriticalPath,
+		Trace:              joined.Trace,
+	}
+}
+
+// record writes the measurements as JSON lines to STREAMEDGE_JOIN_OUT, when it is set.
+func (s *StreamEdgeIntegrationSuite) record(measured []joinMeasurement) {
+	path := os.Getenv("STREAMEDGE_JOIN_OUT")
+	if path == "" {
+		return
+	}
+	out, err := os.Create(path)
+	s.Require().NoError(err)
+	defer out.Close()
+	encoder := json.NewEncoder(out)
+	for _, m := range measured {
+		s.Require().NoError(encoder.Encode(m))
+	}
+}
+
+func median(measured []joinMeasurement, value func(joinMeasurement) float64) float64 {
+	values := make([]float64, 0, len(measured))
+	for _, m := range measured {
+		values = append(values, value(m))
+	}
+	slices.Sort(values)
+	middle := len(values) / 2
+	if len(values)%2 == 0 {
+		return (values[middle-1] + values[middle]) / 2
+	}
+	return values[middle]
 }
 
 func (s *StreamEdgeIntegrationSuite) TestLeavingClosesTheAudio() {
