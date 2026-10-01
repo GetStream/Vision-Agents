@@ -30,11 +30,12 @@ Five PRs with no user-visible change. They give later PRs a place to put code, a
 
 ### T1. Versioned KEK keyring in auth.Sealer · [AI-828](https://linear.app/stream/issue/AI-828)
 
-- **Description.** Extend `internal/auth/secret.go` from one key to a keyring: `ROUTER_AUTH_KEK_V<n>` plus `ROUTER_AUTH_KEK_VERSION`, with `ROUTER_AUTH_KEK` as the version-1 alias. Add `SealWithAAD`, `OpenWithAADVersion` and `CurrentVersion`. Copy from the branch (`internal/auth/secret.go`, 90-line diff).
-- **Scope.** `internal/auth/secret.go`, its tests, README variables. Existing `Seal` and `Open` keep working for API secrets.
+- **Description.** Extend `internal/auth/secret.go` from one key to a keyring: `ROUTER_AUTH_KEK_V<n>` plus `ROUTER_AUTH_KEK_VERSION`, with `ROUTER_AUTH_KEK` as the version-1 alias. Add `SealWithAAD`, `OpenWithAADVersion` and `CurrentVersion`. Copy from the branch (`internal/auth/secret.go`, 90-line diff). Build the sealer whenever connectors are enabled, in every auth mode: today `cmd/router/main.go:225` builds it only for `api_key`, and staging runs `proxy` (`internal/config/staging.yaml:3-4`), where `main.go:211-215` returns before a sealer exists.
+- **Scope.** `internal/auth/secret.go`, its tests, the sealer construction in `cmd/router/main.go`, README variables. Existing `Seal` and `Open` keep working for API secrets.
 - **Out of scope.** Rewrapping rows of any table; connector material (T8).
 - **Dependencies.** None.
-- **Acceptance.** A row sealed under version 1 opens after version 2 is added; a wrong AAD fails to open; missing keyring at startup fails fast with a clear message; existing API-secret tests pass unchanged.
+- **Acceptance.** A row sealed under version 1 opens after version 2 is added; a wrong AAD fails to open; missing keyring at startup fails fast with a clear message; with `auth.mode=proxy` and connectors enabled the router builds the sealer and fails fast without a keyring; with connectors off, `proxy` starts without a KEK as it does today; existing API-secret tests pass unchanged.
+- **Before deploy.** `ROUTER_AUTH_KEK_V1` must exist in the staging deployment's values, which live in Stream's private infra repo (`.claude/skills/deploy/SKILL.md:9-11`). Whether staging sets `ROUTER_AUTH_KEK` today is `unverified`: `proxy` mode does not need it, and `gh search code AUTH_KEK --repo GetStream/chat` returned nothing on October 1. Who adds it is `unverified`; ask the owner of the runbook `infra/docs/accelerate_launch.md`.
 
 ### T2. Egress policy for outbound connector traffic · [AI-829](https://linear.app/stream/issue/AI-829)
 
