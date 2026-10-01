@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"slices"
 	"testing"
 	"time"
 
 	rtc "github.com/GetStream/getstream-go-webrtc"
+	"github.com/GetStream/getstream-go-webrtc/coordinator"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -30,6 +32,8 @@ type StreamEdgeIntegrationSuite struct {
 	ctx      context.Context
 	callID   string
 	callType string
+	// pin is the coordinator options every edge joins with: STREAMEDGE_SFU_ID's SFU.
+	pin []coordinator.Option
 }
 
 func TestStreamEdgeIntegrationSuite(t *testing.T) {
@@ -45,6 +49,13 @@ func (s *StreamEdgeIntegrationSuite) SetupSuite() {
 	if os.Getenv("LOCAL_STACK") != "" {
 		s.callType = "default"
 	}
+	if callType := os.Getenv("STREAMEDGE_CALL_TYPE"); callType != "" {
+		s.callType = callType
+	}
+	// A staging app's SFUs are reached only pinned, by the full SFU id.
+	if sfuID := os.Getenv("STREAMEDGE_SFU_ID"); sfuID != "" {
+		s.pin = []coordinator.Option{coordinator.WithJoinQuery(url.Values{"sfu_id": {sfuID}})}
+	}
 }
 
 func (s *StreamEdgeIntegrationSuite) SetupTest() {
@@ -54,7 +65,8 @@ func (s *StreamEdgeIntegrationSuite) SetupTest() {
 
 // join puts one participant in the test's call.
 func (s *StreamEdgeIntegrationSuite) join(userID string) *Edge {
-	edge, err := New(Options{CallID: s.callID, CallType: s.callType, User: User{ID: userID, Name: userID}})
+	edge, err := New(Options{CallID: s.callID, CallType: s.callType, User: User{ID: userID, Name: userID},
+		coordinatorOptions: s.pin})
 	s.Require().NoError(err)
 	s.Require().NoError(edge.Join(s.ctx))
 	s.T().Cleanup(func() { _ = edge.Leave() })
