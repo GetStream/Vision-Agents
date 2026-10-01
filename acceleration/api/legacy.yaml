@@ -4207,6 +4207,15 @@ components:
         voice:
           type: string
           description: Provider-specific voice id.
+        speed:
+          type: number
+          format: double
+          minimum: 0
+          description: >
+            Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A
+            config that names one is only routed to voices that can be sped up, and one
+            outside that voice's own range is refused.
+          example: 0.9
         llm:
           type: string
           description: The model holding the conversation.
@@ -4289,6 +4298,9 @@ components:
             not used. Empty means the cascade.
         voice:
           type: string
+        speed:
+          type: number
+          format: double
         llm:
           type: string
         video:

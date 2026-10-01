@@ -274,6 +274,9 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if _, ok := sandboxOf(request.Sandbox); !ok {
 		return fmt.Sprintf("there is no sandbox provider called %q", *request.Sandbox), false
 	}
+	if value(request.Speed) < 0 {
+		return "a voice's speed cannot be negative", false
+	}
 	if complaint, ok := guardrailComplaint(request.Guardrail); !ok {
 		return complaint, false
 	}
@@ -361,6 +364,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		TTS:                value(request.Tts),
 		STS:                value(request.Sts),
 		Voice:              value(request.Voice),
+		Speed:              value(request.Speed),
 		LLM:                value(request.Llm),
 		Subagent:           value(request.Subagent),
 		Search:             value(request.Search),
@@ -414,6 +418,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Tts = optional(config.TTS)
 	rendered.Sts = optional(config.STS)
 	rendered.Voice = optional(config.Voice)
+	if config.Speed != 0 {
+		speed := config.Speed
+		rendered.Speed = &speed
+	}
 	rendered.Llm = optional(config.LLM)
 	rendered.Subagent = optional(config.Subagent)
 	frames := config.VideoMaxFrames

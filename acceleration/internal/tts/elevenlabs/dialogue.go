@@ -119,6 +119,10 @@ func NewDialogue(options Options) (*Dialogue, error) {
 		return nil, fmt.Errorf(
 			"elevenlabs: %s is not a dialogue model, open it with New", options.Model)
 	}
+	// The dialogue socket takes stability and nothing else, so a speed would be dropped.
+	if options.Speed != 0 {
+		return nil, fmt.Errorf("elevenlabs: %s takes no speed", options.Model)
+	}
 
 	return &Dialogue{
 		options:  options,

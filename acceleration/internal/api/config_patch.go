@@ -16,6 +16,7 @@ type AgentConfigPatch struct {
 	Tts                *string            `json:"tts,omitempty"`
 	Sts                *string            `json:"sts,omitempty"`
 	Voice              *string            `json:"voice,omitempty"`
+	Speed              *float64           `json:"speed,omitempty" minimum:"0" doc:"The voice's rate of delivery, 1 being its own. Zero leaves it there."`
 	Llm                *string            `json:"llm,omitempty"`
 	Subagent           *string            `json:"subagent,omitempty"`
 	Search             *string            `json:"search,omitempty"`
@@ -93,6 +94,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		Mode:      patch.Mode,
 		Keyterms:  patch.Keyterms,
 		Sandbox:   patch.Sandbox,
+		Speed:     patch.Speed,
 		Guardrail: patch.Guardrail,
 	}); !ok {
 		return nil, huma.Error400BadRequest(message)
@@ -106,6 +108,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.TTS = override(config.TTS, patch.Tts)
 	config.STS = override(config.STS, patch.Sts)
 	config.Voice = override(config.Voice, patch.Voice)
+	config.Speed = override(config.Speed, patch.Speed)
 	config.LLM = override(config.LLM, patch.Llm)
 	config.Subagent = override(config.Subagent, patch.Subagent)
 	config.Search = override(config.Search, patch.Search)
