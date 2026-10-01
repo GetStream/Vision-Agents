@@ -3,8 +3,10 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -24,8 +26,10 @@ type Scheme interface {
 	// resolver persists what comes back under the lock.
 	Mint(ctx context.Context, m Material, p Profile) (Credential, Material, error)
 	// Wrap applies the credential to every outbound request: a header, a signature or a TLS
-	// client certificate. The egress policy wraps the result, outermost, so a signing
-	// scheme sees the final request and the egress check sees the final destination.
+	// client certificate. base is the egress transport (egress.NewClient passes it), so
+	// Wrap runs first and the egress check runs on the request Wrap produced, right before
+	// the dial: it sees the URL that is dialed, and since it leaves the body alone a
+	// signature made in Wrap still matches the wire.
 	Wrap(base http.RoundTripper, c Credential) http.RoundTripper
 	// Classify maps a provider response to the one outcome the core acts on.
 	Classify(resp *http.Response, body []byte, err error) Outcome
@@ -84,6 +88,22 @@ type Material struct {
 	Scheme  string          `json:"scheme"`
 	Version int             `json:"version"`
 	Payload json.RawMessage `json:"payload"`
+}
+
+// String keeps Payload, the long-lived secret, out of any %v or %s. JSON still carries it,
+// because the marshaled bytes are what gets sealed.
+func (m Material) String() string {
+	return "Material{Scheme:" + m.Scheme + " Version:" + strconv.Itoa(m.Version) + " Payload:redacted}"
+}
+
+// GoString keeps Payload out of %#v, which ignores String.
+func (m Material) GoString() string {
+	return m.String()
+}
+
+// LogValue keeps Payload out of slog, whose JSON handler would otherwise marshal it.
+func (m Material) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("scheme", m.Scheme), slog.Int("version", m.Version), slog.String("payload", "redacted"))
 }
 
 // Credential is what one request needs. It never reaches a log or the model: the secret is

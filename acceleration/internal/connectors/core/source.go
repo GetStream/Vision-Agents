@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
@@ -22,7 +21,9 @@ type Source interface {
 
 // Runtime is one opened source for one session.
 type Runtime interface {
-	Tools() []harness.Tool
+	// Tools is in llm's shape rather than harness's, so core never pulls in harness, and
+	// through it llmrouter and store, and the store can still validate against core.
+	Tools() []llm.Tool
 	Call(ctx context.Context, call llm.ToolCall) (Result, error)
 	Close()
 }
