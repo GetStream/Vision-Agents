@@ -312,7 +312,7 @@ func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	write(t, root, "instructions.md", "You are Jean.\n")
 	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
 	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
-	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  title: Plans\n")
+	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  title: Plans\n  refresh_hours: 24\n")
 
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
@@ -339,7 +339,8 @@ func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 		t.Errorf("the knowledge sent is %+v", synced.Knowledge)
 	}
 	if synced.KnowledgeUrls == nil || (*synced.KnowledgeUrls)[0].Url != "https://example.com/plans" ||
-		*(*synced.KnowledgeUrls)[0].Title != "Plans" || (*synced.KnowledgeUrls)[0].Description != nil {
+		*(*synced.KnowledgeUrls)[0].Title != "Plans" || (*synced.KnowledgeUrls)[0].Description != nil ||
+		*(*synced.KnowledgeUrls)[0].RefreshHours != 24 {
 		t.Errorf("the pages sent are %+v", synced.KnowledgeUrls)
 	}
 	if synced.Llm == nil || *synced.Llm != "openai/gpt-5.6" || (*synced.Tags)["team"] != "support" {

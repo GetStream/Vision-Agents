@@ -77,6 +77,25 @@ func (s *KnowledgeUrlsSuite) TestReadingAPageAgainMovesWhenItWasLastIndexed() {
 	s.Equal(created.Id, s.indexed(created.Id, first.LastIndexedAt).Id)
 }
 
+func (s *KnowledgeUrlsSuite) TestAPageRemembersHowOftenItIsReadAgain() {
+	created := s.subscribe(map[string]any{
+		"namespace": "docs", "url": "https://example.com/pricing", "refresh_hours": 24,
+	})
+	s.Equal(24, value(created.RefreshHours))
+
+	// Applying the declaration again without one is a page read only when asked.
+	again := s.subscribe(map[string]any{"namespace": "docs", "url": "https://example.com/pricing"})
+	s.Nil(again.RefreshHours)
+}
+
+func (s *KnowledgeUrlsSuite) TestANegativeRefreshIntervalIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/knowledge/urls",
+		map[string]any{"namespace": "docs", "url": "https://example.com/pricing", "refresh_hours": -1})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "refresh_hours")
+}
+
 func (s *KnowledgeUrlsSuite) TestSomethingThatIsNotAFetchablePageIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/knowledge/urls",
 		map[string]any{"namespace": "docs", "url": "mailto:sales@example.com"})

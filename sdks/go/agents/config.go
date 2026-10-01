@@ -96,6 +96,10 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 			declared := acceleration.KnowledgeUrlDeclaration{Url: page.URL}
 			setString(&declared.Title, page.Title)
 			setString(&declared.Description, page.Description)
+			if page.RefreshHours > 0 {
+				hours := int64(page.RefreshHours)
+				declared.RefreshHours = &hours
+			}
 			pages = append(pages, declared)
 		}
 		body.KnowledgeUrls = &pages
@@ -382,6 +386,9 @@ func SubscribeKnowledgeURLs(
 		body := acceleration.KnowledgeUrlRequest{Namespace: namespace, Url: page.URL}
 		setString(&body.Title, page.Title)
 		setString(&body.Description, page.Description)
+		if page.RefreshHours > 0 {
+			body.RefreshHours = &page.RefreshHours
+		}
 
 		added, err := client.AddKnowledgeUrlWithResponse(ctx, body)
 		if err != nil {

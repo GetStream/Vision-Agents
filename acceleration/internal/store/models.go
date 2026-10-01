@@ -547,9 +547,11 @@ type KnowledgeURL struct {
 	Passages int `bun:"passages,notnull"`
 	// LastIndexedAt is when it was last read successfully. Nil means never.
 	LastIndexedAt *time.Time `bun:"last_indexed_at"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
-	DeletedAt     *time.Time `bun:"deleted_at"`
+	// RefreshHours is how often the page is read again on its own. Zero is never.
+	RefreshHours int        `bun:"refresh_hours,notnull"`
+	CreatedAt    time.Time  `bun:"created_at,notnull"`
+	UpdatedAt    time.Time  `bun:"updated_at,notnull"`
+	DeletedAt    *time.Time `bun:"deleted_at"`
 }
 
 // KnowledgeDocument is a document a knowledge base was filled with, posted or synced

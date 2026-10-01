@@ -5905,6 +5905,14 @@ components:
             What the page is, for a reader of the subscription. Optional, and kept as
             written: it says why this page is subscribed to, which a crawler cannot know.
           example: What each plan includes and where the limits are.
+        refresh_hours:
+          type: integer
+          minimum: 0
+          description: >
+            How often the page is read again on its own, in hours. Omit it, or send zero,
+            and the page is read when it is added and when it is re-indexed, never on a
+            schedule. Adding the page again replaces it.
+          example: 24
 
     KnowledgeUrlState:
       type: string
@@ -5939,6 +5947,9 @@ components:
         passages:
           type: integer
           description: How many passages the page was last cut into.
+        refresh_hours:
+          type: integer
+          description: How often the page is read again on its own, in hours. Absent means never.
         last_indexed_at:
           type: string
           format: date-time

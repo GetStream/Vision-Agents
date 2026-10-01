@@ -951,7 +951,7 @@ retried three times before the page is marked `failed`.
 ```bash
 curl -X POST localhost:8080/v1/agents/knowledge/urls \
   -H "X-Customer-Id: acme" -H "Content-Type: application/json" \
-  -d '{"namespace":"docs","url":"https://example.com/pricing"}'
+  -d '{"namespace":"docs","url":"https://example.com/pricing","refresh_hours":24}'
 ```
 
 Each row records when the page was last read successfully, what it was called and how many
@@ -961,8 +961,11 @@ re-reading a page that got shorter leaves no orphans behind. A page that could n
 fetched is still stored, in the `failed` state with the reason on it, rather than refused
 and forgotten.
 
-Nothing re-crawls on a schedule. `POST /v1/agents/knowledge/urls/{id}/index` queues one to
-be read again, and `last_indexed_at` is what a caller with its own schedule decides from.
+A page with `refresh_hours` is read again once that many hours have passed since its last
+read, failed or not. Every router looks once a minute for pages that are due and queues them;
+the task id is the page, so two routers queuing one read it once. Without `refresh_hours` a
+page is only read again when asked: `POST /v1/agents/knowledge/urls/{id}/index` queues a
+read, and so does adding the page again.
 
 `cmd/knowledge` fills one from files:
 

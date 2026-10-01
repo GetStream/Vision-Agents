@@ -111,6 +111,7 @@ func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
 - url: https://example.com/plans
   title: Plans
   description: What each plan includes.
+  refresh_hours: 24
 `)
 	// Only the one at the root is the declaration.
 	write(t, root, "knowledge/reference/urls.yaml", "the urls we used to have\n")
@@ -135,8 +136,11 @@ func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
 		t.Errorf("a url on its own read as %+v", bare)
 	}
 	if described.URL != "https://example.com/plans" || described.Title != "Plans" ||
-		described.Description != "What each plan includes." {
+		described.Description != "What each plan includes." || described.RefreshHours != 24 {
 		t.Errorf("a described page read as %+v", described)
+	}
+	if bare.RefreshHours != 0 {
+		t.Errorf("a url on its own is read again every %d hours, rather than only when asked", bare.RefreshHours)
 	}
 }
 
@@ -163,6 +167,8 @@ func TestAPageThatCannotBeFetchedOrDescribedIsRefused(t *testing.T) {
 		"- example.com/pricing\n",
 		"- url: https://example.com/plans\n  heading: Plans\n",
 		"- [https://example.com/plans]\n",
+		"- url: https://example.com/plans\n  refresh_hours: 0\n",
+		"- url: https://example.com/plans\n  refresh_hours: daily\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", "name: jean\n")
@@ -316,6 +322,15 @@ func TestADirectoryHashesTheWayThePythonSDKHashesIt(t *testing.T) {
 	}
 	if declared.Hash() == folder.Hash() {
 		t.Error("declaring a page did not change the fingerprint")
+	}
+
+	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  refresh_hours: 24\n")
+	refreshed, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Hash() == declared.Hash() {
+		t.Error("reading a page on a schedule did not change the fingerprint, so it would never be synced")
 	}
 }
 

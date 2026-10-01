@@ -53,9 +53,10 @@ func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *
 
 // KnowledgeUrlDeclaration is a page an agent directory declares.
 type KnowledgeUrlDeclaration struct {
-	Url         string  `json:"url" example:"https://example.com/pricing"`
-	Title       *string `json:"title,omitempty" example:"Pricing"`
-	Description *string `json:"description,omitempty"`
+	Url          string  `json:"url" example:"https://example.com/pricing"`
+	Title        *string `json:"title,omitempty" example:"Pricing"`
+	Description  *string `json:"description,omitempty"`
+	RefreshHours *int    `json:"refresh_hours,omitempty" minimum:"1" example:"24" doc:"How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule."`
 }
 
 func (*KnowledgeUrlDeclaration) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -181,6 +182,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 			wanted := urls.Subscription{Namespace: namespace, URL: page.Url}
 			wanted.Title = value(page.Title)
 			wanted.Description = value(page.Description)
+			wanted.RefreshHours = value(page.RefreshHours)
 			if _, err := s.pages.Add(ctx, customerID, wanted); err != nil {
 				return nil, huma.Error400BadRequest(err.Error())
 			}

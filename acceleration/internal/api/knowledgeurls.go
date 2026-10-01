@@ -71,6 +71,9 @@ func (s *Server) AddKnowledgeUrl(
 	if request.Body.Description != nil {
 		wanted.Description = *request.Body.Description
 	}
+	if request.Body.RefreshHours != nil {
+		wanted.RefreshHours = *request.Body.RefreshHours
+	}
 
 	page, err := s.pages.Add(ctx, customerID, wanted)
 	if err != nil {
@@ -185,6 +188,9 @@ func knowledgeURLOf(page store.KnowledgeURL) KnowledgeUrl {
 	}
 	if page.Error != "" {
 		described.Error = &page.Error
+	}
+	if page.RefreshHours > 0 {
+		described.RefreshHours = &page.RefreshHours
 	}
 	return described
 }

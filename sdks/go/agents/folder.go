@@ -65,6 +65,9 @@ type KnowledgeURL struct {
 	// called itself when it was last read.
 	Title       string
 	Description string
+	// RefreshHours is how often the backend reads the page again on its own. Zero is never:
+	// it is read when it is synced, and when somebody asks.
+	RefreshHours int
 }
 
 // UnmarshalYAML reads a page written either way: the url on its own, or a mapping naming it
@@ -75,6 +78,7 @@ type KnowledgeURL struct {
 //	    - url: https://example.com/plans
 //	      title: Plans
 //	      description: What each plan includes.
+//	      refresh_hours: 24
 //
 // Unknown keys are refused, so a misspelt one is reported rather than dropped into a
 // subscription nobody described.
@@ -88,11 +92,20 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 
 	for index := 0; index+1 < len(node.Content); index += 2 {
 		key, value := node.Content[index], node.Content[index+1]
+		if key.Value == "refresh_hours" {
+			if err := value.Decode(&k.RefreshHours); err != nil {
+				return err
+			}
+			if k.RefreshHours < 1 {
+				return errors.New("refresh_hours is how many hours between reads, so it is at least 1; leave it out for never")
+			}
+			continue
+		}
 		field := map[string]*string{
 			"url": &k.URL, "title": &k.Title, "description": &k.Description,
 		}[key.Value]
 		if field == nil {
-			return fmt.Errorf("%q is not something a page says; url, title and description are", key.Value)
+			return fmt.Errorf("%q is not something a page says; url, title, description and refresh_hours are", key.Value)
 		}
 		if err := value.Decode(field); err != nil {
 			return err
@@ -344,6 +357,11 @@ func fingerprint(
 	}
 	for _, page := range pages {
 		io.WriteString(hasher, "\nurl:"+page.URL+"\n"+page.Title+"\n"+page.Description)
+		// Written only when there is one, so a page without keeps the fingerprint the
+		// Python SDK takes of it.
+		if page.RefreshHours > 0 {
+			io.WriteString(hasher, "\nrefresh_hours:"+strconv.Itoa(page.RefreshHours))
+		}
 	}
 	// Written only when there is a simulations/, so a directory without one keeps the
 	// fingerprint the Python SDK takes of it.

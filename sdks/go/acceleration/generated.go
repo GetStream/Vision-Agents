@@ -2638,6 +2638,9 @@ type KnowledgeUrl struct {
 	// Passages How many passages the page was last cut into.
 	Passages int `json:"passages"`
 
+	// RefreshHours How often the page is read again on its own, in hours. Absent means never.
+	RefreshHours *int `json:"refresh_hours,omitempty"`
+
 	// State Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 	State KnowledgeUrlState `json:"state"`
 
@@ -2650,6 +2653,11 @@ type KnowledgeUrl struct {
 // KnowledgeUrlDeclaration A page an agent directory declares, in the knowledge base named after it.
 type KnowledgeUrlDeclaration struct {
 	Description *string `json:"description,omitempty"`
+
+	// RefreshHours How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule.
+	//
+	// Example: 24
+	RefreshHours *int64 `json:"refresh_hours,omitempty"`
 
 	// Title Example: Pricing
 	Title *string `json:"title,omitempty"`
@@ -2671,6 +2679,12 @@ type KnowledgeUrlRequest struct {
 	//
 	// Example: docs
 	Namespace string `json:"namespace"`
+
+	// RefreshHours How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it.
+	//
+	//
+	// Example: 24
+	RefreshHours *int `json:"refresh_hours,omitempty"`
 
 	// Title What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
 	//

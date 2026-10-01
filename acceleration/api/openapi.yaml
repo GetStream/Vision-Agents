@@ -1937,6 +1937,9 @@ components:
         passages:
           description: How many passages the page was last cut into.
           type: integer
+        refresh_hours:
+          description: How often the page is read again on its own, in hours. Absent means never.
+          type: integer
         state:
           $ref: '#/components/schemas/KnowledgeUrlState'
         title:
@@ -1962,6 +1965,12 @@ components:
       properties:
         description:
           type: string
+        refresh_hours:
+          description: How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule.
+          example: 24
+          format: int64
+          minimum: 1
+          type: integer
         title:
           example: Pricing
           type: string
@@ -1983,6 +1992,12 @@ components:
             The knowledge base to fill, which is what a config's knowledge_namespace names.
           example: docs
           type: string
+        refresh_hours:
+          description: |
+            How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it.
+          example: 24
+          minimum: 0
+          type: integer
         title:
           description: |
             What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
