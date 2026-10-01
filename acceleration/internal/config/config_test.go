@@ -155,6 +155,17 @@ func (s *ConfigSuite) TestSpeculativeRepliesAreOffUnlessAskedFor() {
 	s.True(config.Agent.SpeculativeReplies)
 }
 
+func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.False(config.Connectors.Enabled)
+
+	s.T().Setenv("ROUTER_CONNECTORS_ENABLED", "true")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Connectors.Enabled)
+}
+
 func (s *ConfigSuite) TestANegativeLimitIsRefused() {
 	s.T().Setenv("ROUTER_RATE_LIMIT_MESSAGES_PER_DAY", "-1")
 	_, _, err := Load("")

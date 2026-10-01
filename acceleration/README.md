@@ -84,7 +84,7 @@ go run ./cmd/router --config /etc/router.yaml
 Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`, `cors_origins`,
 `trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
 `postgres.dsn`, `redis.{addr,username,password}`, `auth.{mode,kek}`,
-`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention` and
+`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
 `stream.{api_key,api_secret}`. Naming no file loads one of the three embedded in the
 binary, by `ROUTER_ENV`.
 
@@ -104,7 +104,10 @@ the other commands that read them there.
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless a browser app calls this deployment. The same list decides which origins may open a socket. A deployment reached through Stream's proxy needs the proxy to let a preflight through as well, since a browser cannot authenticate one |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
-| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose |
+| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring |
+| `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
+| `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1` |
+| `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
