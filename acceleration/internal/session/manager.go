@@ -239,6 +239,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, err
 		}
 		spec.ConversationID = conv.CID()
+		conv.ShowTools(spec.VisibleTools)
 		// A resume was deliberately not given an agent id, because only the conversation
 		// knows the one its transcript was written under.
 		spec.AgentID = conv.Agent()

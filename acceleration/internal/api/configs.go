@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -280,6 +281,26 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if complaint, ok := guardrailComplaint(request.Guardrail); !ok {
 		return complaint, false
 	}
+	if complaint, ok := visibleToolsComplaint(request.VisibleTools); !ok {
+		return complaint, false
+	}
+	return "", true
+}
+
+// visibleToolsComplaint reports what is wrong with the tools a config shows end users, if
+// anything. A pattern that cannot match is refused here rather than found showing nothing.
+func visibleToolsComplaint(patterns *[]string) (string, bool) {
+	if patterns == nil {
+		return "", true
+	}
+	if len(*patterns) > 64 {
+		return "a config may show at most 64 visible_tools", false
+	}
+	for _, pattern := range *patterns {
+		if !conversation.ValidVisibleTool(pattern) {
+			return fmt.Sprintf("visible_tools has %q, which is not a tool name or pattern", pattern), false
+		}
+	}
 	return "", true
 }
 
@@ -381,6 +402,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.Plugins = *request.Plugins
 	}
 	config.Keyterms = keytermsOf(request.Keyterms)
+	if request.VisibleTools != nil {
+		config.VisibleTools = *request.VisibleTools
+	}
 	if request.Tags != nil {
 		config.Tags = *request.Tags
 	}
@@ -449,6 +473,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms
 		rendered.Keyterms = &keyterms
+	}
+	if len(config.VisibleTools) > 0 {
+		visible := config.VisibleTools
+		rendered.VisibleTools = &visible
 	}
 	if len(config.Tags) > 0 {
 		tags := config.Tags

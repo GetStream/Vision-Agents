@@ -152,9 +152,12 @@ type Spec struct {
 	LanguageHints []string
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	// A provider that cannot be told about vocabulary ignores them.
-	Keyterms  []string
-	MaxTokens int
-	Tasks     int
+	Keyterms []string
+	// VisibleTools are the tools whose steps end users see on a persistent conversation's
+	// replies, as names or path.Match patterns. Empty shows search and web_search.
+	VisibleTools []string
+	MaxTokens    int
+	Tasks        int
 
 	// Skills are what the voice model may hand to the subagent, spelled out. Nil means
 	// SkillNames decides, and both being empty means the built-in set, which is only
@@ -250,6 +253,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
 		Keyterms:           config.Keyterms,
+		VisibleTools:       config.VisibleTools,
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Sandbox:            config.Sandbox,
 		Tags:               routing.Tags(config.Tags),

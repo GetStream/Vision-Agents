@@ -2275,6 +2275,8 @@ export type components = {
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly search?: string;
             readonly skills?: readonly string[];
+            /** Format: double */
+            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;
@@ -2288,6 +2290,7 @@ export type components = {
             /** Format: date-time */
             readonly updated_at: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            readonly visible_tools?: readonly string[];
             readonly voice?: string;
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
@@ -2306,6 +2309,11 @@ export type components = {
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly search?: string;
             readonly skills?: readonly string[];
+            /**
+             * Format: double
+             * @description The voice's rate of delivery, 1 being its own. Zero leaves it there.
+             */
+            readonly speed?: number;
             readonly sts?: string;
             readonly stt?: string;
             readonly subagent?: string;
@@ -2314,6 +2322,8 @@ export type components = {
             };
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search. */
+            readonly visible_tools?: readonly string[];
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
@@ -2337,6 +2347,12 @@ export type components = {
             readonly search?: string;
             /** @description Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set. */
             readonly skills?: readonly string[];
+            /**
+             * Format: double
+             * @description Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
+             * @example 0.9
+             */
+            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             /** @description A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it. */
@@ -2349,6 +2365,8 @@ export type components = {
             };
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search. */
+            readonly visible_tools?: readonly string[];
             /** @description Provider-specific voice id. */
             readonly voice?: string;
         };
@@ -4480,6 +4498,11 @@ export type components = {
             /** @description The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone. */
             readonly simulations?: readonly components["schemas"]["SimulationDeclaration"][];
             readonly skills?: readonly components["schemas"]["SkillRequest"][];
+            /**
+             * Format: double
+             * @description The voice's rate of delivery, 1 being its own. Zero leaves it there.
+             */
+            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;
