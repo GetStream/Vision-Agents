@@ -1387,7 +1387,7 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 	runtime := runtimeOf(m)
 	fields := map[string]any{"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
 	if len(m.Artifacts) > 0 {
-		fields["attachments"] = ChatAttachments(m.Artifacts)
+		fields["attachments"] = partialAttachments(m.Artifacts)
 	}
 	if op.Create {
 		_, err := c.service.client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{ID: &m.ID, UserID: &user, Text: &m.Text, Custom: map[string]any{"source": "agent", "generating": m.FinishedAt == nil, "support_message": metadata, "support_runtime": runtime}}})

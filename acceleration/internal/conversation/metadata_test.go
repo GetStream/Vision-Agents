@@ -342,6 +342,14 @@ func (s *DisplaySuite) TestAVisibleToolsStoredArtifactIsAttachedToTheReplyAndRes
 	s.Contains(raw, `"artifact_id":"canvas_01"`)
 	s.NotContains(raw, "crm_dump")
 	s.NotContains(raw, "not-for-chat")
+	// Clients read an artifact's fields off the attachment itself, which is where Chat
+	// keeps them only when they are sent there: a server-side read has them as custom.
+	var reply struct {
+		Attachments []map[string]any `json:"attachments"`
+	}
+	s.Require().NoError(json.Unmarshal([]byte(raw), &reply))
+	s.Require().Len(reply.Attachments, 1)
+	s.Equal(map[string]any{"artifact_id": "canvas_01", "revision": float64(1)}, reply.Attachments[0]["custom"])
 	c.Release()
 	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "athena", c.CID(), "", "employee")
 	s.Require().NoError(err)

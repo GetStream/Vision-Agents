@@ -412,6 +412,21 @@ func ChatAttachments(artifacts []ArtifactAttachment) []getstream.Attachment {
 	return attachments
 }
 
+// partialAttachments are artifacts as a partial update sets them. Chat stores a partial
+// update's attachments as sent, so an artifact's fields go on the attachment itself, where
+// clients read them, rather than under a "custom" key that would only be stored as one more field.
+func partialAttachments(artifacts []ArtifactAttachment) []map[string]any {
+	attachments := make([]map[string]any, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		attachment := map[string]any{"type": artifact.Type, "title": artifact.Title, "artifact_id": artifact.ArtifactID, "revision": artifact.Revision}
+		if artifact.Alt != "" {
+			attachment["alt"] = artifact.Alt
+		}
+		attachments = append(attachments, attachment)
+	}
+	return attachments
+}
+
 func runtimeOf(message Message) runtimeMessage {
 	runtime := runtimeMessage{
 		CommandID: message.CommandID, TurnID: message.TurnID, QuestionID: message.QuestionID,

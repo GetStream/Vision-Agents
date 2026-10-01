@@ -102,7 +102,9 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 				db.patches = append(db.patches, body["set"].(map[string]any))
 			} else if r.Method == "PUT" {
 				for k, v := range body["set"].(map[string]any) {
-					if k == "text" || k == "attachments" {
+					if k == "attachments" {
+						db.messages[id][k] = partiallySetAttachments(v)
+					} else if k == "text" {
 						db.messages[id][k] = v
 					} else {
 						db.messages[id]["custom"].(map[string]any)[k] = v
@@ -1153,4 +1155,33 @@ func TestSharedHistoryPreservesAuthorsAsUserData(t *testing.T) {
 	messages, truncated = history(page)
 	require.Empty(t, messages)
 	require.True(t, truncated, "author data must count toward history budget")
+}
+
+// attachmentFields are the fields Chat keeps as an attachment's own.
+var attachmentFields = map[string]bool{"type": true, "title": true, "title_link": true, "text": true,
+	"fallback": true, "image_url": true, "thumb_url": true, "asset_url": true, "og_scrape_url": true}
+
+// partiallySetAttachments stores attachments the way Chat leaves those a partial update
+// sets: every key it does not know is custom data, which a server-side read returns under
+// "custom" and a client reads off the attachment itself. A key named "custom" is not the
+// custom data there, only one more custom field.
+func partiallySetAttachments(value any) any {
+	list, _ := value.([]any)
+	stored := make([]any, 0, len(list))
+	for _, item := range list {
+		attachment, _ := item.(map[string]any)
+		own, custom := map[string]any{}, map[string]any{}
+		for key, field := range attachment {
+			if attachmentFields[key] {
+				own[key] = field
+			} else {
+				custom[key] = field
+			}
+		}
+		if len(custom) > 0 {
+			own["custom"] = custom
+		}
+		stored = append(stored, own)
+	}
+	return stored
 }
