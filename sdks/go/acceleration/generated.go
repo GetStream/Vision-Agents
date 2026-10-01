@@ -1471,12 +1471,13 @@ type AgentConfig struct {
 	Subagent *string `json:"subagent,omitempty"`
 
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
-	SyncHash  *string            `json:"sync_hash,omitempty"`
-	Tags      *map[string]string `json:"tags,omitempty"`
-	Tts       *string            `json:"tts,omitempty"`
-	UpdatedAt time.Time          `json:"updated_at"`
-	Video     *SessionVideo      `json:"video,omitempty"`
-	Voice     *string            `json:"voice,omitempty"`
+	SyncHash     *string            `json:"sync_hash,omitempty"`
+	Tags         *map[string]string `json:"tags,omitempty"`
+	Tts          *string            `json:"tts,omitempty"`
+	UpdatedAt    time.Time          `json:"updated_at"`
+	Video        *SessionVideo      `json:"video,omitempty"`
+	VisibleTools *[]string          `json:"visible_tools,omitempty"`
+	Voice        *string            `json:"voice,omitempty"`
 }
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
@@ -1510,7 +1511,10 @@ type AgentConfigPatch struct {
 	Tags     *map[string]string `json:"tags,omitempty"`
 	Tts      *string            `json:"tts,omitempty"`
 	Video    *SessionVideo      `json:"video,omitempty"`
-	Voice    *string            `json:"voice,omitempty"`
+
+	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
+	VisibleTools *[]string `json:"visible_tools,omitempty"`
+	Voice        *string   `json:"voice,omitempty"`
 }
 
 // AgentConfigRequest defines model for AgentConfigRequest.
@@ -1567,6 +1571,9 @@ type AgentConfigRequest struct {
 	Tags  *map[string]string `json:"tags,omitempty"`
 	Tts   *string            `json:"tts,omitempty"`
 	Video *SessionVideo      `json:"video,omitempty"`
+
+	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
+	VisibleTools *[]string `json:"visible_tools,omitempty"`
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`

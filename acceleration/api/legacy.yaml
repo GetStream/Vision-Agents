@@ -4263,6 +4263,19 @@ components:
             Business-specific words the transcriber would otherwise get wrong, such as
             product or company names. Up to 100 terms, and providers that cannot be told
             about vocabulary ignore them.
+        visible_tools:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            maxLength: 128
+          description: >
+            Tools whose steps end users see on a persistent conversation's replies, as
+            tool names or path.Match patterns such as athena_*. Only a step's name, status
+            and timing are shown, never its arguments or result. A shown tool whose result
+            is exactly {"status":"answered","citations":[{"id","title","url","citation"}]}
+            also adds those citations to the reply's sources. Empty shows search and
+            web_search.
         knowledge_namespace:
           type: string
           description: >
@@ -4324,6 +4337,10 @@ components:
           items:
             type: string
         keyterms:
+          type: array
+          items:
+            type: string
+        visible_tools:
           type: array
           items:
             type: string

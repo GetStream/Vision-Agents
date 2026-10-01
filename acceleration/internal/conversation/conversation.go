@@ -40,7 +40,16 @@ type Tool struct {
 	FinishedAt         *time.Time `json:"finished_at,omitempty"`
 	DurationMS         int64      `json:"duration_ms"`
 }
+type Source struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	Citation string `json:"citation,omitempty"`
+}
 type Message struct {
+	// AnswerStart is a Unicode code-point offset separating public progress from the answer.
+	TextLayout     int        `json:"text_layout,omitempty"`
+	AnswerStart    int        `json:"answer_start,omitempty"`
 	CommandID      string     `json:"command_id,omitempty"`
 	TurnID         string     `json:"turn_id,omitempty"`
 	ID             string     `json:"id"`
@@ -54,6 +63,7 @@ type Message struct {
 	DurationMS     int64      `json:"duration_ms"`
 	Sequence       int        `json:"sequence"`
 	Tools          []Tool     `json:"attachments"`
+	Sources        []Source   `json:"sources,omitempty"`
 	Saved          bool       `json:"saved"`
 	Error          string     `json:"persistence_error,omitempty"`
 
@@ -104,6 +114,9 @@ type disk struct {
 	Agent         string
 	Owner         string
 	Current       *Message
+	// VisibleTools are the agent config's visible_tools, kept so a write retried after a
+	// restart shows end users what the agent shows them.
+	VisibleTools []string `json:",omitempty"`
 }
 type operation struct {
 	Message Message
@@ -582,13 +595,18 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 				continue
 			}
 		}
-		raw, ok := m.Custom["support_message"]
-		if !ok {
-			continue
+		msg, err := messageFromWire(m.ID, m.Text, m.Custom)
+		if err != nil {
+			// A message written before schema v1 carries the whole message as support_message.
+			raw, ok := m.Custom["support_message"]
+			if !ok {
+				continue
+			}
+			b, _ := json.Marshal(raw)
+			msg = Message{}
+			err = json.Unmarshal(b, &msg)
 		}
-		b, _ := json.Marshal(raw)
-		var msg Message
-		if json.Unmarshal(b, &msg) == nil {
+		if err == nil {
 			msg.Saved = true
 			msg.authorID = m.User.ID
 			if m.User.Name != nil {
@@ -718,6 +736,13 @@ func (c *Conversation) CheckCaller(ctx context.Context, caller string) error {
 	return nil
 }
 
+// ShowTools sets which tools' steps end users see, as the agent config's visible_tools.
+func (c *Conversation) ShowTools(patterns []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data.VisibleTools = append([]string(nil), patterns...)
+}
+
 func (c *Conversation) Agent() string             { return c.data.Agent }
 func (c *Conversation) Attach(emit func(Updated)) { c.mu.Lock(); defer c.mu.Unlock(); c.emit = emit }
 func (c *Conversation) Release() {
@@ -785,7 +810,7 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 	// message before it is delivered (an optimistic send) sees Stream's copy replace
 	// its own instead of a duplicate.
 	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}}
-	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
+	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", TextLayout: 1, QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
 	receipt := CommandReceipt{CommandID: id, UserMessageID: u.ID, AssistantMessageID: a.ID, State: a.State}
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
@@ -902,6 +927,8 @@ func (c *Conversation) Observe(event agent.Event) {
 		if m.Text != "" && !strings.HasSuffix(m.Text, "\n\n") {
 			m.Text += "\n\n"
 		}
+		m.TextLayout = 1
+		m.AnswerStart = utf8.RuneCountInString(m.Text)
 	case agent.ResponseDelta:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -917,6 +944,8 @@ func (c *Conversation) Observe(event agent.Event) {
 			c.finish("completed")
 			return
 		}
+		m.TextLayout = 1
+		m.AnswerStart = utf8.RuneCountInString(m.Text)
 	case agent.ToolStarted:
 		if !c.acceptTurn(e.TurnID, true) {
 			return
@@ -926,6 +955,8 @@ func (c *Conversation) Observe(event agent.Event) {
 				return
 			}
 		}
+		m.TextLayout = 1
+		m.AnswerStart = utf8.RuneCountInString(m.Text)
 		m.Tools = append(m.Tools, Tool{Type: "tool_calling", Product: e.Product, SDK: e.SDK, ID: e.ID, Name: e.Tool, Title: title(e.Tool), Status: "running", Phase: "running", StartedAt: e.StartedAt})
 		c.state("tools")
 		persist = true
@@ -963,6 +994,10 @@ func (c *Conversation) Observe(event agent.Event) {
 				}
 			}
 			t.Phase = t.Status
+			// Only a tool end users see may show them what it cited.
+			if e.Err == nil && visibleTool(c.data.VisibleTools, t.Name) {
+				m.Sources = mergeSources(m.Sources, sourcesOf(e.Result))
+			}
 			changed = true
 		}
 		if !changed {
@@ -1173,6 +1208,7 @@ func (c *Conversation) finish(state string) {
 func (c *Conversation) publish(m Message) {
 	if c.emit != nil {
 		m.Tools = append([]Tool{}, m.Tools...)
+		m.Sources = append([]Source{}, m.Sources...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
 }
@@ -1280,6 +1316,7 @@ func (c *Conversation) persist() error {
 }
 func (c *Conversation) enqueue(m Message, create bool) error {
 	m.Tools = append([]Tool{}, m.Tools...)
+	m.Sources = append([]Source{}, m.Sources...)
 	op := operation{Message: m, Create: create}
 	if m.Role == "user" {
 		op.Author = c.userAuthor()
@@ -1304,7 +1341,7 @@ func (c *Conversation) userAuthor() string {
 	return "support-operator"
 }
 
-func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) error {
+func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, visible []string) error {
 	m := op.Message
 	user := c.data.Agent
 	if m.Role == "user" {
@@ -1315,18 +1352,19 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 	}
 	m.Saved = !ephemeral
 	m.Error = ""
-	fields := map[string]any{"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": m, "attachments": m.Tools}
+	metadata, err := metadataOf(m, visible)
+	if err != nil {
+		return err
+	}
+	runtime := runtimeOf(m)
+	fields := map[string]any{"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
 	if op.Create {
-		raw, _ := json.Marshal(m.Tools)
-		var attachments []getstream.Attachment
-		_ = json.Unmarshal(raw, &attachments)
-		_, err := c.service.client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{ID: &m.ID, UserID: &user, Text: &m.Text, Attachments: attachments, Custom: map[string]any{"source": "agent", "generating": m.FinishedAt == nil, "support_message": m}}})
+		_, err := c.service.client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{ID: &m.ID, UserID: &user, Text: &m.Text, Custom: map[string]any{"source": "agent", "generating": m.FinishedAt == nil, "support_message": metadata, "support_runtime": runtime}}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := c.service.client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
 			if readErr == nil {
-				raw, _ := json.Marshal(existing.Data.Message.Custom["support_message"])
-				var stored Message
-				if json.Unmarshal(raw, &stored) == nil && stored.ID == m.ID && stored.Role == m.Role && stored.StartedAt.Equal(m.StartedAt) {
+				stored, decodeErr := messageFromWire(existing.Data.Message.ID, existing.Data.Message.Text, existing.Data.Message.Custom)
+				if decodeErr == nil && stored.ID == m.ID && stored.Role == m.Role && stored.StartedAt.Equal(m.StartedAt) {
 					return nil
 				}
 			}
@@ -1337,7 +1375,7 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 		_, err := c.service.client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
 		return err
 	}
-	_, err := c.service.client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields})
+	_, err = c.service.client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields})
 	return err
 }
 func sameSnapshot(a, b Message) bool {
@@ -1362,9 +1400,10 @@ func (c *Conversation) flush() bool {
 			return false
 		}
 		op := c.data.Pending[0]
+		visible := c.data.VisibleTools
 		c.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := c.send(ctx, op, false)
+		err := c.send(ctx, op, false, visible)
 		cancel()
 		c.mu.Lock()
 		if err != nil {
@@ -1420,10 +1459,12 @@ func (c *Conversation) run() {
 			}
 			c.mu.Lock()
 			m := c.data.Current
+			visible := c.data.VisibleTools
 			dirty := c.dirty && m != nil && c.created[m.ID]
 			if m != nil {
 				copy := *m
 				copy.Tools = append([]Tool{}, m.Tools...)
+				copy.Sources = append([]Source{}, m.Sources...)
 				m = &copy
 			}
 			if dirty {
@@ -1432,7 +1473,7 @@ func (c *Conversation) run() {
 			c.mu.Unlock()
 			if dirty && m != nil && m.FinishedAt == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := c.send(ctx, operation{Message: *m}, true)
+				err := c.send(ctx, operation{Message: *m}, true, visible)
 				cancel()
 				if err != nil {
 					c.mu.Lock()

@@ -26,6 +26,7 @@ type AgentConfigPatch struct {
 	Skills             *[]string          `json:"skills,omitempty"`
 	Plugins            *[]string          `json:"plugins,omitempty"`
 	Keyterms           *[]string          `json:"keyterms,omitempty"`
+	VisibleTools       *[]string          `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
 	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
 	Tags               *map[string]string `json:"tags,omitempty"`
@@ -90,12 +91,13 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 
 	patch := request.Body
 	if message, ok := configComplaint(AgentConfigRequest{
-		Name:      override(config.Name, patch.Name),
-		Mode:      patch.Mode,
-		Keyterms:  patch.Keyterms,
-		Sandbox:   patch.Sandbox,
-		Speed:     patch.Speed,
-		Guardrail: patch.Guardrail,
+		Name:         override(config.Name, patch.Name),
+		Mode:         patch.Mode,
+		Keyterms:     patch.Keyterms,
+		Sandbox:      patch.Sandbox,
+		Speed:        patch.Speed,
+		Guardrail:    patch.Guardrail,
+		VisibleTools: patch.VisibleTools,
 	}); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
@@ -120,6 +122,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if patch.Keyterms != nil {
 		config.Keyterms = keytermsOf(patch.Keyterms)
 	}
+	config.VisibleTools = override(config.VisibleTools, patch.VisibleTools)
 	config.KnowledgeNamespace = override(config.KnowledgeNamespace, patch.KnowledgeNamespace)
 	if patch.Sandbox != nil {
 		config.Sandbox, _ = sandboxOf(patch.Sandbox)

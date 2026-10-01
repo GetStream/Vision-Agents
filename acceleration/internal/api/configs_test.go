@@ -102,6 +102,25 @@ func (s *ConfigsSuite) TestAConfigNamingMoreKeytermsThanAnyProviderTakesIsRefuse
 	s.Contains(failure, "keyterms")
 }
 
+func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEndUsersSee() {
+	created := s.createConfig(map[string]any{"name": "support", "visible_tools": []string{"athena_*", "search"}})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"visible_tools": []string{"web_search"}}, &patched))
+
+	s.Equal([]string{"athena_*", "search"}, value(created.VisibleTools))
+	s.Equal([]string{"web_search"}, value(patched.VisibleTools))
+}
+
+func (s *ConfigsSuite) TestAVisibleToolPatternThatCannotMatchIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "visible_tools": []string{"athena_[*"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "visible_tools")
+}
+
 func (s *ConfigsSuite) TestUpdatingAConfigReplacesWhatItWas() {
 	created := s.createConfig(map[string]any{
 		"name": "support", "llm": "llm-flow", "instructions": "be brief",
