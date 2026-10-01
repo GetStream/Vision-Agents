@@ -202,14 +202,22 @@ func (s *EgressSuite) TestANameThatRebindsToLoopbackAfterValidationIsRefused() {
 	s.Zero(hits.Load())
 }
 
-func (s *EgressSuite) TestTheClientRefusesPlainHTTP() {
-	var hits atomic.Int32
+// The URL is refused before the scheme's wrapper runs, so no credential is applied to it.
+func (s *EgressSuite) TestTheClientRefusesPlainHTTPBeforeTheWrapperRuns() {
+	var hits, wrapped atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
 	defer server.Close()
+	counting := func(next http.RoundTripper) http.RoundTripper {
+		return roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			wrapped.Add(1)
+			return next.RoundTrip(request)
+		})
+	}
 
-	_, err := NewClient(5*time.Second, nil).Get(server.URL)
+	_, err := NewClient(5*time.Second, counting).Get(server.URL)
 
 	s.ErrorContains(err, "only HTTPS")
+	s.Zero(wrapped.Load())
 	s.Zero(hits.Load())
 }
 

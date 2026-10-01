@@ -213,14 +213,19 @@ func numericHost(host string) bool {
 	return label != "" && strings.Trim(label, digits) == ""
 }
 
-// clientRoundTripper is the client's transport. It forwards CloseIdleConnections to the
-// inner transport, which a scheme's wrapper would otherwise hide from Client.
+// clientRoundTripper is the client's transport. It checks the URL before the scheme's
+// wrapper sees the request, so no credential is applied to a URL that will be refused,
+// and forwards CloseIdleConnections to the inner transport, which the wrapper would
+// otherwise hide from Client.
 type clientRoundTripper struct {
 	next      http.RoundTripper
 	transport *http.Transport
 }
 
 func (t clientRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	if err := checkURL(request.URL); err != nil {
+		return nil, err
+	}
 	return t.next.RoundTrip(request)
 }
 
@@ -228,6 +233,7 @@ func (t clientRoundTripper) CloseIdleConnections() {
 	t.transport.CloseIdleConnections()
 }
 
+// checkedRoundTripper repeats the URL check after the wrapper, which may rewrite the request.
 type checkedRoundTripper struct {
 	transport *http.Transport
 }
