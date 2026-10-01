@@ -408,8 +408,9 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 
 // RespondCommand accepts one durable text submission. The receipt may be replayed,
 // but only the first successful acceptance is allowed to invoke the model, and only
-// that one returns the id of the response it recorded.
-func (s *Session) RespondCommand(ctx context.Context, id, text string) (persistent.CommandReceipt, string, error) {
+// that one returns the id of the response it recorded. clientID names the install the
+// command came from, which a client tool called while answering is addressed to.
+func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string) (persistent.CommandReceipt, string, error) {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
@@ -418,7 +419,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text string) (persiste
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", err
 	}
-	receipt, err := s.persisted.BeginCommand(id, text)
+	receipt, err := s.persisted.BeginCommand(id, text, clientID)
 	if err != nil {
 		return receipt, "", err
 	}
