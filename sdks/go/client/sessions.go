@@ -63,6 +63,10 @@ type Query struct {
 	UserID string
 	// Modality narrows to how the user took part: "text", "voice" or "video".
 	Modality string
+	// State narrows to the sessions still running, "live", or the ones over, "ended".
+	State string
+	// AgentID narrows to the sessions created with this agent id.
+	AgentID string
 	// Limit is up to 200. Zero is 25.
 	Limit int
 	// Cursor is the NextCursor of the page before, with the same filters. Empty is the
@@ -274,6 +278,8 @@ func (s *Sessions) queryOf(text string, query Query) acceleration.SessionQuery {
 		ProjectId: equals(query.ProjectID),
 		UserId:    equals(query.UserID),
 		Modality:  equals(query.Modality),
+		State:     equals(query.State),
+		AgentId:   equals(query.AgentID),
 	}
 	if text != "" {
 		filter.Text = &acceleration.TextMatch{Q: text}

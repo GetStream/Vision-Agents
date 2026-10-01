@@ -859,6 +859,11 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	case filter.Modality != "" && live.Modality() != filter.Modality:
 		return false
+	case filter.AgentID != "" && spec.AgentID != filter.AgentID:
+		return false
+	case filter.State == store.SessionRunning && live.State() != Live,
+		filter.State == store.SessionClosed && live.State() != Ended:
+		return false
 	case filter.Cursor != nil && !before(live.CreatedAt(), live.ID(), *filter.Cursor):
 		return false
 	}
