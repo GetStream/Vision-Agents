@@ -273,7 +273,7 @@ func (s *Server) GetCallTranscript(ctx context.Context, request GetCallTranscrip
 		return GetCallTranscript404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
 	}
 
-	said, err := s.transcripts.Transcript(ctx, call.AgentID)
+	said, err := s.transcripts.Transcript(ctx, s.transcriptRead(ctx, customerID, call))
 	if err != nil {
 		return nil, err
 	}
@@ -289,6 +289,31 @@ func (s *Server) GetCallTranscript(ctx context.Context, request GetCallTranscrip
 		})
 	}
 	return GetCallTranscript200JSONResponse(messages), nil
+}
+
+// transcriptSlack widens a call's window by the time the router's clock and Stream's may
+// disagree, so the first and last lines are not lost to a timestamp a moment off.
+const transcriptSlack = 2 * time.Second
+
+// transcriptRead is where a call's transcript was written. A call bound to a conversation
+// wrote into that conversation's channel, beside what was typed before and after it, so
+// only the call's own window is read. A call with no session row read its agent's channel
+// before there were session rows, and still does.
+func (s *Server) transcriptRead(ctx context.Context, customerID string, call store.Call) chatlog.Read {
+	channel := call.AgentID
+	if stored, err := s.store.StoredSession(ctx, customerID, call.ID); err == nil {
+		channel = transcriptChannel(stored)
+	}
+	read := chatlog.Read{
+		Channel:  channel,
+		Customer: customerID,
+		Agent:    call.AgentID,
+		From:     call.StartedAt.Add(-transcriptSlack),
+	}
+	if call.EndedAt != nil {
+		read.To = call.EndedAt.Add(transcriptSlack)
+	}
+	return read
 }
 
 // GetCallEvents returns what the conversation decided on one call, oldest first.
@@ -356,7 +381,7 @@ func (s *Server) GetCallTimeline(ctx context.Context, request GetCallTimelineReq
 	// part of this view that only this service holds.
 	var said []chatlog.Spoken
 	if s.transcripts != nil {
-		said, err = s.transcripts.Transcript(ctx, call.AgentID)
+		said, err = s.transcripts.Transcript(ctx, s.transcriptRead(ctx, customerID, call))
 		if err != nil {
 			s.logger.Error("could not read the transcript for a timeline",
 				"call", call.ID, "error", err)

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 )
 
 // transcriptLimit is how much of a conversation is read back at once. Stream caps a page
@@ -65,51 +67,77 @@ func NewReader(options ReaderOptions) (*Reader, error) {
 	return &Reader{client: client}, nil
 }
 
-// Transcript returns what was said by one agent, oldest first.
+// NewReaderFromClient reads through a client the caller built, which is how a test points
+// a Reader at something other than Stream.
+func NewReaderFromClient(client *getstream.Stream) *Reader { return &Reader{client: client} }
+
+// Read names the part of a conversation to read back.
+type Read struct {
+	// Channel is the channel id within the agent type: the agent's own channel, or the
+	// conversation a call was bound to.
+	Channel string
+	// Customer is who is reading. A channel stamped for another customer reads as empty.
+	Customer string
+	// Agent is the agent's id, which is who the conversation service writes its replies
+	// as. Those lines carry no source, so this is how they are told apart.
+	Agent string
+	// From and To bound the lines to the call's own, since a conversation's channel also
+	// holds what was typed before and after it. A zero To means the call is still going.
+	From, To time.Time
+}
+
+// Transcript returns what was said in one channel, oldest first.
 //
 // A conversation nobody stored comes back empty rather than as an error: a call whose
 // transcript was never written still happened, and the caller asking about it is not
-// wrong to.
-func (r *Reader) Transcript(ctx context.Context, agentID string) ([]Spoken, error) {
-	if agentID == "" {
-		return nil, errors.New("chatlog: an agent id is required")
+// wrong to. Reading never creates the channel, so asking about a call leaves nothing behind.
+func (r *Reader) Transcript(ctx context.Context, read Read) ([]Spoken, error) {
+	if read.Channel == "" {
+		return nil, errors.New("chatlog: a channel is required")
 	}
 
-	limit := transcriptLimit
-	// Without asking for the state the channel comes back without its messages, which
-	// reads as a conversation nobody stored rather than as the error it is.
-	state := true
-	// A custom channel type such as "agent" refuses server-side create without a
-	// creator; "messaging" used to let this through. The channel is named for the
-	// agent, so the agent is who created it.
-	createdBy := agentID
-	response, err := r.client.Chat().GetOrCreateChannel(ctx, ChannelType, agentID,
-		&getstream.GetOrCreateChannelRequest{
-			State:    &state,
-			Messages: &getstream.MessagePaginationParams{Limit: &limit},
-			Data:     &getstream.ChannelInput{CreatedByID: &createdBy},
-		})
+	one, limit := 1, transcriptLimit
+	response, err := r.client.Chat().QueryChannels(ctx, &getstream.QueryChannelsRequest{
+		FilterConditions: map[string]any{"cid": ChannelType + ":" + read.Channel},
+		Limit:            &one,
+		MessageLimit:     &limit,
+	})
 	if err != nil {
 		return nil, err
 	}
+	if len(response.Data.Channels) == 0 {
+		return []Spoken{}, nil
+	}
+	found := response.Data.Channels[0]
+	// A channel the router stamped says whose it is. One stamped for somebody else is not
+	// this customer's to read, whatever their call row names.
+	if found.Channel != nil {
+		if stamped, ok := found.Channel.Custom[conversation.CustomerField]; ok && stamped != read.Customer {
+			return []Spoken{}, nil
+		}
+	}
 
-	said := make([]Spoken, 0, len(response.Data.Messages))
-	for _, stored := range response.Data.Messages {
+	said := make([]Spoken, 0, len(found.Messages))
+	for _, stored := range found.Messages {
 		if stored.Text == "" || stored.DeletedAt != nil {
 			continue
 		}
-		line := Spoken{
-			Speaker: stored.User.ID,
-			Text:    stored.Text,
-			Agent:   stored.Custom[SourceField] == SourceAgent,
+		line := Spoken{Speaker: stored.User.ID, Text: stored.Text}
+		if stored.CreatedAt.Time != nil {
+			line.At = *stored.CreatedAt.Time
 		}
+		if !read.From.IsZero() && line.At.Before(read.From) {
+			continue
+		}
+		if !read.To.IsZero() && line.At.After(read.To) {
+			continue
+		}
+		source, sourced := stored.Custom[SourceField]
+		line.Agent = source == SourceAgent || (!sourced && read.Agent != "" && stored.User.ID == read.Agent)
 		// A user nobody named is named after their own id, which is not a name and is no
 		// use to whoever is reading the conversation back.
 		if stored.User.Name != nil && *stored.User.Name != stored.User.ID {
 			line.Name = *stored.User.Name
-		}
-		if stored.CreatedAt.Time != nil {
-			line.At = *stored.CreatedAt.Time
 		}
 		said = append(said, line)
 	}

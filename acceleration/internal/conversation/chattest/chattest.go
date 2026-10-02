@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 )
@@ -20,19 +21,66 @@ type store struct {
 	channels map[string]map[string]any
 	messages map[string]map[string]any
 	order    []string
+	now      func() time.Time
 }
 
-// Client serves Chat from memory for the life of the test.
-func Client(t *testing.T) *getstream.Stream {
+// Server is Chat in memory, for a test that needs to steer or look at what is stored.
+type Server struct {
+	// Client talks to it.
+	Client *getstream.Stream
+	db     *store
+}
+
+// NewServer serves Chat from memory for the life of the test.
+func NewServer(t *testing.T) *Server {
 	t.Helper()
-	db := &store{channels: map[string]map[string]any{}, messages: map[string]map[string]any{}}
+	db := &store{channels: map[string]map[string]any{}, messages: map[string]map[string]any{}, now: time.Now}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
 	t.Cleanup(server.Close)
 	client, err := getstream.NewClient("test", "secret", getstream.WithBaseUrl(server.URL))
 	if err != nil {
 		t.Fatalf("chattest: %v", err)
 	}
-	return client
+	return &Server{Client: client, db: db}
+}
+
+// Client serves Chat from memory for the life of the test.
+func Client(t *testing.T) *getstream.Stream {
+	t.Helper()
+	return NewServer(t).Client
+}
+
+// At dates every message stored from now on, which Chat does by its own clock. A test
+// places lines either side of something with it.
+func (s *Server) At(at time.Time) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.now = func() time.Time { return at }
+}
+
+// Channel returns what an agent channel was created with, and whether it exists at all.
+func (s *Server) Channel(id string) (map[string]any, bool) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	data, ok := s.db.channels[id]
+	return data, ok
+}
+
+// refuse answers the way Chat does when it will not do what was asked.
+func refuse(w http.ResponseWriter, message string) {
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": message, "StatusCode": http.StatusBadRequest})
+}
+
+// messagesIn returns a channel's messages in the order they were written.
+func (db *store) messagesIn(id string) []map[string]any {
+	messages := []map[string]any{}
+	for _, mid := range db.order {
+		if db.messages[mid]["cid"] == "agent:"+id {
+			messages = append(messages, db.messages[mid])
+		}
+	}
+	return messages
 }
 
 func (db *store) serve(w http.ResponseWriter, r *http.Request) {
@@ -46,22 +94,37 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/channels"):
+		// A query finds channels and never creates one.
+		channels := []map[string]any{}
+		filter, _ := body["filter_conditions"].(map[string]any)
+		if cid, ok := filter["cid"].(string); ok {
+			id := strings.TrimPrefix(cid, "agent:")
+			if data, exists := db.channels[id]; exists && strings.HasPrefix(cid, "agent:") {
+				channels = append(channels, map[string]any{
+					"channel": data, "members": data["members"], "messages": db.messagesIn(id),
+				})
+			}
+		}
+		result["channels"] = channels
 	case strings.HasSuffix(r.URL.Path, "/query"):
 		id := parts[len(parts)-2]
+		_, exists := db.channels[id]
+		data, carries := body["data"].(map[string]any)
+		// The agent channel type refuses a server-side create without a creator, so a
+		// query for a channel that is not there creates nothing unless it names one.
+		if !exists && (!carries || (data["created_by_id"] == nil && data["created_by"] == nil)) {
+			refuse(w, "either data.created_by or data.created_by_id must be provided when using server side auth")
+			return
+		}
 		// A query carrying data creates the channel; one without it must not overwrite
 		// the ownership already recorded on it.
-		if data, ok := body["data"].(map[string]any); ok {
+		if carries {
 			db.channels[id] = data
 		}
 		result["channel"] = db.channels[id]
 		result["members"] = db.channels[id]["members"]
-		messages := []map[string]any{}
-		for _, id := range db.order {
-			if db.messages[id]["cid"] == "agent:"+parts[len(parts)-2] {
-				messages = append(messages, db.messages[id])
-			}
-		}
-		result["messages"] = messages
+		result["messages"] = db.messagesIn(id)
 	case strings.HasSuffix(r.URL.Path, "/message"):
 		message := body["message"].(map[string]any)
 		id, _ := message["id"].(string)
@@ -72,6 +135,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if _, exists := db.messages[id]; !exists {
 			db.order = append(db.order, id)
 			message["cid"] = "agent:" + parts[len(parts)-2]
+			message["created_at"] = db.now().UnixNano()
 			// Chat answers with the author it resolved the id to, which is how a reader
 			// learns who spoke: a stored message carries a user, not a user id. A user
 			// nobody named comes back named after their own id.

@@ -114,6 +114,9 @@ type Options struct {
 	// VisibleTools are the agent config's visible_tools. A shown tool's stored artifacts
 	// get a card of their own; empty shows search and web_search.
 	VisibleTools []string
+	// CustomerID is stamped on a channel this log creates, so reading it back can tell
+	// whose it is. A bound conversation's channel already carries the stamp.
+	CustomerID string
 
 	// APIKey defaults to STREAM_API_KEY.
 	APIKey string
@@ -136,6 +139,7 @@ type Log struct {
 	agentID  string
 	channel  string
 	existing bool
+	customer string
 	agent    User
 	visible  []string
 	logger   *slog.Logger
@@ -200,6 +204,7 @@ func New(options Options) (*Log, error) {
 		agentID:  options.AgentID,
 		channel:  channel,
 		existing: options.Channel != "",
+		customer: options.CustomerID,
 		agent:    options.Agent,
 		visible:  options.VisibleTools,
 		logger:   options.Logger.With("agent", options.AgentID, "channel", channel),
@@ -223,6 +228,9 @@ func (l *Log) Start(ctx context.Context) error {
 		request.State = &state
 	} else {
 		request.Data = &getstream.ChannelInput{CreatedByID: &l.agent.ID}
+		if l.customer != "" {
+			request.Data.Custom = map[string]any{conversation.CustomerField: l.customer}
+		}
 	}
 	_, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request)
 	if err != nil {

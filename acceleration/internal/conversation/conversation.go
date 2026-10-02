@@ -191,6 +191,9 @@ func SessionCommandChannel(channelType, id string) bool {
 const TriggerField = "support_trigger"
 const SessionCommandTrigger = "session_commands"
 
+// CustomerField names the customer a channel the router created belongs to.
+const CustomerField = "support_customer_id"
+
 func New(root string) (*Service, error) {
 	client, err := getstream.NewClient(os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET"))
 	if err != nil {
@@ -365,7 +368,7 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 			return nil, nil, false, err
 		}
 		stamped := channelCustom(custom)
-		maps.Copy(stamped, map[string]any{"support_customer_id": customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
+		maps.Copy(stamped, map[string]any{CustomerField: customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
 		_, err = s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}})
 		if err != nil {
 			return nil, nil, false, err
@@ -483,7 +486,7 @@ func (s *Service) Describe(ctx context.Context, cid, title, description string) 
 // requires the caller's current membership, checked against the query response.
 // A channel with no owner is a backend-owned demo, which no end user may claim.
 func ownedBy(custom map[string]any, customer, agentID, caller string) error {
-	if custom["support_customer_id"] != customer || (agentID != "" && custom["support_agent_id"] != agentID) {
+	if custom[CustomerField] != customer || (agentID != "" && custom["support_agent_id"] != agentID) {
 		return errors.New("conversation belongs to another customer or agent")
 	}
 	rawOwner, bound := custom["support_owner_id"]

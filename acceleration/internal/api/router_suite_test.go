@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -133,6 +134,9 @@ type RouterSuite struct {
 	// outbox is where the conversations service queues what it could not write down.
 	outbox string
 
+	// chat is the Stream Chat the conversations are written to and transcripts read from.
+	chat *chattest.Server
+
 	// dispatch is the pool the hooks hand an arriving call or message to, for a test to
 	// register a worker in and read back what it was given.
 	dispatch *dispatch.Pool
@@ -204,6 +208,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.data = testData{suite: s}
 
+	s.chat = chattest.NewServer(s.T())
 	limiter := s.quota(liveClient, logger)
 	policies := s.policies(logger)
 	streams := s.routers(limiter, policies, logger)
@@ -230,6 +235,7 @@ func (s *RouterSuite) SetupSuite() {
 		Campaigns:     s.campaigns(sessions, logger),
 		Simulations:   s.simulations(sessions, streams, logger),
 		Knowledge:     s.knowledgeWriter(),
+		Transcripts:   chatlog.NewReaderFromClient(s.chat.Client),
 		KnowledgeURLs: s.pages(redisAddr),
 		Voices:        s.voiceService(),
 		VoiceLibrary:  voices.NewCatalogue(),
@@ -361,7 +367,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // not.
 func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *session.Manager {
 	s.outbox = s.T().TempDir()
-	conversations, err := conversation.NewForChat(s.outbox, chattest.Client(s.T()))
+	conversations, err := conversation.NewForChat(s.outbox, s.chat.Client)
 	s.Require().NoError(err)
 	s.T().Cleanup(conversations.Close)
 
