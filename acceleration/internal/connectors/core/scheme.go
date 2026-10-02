@@ -79,6 +79,10 @@ type Captured struct {
 	Metadata map[string]string
 	// Scopes are the scopes the provider says it granted.
 	Scopes []string
+	// Unverified names the Metadata values read from a callback query that a request with
+	// the minted token must confirm before they are trusted. When an identity part is
+	// among them, AccountID is unverified too.
+	Unverified []string
 }
 
 // Material is scheme-private and sealed as one blob, bound to tenant, connection and
