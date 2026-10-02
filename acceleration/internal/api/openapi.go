@@ -186,6 +186,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	api := humachi.New(router, config)
 	s.registerHealth(api)
 	s.registerPolicies(api)
+	s.registerSettings(api)
 	s.registerSessionQuery(api)
 	s.registerSessionStop(api)
 	s.registerSessionDelete(api)

@@ -76,6 +76,13 @@ func newRouter(t *testing.T) *router {
 		answer(w, http.StatusNotFound, acceleration.Error{Error: "no such agent config"})
 	})
 
+	mux.HandleFunc("GET /v1/settings/app", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.AppSettings{Stream: acceleration.StreamSettings{
+			Tenancy: "deployment", WritesInto: "deployment_app", ChannelType: "present", CallType: "missing",
+		}})
+	})
+
 	mux.HandleFunc("POST /v1/agents/sessions", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusCreated, acceleration.Session{
@@ -1080,4 +1087,19 @@ func register(registry *tools.Registry, name string) error {
 		}) (any, error) {
 			return "raining in " + in.Location, nil
 		})
+}
+
+func TestTheAppsSettingsSayWhereItsWorkIsWritten(t *testing.T) {
+	backend := newRouter(t)
+
+	settings, err := backend.client(t).Settings().App(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Stream.WritesInto != "deployment_app" || settings.Stream.CallType != "missing" {
+		t.Errorf("the settings came back as %+v", settings.Stream)
+	}
+	if asked := backend.requests("GET", "/v1/settings/app"); asked != 1 {
+		t.Errorf("the router was asked %v", backend.asked)
+	}
 }

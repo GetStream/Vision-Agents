@@ -11,6 +11,7 @@ package api
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -103,6 +105,9 @@ type Options struct {
 	// customer: tokens, guests and the transcripts read back. Absent when the deployment
 	// has no Stream app at all, in which case those paths say so.
 	Stream *streamapp.Clients
+	// StreamTenancy is whose Stream app the router acts in, as stream.tenancy says. Empty
+	// is deployment.
+	StreamTenancy string
 	// Campaigns rings lists of people. Absent without telephony or sessions, in which
 	// case a campaign can be written down but not run.
 	Campaigns *campaign.Runner
@@ -180,6 +185,7 @@ type Server struct {
 	sessions      *session.Manager
 	streams       *Streams
 	stream        *streamapp.Clients
+	streamTenancy string
 	campaigns     *campaign.Runner
 	simulations   *simulation.Runner
 	knowledge     knowledge.Writer
@@ -269,6 +275,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		sessions:      options.Sessions,
 		streams:       options.Streams,
 		stream:        options.Stream,
+		streamTenancy: cmp.Or(options.StreamTenancy, config.TenancyDeployment),
 		campaigns:     options.Campaigns,
 		simulations:   options.Simulations,
 		knowledge:     options.Knowledge,

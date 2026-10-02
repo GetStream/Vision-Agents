@@ -1214,6 +1214,69 @@ func (e SimulationRunState) Valid() bool {
 	}
 }
 
+// Defines values for StreamTenancy.
+const (
+	App        StreamTenancy = "app"
+	Deployment StreamTenancy = "deployment"
+)
+
+// Valid indicates whether the value is a known member of the StreamTenancy enum.
+func (e StreamTenancy) Valid() bool {
+	switch e {
+	case App:
+		return true
+	case Deployment:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamTypeState.
+const (
+	Missing StreamTypeState = "missing"
+	Present StreamTypeState = "present"
+	Unknown StreamTypeState = "unknown"
+	Unsafe  StreamTypeState = "unsafe"
+)
+
+// Valid indicates whether the value is a known member of the StreamTypeState enum.
+func (e StreamTypeState) Valid() bool {
+	switch e {
+	case Missing:
+		return true
+	case Present:
+		return true
+	case Unknown:
+		return true
+	case Unsafe:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamWritesInto.
+const (
+	DeploymentApp StreamWritesInto = "deployment_app"
+	Nowhere       StreamWritesInto = "nowhere"
+	ThisApp       StreamWritesInto = "this_app"
+)
+
+// Valid indicates whether the value is a known member of the StreamWritesInto enum.
+func (e StreamWritesInto) Valid() bool {
+	switch e {
+	case DeploymentApp:
+		return true
+	case Nowhere:
+		return true
+	case ThisApp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StsOptionsTurnDetection.
 const (
 	StsOptionsTurnDetectionNone      StsOptionsTurnDetection = "none"
@@ -1710,6 +1773,12 @@ type AgentResponsePage struct {
 
 	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// AppSettings What the router does for the calling app. It never carries a secret.
+type AppSettings struct {
+	// Stream Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
+	Stream StreamSettings `json:"stream"`
 }
 
 // AttachNumberRequest defines model for AttachNumberRequest.
@@ -3837,6 +3906,33 @@ type StatsBucket struct {
 	// Uptime Successes over total requests in the bucket.
 	Uptime *float64 `json:"uptime,omitempty"`
 }
+
+// StreamSettings Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
+type StreamSettings struct {
+	// CallType Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
+	CallType StreamTypeState `json:"call_type"`
+
+	// ChannelType Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
+	ChannelType StreamTypeState `json:"channel_type"`
+
+	// CheckedAt When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
+
+	// Tenancy Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
+	Tenancy StreamTenancy `json:"tenancy"`
+
+	// WritesInto Which Stream app the calling app's work is written into: this_app is its own, deployment_app is the router's own app, shared with every app it serves that has none, and nowhere is no app at all, so conversations are not kept and calls cannot be made.
+	WritesInto StreamWritesInto `json:"writes_into"`
+}
+
+// StreamTenancy Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
+type StreamTenancy string
+
+// StreamTypeState Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
+type StreamTypeState string
+
+// StreamWritesInto Which Stream app the calling app's work is written into: this_app is its own, deployment_app is the router's own app, shared with every app it serves that has none, and nowhere is no app at all, so conversations are not kept and calls cannot be made.
+type StreamWritesInto string
 
 // StsOptions How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
 type StsOptions struct {
@@ -6607,6 +6703,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/search (the `Search` operationId).
 	Search(ctx context.Context, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAppSettings What the router does for the calling app
+	//
+	// Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
+	GetAppSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetActivity Who used the calling customer's agents, and how much
 	//
@@ -9681,6 +9786,25 @@ func (c *Client) SearchWithBody(ctx context.Context, contentType string, body io
 // Corresponds with POST /v1/search (the `Search` operationId).
 func (c *Client) Search(ctx context.Context, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSearchRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAppSettings What the router does for the calling app
+//
+// Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
+func (c *Client) GetAppSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAppSettingsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -15147,6 +15271,33 @@ func NewSearchRequestWithBody(server string, contentType string, body io.Reader)
 	return req, nil
 }
 
+// NewGetAppSettingsRequest constructs an http.Request for the GetAppSettings method
+func NewGetAppSettingsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/settings/app")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetActivityRequest constructs an http.Request for the GetActivity method
 func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Request, error) {
 	var err error
@@ -17533,6 +17684,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/search (the `Search` operationId).
 	SearchWithResponse(ctx context.Context, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchResponse, error)
+
+	// GetAppSettingsWithResponse What the router does for the calling app
+	//
+	// Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
+	GetAppSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAppSettingsResponse, error)
 
 	// GetActivityWithResponse Who used the calling customer's agents, and how much
 	//
@@ -25137,6 +25299,75 @@ func (r SearchResponse) ContentType() string {
 	return ""
 }
 
+type GetAppSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppSettings
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAppSettingsResponse) GetJSON200() *AppSettings {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAppSettingsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAppSettingsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAppSettingsResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAppSettingsResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAppSettingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAppSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAppSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAppSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetActivityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28508,6 +28739,23 @@ func (c *ClientWithResponses) SearchWithResponse(ctx context.Context, body Searc
 		return nil, err
 	}
 	return ParseSearchResponse(rsp)
+}
+
+// GetAppSettingsWithResponse What the router does for the calling app
+//
+// Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
+func (c *ClientWithResponses) GetAppSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAppSettingsResponse, error) {
+	rsp, err := c.GetAppSettings(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAppSettingsResponse(rsp)
 }
 
 // GetActivityWithResponse Who used the calling customer's agents, and how much
@@ -34555,6 +34803,60 @@ func ParseSearchResponse(rsp *http.Response) (*SearchResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAppSettingsResponse parses an HTTP response from a GetAppSettingsWithResponse call
+func ParseGetAppSettingsResponse(rsp *http.Response) (*GetAppSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAppSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

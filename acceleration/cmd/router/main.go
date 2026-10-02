@@ -746,6 +746,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		AuthMode:       authMode,
 		DataRetention:  settings.DataMove.Retention,
 		Stream:         streamClients,
+		StreamTenancy:  settings.Stream.Tenancy,
 		HookSecret:     settings.Stream.APISecret,
 		CORSOrigins:    settings.CORSOrigins,
 		PublicURL:      settings.PublicURL,

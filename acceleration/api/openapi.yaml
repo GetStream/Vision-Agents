@@ -567,6 +567,14 @@ components:
         - items
         - has_more
       type: object
+    AppSettings:
+      description: What the router does for the calling app. It never carries a secret.
+      properties:
+        stream:
+          $ref: '#/components/schemas/StreamSettings'
+      required:
+        - stream
+      type: object
     AttachNumberRequest:
       properties:
         allowed_ips:
@@ -3797,6 +3805,50 @@ components:
         - request_count
         - error_count
       type: object
+    StreamSettings:
+      description: Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
+      properties:
+        call_type:
+          $ref: '#/components/schemas/StreamTypeState'
+          description: Whether the Stream app holds the agent call type calls are made with. Stream reports no grants for it here, so it is present or missing.
+        channel_type:
+          $ref: '#/components/schemas/StreamTypeState'
+          description: Whether the Stream app holds the agent channel type conversations are kept in. unsafe is one whose grants let somebody other than the app's backend make, change or join a conversation's channel, or read one they are not in.
+        checked_at:
+          description: When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
+          format: date-time
+          type: string
+        tenancy:
+          $ref: '#/components/schemas/StreamTenancy'
+        writes_into:
+          $ref: '#/components/schemas/StreamWritesInto'
+      required:
+        - tenancy
+        - writes_into
+        - channel_type
+        - call_type
+      type: object
+    StreamTenancy:
+      description: Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
+      enum:
+        - deployment
+        - app
+      type: string
+    StreamTypeState:
+      description: Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
+      enum:
+        - present
+        - missing
+        - unsafe
+        - unknown
+      type: string
+    StreamWritesInto:
+      description: 'Which Stream app the calling app''s work is written into: this_app is its own, deployment_app is the router''s own app, shared with every app it serves that has none, and nowhere is no app at all, so conversations are not kept and calls cannot be made.'
+      enum:
+        - this_app
+        - deployment_app
+        - nowhere
+      type: string
     StsOptions:
       description: |
         How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
@@ -8374,6 +8426,37 @@ paths:
           $ref: '#/components/responses/NotFound'
       summary: Answer a question out of what is true now
       x-client-accessible: true
+  /v1/settings/app:
+    get:
+      description: |-
+        Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: getAppSettings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSettings'
+          description: The app's settings
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Service Unavailable
+      summary: What the router does for the calling app
   /v1/stats/activity:
     get:
       description: |
