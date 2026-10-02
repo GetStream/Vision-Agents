@@ -365,3 +365,19 @@ func (s *StoredSuite) TestAHealthyAppStaysConnectedWithWhatItsCheckFound() {
 	s.Equal(store.StreamAppConnected, held.State)
 	s.JSONEq(`{"channel_type":"missing","call_type":"present","suspended":false,"auth_checks_off":false}`, string(held.Checks))
 }
+
+func (s *StoredSuite) TestADeploymentSignedHookWaitsForTheDeploymentApp() {
+	s.deployment = NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", Strict: true})
+	clients := NewClients(s.source(false), ClientsOptions{})
+
+	_, err := clients.Verifiers(s.ctx, "", 0)
+	s.ErrorIs(err, ErrDeploymentAppUnknown)
+	_, err = clients.Verifiers(s.ctx, "", 999)
+	s.ErrorIs(err, ErrDeploymentAppUnknown, "999 may be the deployment's own app")
+
+	s.register("own-key")
+	verifiers, err := clients.Verifiers(s.ctx, "", s.app)
+	s.Require().NoError(err, "a registered app's hooks do not wait on the deployment's")
+	s.Require().Len(verifiers, 1)
+	s.Equal(s.customer, verifiers[0].CustomerID)
+}

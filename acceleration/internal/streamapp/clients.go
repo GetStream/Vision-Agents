@@ -58,6 +58,7 @@ type Clients struct {
 	known   map[resolution]resolved
 	refresh map[string]time.Time
 	checks  map[string]checked
+	unknown map[string]time.Time
 }
 
 // resolution is one question asked of the source: a customer's app for new work, or the
@@ -98,6 +99,7 @@ func NewClients(source Source, options ClientsOptions) *Clients {
 		source: source, http: httpClient, max: maxClients, now: now,
 		clients: map[string]*list.Element{}, order: list.New(),
 		known: map[resolution]resolved{}, refresh: map[string]time.Time{}, checks: map[string]checked{},
+		unknown: map[string]time.Time{},
 	}
 }
 
@@ -209,6 +211,8 @@ func (c *Clients) forget(customer string) {
 			delete(c.known, asked)
 		}
 	}
+	// A key registered a moment ago is no longer one no app holds.
+	clear(c.unknown)
 	// What the customer's app holds is asked again too, since whatever changed it may
 	// have changed that.
 	for key, answer := range c.checks {
