@@ -3,7 +3,6 @@ package chatlog
 import (
 	"context"
 	"errors"
-	"os"
 	"sort"
 	"time"
 
@@ -16,15 +15,6 @@ import (
 // of messages, and a call long enough to exceed it is long enough that the far end of it
 // is a separate question.
 const transcriptLimit = 200
-
-// ReaderOptions configures a Reader. The credentials fall back to the environment the
-// same way a Log's do.
-type ReaderOptions struct {
-	// APIKey defaults to STREAM_API_KEY.
-	APIKey string
-	// APISecret defaults to STREAM_API_SECRET.
-	APISecret string
-}
 
 // Reader reads conversations back out of Stream Chat.
 //
@@ -46,25 +36,6 @@ type Spoken struct {
 	Agent bool
 	Text  string
 	At    time.Time
-}
-
-// NewReader validates the options and returns a Reader.
-func NewReader(options ReaderOptions) (*Reader, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
-	if options.APIKey == "" || options.APISecret == "" {
-		return nil, errors.New("chatlog: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required")
-	}
-
-	client, err := getstream.NewClient(options.APIKey, options.APISecret)
-	if err != nil {
-		return nil, err
-	}
-	return &Reader{client: client}, nil
 }
 
 // NewReaderFromClient reads through a client the caller built, which is how a test points

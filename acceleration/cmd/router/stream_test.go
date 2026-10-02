@@ -22,7 +22,6 @@ func TestStreamClientsSuite(t *testing.T) {
 func (s *StreamClientsSuite) TestRouterStartsWithTenancyDeployment() {
 	// A router whose settings name none of the new tenancy settings acts in its own app
 	// for every customer, as it always has.
-	s.T().Setenv(userTokenEnvVar, "")
 	settings := config.Defaults()
 	settings.Stream.APIKey, settings.Stream.APISecret = "deploy-key", "deploy-secret"
 	s.Empty(settings.Stream.Tenancy)
@@ -39,9 +38,9 @@ func (s *StreamClientsSuite) TestRouterStartsWithTenancyDeployment() {
 }
 
 func (s *StreamClientsSuite) TestTheDeploymentAppCarriesTheUserToken() {
-	s.T().Setenv(userTokenEnvVar, "fixed-token")
 	settings := config.Defaults()
 	settings.Stream.APIKey, settings.Stream.APISecret = "deploy-key", "deploy-secret"
+	settings.Stream.UserToken = "fixed-token"
 
 	bound, err := newStreamClients(settings).For(context.Background(), "acme")
 

@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,11 +31,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
-)
-
-const (
-	apiKeyEnvVar    = "STREAM_API_KEY"
-	apiSecretEnvVar = "STREAM_API_SECRET"
 )
 
 // ChannelType is the Stream Chat channel type transcripts are written to.
@@ -99,8 +93,7 @@ const (
 	artifact
 )
 
-// Options configures a Log. The credentials fall back to the environment, the same way
-// the Stream edge reads them.
+// Options configures a Log. Its credentials are given, never read from the environment.
 type Options struct {
 	// AgentID is required. It is the default channel name for demo calls that have no
 	// conversation.
@@ -122,10 +115,9 @@ type Options struct {
 	// router writes in the Stream app a session is pinned to. With it set, nothing is read
 	// from the environment and the key and secret below are not used.
 	Client *getstream.Stream
-	// APIKey defaults to STREAM_API_KEY.
-	APIKey string
-	// APISecret defaults to STREAM_API_SECRET. These are server-side writes, so a secret
-	// is required rather than a user token.
+	// APIKey and APISecret build a client when none is given. These are server-side
+	// writes, so a secret is required rather than a user token.
+	APIKey    string
 	APISecret string
 
 	Logger *slog.Logger
@@ -185,14 +177,8 @@ func New(options Options) (*Log, error) {
 	}
 	client := options.Client
 	if client == nil {
-		if options.APIKey == "" {
-			options.APIKey = os.Getenv(apiKeyEnvVar)
-		}
-		if options.APISecret == "" {
-			options.APISecret = os.Getenv(apiSecretEnvVar)
-		}
 		if options.APIKey == "" || options.APISecret == "" {
-			return nil, errors.New("chatlog: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required")
+			return nil, errors.New("chatlog: a client, or an api key and secret, are required")
 		}
 		var err error
 		if client, err = getstream.NewClient(options.APIKey, options.APISecret); err != nil {

@@ -65,34 +65,27 @@ func (s *StreamEdgeSuite) TestACallIDIsRequired() {
 func (s *StreamEdgeSuite) TestCredentialsAreRequired() {
 	_, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
 
-	s.ErrorContains(err, "STREAM_API_KEY")
+	s.ErrorContains(err, "api key")
 }
 
 func (s *StreamEdgeSuite) TestATokenOrASecretIsRequired() {
-	s.T().Setenv("STREAM_API_KEY", "key")
+	_, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key"})
 
-	_, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
-
-	s.ErrorContains(err, "STREAM_USER_TOKEN")
+	s.ErrorContains(err, "secret or a user token")
 }
 
-func (s *StreamEdgeSuite) TestCredentialsComeFromTheEnvironment() {
-	s.T().Setenv("STREAM_API_KEY", "key")
-	s.T().Setenv("STREAM_API_SECRET", "secret")
-
-	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
+func (s *StreamEdgeSuite) TestAnAgentJoinsTheAgentCallTypeUnlessOneIsNamed() {
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
 
 	s.Require().NoError(err)
-	s.Equal("agent", edge.options.CallType, "the call type an agent joins unless one is named")
+	s.Equal("agent", edge.options.CallType)
 }
 
 func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {
-	s.T().Setenv("STREAM_API_KEY", "key")
-	s.T().Setenv("STREAM_API_SECRET", "secret")
 	// A developer whose own environment points the demo somewhere else is not what this is
 	// about.
 	s.T().Setenv("EXAMPLE_BASE_URL", "")
-	edge, err := New(Options{CallID: "my call", User: User{ID: "agent"}})
+	edge, err := New(Options{CallID: "my call", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
 	s.Require().NoError(err)
 
 	link, err := edge.DemoURL(User{ID: "demo-caller"})
@@ -108,10 +101,8 @@ func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {
 }
 
 func (s *StreamEdgeSuite) TestTheDemoLinkCanPointAtAnotherDeployment() {
-	s.T().Setenv("STREAM_API_KEY", "key")
-	s.T().Setenv("STREAM_API_SECRET", "secret")
 	s.T().Setenv("EXAMPLE_BASE_URL", "https://pronto.getstream.io/")
-	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
 	s.Require().NoError(err)
 
 	link, err := edge.DemoURL(User{ID: "demo-caller", Name: "Demo caller"})
@@ -121,13 +112,12 @@ func (s *StreamEdgeSuite) TestTheDemoLinkCanPointAtAnotherDeployment() {
 }
 
 func (s *StreamEdgeSuite) TestADemoLinkNeedsASecretToSignAToken() {
-	s.T().Setenv("STREAM_API_KEY", "key")
-	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, UserToken: "token"})
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", UserToken: "token"})
 	s.Require().NoError(err)
 
 	_, err = edge.DemoURL(User{ID: "demo-caller"})
 
-	s.ErrorContains(err, "STREAM_API_SECRET")
+	s.ErrorContains(err, "secret")
 }
 
 func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {
@@ -360,39 +350,25 @@ func (s *StreamEdgeSuite) TestPublishingAfterLeavingFails() {
 	s.NoError(talker.Close(), "closing twice is safe")
 }
 
-func (s *StreamEdgeSuite) TestAnExplicitIdentityIsNotOverriddenByAUserTokenInTheEnvironment() {
-	// A session acts in the app it was pinned to. A token in the environment belongs to the
-	// deployment's app, and preferring it would join somebody else's call as somebody else.
-	s.T().Setenv(apiKeyEnvVar, "deploy-key")
-	s.T().Setenv(apiSecretEnvVar, "deploy-secret")
-	s.T().Setenv(userTokenEnvVar, "deploy-token")
+func (s *StreamEdgeSuite) TestAnEdgeReadsNoCredentialsFromTheEnvironment() {
+	// A session acts in the app it was pinned to. A key or token in the environment belongs
+	// to the deployment's app, and reading it would join somebody else's call as somebody
+	// else.
+	s.T().Setenv("STREAM_API_KEY", "deploy-key")
+	s.T().Setenv("STREAM_API_SECRET", "deploy-secret")
+	s.T().Setenv("STREAM_USER_TOKEN", "deploy-token")
 
-	edge, err := New(Options{
-		CallID: "call-1", User: User{ID: "agent"},
-		APIKey: "own-key", APISecret: "own-secret", Explicit: true,
-	})
-
+	edge, err := New(Options{CallID: "call-1", User: User{ID: "agent"}, APIKey: "own-key", APISecret: "own-secret"})
 	s.Require().NoError(err)
 	s.Equal("own-key", edge.options.APIKey)
-	s.Equal("own-secret", edge.options.APISecret)
 	s.Empty(edge.options.UserToken)
-}
 
-func (s *StreamEdgeSuite) TestAnExplicitIdentityNeedsItsOwnCredentials() {
-	s.T().Setenv(apiKeyEnvVar, "deploy-key")
-	s.T().Setenv(apiSecretEnvVar, "deploy-secret")
-
-	_, err := New(Options{CallID: "call-1", User: User{ID: "agent"}, Explicit: true})
-
+	_, err = New(Options{CallID: "call-1", User: User{ID: "agent"}})
 	s.Error(err, "an empty identity must not quietly become the deployment's")
 }
 
-func (s *StreamEdgeSuite) TestDeploymentModeStillHonoursAUserToken() {
-	s.T().Setenv(apiKeyEnvVar, "deploy-key")
-	s.T().Setenv(apiSecretEnvVar, "")
-	s.T().Setenv(userTokenEnvVar, "deploy-token")
-
-	edge, err := New(Options{CallID: "call-1", User: User{ID: "agent"}})
+func (s *StreamEdgeSuite) TestAFixedUserTokenIsUsedInPreferenceToASecret() {
+	edge, err := New(Options{CallID: "call-1", User: User{ID: "agent"}, APIKey: "deploy-key", UserToken: "deploy-token"})
 
 	s.Require().NoError(err)
 	s.Equal("deploy-token", edge.options.UserToken)

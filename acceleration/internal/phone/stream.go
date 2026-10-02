@@ -4,15 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
-)
-
-const (
-	apiKeyEnvVar    = "STREAM_API_KEY"
-	apiSecretEnvVar = "STREAM_API_SECRET"
 )
 
 // defaultCallType is the Stream call type a phone call joins.
@@ -26,9 +20,7 @@ const callerTemplate = "sip-{{caller_number}}"
 
 // StreamOptions configures the Stream side of a phone number.
 type StreamOptions struct {
-	// APIKey defaults to STREAM_API_KEY.
-	APIKey string
-	// APISecret defaults to STREAM_API_SECRET.
+	APIKey    string
 	APISecret string
 }
 
@@ -44,14 +36,8 @@ type Stream struct {
 
 // NewStream validates the credentials and returns a Stream.
 func NewStream(options StreamOptions) (*Stream, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
 	if options.APIKey == "" || options.APISecret == "" {
-		return nil, errors.New("phone: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required")
+		return nil, errors.New("phone: a stream api key and secret are required")
 	}
 
 	client, err := getstream.NewClient(options.APIKey, options.APISecret)

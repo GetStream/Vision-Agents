@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"slices"
 	"sync"
 	"time"
@@ -34,12 +33,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-const (
-	apiKeyEnvVar    = "STREAM_API_KEY"
-	apiSecretEnvVar = "STREAM_API_SECRET"
-	userTokenEnvVar = "STREAM_USER_TOKEN"
-)
-
 // defaultCallType is the call type an agent joins under.
 const defaultCallType = "agent"
 
@@ -52,8 +45,9 @@ const audioBuffer = 10
 // would hold up every other event the SFU is trying to report.
 const attendanceBuffer = 32
 
-// Options configures an Edge. The credentials fall back to the environment, which is how
-// every other provider in this service is configured.
+// Options configures an Edge. The credentials are whoever builds the edge's to give: the
+// router gives the identity of the Stream app the session is pinned to, and nothing is read
+// from the environment, which would make every call the deployment's.
 type Options struct {
 	// CallID is the call to join.
 	CallID string
@@ -62,17 +56,13 @@ type Options struct {
 	// User is the identity the agent joins as.
 	User User
 
-	// APIKey defaults to STREAM_API_KEY.
+	// APIKey is the app's key.
 	APIKey string
-	// APISecret defaults to STREAM_API_SECRET. It mints the agent's token, which is why a
-	// server-side agent needs no token of its own.
+	// APISecret mints the agent's token, which is why a server-side agent needs no token
+	// of its own.
 	APISecret string
-	// UserToken defaults to STREAM_USER_TOKEN and is used in preference to a secret.
+	// UserToken is a fixed token used in preference to a secret.
 	UserToken string
-	// Explicit says the credentials above are the whole answer: nothing is read from the
-	// environment to fill them in. The router sets it, because a session acts in the
-	// Stream app it was pinned to, never in whichever app the environment names.
-	Explicit bool
 	// BaseURL is the Stream API the app is reached at, and HTTPClient what reaches it.
 	// Empty leaves both to the SDK.
 	BaseURL    string
@@ -128,22 +118,11 @@ func New(options Options) (*Edge, error) {
 	if options.CallType == "" {
 		options.CallType = defaultCallType
 	}
-	if !options.Explicit {
-		if options.APIKey == "" {
-			options.APIKey = os.Getenv(apiKeyEnvVar)
-		}
-		if options.APISecret == "" {
-			options.APISecret = os.Getenv(apiSecretEnvVar)
-		}
-		if options.UserToken == "" {
-			options.UserToken = os.Getenv(userTokenEnvVar)
-		}
-	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("streamedge: %s is not set", apiKeyEnvVar)
+		return nil, errors.New("streamedge: an api key is required")
 	}
 	if options.APISecret == "" && options.UserToken == "" {
-		return nil, fmt.Errorf("streamedge: set %s or %s", userTokenEnvVar, apiSecretEnvVar)
+		return nil, errors.New("streamedge: a secret or a user token is required")
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()

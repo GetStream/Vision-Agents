@@ -504,11 +504,11 @@ func hooks(ctx context.Context, arguments []string) error {
 		return err
 	}
 
-	stream, err := phone.NewStream(phone.StreamOptions{})
+	stream, err := phone.NewStream(phone.StreamOptions{APIKey: streamKey(), APISecret: streamSecret()})
 	if err != nil {
 		return err
 	}
-	messages, err := chat.NewStream(chat.StreamOptions{})
+	messages, err := chat.NewStream(chat.StreamOptions{APIKey: streamKey(), APISecret: streamSecret()})
 	if err != nil {
 		return err
 	}
@@ -660,7 +660,7 @@ func build(ctx context.Context) (*phone.Service, func(), error) {
 	// Stream is only needed to attach a number, so a missing key is not fatal here: the
 	// operations that need it say so themselves.
 	var stream *phone.Stream
-	if streaming, err := phone.NewStream(phone.StreamOptions{}); err == nil {
+	if streaming, err := phone.NewStream(phone.StreamOptions{APIKey: streamKey(), APISecret: streamSecret()}); err == nil {
 		stream = streaming
 	}
 
@@ -723,3 +723,8 @@ func split(list string) []string {
 	}
 	return trimmed
 }
+
+// streamKey and streamSecret are the Stream app this command configures, which is the one
+// its environment names.
+func streamKey() string    { return os.Getenv("STREAM_API_KEY") }
+func streamSecret() string { return os.Getenv("STREAM_API_SECRET") }

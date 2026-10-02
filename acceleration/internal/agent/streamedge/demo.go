@@ -32,7 +32,7 @@ func (e *Edge) DemoURL(user User) (string, error) {
 		return "", errors.New("streamedge: a demo user id is required")
 	}
 	if e.options.APISecret == "" {
-		return "", fmt.Errorf("streamedge: %s is required to mint a demo token", apiSecretEnvVar)
+		return "", errors.New("streamedge: a secret is required to mint a demo token")
 	}
 	if user.Name == "" {
 		user.Name = user.ID

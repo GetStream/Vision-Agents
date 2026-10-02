@@ -34,7 +34,7 @@ func (s *TransferIntegrationSuite) SetupSuite() {
 		s.T().Skip("STREAM_API_KEY and STREAM_API_SECRET not set")
 	}
 
-	stream, err := NewStream(StreamOptions{})
+	stream, err := NewStream(StreamOptions{APIKey: os.Getenv("STREAM_API_KEY"), APISecret: os.Getenv("STREAM_API_SECRET")})
 	s.Require().NoError(err)
 	s.stream = stream
 	s.number = fmt.Sprintf("+1512555%04d", time.Now().UnixNano()%10_000)

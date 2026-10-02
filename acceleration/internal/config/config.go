@@ -122,6 +122,9 @@ type DataMove struct {
 type Stream struct {
 	APIKey    string `koanf:"api_key"`
 	APISecret string `koanf:"api_secret"`
+	// UserToken is a fixed token the voice edge has always preferred to minting its own,
+	// for the deployment's app only.
+	UserToken string `koanf:"user_token"`
 	// BaseURL is the Stream API the deployment's app is reached at. Empty is Stream's
 	// default. It is read here once, so every app's client is told where to go rather than
 	// each reading the environment for itself.
@@ -177,6 +180,7 @@ var variables = map[string]string{
 	"stream.api_key":      "STREAM_API_KEY",
 	"stream.api_secret":   "STREAM_API_SECRET",
 	"stream.base_url":     "STREAM_BASE_URL",
+	"stream.user_token":   "STREAM_USER_TOKEN",
 	"stream.tenancy":      "ROUTER_STREAM_TENANCY",
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
@@ -338,6 +342,7 @@ func (c Config) export() error {
 		"stream.api_key":              c.Stream.APIKey,
 		"stream.api_secret":           c.Stream.APISecret,
 		"stream.base_url":             c.Stream.BaseURL,
+		"stream.user_token":           c.Stream.UserToken,
 		"stream.tenancy":              c.Stream.Tenancy,
 		"data_move.retention":         c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day": fmt.Sprint(c.RateLimit.MessagesPerDay),

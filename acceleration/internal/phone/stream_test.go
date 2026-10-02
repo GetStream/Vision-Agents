@@ -4,12 +4,12 @@ package phone
 // reaches Stream, and that a trunk address a vendor is given is dialable.
 
 func (s *PhoneSuite) TestStreamNeedsItsCredentials() {
-	s.T().Setenv("STREAM_API_KEY", "")
-	s.T().Setenv("STREAM_API_SECRET", "")
+	s.T().Setenv("STREAM_API_KEY", "deploy-key")
+	s.T().Setenv("STREAM_API_SECRET", "deploy-secret")
 
 	_, err := NewStream(StreamOptions{})
 
-	s.ErrorContains(err, "STREAM_API_KEY")
+	s.ErrorContains(err, "api key and secret", "the environment is the deployment's app, not this one's")
 }
 
 func (s *PhoneSuite) TestATrunkWithoutNumbersIsRefusedBeforeStreamIsAsked() {
@@ -63,10 +63,7 @@ func (s *PhoneSuite) TestTheTrunkAddressGivenToAVendorIsAlwaysDialable() {
 }
 
 func (s *PhoneSuite) stream() *Stream {
-	s.T().Setenv("STREAM_API_KEY", "key")
-	s.T().Setenv("STREAM_API_SECRET", "secret")
-
-	stream, err := NewStream(StreamOptions{})
+	stream, err := NewStream(StreamOptions{APIKey: "key", APISecret: "secret"})
 	s.Require().NoError(err)
 	return stream
 }

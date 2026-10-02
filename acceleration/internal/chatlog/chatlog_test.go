@@ -69,12 +69,14 @@ func (s *ChatLogSuite) TestAnAgentIdIsRequiredBecauseItNamesTheChannel() {
 }
 
 func (s *ChatLogSuite) TestCredentialsAreRequiredBecauseTheseAreServerSideWrites() {
-	s.T().Setenv("STREAM_API_KEY", "")
-	s.T().Setenv("STREAM_API_SECRET", "")
+	// Nothing is read from the environment, which names the deployment's app rather than
+	// the one a session is in.
+	s.T().Setenv("STREAM_API_KEY", "deploy-key")
+	s.T().Setenv("STREAM_API_SECRET", "deploy-secret")
 
 	_, err := New(Options{AgentID: "agent-1", Agent: User{ID: "vision-agent"}})
 
-	s.ErrorContains(err, "STREAM_API_KEY")
+	s.ErrorContains(err, "api key and secret")
 }
 
 func (s *ChatLogSuite) TestTheTranscriptIsStoredUnderTheAgentId() {

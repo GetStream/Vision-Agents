@@ -34,7 +34,6 @@ func edgeFor(clients *streamapp.Clients) session.EdgeFactory {
 			APIKey:     identity.APIKey,
 			APISecret:  identity.Secret.Reveal(),
 			UserToken:  identity.UserToken,
-			Explicit:   true,
 			BaseURL:    identity.BaseURL,
 			HTTPClient: clients.HTTPClient(),
 			Logger:     logger,
