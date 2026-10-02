@@ -2264,7 +2264,6 @@ export type components = {
             readonly created_at: string;
             readonly greeting?: string;
             readonly guardrail?: string;
-            readonly harness?: components["schemas"]["Harness"];
             readonly id: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
@@ -2299,7 +2298,6 @@ export type components = {
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
             readonly guardrail?: string;
-            readonly harness?: components["schemas"]["Harness"];
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
@@ -2332,7 +2330,6 @@ export type components = {
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
-            readonly harness?: components["schemas"]["Harness"];
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             readonly keyterms?: readonly string[];
@@ -2906,16 +2903,25 @@ export type components = {
             readonly phone?: components["schemas"]["SessionPhone"];
             /** @description What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins. */
             readonly project_id?: string;
+            readonly sandbox?: components["schemas"]["Sandbox"];
             /** @description Omit it and the config decides, or search-fast when there is no config. */
             readonly search?: string;
+            /** @description Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped. */
+            readonly skill_names?: readonly string[];
+            /** @description Omit for the built-in set of think, recall and explain. */
+            readonly skills?: readonly components["schemas"]["SessionSkill"][];
             /** @description A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides. */
             readonly sts?: string;
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             readonly stt?: string;
+            /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
+            readonly subagent?: string;
             /** @description Cost labels, carried onto every request the session makes. */
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description How much delegated work may run at once. */
+            readonly tasks?: number;
             /**
              * @description Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
              * @default false
@@ -3088,11 +3094,6 @@ export type components = {
             /** @description What to call them, for a transcript a person reads later. */
             readonly name?: string;
         };
-        /**
-         * @description Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-         * @enum {string}
-         */
-        readonly Harness: "default";
         readonly HealthStatus: {
             /**
              * @description Dependency name to "ok" or a failure description.
@@ -3278,8 +3279,6 @@ export type components = {
             readonly namespace: string;
             /** @description How many passages the page was last cut into. */
             readonly passages: number;
-            /** @description How often the page is read again on its own, in hours. Absent means never. */
-            readonly refresh_hours?: number;
             readonly state: components["schemas"]["KnowledgeUrlState"];
             /** @description What the page is called: the title it was subscribed with, or what it called itself when it was last read. */
             readonly title?: string;
@@ -3290,12 +3289,6 @@ export type components = {
         /** @description A page an agent directory declares, in the knowledge base named after it. */
         readonly KnowledgeUrlDeclaration: {
             readonly description?: string;
-            /**
-             * Format: int64
-             * @description How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule.
-             * @example 24
-             */
-            readonly refresh_hours?: number;
             /** @example Pricing */
             readonly title?: string;
             /** @example https://example.com/pricing */
@@ -3312,11 +3305,6 @@ export type components = {
              * @example docs
              */
             readonly namespace: string;
-            /**
-             * @description How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it.
-             * @example 24
-             */
-            readonly refresh_hours?: number;
             /**
              * @description What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
              * @example Pricing
@@ -3442,6 +3430,8 @@ export type components = {
             /** @description A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened. */
             readonly sts?: string;
             readonly stt?: string;
+            /** @description The model delegated work runs on, in place of the config's. */
+            readonly subagent?: string;
             /**
              * Format: double
              * @description How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
@@ -3983,6 +3973,7 @@ export type components = {
             /** @description A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
             readonly sts?: string;
             readonly stt?: string;
+            readonly subagent?: string;
             /** Format: double */
             readonly temperature?: number;
             /** @enum {string} */
@@ -3992,6 +3983,26 @@ export type components = {
             readonly verbosity?: "low" | "medium" | "high";
             /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
             readonly voice?: string;
+        };
+        /** @description A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under. */
+        readonly SessionSkill: {
+            /** @description Capture task-scoped visual evidence before reasoning. */
+            readonly capture_video?: boolean;
+            /**
+             * Format: int64
+             * @description How long the work may run before it is abandoned. Zero is the default.
+             */
+            readonly deadline_ms?: number;
+            /** @description The one line the fast model sees. */
+            readonly description: string;
+            /** @description The full prompt, which only the subagent sees. */
+            readonly instructions: string;
+            readonly name: string;
+            /**
+             * Format: int64
+             * @description Immutable skill revision selected by the application's authorized registry.
+             */
+            readonly revision?: number;
         };
         readonly SessionSort: {
             /**
@@ -4483,7 +4494,6 @@ export type components = {
             readonly greeting?: string;
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
             readonly guardrail?: string;
-            readonly harness?: components["schemas"]["Harness"];
             /** @description A fingerprint of the directory. A second sync with the same hash does nothing. */
             readonly hash: string;
             readonly instructions?: string;
@@ -4907,6 +4917,7 @@ export type components = {
             /** @description A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
             readonly sts?: string;
             readonly stt?: string;
+            readonly subagent?: string;
             /** Format: double */
             readonly temperature?: number;
             /** @enum {string} */
