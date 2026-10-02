@@ -177,6 +177,34 @@ func (s *ConfigSuite) TestTheProxyDeclaresNoKindUnlessAskedFor() {
 	s.True(config.Auth.ProxyDeclaresKind)
 }
 
+func (s *ConfigSuite) TestStreamTenancyDefaultsToDeployment() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.Stream.Tenancy)
+
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyDeployment)
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(TenancyDeployment, config.Stream.Tenancy)
+}
+
+func (s *ConfigSuite) TestStreamTenancyAppIsRefusedUntilAvailable() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	_, _, err := Load("")
+	s.ErrorContains(err, "not available")
+
+	s.T().Setenv("ROUTER_STREAM_TENANCY", "shared")
+	_, _, err = Load("")
+	s.ErrorContains(err, "stream.tenancy")
+}
+
+func (s *ConfigSuite) TestTheStreamBaseURLIsReadOnce() {
+	s.T().Setenv("STREAM_BASE_URL", "https://chat.example.test")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("https://chat.example.test", config.Stream.BaseURL)
+}
+
 func (s *ConfigSuite) TestANegativeLimitIsRefused() {
 	s.T().Setenv("ROUTER_RATE_LIMIT_MESSAGES_PER_DAY", "-1")
 	_, _, err := Load("")

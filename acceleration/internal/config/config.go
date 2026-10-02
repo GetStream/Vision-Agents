@@ -117,12 +117,26 @@ type DataMove struct {
 	Retention time.Duration `koanf:"retention"`
 }
 
-// Stream is the app whose secret signs the call events Stream sends to the inbound hook,
-// and the tokens a browser joins a call with.
+// Stream is the deployment's own Stream app: the one the router acts in for every
+// customer in deployment mode, and for its own customer in app mode.
 type Stream struct {
 	APIKey    string `koanf:"api_key"`
 	APISecret string `koanf:"api_secret"`
+	// BaseURL is the Stream API the deployment's app is reached at. Empty is Stream's
+	// default. It is read here once, so every app's client is told where to go rather than
+	// each reading the environment for itself.
+	BaseURL string `koanf:"base_url"`
+	// Tenancy says whose app the router acts in. deployment, the default, is the
+	// deployment's own app for every customer, as it always was. app is each customer's
+	// own, which this build does not offer yet.
+	Tenancy string `koanf:"tenancy"`
 }
+
+// What Stream.Tenancy holds.
+const (
+	TenancyDeployment = "deployment"
+	TenancyApp        = "app"
+)
 
 // Agent is how an agent holds a conversation, where that is the deployment's choice.
 type Agent struct {
@@ -162,6 +176,8 @@ var variables = map[string]string{
 	"data_move.retention": "ROUTER_DATA_MOVE_RETENTION",
 	"stream.api_key":      "STREAM_API_KEY",
 	"stream.api_secret":   "STREAM_API_SECRET",
+	"stream.base_url":     "STREAM_BASE_URL",
+	"stream.tenancy":      "ROUTER_STREAM_TENANCY",
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
@@ -282,6 +298,13 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
 			c.RateLimit.MessagesPerDay, c.RateLimit.TokensPerDay)
 	}
+	switch c.Stream.Tenancy {
+	case "", TenancyDeployment:
+	case TenancyApp:
+		return fmt.Errorf("config: stream.tenancy=%s is not available in this build", TenancyApp)
+	default:
+		return fmt.Errorf("config: stream.tenancy is %s or %s, got %q", TenancyDeployment, TenancyApp, c.Stream.Tenancy)
+	}
 	if c.DataMove.Retention < 0 {
 		return fmt.Errorf("config: data_move.retention cannot be negative, got %s", c.DataMove.Retention)
 	}
@@ -314,6 +337,8 @@ func (c Config) export() error {
 		"auth.proxy_declares_kind":    fmt.Sprint(c.Auth.ProxyDeclaresKind),
 		"stream.api_key":              c.Stream.APIKey,
 		"stream.api_secret":           c.Stream.APISecret,
+		"stream.base_url":             c.Stream.BaseURL,
+		"stream.tenancy":              c.Stream.Tenancy,
 		"data_move.retention":         c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day": fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":   fmt.Sprint(c.RateLimit.TokensPerDay),
