@@ -236,3 +236,30 @@ func (s *AppHooksSuite) ringing(call string, at time.Time) string {
   "created_at": %q, "call": {"id": %q, "type": "default", "custom": {}}}`,
 		call, "session-"+s.utils.uuid(), at.UTC().Format(time.RFC3339Nano), call)
 }
+
+func (s *AppHooksSuite) TestACallOfTheSameNameInAnotherAppDoesNotHideThisOne() {
+	// Call ids are only unique within an app: another customer attaching a line to a call of
+	// the same name, in its own app, must not stop this customer's ringing.
+	line := "line-" + s.utils.uuid()
+	other := s.numberedApp(streamAppID())
+	ctx := context.Background()
+	otherNumber := s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: otherNumber, Vendor: "telnyx", Country: "US", CustomerID: other.app.ID, PurchasedAt: time.Now().UTC(),
+	}))
+	s.Require().NoError(s.store.AttachNumber(ctx, other.app.ID, otherNumber, store.NumberAttachment{
+		TrunkID: "trunk-" + s.utils.uuid(), StreamAppPK: 7, CallType: "default", CallID: line,
+	}))
+	s.attach(s.utils.number(), line, s.appID())
+	worker, release := s.dispatch.Register(s.customerID(), 1)
+	defer release()
+
+	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/phone/hooks/stream"), s.ringing(line, time.Now()), s.secret, s.apiKey))
+
+	select {
+	case arrived := <-worker.Calls():
+		s.Equal(line, arrived.CallID)
+	case <-time.After(settleFor):
+		s.Fail("the call never reached the worker")
+	}
+}

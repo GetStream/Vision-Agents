@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -52,17 +53,31 @@ func (s *Store) StreamAppByPK(ctx context.Context, app int64) (StreamApp, error)
 	return s.StreamApp(ctx, found.CustomerID)
 }
 
-// NumberByCallInApp is NumberByCall, among the numbers attached in one app.
+// NumberByCallInApp is NumberByCall, among the numbers attached in one app. A call's id is
+// only unique within its app, so each lookup is made there rather than narrowed to it after.
 func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType, callID string) (PhoneNumber, error) {
-	number, err := s.NumberByCall(ctx, callType, callID)
-	if err != nil {
-		return PhoneNumber{}, err
+	if callID == "" {
+		return PhoneNumber{}, errors.New("store: a call id is required")
 	}
-	// The call names a number; the number has to have been attached in the hook's app.
+	if callType == "" {
+		callType = "agent"
+	}
 	var held []PhoneNumber
 	if err := scope.where(s.db.NewSelect().Model(&held).
-		Where("e164 = ?", number.E164).Where("released_at IS NULL")).Scan(ctx); err != nil {
+		Where("stream_call_id = ?", callID).Where("stream_call_type = ?", callType).
+		Where("released_at IS NULL")).Limit(20).Scan(ctx); err != nil {
 		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
+	}
+	if len(held) == 0 {
+		e164, named := strings.CutPrefix(callID, "phone-")
+		if !named {
+			return PhoneNumber{}, fmt.Errorf("store: no number in that app reaches call %s:%s", callType, callID)
+		}
+		if err := scope.where(s.db.NewSelect().Model(&held).
+			Where("e164 = ?", e164).Where("stream_trunk_id IS NOT NULL").
+			Where("released_at IS NULL")).Limit(20).Scan(ctx); err != nil {
+			return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
+		}
 	}
 	switch customers(held, func(n PhoneNumber) string { return n.CustomerID }) {
 	case 0:
