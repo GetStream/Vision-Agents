@@ -4,7 +4,7 @@ from typing import List, Dict, Set
 
 from getstream.models import MessageRequest
 from getstream.chat.async_channel import Channel
-from getstream.base import StreamAPIException
+from getstream.exceptions import StreamApiException
 
 from vision_agents.core.agents.conversation import (
     Conversation,
@@ -78,7 +78,7 @@ class StreamConversation(Conversation):
             except Exception:
                 # Fire-and-forget: never let a backend failure escape as an
                 # unretrieved task exception. Catch everything (not just
-                # StreamAPIException) so chunking/encoding/transport errors
+                # StreamApiException) so chunking/encoding/transport errors
                 # are logged instead of silently lost on the hot path.
                 logger.exception("Stream Chat sync failed for message %s", message.id)
 
@@ -128,7 +128,7 @@ class StreamConversation(Conversation):
                 response = await self.channel.send_message(request)
 
                 if response.data.message.type == "error":
-                    raise StreamAPIException(response=response.__response)
+                    raise StreamApiException(response=response.__response)
 
                 chunk_id = response.data.message.id
                 state.backend_message_ids.append(chunk_id)

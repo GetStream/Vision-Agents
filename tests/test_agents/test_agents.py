@@ -89,10 +89,12 @@ class DummyEdge(EdgeTransport):
         return DummyCall(call_id=call_id)
 
     def create_audio_track(self, *args, **kwargs) -> AudioStreamTrack:
+        # Tests read recv() directly, so the track pads with silence like a sender.
         return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
             sample_rate=48000,
             channels=2,
+            pace=True,
         )
 
     async def close(self):
