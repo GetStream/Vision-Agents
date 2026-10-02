@@ -90,9 +90,9 @@ is never edited by hand.
   clients (see [acceleration/README.md](acceleration/README.md)). A test fails if the committed
   `openapi.yaml` is out of date.
 
-`acceleration/api/legacy.yaml` holds the operations not yet moved to Go, which oapi-codegen still
-generates. Do not add to it. Move an operation by registering it with Huma and deleting it from
-`legacy.yaml`, along with any component nothing left there refers to.
+`acceleration/api/legacy.yaml` describes only the handlers Huma cannot express, the sockets and
+the streams, which are written by hand and listed in `unspecifiedRoutes`. Every other operation
+is registered with Huma; do not add one to `legacy.yaml`.
 
 The JavaScript SDK is its own npm package, checked with node 22 and no runtime dependencies:
 

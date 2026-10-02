@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -11,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // noSessions is what every session path says on a deployment that only inspects routing.
@@ -19,7 +21,437 @@ import (
 const noSessions = "this deployment does not run sessions"
 
 // configFor resolves whichever way the caller addressed the agent.
-//
+type UpdateSessionRequestThinking string
+
+const (
+	UpdateSessionRequestThinkingHigh    UpdateSessionRequestThinking = "high"
+	UpdateSessionRequestThinkingLow     UpdateSessionRequestThinking = "low"
+	UpdateSessionRequestThinkingMedium  UpdateSessionRequestThinking = "medium"
+	UpdateSessionRequestThinkingMinimal UpdateSessionRequestThinking = "minimal"
+	UpdateSessionRequestThinkingNone    UpdateSessionRequestThinking = "none"
+)
+
+// Valid indicates whether the value is a known member of the UpdateSessionRequestThinking enum.
+func (e UpdateSessionRequestThinking) Valid() bool {
+	switch e {
+	case UpdateSessionRequestThinkingHigh:
+		return true
+	case UpdateSessionRequestThinkingLow:
+		return true
+	case UpdateSessionRequestThinkingMedium:
+		return true
+	case UpdateSessionRequestThinkingMinimal:
+		return true
+	case UpdateSessionRequestThinkingNone:
+		return true
+	default:
+		return false
+	}
+}
+
+type UpdateSessionRequestVerbosity string
+
+const (
+	UpdateSessionRequestVerbosityHigh   UpdateSessionRequestVerbosity = "high"
+	UpdateSessionRequestVerbosityLow    UpdateSessionRequestVerbosity = "low"
+	UpdateSessionRequestVerbosityMedium UpdateSessionRequestVerbosity = "medium"
+)
+
+// Valid indicates whether the value is a known member of the UpdateSessionRequestVerbosity enum.
+func (e UpdateSessionRequestVerbosity) Valid() bool {
+	switch e {
+	case UpdateSessionRequestVerbosityHigh:
+		return true
+	case UpdateSessionRequestVerbosityLow:
+		return true
+	case UpdateSessionRequestVerbosityMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+type UpdateSessionRequest struct {
+	Title           *string                        `json:"title,omitempty"`
+	Description     *string                        `json:"description,omitempty"`
+	Custom          *map[string]interface{}        `json:"custom,omitempty" doc:"Replaces the caller's labels whole. An empty object clears them."`
+	Instructions    *string                        `json:"instructions,omitempty" doc:"What the agent is told to be, from the next turn."`
+	Llm             *string                        `json:"llm,omitempty" doc:"The conversation model, a provider/model or a capability shortcut."`
+	Stt             *string                        `json:"stt,omitempty"`
+	Tts             *string                        `json:"tts,omitempty"`
+	Sts             *string                        `json:"sts,omitempty" doc:"A speech-to-speech target, which makes the session native. Empty makes it a cascade again."`
+	Voice           *string                        `json:"voice,omitempty" doc:"The voice to speak in, in the provider's own terms. Empty returns to the provider's default."`
+	Thinking        *UpdateSessionRequestThinking  `json:"thinking,omitempty" enum:"none,minimal,low,medium,high"`
+	Temperature     *float64                       `json:"temperature,omitempty"`
+	MaxOutputTokens *int                           `json:"max_output_tokens,omitempty"`
+	Verbosity       *UpdateSessionRequestVerbosity `json:"verbosity,omitempty" enum:"low,medium,high"`
+}
+
+func (*UpdateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What to change about one session. A field left out is left as it is. Title, description and " +
+		"custom can change on a session that ended; everything else needs it running."
+	return schema
+}
+
+type ForkSessionRequest struct {
+	Agent           *string                 `json:"agent,omitempty"`
+	ConfigId        *string                 `json:"config_id,omitempty"`
+	Title           *string                 `json:"title,omitempty"`
+	Description     *string                 `json:"description,omitempty"`
+	ProjectId       *string                 `json:"project_id,omitempty"`
+	Custom          *map[string]interface{} `json:"custom,omitempty"`
+	ModelOverwrites *ModelOverwrites        `json:"model_overwrites,omitempty"`
+	Instructions    *string                 `json:"instructions,omitempty"`
+	Incognito       *bool                   `json:"incognito,omitempty" doc:"Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept."`
+	Messages        *bool                   `json:"messages,omitempty" doc:"Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants." default:"true"`
+	ResponseId      *string                 `json:"response_id,omitempty" doc:"Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false."`
+	CallId          *string                 `json:"call_id,omitempty" doc:"The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not."`
+}
+
+func (*ForkSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Continue a conversation as a new one. Everything the parent was opened with is inherited; " +
+		"anything named here is written over it, which is what makes a fork useful rather than a " +
+		"copy -- the usual reason to fork is to ask the same question of a different model."
+	return schema
+}
+
+type RewindSessionRequest struct {
+	ResponseId string `json:"response_id" doc:"The response to carry on from. It is kept; everything after it is not."`
+}
+
+type SayRequest struct {
+	Text string `json:"text"`
+}
+
+type RespondRequest struct {
+	Text      string  `json:"text" minLength:"1"`
+	CommandId *string `json:"command_id,omitempty" doc:"Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	ClientId  *string `json:"client_id,omitempty" doc:"The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it." pattern:"^[A-Za-z0-9_.:-]{1,128}$"`
+}
+
+type InstructionsRequest struct {
+	Instructions string `json:"instructions"`
+}
+
+type SessionSettingsRequestThinking string
+
+const (
+	SessionSettingsRequestThinkingHigh    SessionSettingsRequestThinking = "high"
+	SessionSettingsRequestThinkingLow     SessionSettingsRequestThinking = "low"
+	SessionSettingsRequestThinkingMedium  SessionSettingsRequestThinking = "medium"
+	SessionSettingsRequestThinkingMinimal SessionSettingsRequestThinking = "minimal"
+	SessionSettingsRequestThinkingNone    SessionSettingsRequestThinking = "none"
+)
+
+// Valid indicates whether the value is a known member of the SessionSettingsRequestThinking enum.
+func (e SessionSettingsRequestThinking) Valid() bool {
+	switch e {
+	case SessionSettingsRequestThinkingHigh:
+		return true
+	case SessionSettingsRequestThinkingLow:
+		return true
+	case SessionSettingsRequestThinkingMedium:
+		return true
+	case SessionSettingsRequestThinkingMinimal:
+		return true
+	case SessionSettingsRequestThinkingNone:
+		return true
+	default:
+		return false
+	}
+}
+
+type SessionSettingsRequestVerbosity string
+
+const (
+	SessionSettingsRequestVerbosityHigh   SessionSettingsRequestVerbosity = "high"
+	SessionSettingsRequestVerbosityLow    SessionSettingsRequestVerbosity = "low"
+	SessionSettingsRequestVerbosityMedium SessionSettingsRequestVerbosity = "medium"
+)
+
+// Valid indicates whether the value is a known member of the SessionSettingsRequestVerbosity enum.
+func (e SessionSettingsRequestVerbosity) Valid() bool {
+	switch e {
+	case SessionSettingsRequestVerbosityHigh:
+		return true
+	case SessionSettingsRequestVerbosityLow:
+		return true
+	case SessionSettingsRequestVerbosityMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+type SessionSettingsRequest struct {
+	Llm             *string                          `json:"llm,omitempty" doc:"The conversation model, a provider/model or a capability shortcut."`
+	Stt             *string                          `json:"stt,omitempty"`
+	Tts             *string                          `json:"tts,omitempty"`
+	Sts             *string                          `json:"sts,omitempty" doc:"A speech-to-speech target, which makes the session native. Empty makes it a cascade again."`
+	Voice           *string                          `json:"voice,omitempty" doc:"The voice to speak in, in the provider's own terms. Empty returns to the provider's default."`
+	Thinking        *SessionSettingsRequestThinking  `json:"thinking,omitempty" enum:"none,minimal,low,medium,high"`
+	Temperature     *float64                         `json:"temperature,omitempty"`
+	MaxOutputTokens *int                             `json:"max_output_tokens,omitempty"`
+	Verbosity       *SessionSettingsRequestVerbosity `json:"verbosity,omitempty" enum:"low,medium,high"`
+}
+
+func (*SessionSettingsRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What to change about one running session's models. A field left out is left as it is. The " +
+		"same safe knobs as ModelOverwrites, plus the voice."
+	return schema
+}
+
+type getSessionRequest struct {
+	ID string `path:"id" doc:"The session, as returned when it was created."`
+}
+
+type updateSessionRequest struct {
+	ID   string `path:"id" doc:"The session, as returned when it was created."`
+	Body UpdateSessionRequest
+}
+
+type forkSessionRequest struct {
+	ID   string `path:"id" doc:"The session, as returned when it was created."`
+	Body *ForkSessionRequest
+}
+
+type rewindSessionRequest struct {
+	ID   string `path:"id" doc:"The session, as returned when it was created."`
+	Body RewindSessionRequest
+}
+
+type saySessionRequest struct {
+	ID   string `path:"id" doc:"The session, as returned when it was created."`
+	Body SayRequest
+}
+
+type respondSessionRequest struct {
+	ID   string `path:"id" doc:"The session, as returned when it was created."`
+	Body RespondRequest
+}
+
+type respondSessionResponse struct {
+	Status int
+	Body   *CommandReceipt
+}
+
+type interruptSessionRequest struct {
+	ID string `path:"id" doc:"The session, as returned when it was created."`
+}
+
+type getSessionCommandRequest struct {
+	ID        string `path:"id" doc:"The session, as returned when it was created."`
+	CommandID string `path:"command_id" doc:"The client's own command id, as sent when the command was submitted."`
+}
+
+type interruptSessionCommandRequest struct {
+	ID        string `path:"id" doc:"The session, as returned when it was created."`
+	CommandID string `path:"command_id" doc:"The client's own command id, as sent when the command was submitted."`
+}
+
+type setSessionInstructionsRequest struct {
+	ID   string `path:"id" doc:"The session, as returned when it was created."`
+	Body InstructionsRequest
+}
+
+type setSessionSettingsRequest struct {
+	ID   string `path:"id" doc:"The session, as returned when it was created."`
+	Body SessionSettingsRequest
+}
+
+func (s *Server) registerSessions(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getSession",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/sessions/{id}",
+		Summary:     "One session",
+		Description: "Reading a session is open to the device holding it, for the same reason listing " +
+			"and stopping are: it is the conversation the caller is having. A session " +
+			"belonging to somebody else is reported as not found rather than refused, so " +
+			"this is not a way to find out whose an id is.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The session"},
+		},
+		Errors:     []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Extensions: map[string]any{clientAccessibleExtension: true},
+	}, s.getSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "updateSession",
+		Method:      http.MethodPatch,
+		Path:        "/v1/agents/sessions/{id}",
+		Summary:     "Change a session",
+		Description: "Renames a session, relabels it, rewrites its instructions or moves it onto " +
+			"other models, for this session only: the agent config it started from is " +
+			"untouched. A field left out is left as it is. The id, the call and incognito " +
+			"are what the session is, so they cannot change; forking is how to get a session " +
+			"that differs in those.\n" +
+			"A session that ended can still be renamed and relabelled, since that is when a " +
+			"person tidies up their conversations. Instructions and models only mean " +
+			"something to a session that is running, so asking to change them on one that " +
+			"ended is refused.\n" +
+			"Model changes are opened before anything changes, so a target that does not " +
+			"route is refused and the session carries on as it was. Instructions and models " +
+			"take over from the next turn; a reply being spoken finishes on what it started " +
+			"with. Naming sts makes the session native, and an empty sts makes it a cascade " +
+			"again. A title or description given here stops the router naming the " +
+			"conversation for what was said.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The session as it now is"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.updateSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "forkSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/fork",
+		Summary:     "Continue a conversation as a new one",
+		Description: "Opens a session from another's spec, carrying its history across by default, " +
+			"and records where it came from. The usual reason is to ask the same question of " +
+			"a different model without losing the original answer, which is why anything in " +
+			"the request is written over what the parent was opened with.\n" +
+			"The parent is untouched and keeps running if it was running. Forking an " +
+			"incognito session is refused rather than answered with an empty conversation: " +
+			"there is nothing recorded to fork from, and pretending otherwise would hand " +
+			"back a session that quietly lost everything the caller thought they were " +
+			"continuing.",
+		DefaultStatus: http.StatusCreated,
+		Responses: map[string]*huma.Response{
+			"201": {Description: "The fork is running"},
+		},
+		Errors:     []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Extensions: map[string]any{clientAccessibleExtension: true},
+	}, s.forkSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "rewindSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/rewind",
+		Summary:     "Go back to a response and carry on from there",
+		Description: "The conversation continues as though nothing after the named response had been " +
+			"said: the reply being spoken is abandoned, the agent's history is cut back to " +
+			"the end of that response, and every later response is marked rewound, so " +
+			"neither the responses nor their items list them again. The named response " +
+			"itself is kept.\n" +
+			"The history is rebuilt from what the session recorded, the question and the " +
+			"answer of each turn, so a session that recorded nothing cannot be rewound: an " +
+			"incognito one, one on a deployment with no store, and a native speech-to-speech " +
+			"one, whose model keeps its own context. A persistent conversation is refused as " +
+			"well, because its transcript lives in Chat and would bring the rewound turns " +
+			"back the next time it opened; fork it at the response instead.",
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The conversation carries on from the end of that response"},
+		},
+		Errors:     []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Extensions: map[string]any{clientAccessibleExtension: true},
+	}, s.rewindSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "saySession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/say",
+		Summary:     "Speak a piece of text without going through the model",
+		Description: "For when the caller already knows what should be said, such as a greeting. A " +
+			"model would only add latency and cost to words that were never in question.",
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The text is being spoken"},
+		},
+		Errors:       []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		MaxBodyBytes: largeBody,
+	}, s.saySession)
+	huma.Register(api, huma.Operation{
+		OperationID: "respondSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/respond",
+		Summary:     "Answer a piece of text through the model, as though it had been said",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Durable command accepted or replayed; only a new command starts inference"},
+			"204": {Description: "The model is answering"},
+			"409": errorResponse("The command ID was already accepted with different content"),
+		},
+		Errors:       []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		MaxBodyBytes: largeBody,
+	}, s.respondSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "interruptSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/interrupt",
+		Summary:     "Abandon the reply being spoken",
+		Description: "What a caller outside the call has instead of a voice. A murmur is not " +
+			"interrupted, because it was meant to overlap with whoever is talking.",
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The reply was abandoned, if there was one"},
+		},
+		Errors: []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.interruptSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "getSessionCommand",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/sessions/{id}/commands/{command_id}",
+		Summary:     "What is known about one durable command",
+		Description: "Reads a command's receipt without accepting, running or stopping anything. It " +
+			"is how a client whose stop or submission had an unknown outcome reconciles the " +
+			"same command id rather than inventing another one.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The command's current receipt"},
+		},
+		Errors: []int{http.StatusUnauthorized, http.StatusNotFound},
+	}, s.getSessionCommand)
+	huma.Register(api, huma.Operation{
+		OperationID: "interruptSessionCommand",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/commands/{command_id}/interrupt",
+		Summary:     "Stop one named command, and nothing else",
+		Description: "Abandons the reply that command is generating. Unlike interrupting the session, " +
+			"a stop that arrives after its command finished replays that command's terminal " +
+			"receipt and leaves the command running now alone, so a delayed stop for one " +
+			"question can never take the answer to the next one.\n" +
+			"A command accepted but not yet generating is prevented from starting. A command " +
+			"already completed, failed, cancelled or interrupted returns what it ended as. " +
+			"An unknown command is a 404, the same answer as a conversation the caller does " +
+			"not own.\n" +
+			"Interrupting model work claims nothing about a tool whose external side effect " +
+			"already happened.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The command's terminal receipt"},
+			"503": errorResponse("The stop was accepted but its durable outcome is unknown. The command is not " +
+				"reported stopped; retry the same command id."),
+		},
+		Errors: []int{http.StatusUnauthorized, http.StatusNotFound},
+	}, s.interruptSessionCommand)
+	huma.Register(api, huma.Operation{
+		OperationID: "setSessionInstructions",
+		Method:      http.MethodPut,
+		Path:        "/v1/agents/sessions/{id}/instructions",
+		Summary:     "Change what the agent is told to be",
+		Description: "Deprecated: use updateSession. Applies from the next turn. The reply being " +
+			"spoken keeps the prompt it started with, because rewriting it mid-sentence " +
+			"would have the agent change character in the middle of a thought.",
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The next turn will use them"},
+		},
+		Errors:     []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Deprecated: true,
+	}, s.setSessionInstructions)
+	huma.Register(api, huma.Operation{
+		OperationID: "setSessionSettings",
+		Method:      http.MethodPatch,
+		Path:        "/v1/agents/sessions/{id}/settings",
+		Summary:     "Change the models and voice of one running session",
+		Description: "Deprecated: use updateSession. Swaps what the agent runs on without leaving the " +
+			"call, for this session only: the agent config it started from is untouched. The " +
+			"new models are opened before anything changes, so a target that does not route " +
+			"is refused and the agent carries on as it was. They take over from the next " +
+			"turn; a reply being spoken finishes on the models it started with.\n" +
+			"Naming sts makes the session native, and an empty sts makes it a cascade again, " +
+			"on whatever llm, stt and tts it names or had before. The conversation carries " +
+			"across: a conversation model is handed the history on every turn, and a " +
+			"speech-to-speech model is opened with the recent transcript in its instructions.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The session, on its new models"},
+		},
+		Errors:     []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Deprecated: true,
+	}, s.setSessionSettings)
+}
+
 // A name is the one a person actually knows the agent by, so it is worth supporting even
 // though it costs a lookup. Both at once is refused rather than picking one: there is no
 // sensible answer when they disagree, and quietly preferring the id would leave a caller
@@ -58,22 +490,22 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 	return &found, nil
 }
 
-// ForkSession continues a conversation as a new one.
-func (s *Server) ForkSession(ctx context.Context, request ForkSessionRequestObject) (ForkSessionResponseObject, error) {
+// forkSession continues a conversation as a new one.
+func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (*sessionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ForkSession401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.sessions == nil {
-		return ForkSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
+		return nil, huma.Error404NotFound(noSessions)
 	}
 
-	parent, failure := s.storedOrLiveSession(ctx, request.Id)
+	parent, failure := s.storedOrLiveSession(ctx, request.ID)
 	if failure != nil {
 		if failure.status == unauthorized {
-			return ForkSession401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return ForkSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
 
 	body := ForkSessionRequest{}
@@ -86,21 +518,21 @@ func (s *Server) ForkSession(ctx context.Context, request ForkSessionRequestObje
 	config, failure := s.configFor(ctx, customerID, body.ConfigId, body.Agent)
 	if failure != nil {
 		if failure.status == notFound {
-			return ForkSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+			return nil, huma.Error404NotFound(failure.message)
 		}
-		return ForkSession400JSONResponse{badRequest(failure.message)}, nil
+		return nil, huma.Error400BadRequest(failure.message)
 	}
 
 	spec, err := forkSpec(parent, body, config)
 	if err != nil {
-		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
-		return ForkSession404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, huma.Error404NotFound(err.Error())
 	case errors.Is(err, errForkNeedsHistory), errors.Is(err, errNoRecords):
-		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	case err != nil:
 		return nil, err
 	}
@@ -113,153 +545,153 @@ func (s *Server) ForkSession(ctx context.Context, request ForkSessionRequestObje
 
 	created, err := s.sessions.Create(ctx, spec)
 	if err != nil {
-		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return ForkSession201JSONResponse(sessionOf(created)), nil
+	return &sessionResponse{Body: sessionOf(created)}, nil
 }
 
-// GetSession returns one session.
-func (s *Server) GetSession(ctx context.Context, request GetSessionRequestObject) (GetSessionResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+// getSession returns one session.
+func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*sessionResponse, error) {
+	found, failure := s.session(ctx, request.ID)
 	if failure != nil {
 		switch failure.status {
 		case unauthorized:
-			return GetSession401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		default:
-			return GetSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+			return nil, huma.Error404NotFound(failure.message)
 		}
 	}
-	return GetSession200JSONResponse(sessionOf(found)), nil
+	return &sessionResponse{Body: sessionOf(found)}, nil
 }
 
-// SaySession speaks a piece of text without going through the model.
-func (s *Server) SaySession(ctx context.Context, request SaySessionRequestObject) (SaySessionResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+// saySession speaks a piece of text without going through the model.
+func (s *Server) saySession(ctx context.Context, request *saySessionRequest) (*struct{}, error) {
+	found, failure := s.session(ctx, request.ID)
 	if failure != nil {
 		if failure.status == unauthorized {
-			return SaySession401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return SaySession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
-	if request.Body == nil || request.Body.Text == "" {
-		return SaySession400JSONResponse{badRequest("there is nothing to say")}, nil
+	if request.Body.Text == "" {
+		return nil, huma.Error400BadRequest("there is nothing to say")
 	}
 
 	if err := found.Say(ctx, request.Body.Text); err != nil {
-		return SaySession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return SaySession204Response{}, nil
+	return nil, nil
 }
 
-// RespondSession answers a piece of text through the model.
-func (s *Server) RespondSession(ctx context.Context, request RespondSessionRequestObject) (RespondSessionResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+// respondSession answers a piece of text through the model.
+func (s *Server) respondSession(ctx context.Context, request *respondSessionRequest) (*respondSessionResponse, error) {
+	found, failure := s.session(ctx, request.ID)
 	if failure != nil {
 		if failure.status == unauthorized {
-			return RespondSession401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return RespondSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
-	if request.Body == nil || request.Body.Text == "" {
-		return RespondSession400JSONResponse{badRequest("there is nothing to answer")}, nil
+	if request.Body.Text == "" {
+		return nil, huma.Error400BadRequest("there is nothing to answer")
 	}
 
 	if id := value(request.Body.CommandId); id != "" {
 		receipt, _, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId))
 		if errors.Is(err, conversation.ErrCommandConflict) {
-			return RespondSession409JSONResponse{Error: err.Error()}, nil
+			return nil, huma.Error409Conflict(err.Error())
 		}
 		if err != nil {
-			return RespondSession400JSONResponse{badRequest(err.Error())}, nil
+			return nil, huma.Error400BadRequest(err.Error())
 		}
-		return RespondSession200JSONResponse{CommandId: receipt.CommandID, UserMessageId: receipt.UserMessageID,
-			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate}, nil
+		return &respondSessionResponse{Status: http.StatusOK, Body: &CommandReceipt{CommandId: receipt.CommandID, UserMessageId: receipt.UserMessageID,
+			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate}}, nil
 	}
 	if _, err := found.Respond(ctx, request.Body.Text, nil); err != nil {
-		return RespondSession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return RespondSession204Response{}, nil
+	return &respondSessionResponse{Status: http.StatusNoContent}, nil
 }
 
-// InterruptSession abandons the reply being spoken.
-func (s *Server) InterruptSession(ctx context.Context, request InterruptSessionRequestObject) (InterruptSessionResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+// interruptSession abandons the reply being spoken.
+func (s *Server) interruptSession(ctx context.Context, request *interruptSessionRequest) (*struct{}, error) {
+	found, failure := s.session(ctx, request.ID)
 	if failure != nil {
 		if failure.status == unauthorized {
-			return InterruptSession401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return InterruptSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
 
 	found.Interrupt()
-	return InterruptSession204Response{}, nil
+	return nil, nil
 }
 
-// RewindSession carries a conversation on from the end of one of its responses.
-func (s *Server) RewindSession(ctx context.Context, request RewindSessionRequestObject) (RewindSessionResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+// rewindSession carries a conversation on from the end of one of its responses.
+func (s *Server) rewindSession(ctx context.Context, request *rewindSessionRequest) (*struct{}, error) {
+	found, failure := s.session(ctx, request.ID)
 	if failure != nil {
 		if failure.status == unauthorized {
-			return RewindSession401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return RewindSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
-	if request.Body == nil || request.Body.ResponseId == "" {
-		return RewindSession400JSONResponse{badRequest("name the response to carry on from")}, nil
+	if request.Body.ResponseId == "" {
+		return nil, huma.Error400BadRequest("name the response to carry on from")
 	}
 	if s.store == nil {
-		return RewindSession400JSONResponse{badRequest(noStore)}, nil
+		return nil, huma.Error400BadRequest(noStore)
 	}
 
 	err := found.Rewind(ctx, s.store, request.Body.ResponseId)
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
-		return RewindSession404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, huma.Error404NotFound(err.Error())
 	case errors.Is(err, session.ErrCannotRewind):
-		return RewindSession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	case err != nil:
 		return nil, err
 	}
-	return RewindSession204Response{}, nil
+	return nil, nil
 }
 
-// GetSessionCommand reports what one durable command ended as, without running anything.
-func (s *Server) GetSessionCommand(ctx context.Context, request GetSessionCommandRequestObject) (GetSessionCommandResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+// getSessionCommand reports what one durable command ended as, without running anything.
+func (s *Server) getSessionCommand(ctx context.Context, request *getSessionCommandRequest) (*commandReceiptResponse, error) {
+	found, failure := s.session(ctx, request.ID)
 	if failure != nil {
 		if failure.status == unauthorized {
-			return GetSessionCommand401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return GetSessionCommand404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
 
-	receipt, err := found.Command(request.CommandId)
+	receipt, err := found.Command(request.CommandID)
 	if err != nil {
-		return GetSessionCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+		return nil, huma.Error404NotFound(unknownCommand)
 	}
-	return GetSessionCommand200JSONResponse(receiptOf(receipt)), nil
+	return &commandReceiptResponse{Body: receiptOf(receipt)}, nil
 }
 
-// InterruptSessionCommand stops the named command and leaves every other one alone.
-func (s *Server) InterruptSessionCommand(ctx context.Context, request InterruptSessionCommandRequestObject) (InterruptSessionCommandResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+// interruptSessionCommand stops the named command and leaves every other one alone.
+func (s *Server) interruptSessionCommand(ctx context.Context, request *interruptSessionCommandRequest) (*commandReceiptResponse, error) {
+	found, failure := s.session(ctx, request.ID)
 	if failure != nil {
 		if failure.status == unauthorized {
-			return InterruptSessionCommand401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return InterruptSessionCommand404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
 
-	receipt, err := found.InterruptCommand(request.CommandId)
+	receipt, err := found.InterruptCommand(request.CommandID)
 	if errors.Is(err, conversation.ErrCommandNotFound) {
-		return InterruptSessionCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+		return nil, huma.Error404NotFound(unknownCommand)
 	}
 	if err != nil {
 		// The stop was taken but its durable outcome is not known, so the caller is told
 		// to keep the intent and retry this command id rather than that it stopped.
-		return InterruptSessionCommand503JSONResponse{Error: err.Error()}, nil
+		return nil, huma.Error503ServiceUnavailable(err.Error())
 	}
-	return InterruptSessionCommand200JSONResponse(receiptOf(receipt)), nil
+	return &commandReceiptResponse{Body: receiptOf(receipt)}, nil
 }
 
 // receiptOf renders a durable command receipt for the wire.
@@ -273,35 +705,29 @@ func receiptOf(receipt conversation.CommandReceipt) CommandReceipt {
 	}
 }
 
-// SetSessionInstructions changes what the agent is told to be.
-func (s *Server) SetSessionInstructions(ctx context.Context, request SetSessionInstructionsRequestObject) (SetSessionInstructionsResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+// setSessionInstructions changes what the agent is told to be.
+func (s *Server) setSessionInstructions(ctx context.Context, request *setSessionInstructionsRequest) (*struct{}, error) {
+	found, failure := s.session(ctx, request.ID)
 	if failure != nil {
 		if failure.status == unauthorized {
-			return SetSessionInstructions401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return SetSessionInstructions404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
-	}
-	if request.Body == nil {
-		return SetSessionInstructions400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
 
 	found.SetInstructions(request.Body.Instructions)
-	return SetSessionInstructions204Response{}, nil
+	return nil, nil
 }
 
-// SetSessionSettings moves one running session onto other models or another voice. The
+// setSessionSettings moves one running session onto other models or another voice. The
 // agent config it started from is untouched.
-func (s *Server) SetSessionSettings(ctx context.Context, request SetSessionSettingsRequestObject) (SetSessionSettingsResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSettingsRequest) (*sessionResponse, error) {
+	found, failure := s.session(ctx, request.ID)
 	if failure != nil {
 		if failure.status == unauthorized {
-			return SetSessionSettings401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return SetSessionSettings404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
-	}
-	if request.Body == nil {
-		return SetSessionSettings400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
 
 	body := request.Body
@@ -318,36 +744,33 @@ func (s *Server) SetSessionSettings(ctx context.Context, request SetSessionSetti
 		settings.Verbosity = &verbosity
 	}
 	if err := found.SetSettings(ctx, settings); err != nil {
-		return SetSessionSettings400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return SetSessionSettings200JSONResponse(sessionOf(found)), nil
+	return &sessionResponse{Body: sessionOf(found)}, nil
 }
 
-// UpdateSession renames, relabels, re-instructs or moves one session onto other models. A
+// updateSession renames, relabels, re-instructs or moves one session onto other models. A
 // session that ended can only be renamed and relabelled.
-func (s *Server) UpdateSession(ctx context.Context, request UpdateSessionRequestObject) (UpdateSessionResponseObject, error) {
-	found, failure := s.storedOrLiveSession(ctx, request.Id)
+func (s *Server) updateSession(ctx context.Context, request *updateSessionRequest) (*sessionResponse, error) {
+	found, failure := s.storedOrLiveSession(ctx, request.ID)
 	if failure == nil && found.Live != nil && !canReadSession(ctx, found.Live.Spec()) {
 		failure = &lookupFailure{status: notFound, message: unknownSession}
 	}
 	if failure != nil {
 		if failure.status == unauthorized {
-			return UpdateSession401JSONResponse{missingCustomer()}, nil
+			return nil, huma.Error401Unauthorized(missingCustomer().Error)
 		}
-		return UpdateSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
-	}
-	if request.Body == nil {
-		return UpdateSession400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error404NotFound(failure.message)
 	}
 
 	body := request.Body
-	settings, moving := settingsOf(*body)
+	settings, moving := settingsOf(body)
 	labels := session.Labels{Title: body.Title, Description: body.Description, Custom: body.Custom}
 
 	if found.Live == nil {
 		if moving || body.Instructions != nil {
-			return UpdateSession400JSONResponse{badRequest(
-				"the session has ended, so only its title, description and custom can change")}, nil
+			return nil, huma.Error400BadRequest(
+				"the session has ended, so only its title, description and custom can change")
 		}
 		row := *found.Stored
 		row.Title = override(row.Title, body.Title)
@@ -357,13 +780,13 @@ func (s *Server) UpdateSession(ctx context.Context, request UpdateSessionRequest
 			value(body.Custom)); err != nil {
 			return nil, err
 		}
-		return UpdateSession200JSONResponse(storedSessionOf(row)), nil
+		return &sessionResponse{Body: storedSessionOf(row)}, nil
 	}
 
 	live := found.Live
 	if moving {
 		if err := live.SetSettings(ctx, settings); err != nil {
-			return UpdateSession400JSONResponse{badRequest(err.Error())}, nil
+			return nil, huma.Error400BadRequest(err.Error())
 		}
 	}
 	if body.Instructions != nil {
@@ -372,7 +795,7 @@ func (s *Server) UpdateSession(ctx context.Context, request UpdateSessionRequest
 	if labels.Title != nil || labels.Description != nil || labels.Custom != nil {
 		live.Describe(ctx, labels)
 	}
-	return UpdateSession200JSONResponse(sessionOf(live)), nil
+	return &sessionResponse{Body: sessionOf(live)}, nil
 }
 
 // settingsOf reads the models and voice an update asks for, and reports whether it asks

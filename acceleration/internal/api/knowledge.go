@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // noKnowledge is what the paths say when the deployment has no knowledge provider. Filling
@@ -22,60 +25,198 @@ const noKnowledgeDocuments = "knowledge documents are not available: no database
 // which is the same thing they are told about one that never existed.
 const unknownKnowledgeDocument = "no such knowledge document"
 
-// IngestKnowledge fills a knowledge base with what the business wrote down.
-//
+// ingestKnowledge fills a knowledge base with what the business wrote down.
+type IngestKnowledgeRequest struct {
+	Namespace string              `json:"namespace" doc:"The knowledge base to write into, which is what a config's knowledge_namespace names. Knowledge is never shared, so there is no default." example:"docs"`
+	Documents []KnowledgeDocument `json:"documents" minItems:"1"`
+	ChunkSize *int                `json:"chunk_size,omitempty" doc:"Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own."`
+}
+
+type IngestedKnowledge struct {
+	Namespace string `json:"namespace"`
+	Documents int    `json:"documents" doc:"How many documents were read."`
+	Passages  int    `json:"passages" doc:"How many passages they were cut into and written as."`
+}
+
+type KnowledgeDocument struct {
+	Source string `json:"source" doc:"Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so posting the same source again replaces what it wrote before." example:"pricing.md"`
+	Text   string `json:"text" doc:"The document, whole. It is cut into passages here."`
+}
+
+type IndexedKnowledgeDocument struct {
+	Id        string    `json:"id"`
+	Namespace string    `json:"namespace"`
+	Source    string    `json:"source" doc:"What the document was posted as, and what its passages are keyed by." example:"pricing.md"`
+	Passages  int       `json:"passages" doc:"How many passages it was last cut into."`
+	Text      *string   `json:"text,omitempty" doc:"The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none."`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" doc:"When it was last written."`
+}
+
+type KnowledgePassage struct {
+	Id     string `json:"id"`
+	Source string `json:"source" doc:"The heading or file the passage sits under."`
+	Text   string `json:"text"`
+}
+
+type ingestKnowledgeRequest struct {
+	Body IngestKnowledgeRequest
+}
+
+type ingestedKnowledgeResponse struct {
+	Body IngestedKnowledge
+}
+
+type listKnowledgeDocumentsRequest struct {
+	Namespace optionalParam[string] `query:"namespace" doc:"One knowledge base. Omit to list every document the customer has."`
+}
+
+type indexedKnowledgeDocumentListResponse struct {
+	Body []IndexedKnowledgeDocument
+}
+
+type getKnowledgeDocumentRequest struct {
+	ID string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type indexedKnowledgeDocumentResponse struct {
+	Body IndexedKnowledgeDocument
+}
+
+type deleteKnowledgeDocumentRequest struct {
+	ID string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type listKnowledgeDocumentPassagesRequest struct {
+	ID string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type knowledgePassageListResponse struct {
+	Body []KnowledgePassage
+}
+
+func (s *Server) registerKnowledge(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "ingestKnowledge",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/knowledge",
+		Summary:     "Fill a knowledge base with what the business wrote down",
+		Description: "The writing half of the lookup a config's knowledge_namespace gives an agent. " +
+			"Each document is cut into passages here rather than by the caller, so a file " +
+			"read off disk by the command and one posted by an SDK are cut the same way and " +
+			"can replace each other.\n" +
+			"Passages are keyed by the source and the position they came from, so posting a " +
+			"document again after editing it replaces that document's passages rather than " +
+			"leaving two versions of them to be found. A namespace is never shared between " +
+			"agents, and the caller names it.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The passages were written"},
+		},
+		Errors:       []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		MaxBodyBytes: largeBody,
+	}, s.ingestKnowledge)
+	huma.Register(api, huma.Operation{
+		OperationID: "listKnowledgeDocuments",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/knowledge/documents",
+		Summary:     "The documents a knowledge base was filled with",
+		Description: "What was posted to /v1/agents/knowledge or synced from an agent directory's " +
+			"knowledge folder, one entry per source. Pages are listed at " +
+			"/v1/agents/knowledge/urls.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The customer's documents, most recently written first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listKnowledgeDocuments)
+	huma.Register(api, huma.Operation{
+		OperationID: "getKnowledgeDocument",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/knowledge/documents/{id}",
+		Summary:     "One document, with the text it was posted as",
+		Description: "What to start from when editing it: post it again under the same source to " +
+			"replace it. A document written before its text was kept comes back without one.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The document"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getKnowledgeDocument)
+	huma.Register(api, huma.Operation{
+		OperationID: "deleteKnowledgeDocument",
+		Method:      http.MethodDelete,
+		Path:        "/v1/agents/knowledge/documents/{id}",
+		Summary:     "Take a document out of a knowledge base",
+		Description: "The passages it was cut into are removed too, so the agent stops answering out " +
+			"of it.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The document and its passages are gone"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.deleteKnowledgeDocument)
+	huma.Register(api, huma.Operation{
+		OperationID: "listKnowledgeDocumentPassages",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/knowledge/documents/{id}/passages",
+		Summary:     "What a document was cut into, in order",
+		Description: "The passages as the agent finds them, which is what shows what a lookup can " +
+			"answer out of this document.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The passages"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.listKnowledgeDocumentPassages)
+}
+
 // The documents are cut into passages here rather than by the caller, so a file read off
 // disk by cmd/knowledge and one posted by an SDK are cut the same way and can replace each
 // other.
-func (s *Server) IngestKnowledge(ctx context.Context, request IngestKnowledgeRequestObject) (IngestKnowledgeResponseObject, error) {
+func (s *Server) ingestKnowledge(ctx context.Context, request *ingestKnowledgeRequest) (*ingestedKnowledgeResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return IngestKnowledge401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.knowledge == nil {
-		return IngestKnowledge400JSONResponse{badRequest(noKnowledge)}, nil
-	}
-	if request.Body == nil {
-		return IngestKnowledge400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest(noKnowledge)
 	}
 
 	namespace := strings.TrimSpace(request.Body.Namespace)
 	if namespace == "" {
-		return IngestKnowledge400JSONResponse{
-			badRequest("a namespace is required, knowledge is never shared"),
-		}, nil
+		return nil, huma.Error400BadRequest("a namespace is required, knowledge is never shared")
 	}
 
 	read, passages, err := s.fillKnowledge(ctx, customerID, namespace, request.Body.Documents, request.Body.ChunkSize)
 	if err != nil {
-		return IngestKnowledge400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	s.logger.Info("filled a knowledge base",
 		"namespace", namespace, "documents", read, "passages", passages)
-	return IngestKnowledge200JSONResponse{
+	return &ingestedKnowledgeResponse{Body: IngestedKnowledge{
 		Namespace: namespace,
 		Documents: read,
 		Passages:  passages,
-	}, nil
+	}}, nil
 }
 
-// ListKnowledgeDocuments returns the documents the calling customer's knowledge bases were
+// listKnowledgeDocuments returns the documents the calling customer's knowledge bases were
 // filled with, most recently written first.
-func (s *Server) ListKnowledgeDocuments(
-	ctx context.Context, request ListKnowledgeDocumentsRequestObject,
-) (ListKnowledgeDocumentsResponseObject, error) {
+func (s *Server) listKnowledgeDocuments(ctx context.Context, request *listKnowledgeDocumentsRequest) (*indexedKnowledgeDocumentListResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListKnowledgeDocuments401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil || s.knowledge == nil {
-		return ListKnowledgeDocuments400JSONResponse{badRequest(noKnowledgeDocuments)}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeDocuments)
 	}
 
 	namespace := ""
-	if request.Params.Namespace != nil {
-		namespace = strings.TrimSpace(*request.Params.Namespace)
+	if request.Namespace.Set {
+		namespace = strings.TrimSpace(request.Namespace.Value)
 	}
 
 	stored, err := s.store.CustomerKnowledgeDocuments(ctx, customerID, namespace)
@@ -87,73 +228,67 @@ func (s *Server) ListKnowledgeDocuments(
 	for _, document := range stored {
 		listed = append(listed, indexedKnowledgeDocumentOf(document))
 	}
-	return ListKnowledgeDocuments200JSONResponse(listed), nil
+	return &indexedKnowledgeDocumentListResponse{Body: listed}, nil
 }
 
-// GetKnowledgeDocument returns one document with the text it was posted as.
-func (s *Server) GetKnowledgeDocument(
-	ctx context.Context, request GetKnowledgeDocumentRequestObject,
-) (GetKnowledgeDocumentResponseObject, error) {
+// getKnowledgeDocument returns one document with the text it was posted as.
+func (s *Server) getKnowledgeDocument(ctx context.Context, request *getKnowledgeDocumentRequest) (*indexedKnowledgeDocumentResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetKnowledgeDocument401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil || s.knowledge == nil {
-		return GetKnowledgeDocument400JSONResponse{badRequest(noKnowledgeDocuments)}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeDocuments)
 	}
 
-	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
+	document, err := s.store.KnowledgeDocument(ctx, customerID, request.ID)
 	if err != nil {
-		return GetKnowledgeDocument404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeDocument}}, nil
+		return nil, huma.Error404NotFound(unknownKnowledgeDocument)
 	}
 	read := indexedKnowledgeDocumentOf(document)
 	read.Text = &document.Text
-	return GetKnowledgeDocument200JSONResponse(read), nil
+	return &indexedKnowledgeDocumentResponse{Body: read}, nil
 }
 
-// DeleteKnowledgeDocument takes a document out of its knowledge base, passages and all.
-func (s *Server) DeleteKnowledgeDocument(
-	ctx context.Context, request DeleteKnowledgeDocumentRequestObject,
-) (DeleteKnowledgeDocumentResponseObject, error) {
+// deleteKnowledgeDocument takes a document out of its knowledge base, passages and all.
+func (s *Server) deleteKnowledgeDocument(ctx context.Context, request *deleteKnowledgeDocumentRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return DeleteKnowledgeDocument401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil || s.knowledge == nil {
-		return DeleteKnowledgeDocument400JSONResponse{badRequest(noKnowledgeDocuments)}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeDocuments)
 	}
 
-	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
+	document, err := s.store.KnowledgeDocument(ctx, customerID, request.ID)
 	if err != nil {
-		return DeleteKnowledgeDocument404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeDocument}}, nil
+		return nil, huma.Error404NotFound(unknownKnowledgeDocument)
 	}
 	if err := s.removeKnowledgeDocument(ctx, document); err != nil {
 		return nil, err
 	}
-	return DeleteKnowledgeDocument204Response{}, nil
+	return nil, nil
 }
 
-// ListKnowledgeDocumentPassages reads back what a document was cut into.
-func (s *Server) ListKnowledgeDocumentPassages(
-	ctx context.Context, request ListKnowledgeDocumentPassagesRequestObject,
-) (ListKnowledgeDocumentPassagesResponseObject, error) {
+// listKnowledgeDocumentPassages reads back what a document was cut into.
+func (s *Server) listKnowledgeDocumentPassages(ctx context.Context, request *listKnowledgeDocumentPassagesRequest) (*knowledgePassageListResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListKnowledgeDocumentPassages401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil || s.knowledge == nil {
-		return ListKnowledgeDocumentPassages400JSONResponse{badRequest(noKnowledgeDocuments)}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeDocuments)
 	}
 
-	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
+	document, err := s.store.KnowledgeDocument(ctx, customerID, request.ID)
 	if err != nil {
-		return ListKnowledgeDocumentPassages404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeDocument}}, nil
+		return nil, huma.Error404NotFound(unknownKnowledgeDocument)
 	}
 	passages, err := s.knowledgePassages(ctx, customerID, document.Namespace, document.Source, document.Passages)
 	if err != nil {
 		return nil, err
 	}
-	return ListKnowledgeDocumentPassages200JSONResponse(passages), nil
+	return &knowledgePassageListResponse{Body: passages}, nil
 }
 
 // knowledgePassages reads a source's passages back in the order it was cut into them.

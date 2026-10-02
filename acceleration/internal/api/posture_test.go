@@ -76,13 +76,13 @@ func (s *PostureSuite) TestEveryOperationTheSpecOpensIsReachableByAUsersDevice()
 }
 
 func (s *PostureSuite) TestTheRoutesLeftOutOfTheSpecAreStillDecidedOneWayOrTheOther() {
-	// Excluding an operation from generation drops it from the embedded spec the two
-	// tests above read, which is the one way an inverted default can fail open: nothing
-	// refuses what nothing can see. So unspecifiedRoutes has to name every excluded
-	// operation, not merely be right about the ones it happens to name.
-	for route, open := range s.excludedRoutes() {
+	// A handler written by hand is not a Huma operation, so it is missing from the
+	// document the two tests above read, which is the one way an inverted default can fail
+	// open: nothing refuses what nothing can see. So unspecifiedRoutes has to name every
+	// one, not merely be right about the ones it happens to name.
+	for route, open := range s.handWrittenRoutes() {
 		s.Contains(unspecifiedRoutes, route,
-			"%s is excluded from generation, so the middleware cannot see it", route)
+			"%s is written by hand, so the middleware cannot see it", route)
 		s.Equal(open, unspecifiedRoutes[route], "%s is open in the spec but not here", route)
 
 		method, path, found := strings.Cut(route, " ")
@@ -166,54 +166,30 @@ func (s *PostureSuite) assertRefusedAlike(wrongly func(http.Header)) {
 	s.Equal(string(nothingAtAll), string(refusal))
 }
 
-// operations are the ones the embedded spec describes, which is what the middleware reads.
+// operations are the ones declared in Go, which is what the middleware reads.
 func (s *PostureSuite) operations() []operationSummary {
 	operations, err := specifiedOperations((&Server{}).newAPI(chi.NewRouter()).OpenAPI())
 	s.Require().NoError(err)
 	return operations
 }
 
-// excludedRoutes reads the operations kept out of generation, as routes and whether each
-// is open to a client.
-//
-// Both files are read off disk rather than from the embedded spec, because what is being
-// checked is the very thing the embedded spec is missing: the generator's exclude list on
-// one side and the operations it names on the other.
-func (s *PostureSuite) excludedRoutes() map[string]bool {
-	var codegen struct {
-		OutputOptions struct {
-			Excluded []string `yaml:"exclude-operation-ids"`
-		} `yaml:"output-options"`
-	}
-	s.read("../../api/oapi-codegen.yaml", &codegen)
-
+// handWrittenRoutes reads the operations api/legacy.yaml declares, as routes and whether
+// each is open to a client.
+func (s *PostureSuite) handWrittenRoutes() map[string]bool {
 	var spec struct {
 		Paths map[string]map[string]struct {
-			OperationID string `yaml:"operationId"`
-			Open        bool   `yaml:"x-client-accessible"`
-			Security    *[]map[string][]string
+			Open     bool `yaml:"x-client-accessible"`
+			Security *[]map[string][]string
 		} `yaml:"paths"`
 	}
 	s.read("../../api/legacy.yaml", &spec)
 
-	excluded := map[string]bool{}
-	for _, id := range codegen.OutputOptions.Excluded {
-		excluded[id] = false
-	}
-
 	routes := map[string]bool{}
 	for path, item := range spec.Paths {
 		for method, operation := range item {
-			if _, ok := excluded[operation.OperationID]; !ok {
-				continue
-			}
 			free := operation.Security != nil && len(*operation.Security) == 0
 			routes[strings.ToUpper(method)+" "+path] = operation.Open || free
-			excluded[operation.OperationID] = true
 		}
-	}
-	for id, found := range excluded {
-		s.True(found, "%s is excluded from generation but is not in the spec", id)
 	}
 	return routes
 }

@@ -1,30 +1,10 @@
 package: api
 # Paths are resolved against the working directory, so generation runs from acceleration/.
 output: internal/api/generated.go
+# Every operation api/legacy.yaml declares is served by a handler written by hand, so only
+# its models are generated: the sockets, the agent-log stream and the data export and
+# import, none of which a typed operation can hand back or take.
 generate:
   models: true
-  chi-server: true
-  strict-server: true
-  embedded-spec: true
 output-options:
   skip-prune: true
-  # The three sockets are in the spec so a client generator and a reader know they exist,
-  # but a strict server cannot express an upgrade. Their handlers are hand-written in
-  # sessionws.go, streamws.go and dispatchws.go and registered on the mux before the
-  # generated routes. Excluding an operation also drops it from the embedded spec, so a
-  # socket that is server-side only makes that check itself rather than in withServerSide.
-  exclude-operation-ids:
-    - watchSession
-    - streamModality
-    - dispatchCalls
-    - pluginOAuthCallback
-
-    - listAgentLogs
-    - getAgentLog
-    - streamAgentLogs
-
-    # An export streams rows out and an import streams them in, neither of which a
-    # strict server can hand back or take. They are written by hand in datamove.go.
-    - exportData
-    - importData
-    - listDataChanges

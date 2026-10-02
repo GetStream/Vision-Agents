@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"net/http"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // noKnowledgeURLs is what these paths say on a deployment that cannot honour a
@@ -15,22 +18,196 @@ const noKnowledgeURLs = "knowledge urls are not available: no database or no way
 // the same thing they are told about one that never existed.
 const unknownKnowledgeURL = "no such knowledge url"
 
-// ListKnowledgeUrls returns the pages the calling customer's knowledge bases are filled
+type KnowledgeUrl struct {
+	Id            string            `json:"id"`
+	Namespace     string            `json:"namespace"`
+	Url           string            `json:"url"`
+	Title         *string           `json:"title,omitempty" doc:"What the page is called: the title it was subscribed with, or what it called itself when it was last read."`
+	Description   *string           `json:"description,omitempty" doc:"What the page was subscribed as being. Empty unless it was given one."`
+	State         KnowledgeUrlState `json:"state"`
+	Error         *string           `json:"error,omitempty" doc:"Why the last read failed. Empty otherwise."`
+	Passages      int               `json:"passages" doc:"How many passages the page was last cut into."`
+	RefreshHours  *int              `json:"refresh_hours,omitempty" doc:"How often the page is read again on its own, in hours. Absent means never."`
+	LastIndexedAt *time.Time        `json:"last_indexed_at,omitempty" doc:"When it was last read successfully. Absent means never, which is what separates a page that has never worked from one that worked and has since broken." nullable:"true"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+}
+
+type KnowledgeUrlState string
+
+const (
+	KnowledgeUrlStateFailed  KnowledgeUrlState = "failed"
+	KnowledgeUrlStateIndexed KnowledgeUrlState = "indexed"
+	KnowledgeUrlStatePending KnowledgeUrlState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the KnowledgeUrlState enum.
+func (e KnowledgeUrlState) Valid() bool {
+	switch e {
+	case KnowledgeUrlStateFailed:
+		return true
+	case KnowledgeUrlStateIndexed:
+		return true
+	case KnowledgeUrlStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
+func (KnowledgeUrlState) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "KnowledgeUrlState", "Where the page has got to. Pending means it has been added and its first read is queued "+
+		"or being retried; failed means every attempt failed.",
+		string(KnowledgeUrlStatePending), string(KnowledgeUrlStateIndexed), string(KnowledgeUrlStateFailed))
+}
+
+type KnowledgeUrlRequest struct {
+	Namespace    string  `json:"namespace" doc:"The knowledge base to fill, which is what a config's knowledge_namespace names." example:"docs"`
+	Url          string  `json:"url" doc:"The page to read. It must be http or https: this is handed to a crawler and then used to key the passages it becomes." example:"https://example.com/pricing"`
+	Title        *string `json:"title,omitempty" doc:"What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read." example:"Pricing"`
+	Description  *string `json:"description,omitempty" doc:"What the page is, for a reader of the subscription. Optional, and kept as written: it says why this page is subscribed to, which a crawler cannot know." example:"What each plan includes and where the limits are."`
+	RefreshHours *int    `json:"refresh_hours,omitempty" doc:"How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it." minimum:"0" example:"24"`
+}
+
+type listKnowledgeUrlsRequest struct {
+	Namespace optionalParam[string] `query:"namespace" doc:"One knowledge base. Omit to list every page the customer has."`
+}
+
+type knowledgeUrlListResponse struct {
+	Body []KnowledgeUrl
+}
+
+type addKnowledgeUrlRequest struct {
+	Body KnowledgeUrlRequest
+}
+
+type knowledgeUrlResponse struct {
+	Body KnowledgeUrl
+}
+
+type getKnowledgeUrlRequest struct {
+	ID string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type deleteKnowledgeUrlRequest struct {
+	ID string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type listKnowledgeUrlPassagesRequest struct {
+	ID string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type indexKnowledgeUrlRequest struct {
+	ID string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+func (s *Server) registerKnowledgeURLs(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listKnowledgeUrls",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/knowledge/urls",
+		Summary:     "The pages a knowledge base is kept filled from",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The customer's pages, newest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listKnowledgeUrls)
+	huma.Register(api, huma.Operation{
+		OperationID: "addKnowledgeUrl",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/knowledge/urls",
+		Summary:     "Keep a knowledge base filled from a page",
+		Description: "Posting a document is a thing that happens once; a url is a subscription, " +
+			"because the page behind it changes and nobody re-posts it. The page is fetched, " +
+			"turned into markdown, cut into passages the same way a document is, and written " +
+			"under the url so a later read replaces it rather than adding a second copy.\n" +
+			"The fetch is queued rather than done before this answers, since a live crawl " +
+			"takes seconds: the page comes back pending, and indexed or failed once it has " +
+			"been read. A read that fails is tried again a few times first. A page that " +
+			"could not be read is still stored, in the failed state with the reason on it, " +
+			"rather than refused and forgotten.\n" +
+			"Adding a page a knowledge base already has is a re-read of it rather than a " +
+			"second copy: the subscription is the url, so a declaration of what an agent " +
+			"reads can be applied again without being diffed first.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		DefaultStatus: http.StatusCreated,
+		Responses: map[string]*huma.Response{
+			"201": {Description: "The page was stored and its read queued"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.addKnowledgeUrl)
+	huma.Register(api, huma.Operation{
+		OperationID: "getKnowledgeUrl",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/knowledge/urls/{id}",
+		Summary:     "One page, and when it was last read",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The page"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getKnowledgeUrl)
+	huma.Register(api, huma.Operation{
+		OperationID: "deleteKnowledgeUrl",
+		Method:      http.MethodDelete,
+		Path:        "/v1/agents/knowledge/urls/{id}",
+		Summary:     "Stop filling a knowledge base from a page",
+		Description: "The passages the page wrote are removed too. Leaving them would have the agent " +
+			"go on answering out of a page nobody subscribes to any more, which is worse " +
+			"than it saying it does not know.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The page and its passages are gone"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.deleteKnowledgeUrl)
+	huma.Register(api, huma.Operation{
+		OperationID: "listKnowledgeUrlPassages",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/knowledge/urls/{id}/passages",
+		Summary:     "What a page was last read into, in order",
+		Description: "Empty until the page has been read.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The passages"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.listKnowledgeUrlPassages)
+	huma.Register(api, huma.Operation{
+		OperationID: "indexKnowledgeUrl",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/knowledge/urls/{id}/index",
+		Summary:     "Read a page again",
+		Description: "Nothing re-reads a page on its own, so this is what a caller with its own " +
+			"schedule calls. The read is queued, the same as adding the page; " +
+			"last_indexed_at moves once it has happened. Passages past the end of the new " +
+			"version are removed, so a page that got shorter does not leave its old tail " +
+			"behind.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The page as it is while the read is queued"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.indexKnowledgeUrl)
+}
+
+// listKnowledgeUrls returns the pages the calling customer's knowledge bases are filled
 // from, newest first.
-func (s *Server) ListKnowledgeUrls(
-	ctx context.Context, request ListKnowledgeUrlsRequestObject,
-) (ListKnowledgeUrlsResponseObject, error) {
+func (s *Server) listKnowledgeUrls(ctx context.Context, request *listKnowledgeUrlsRequest) (*knowledgeUrlListResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListKnowledgeUrls401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.pages == nil {
-		return ListKnowledgeUrls400JSONResponse{badRequest(noKnowledgeURLs)}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeURLs)
 	}
 
 	namespace := ""
-	if request.Params.Namespace != nil {
-		namespace = *request.Params.Namespace
+	if request.Namespace.Set {
+		namespace = request.Namespace.Value
 	}
 
 	stored, err := s.pages.List(ctx, customerID, namespace)
@@ -42,26 +219,21 @@ func (s *Server) ListKnowledgeUrls(
 	for _, page := range stored {
 		listed = append(listed, knowledgeURLOf(page))
 	}
-	return ListKnowledgeUrls200JSONResponse(listed), nil
+	return &knowledgeUrlListResponse{Body: listed}, nil
 }
 
-// AddKnowledgeUrl subscribes a knowledge base to a page and reads it.
+// addKnowledgeUrl subscribes a knowledge base to a page and reads it.
 //
 // A page that could not be read is a 201 with the row in the failed state rather than an
 // error: the subscription was made, and what went wrong reading it is on the row where the
 // caller can see it and try again.
-func (s *Server) AddKnowledgeUrl(
-	ctx context.Context, request AddKnowledgeUrlRequestObject,
-) (AddKnowledgeUrlResponseObject, error) {
+func (s *Server) addKnowledgeUrl(ctx context.Context, request *addKnowledgeUrlRequest) (*knowledgeUrlResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return AddKnowledgeUrl401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.pages == nil {
-		return AddKnowledgeUrl400JSONResponse{badRequest(noKnowledgeURLs)}, nil
-	}
-	if request.Body == nil {
-		return AddKnowledgeUrl400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeURLs)
 	}
 
 	wanted := urls.Subscription{Namespace: request.Body.Namespace, URL: request.Body.Url}
@@ -77,89 +249,81 @@ func (s *Server) AddKnowledgeUrl(
 
 	page, err := s.pages.Add(ctx, customerID, wanted)
 	if err != nil {
-		return AddKnowledgeUrl400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return AddKnowledgeUrl201JSONResponse(knowledgeURLOf(page)), nil
+	return &knowledgeUrlResponse{Body: knowledgeURLOf(page)}, nil
 }
 
-// GetKnowledgeUrl returns one page.
-func (s *Server) GetKnowledgeUrl(
-	ctx context.Context, request GetKnowledgeUrlRequestObject,
-) (GetKnowledgeUrlResponseObject, error) {
+// getKnowledgeUrl returns one page.
+func (s *Server) getKnowledgeUrl(ctx context.Context, request *getKnowledgeUrlRequest) (*knowledgeUrlResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetKnowledgeUrl401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.pages == nil {
-		return GetKnowledgeUrl400JSONResponse{badRequest(noKnowledgeURLs)}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeURLs)
 	}
 
-	page, err := s.pages.Get(ctx, customerID, request.Id)
+	page, err := s.pages.Get(ctx, customerID, request.ID)
 	if err != nil {
-		return GetKnowledgeUrl404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeURL}}, nil
+		return nil, huma.Error404NotFound(unknownKnowledgeURL)
 	}
-	return GetKnowledgeUrl200JSONResponse(knowledgeURLOf(page)), nil
+	return &knowledgeUrlResponse{Body: knowledgeURLOf(page)}, nil
 }
 
-// ListKnowledgeUrlPassages reads back what a page was last read into.
-func (s *Server) ListKnowledgeUrlPassages(
-	ctx context.Context, request ListKnowledgeUrlPassagesRequestObject,
-) (ListKnowledgeUrlPassagesResponseObject, error) {
+// listKnowledgeUrlPassages reads back what a page was last read into.
+func (s *Server) listKnowledgeUrlPassages(ctx context.Context, request *listKnowledgeUrlPassagesRequest) (*knowledgePassageListResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListKnowledgeUrlPassages401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.pages == nil || s.knowledge == nil {
-		return ListKnowledgeUrlPassages400JSONResponse{badRequest(noKnowledgeURLs)}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeURLs)
 	}
 
-	page, err := s.pages.Get(ctx, customerID, request.Id)
+	page, err := s.pages.Get(ctx, customerID, request.ID)
 	if err != nil {
-		return ListKnowledgeUrlPassages404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeURL}}, nil
+		return nil, huma.Error404NotFound(unknownKnowledgeURL)
 	}
 	passages, err := s.knowledgePassages(ctx, customerID, page.Namespace, page.URL, page.Passages)
 	if err != nil {
 		return nil, err
 	}
-	return ListKnowledgeUrlPassages200JSONResponse(passages), nil
+	return &knowledgePassageListResponse{Body: passages}, nil
 }
 
-// DeleteKnowledgeUrl stops filling a knowledge base from a page, and removes the passages
+// deleteKnowledgeUrl stops filling a knowledge base from a page, and removes the passages
 // it wrote.
-func (s *Server) DeleteKnowledgeUrl(
-	ctx context.Context, request DeleteKnowledgeUrlRequestObject,
-) (DeleteKnowledgeUrlResponseObject, error) {
+func (s *Server) deleteKnowledgeUrl(ctx context.Context, request *deleteKnowledgeUrlRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return DeleteKnowledgeUrl401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.pages == nil {
-		return DeleteKnowledgeUrl400JSONResponse{badRequest(noKnowledgeURLs)}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeURLs)
 	}
 
-	if err := s.pages.Remove(ctx, customerID, request.Id); err != nil {
-		return DeleteKnowledgeUrl404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeURL}}, nil
+	if err := s.pages.Remove(ctx, customerID, request.ID); err != nil {
+		return nil, huma.Error404NotFound(unknownKnowledgeURL)
 	}
-	return DeleteKnowledgeUrl204Response{}, nil
+	return nil, nil
 }
 
-// IndexKnowledgeUrl reads a page again.
-func (s *Server) IndexKnowledgeUrl(
-	ctx context.Context, request IndexKnowledgeUrlRequestObject,
-) (IndexKnowledgeUrlResponseObject, error) {
+// indexKnowledgeUrl reads a page again.
+func (s *Server) indexKnowledgeUrl(ctx context.Context, request *indexKnowledgeUrlRequest) (*knowledgeUrlResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return IndexKnowledgeUrl401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.pages == nil {
-		return IndexKnowledgeUrl400JSONResponse{badRequest(noKnowledgeURLs)}, nil
+		return nil, huma.Error400BadRequest(noKnowledgeURLs)
 	}
 
-	page, err := s.pages.Reindex(ctx, customerID, request.Id)
+	page, err := s.pages.Reindex(ctx, customerID, request.ID)
 	if err != nil {
-		return IndexKnowledgeUrl404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeURL}}, nil
+		return nil, huma.Error404NotFound(unknownKnowledgeURL)
 	}
-	return IndexKnowledgeUrl200JSONResponse(knowledgeURLOf(page)), nil
+	return &knowledgeUrlResponse{Body: knowledgeURLOf(page)}, nil
 }
 
 // knowledgeURLOf is the stored row as the API describes it.

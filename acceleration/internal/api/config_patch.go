@@ -43,17 +43,27 @@ func (*AgentConfigPatch) TransformSchema(_ huma.Registry, schema *huma.Schema) *
 }
 
 func (AgentMode) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "AgentMode", "Whether the agent is spoken to or written to.",
+	ref := namedEnum(registry, "AgentMode", "Whether the agent is spoken to or written to. A "+
+		"voice agent joins a call, transcribes what it hears and speaks its replies. A text "+
+		"agent holds the same conversation in writing, so it uses neither speech target and a "+
+		"session created from it needs no call to join.",
 		string(AgentModeVoice), string(AgentModeText))
+	registry.Map()["AgentMode"].Default = string(AgentModeVoice)
+	return ref
 }
 
 func (Sandbox) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "Sandbox", "Where the subagent may run code it writes.", string(Daytona))
+	return namedEnum(registry, "Sandbox", "Where the subagent may run code it writes. Only the "+
+		"subagent is offered it: running code takes seconds, and the model holding the "+
+		"conversation has none to spare. Omit it and the subagent works everything out in its "+
+		"head.", string(Daytona))
 }
 
 func (Harness) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "Harness", "Which harness the agent's sessions run. Set on the "+
-		"agent, never on a session.", string(Default))
+	return namedEnum(registry, "Harness", "Which harness the agent's sessions run: what hands "+
+		"work to the subagent, loads skills, compacts the conversation and starts the sandbox. "+
+		"Set on the agent, never on a session. Omit it for the default, the only one there is.",
+		string(Default))
 }
 
 func (DispatchSetting) Schema(registry huma.Registry) *huma.Schema {

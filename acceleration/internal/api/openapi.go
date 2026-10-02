@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -102,6 +103,9 @@ var responseDescriptions = map[string]string{
 
 // There is one Huma API per process, so its error constructor is set once for all of it.
 func init() {
+	// A list is an empty list rather than null, as api/legacy.yaml declared them, and a
+	// client generator would otherwise make every list field optional.
+	huma.DefaultArrayNullable = false
 	huma.NewError = func(status int, message string, errs ...error) huma.StatusError {
 		// The spec promises a 400 for a request that does not validate, where Huma's own
 		// answer is a 422.
@@ -120,7 +124,7 @@ func init() {
 }
 
 // apiError is how a Huma operation reports a failure, in the {"error": "..."} shape the
-// generated operations and the sockets answer with.
+// sockets answer with as well.
 type apiError struct {
 	status  int
 	Message string `json:"error"`
@@ -179,11 +183,12 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 		Formats:       huma.DefaultFormats,
 		DefaultFormat: "application/json",
 	}
-	// The generated operations ignore a field they do not know, and a client written
-	// against a newer spec sends them.
+	// An operation ignores a field it does not know, and a client written against a newer
+	// spec sends them.
 	config.AllowAdditionalPropertiesByDefault = true
 
 	api := humachi.New(router, config)
+	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
 	s.registerPolicies(api)
 	s.registerSessionQuery(api)
@@ -192,18 +197,172 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerMemories(api)
 	s.registerConfigPatch(api)
 	s.registerSync(api)
+	s.registerRouting(api)
+	s.registerRouterConfigs(api)
+	s.registerPhone(api)
+	s.registerConfigs(api)
+	s.registerPlugins(api)
+	s.registerVoices(api)
+	s.registerKnowledge(api)
+	s.registerKnowledgeURLs(api)
+	s.registerCampaigns(api)
+	s.registerSimulations(api)
+	s.registerCalls(api)
+	s.registerConversations(api)
+	s.registerSessionCreate(api)
+	s.registerGuests(api)
+	s.registerSessions(api)
+	s.registerResponses(api)
+	s.registerSearch(api)
+	s.registerClassify(api)
+	s.registerRecordings(api)
+	s.registerImages(api)
+	registerSocketFrames(api.OpenAPI().Components.Schemas)
+	legacyFormats(api.OpenAPI())
 	return api
 }
 
+// requireCustomer answers a caller who named no customer before its input is read, so
+// it is told to authenticate rather than what is wrong with a request it may not make.
+// An operation declaring no security at all is reached without one.
+func requireCustomer(api huma.API) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		security := ctx.Operation().Security
+		if _, ok := CustomerFrom(ctx.Context()); !ok && (security == nil || len(security) > 0) {
+			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, missingCustomer().Error)
+			return
+		}
+		next(ctx)
+	}
+}
+
+// errorResponse is an error an operation describes in words of its own.
+func errorResponse(description string) *huma.Response {
+	return &huma.Response{
+		Description: description,
+		Content: map[string]*huma.MediaType{
+			"application/json": {Schema: &huma.Schema{Ref: "#/components/schemas/Error"}},
+		},
+	}
+}
+
+// largeBody is how much an operation carrying audio, images or documents may be sent,
+// where Huma's own limit is a megabyte.
+const largeBody = 64 << 20
+
+// legacyFormats renders a Go int as a plain integer and a []byte as format: byte, as
+// api/legacy.yaml declared them, where Huma writes int64 and contentEncoding: base64. A
+// client generator reads the format, so leaving Huma's would change the type every client
+// has for the field. An int naming its format in a tag keeps it.
+func legacyFormats(document *huma.OpenAPI) {
+	registry := document.Components.Schemas
+	for name, schema := range registry.Map() {
+		t := registry.TypeFromRef("#/components/schemas/" + name)
+		if t == nil || t.Kind() != reflect.Struct {
+			continue
+		}
+		for i := range t.NumField() {
+			field := t.Field(i)
+			property := schema.Properties[strings.Split(field.Tag.Get("json"), ",")[0]]
+			switch {
+			case property == nil:
+			case field.Tag.Get("format") == "byte":
+				property.ContentEncoding = ""
+			case field.Tag.Get("format") == "":
+				plainNumber(field.Type, property)
+			}
+		}
+	}
+	for _, item := range document.Paths {
+		for _, operation := range []*huma.Operation{item.Get, item.Post, item.Put, item.Patch, item.Delete} {
+			if operation == nil {
+				continue
+			}
+			for _, parameter := range operation.Parameters {
+				if parameter.Schema != nil && parameter.Schema.Format == "int64" {
+					parameter.Schema.Format = ""
+				}
+			}
+		}
+	}
+}
+
+// plainNumber clears the format Huma gave a Go int, or the items or values of a slice or
+// map of them.
+func plainNumber(t reflect.Type, schema *huma.Schema) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Int:
+		schema.Format = ""
+	case reflect.Slice:
+		if schema.Items != nil {
+			plainNumber(t.Elem(), schema.Items)
+		}
+	case reflect.Map:
+		if values, ok := schema.AdditionalProperties.(*huma.Schema); ok {
+			plainNumber(t.Elem(), values)
+		}
+	}
+}
+
+// optionalParam is a query parameter that may be left out. Huma cannot fill a pointer
+// parameter, and a zero value cannot say whether the caller sent false or nothing.
+type optionalParam[T any] struct {
+	Value T
+	Set   bool
+}
+
+func (o *optionalParam[T]) Receiver() reflect.Value {
+	return reflect.ValueOf(o).Elem().Field(0)
+}
+
+func (o *optionalParam[T]) OnParamSet(isSet bool, _ any) {
+	o.Set = isSet
+}
+
+// Schema documents the parameter as the value it carries.
+func (optionalParam[T]) Schema(registry huma.Registry) *huma.Schema {
+	return registry.Schema(reflect.TypeFor[T](), true, "")
+}
+
+// Ptr returns the value sent, or nil when the parameter was left out.
+func (o optionalParam[T]) Ptr() *T {
+	if !o.Set {
+		return nil
+	}
+	return &o.Value
+}
+
+// namedUnion declares a oneOf as a schema of its own and returns the reference to it.
+func namedUnion(registry huma.Registry, name, description string, choices ...*huma.Schema) *huma.Schema {
+	schema := &huma.Schema{Description: description, OneOf: choices}
+	schema.PrecomputeMessages()
+	registry.Map()[name] = schema
+	return &huma.Schema{Ref: "#/components/schemas/" + name}
+}
+
+// Schema points a Modality at the schema api/legacy.yaml declares for it.
+func (Modality) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "Modality", "", string(Stt), string(Tts), string(Llm), string(Sts),
+		string(Search), string(Lcm), string(Image), string(Memory), string(Knowledge), string(Phone))
+}
+
 // shareErrorResponses points an operation's error responses at the shared ones, and folds
-// Huma's 422 into the 400 its error constructor answers with instead.
+// Huma's 422 into the 400 its error constructor answers with instead. An error the
+// operation describes in words of its own keeps them.
 func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 	if _, ok := operation.Responses["422"]; ok {
 		delete(operation.Responses, "422")
-		operation.Responses["400"] = &huma.Response{}
+		if _, ok := operation.Responses["400"]; !ok {
+			operation.Responses["400"] = &huma.Response{}
+		}
 	}
 	for code, name := range sharedResponses {
-		if _, ok := operation.Responses[code]; ok {
+		response, ok := operation.Responses[code]
+		status, _ := strconv.Atoi(code)
+		if ok && (response.Description == "" || response.Description == http.StatusText(status)) {
 			operation.Responses[code] = &huma.Response{Ref: "#/components/responses/" + name}
 		}
 	}
@@ -220,25 +379,9 @@ type operationSummary struct {
 	open bool
 }
 
-// specifiedOperations lists every operation document declares in Go and every one
-// generated from api/legacy.yaml, leaving out what oapi-codegen was told to skip.
+// specifiedOperations lists every operation document declares in Go.
 func specifiedOperations(document *huma.OpenAPI) ([]operationSummary, error) {
-	legacy, err := GetSpec()
-	if err != nil {
-		return nil, fmt.Errorf("api: could not read the embedded spec: %w", err)
-	}
 	var operations []operationSummary
-	for path, item := range legacy.Paths.Map() {
-		for method, operation := range item.Operations() {
-			open, _ := operation.Extensions[clientAccessibleExtension].(bool)
-			operations = append(operations, operationSummary{
-				method: method,
-				path:   path,
-				public: operation.Security != nil && len(*operation.Security) == 0,
-				open:   open,
-			})
-		}
-	}
 	for path, item := range document.Paths {
 		for method, operation := range map[string]*huma.Operation{
 			http.MethodGet: item.Get, http.MethodPost: item.Post, http.MethodPut: item.Put,
@@ -260,12 +403,13 @@ func specifiedOperations(document *huma.OpenAPI) ([]operationSummary, error) {
 }
 
 // Spec renders the router's whole OpenAPI document, which is what api/openapi.yaml holds:
-// the operations declared in Go, and the ones api/legacy.yaml still describes by hand.
+// the operations declared in Go, and the hand-written ones api/legacy.yaml describes.
 //
 // A component both declare is taken from api/legacy.yaml. The Go type behind it is the one
 // oapi-codegen generated from there, which renders the same schema without its words.
 func Spec() ([]byte, error) {
-	rendered, err := (&Server{}).newAPI(chi.NewRouter()).OpenAPI().Downgrade()
+	api := (&Server{}).newAPI(chi.NewRouter())
+	rendered, err := api.OpenAPI().Downgrade()
 	if err != nil {
 		return nil, err
 	}
@@ -275,6 +419,24 @@ func Spec() ([]byte, error) {
 	decoder.UseNumber()
 	if err := decoder.Decode(&document); err != nil {
 		return nil, err
+	}
+	// Huma leaves out a schema no operation names, which is what the socket frames are.
+	schemas := object(object(document, "components"), "schemas")
+	for name, schema := range api.OpenAPI().Components.Schemas.Map() {
+		if _, ok := schemas[name]; ok {
+			continue
+		}
+		encoded, err := json.Marshal(schema)
+		if err != nil {
+			return nil, err
+		}
+		var decoded map[string]any
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.UseNumber()
+		if err := decoder.Decode(&decoded); err != nil {
+			return nil, err
+		}
+		schemas[name] = decoded
 	}
 	tidy(document)
 	var legacy map[string]any
@@ -317,12 +479,20 @@ func Spec() ([]byte, error) {
 // tidy rewrites what Huma rendered into what the hand-written half says: a number as a
 // number rather than the json.Number yaml would quote, and no additionalProperties: true.
 // Huma writes that on every object, and client generators turn it into a catch-all map
-// on the type; a schema that means it says so in api/legacy.yaml.
+// on the type. A map of anything, which Huma renders as additionalProperties: {}, says
+// additionalProperties: true instead.
 func tidy(value any) any {
 	switch value := value.(type) {
 	case map[string]any:
-		if allowed, ok := value["additionalProperties"].(bool); ok && allowed {
-			delete(value, "additionalProperties")
+		switch allowed := value["additionalProperties"].(type) {
+		case bool:
+			if allowed {
+				delete(value, "additionalProperties")
+			}
+		case map[string]any:
+			if len(allowed) == 0 {
+				value["additionalProperties"] = true
+			}
 		}
 		for key, child := range value {
 			value[key] = tidy(child)

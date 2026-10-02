@@ -1332,9 +1332,10 @@ docker run -d --name va-redis -p 56379:6379 redis:7-alpine
 
 Operations are declared in Go with Huma, on a chi router, and the structs are the source
 of truth. `api/openapi.yaml` is rendered from them and read by every client generator, so it
-is never edited by hand. The operations not yet moved to Go are still described in
-`api/legacy.yaml` and generated into `internal/api/generated.go` by oapi-codegen, and
-`cmd/openapi` merges both halves into one document. After changing an operation:
+is never edited by hand. The handlers written by hand, the sockets, the agent-log stream and
+the data export and import, are described in `api/legacy.yaml`, whose models oapi-codegen
+generates into `internal/api/generated.go`, and `cmd/openapi` merges both halves into one
+document. After changing an operation:
 
 ```bash
 go tool oapi-codegen -config api/oapi-codegen.yaml api/legacy.yaml   # only if legacy.yaml changed
@@ -1355,13 +1356,12 @@ code is hand-written in `sdks/js/src/client.ts` and typed against the generated 
 a new operation is reachable there as soon as the types are regenerated.
 
 The three sockets are declared in `api/legacy.yaml` with a `101` response so a reader and a client
-generator know they exist, and excluded from generation: a strict server cannot express an
-upgrade. Their handlers are hand-written in `internal/api/sessionws.go`, `streamws.go` and
-`dispatchws.go`, and the Python side of them in `plugins/stream/.../_socket.py`. Excluding
-an operation also drops it from the embedded spec, so the middleware cannot read their marks
-off it. Those, and the three agent-log handlers excluded for the same reason, are listed in
-`unspecifiedRoutes` in `server.go` instead. A test reads `exclude-operation-ids` and fails if
-that list and this map disagree, because an operation the spec cannot see is the one place a
+generator know they exist: a Huma operation cannot express an upgrade. Their handlers are
+hand-written in `internal/api/sessionws.go`, `streamws.go` and `dispatchws.go`, and the Python
+side of them in `plugins/stream/.../_socket.py`. The middleware reads an operation's marks off
+the Huma document, which has none of them, so they and the other handlers `api/legacy.yaml`
+declares are listed in `unspecifiedRoutes` in `server.go` instead. A test fails if that file
+and this map disagree, because an operation the middleware cannot see is the one place a
 default that refuses by default could fail open.
 
 ## Design notes

@@ -57,7 +57,7 @@ type KnowledgeUrlDeclaration struct {
 	Url          string  `json:"url" example:"https://example.com/pricing"`
 	Title        *string `json:"title,omitempty" example:"Pricing"`
 	Description  *string `json:"description,omitempty"`
-	RefreshHours *int    `json:"refresh_hours,omitempty" minimum:"1" example:"24" doc:"How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule."`
+	RefreshHours *int    `json:"refresh_hours,omitempty" format:"int64" minimum:"1" example:"24" doc:"How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule."`
 }
 
 func (*KnowledgeUrlDeclaration) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -72,8 +72,8 @@ type SimulationDeclaration struct {
 	Scenario     string             `json:"scenario" minLength:"1" doc:"What the caller wants, in your own words and over as many turns as it takes."`
 	Assertion    string             `json:"assertion" minLength:"1" doc:"What has to be true at the end for a run to have passed."`
 	Mode         *string            `json:"mode,omitempty" enum:"text,audio" doc:"Text when left out."`
-	Variations   *int               `json:"variations,omitempty" minimum:"1" maximum:"10" doc:"How many ways of asking the same thing one run tries."`
-	MaxTurns     *int               `json:"max_turns,omitempty" minimum:"1" maximum:"200" doc:"How many times the caller may speak. Twelve when left out."`
+	Variations   *int               `json:"variations,omitempty" format:"int64" minimum:"1" maximum:"10" doc:"How many ways of asking the same thing one run tries."`
+	MaxTurns     *int               `json:"max_turns,omitempty" format:"int64" minimum:"1" maximum:"200" doc:"How many times the caller may speak. Twelve when left out."`
 	CallerTarget *string            `json:"caller_target,omitempty"`
 	JudgeTarget  *string            `json:"judge_target,omitempty"`
 	CallerStt    *string            `json:"caller_stt,omitempty"`

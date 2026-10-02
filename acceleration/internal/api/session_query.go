@@ -17,9 +17,15 @@ import (
 // the way Stream's query endpoints are: a filter of fields, a sort of {field, direction}.
 type SessionQuery struct {
 	Filter *SessionFilter `json:"filter,omitempty"`
-	Sort   []SessionSort  `json:"sort,omitempty" maxItems:"1" doc:"Omitted is updated_at, or relevance for a text search."`
-	Limit  int            `json:"limit,omitempty" minimum:"1" maximum:"200" doc:"Up to 200. Omitted is 25."`
+	Sort   []SessionSort  `json:"sort,omitempty" nullable:"true" maxItems:"1" doc:"Omitted is updated_at, or relevance for a text search."`
+	Limit  int            `json:"limit,omitempty" format:"int64" minimum:"1" maximum:"200" doc:"Up to 200. Omitted is 25."`
 	Cursor string         `json:"cursor,omitempty" doc:"The next_cursor of the previous page, sent with the same filter and sort. Omitted is the first page."`
+}
+
+type SessionPage struct {
+	Items      []Session `json:"items"`
+	HasMore    bool      `json:"has_more"`
+	NextCursor *string   "json:\"next_cursor,omitempty\" doc:\"Pass as `cursor` for the next page. Absent on the last one.\""
 }
 
 func (*SessionQuery) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -94,7 +100,7 @@ func (Equals) Schema(registry huma.Registry) *huma.Schema {
 // SessionSort is what a session query is ordered by.
 type SessionSort struct {
 	Field     SessionSortField `json:"field"`
-	Direction int              `json:"direction,omitempty" enum:"-1" default:"-1" doc:"-1, descending. Ascending is not offered."`
+	Direction int              `json:"direction,omitempty" format:"int64" enum:"-1" default:"-1" doc:"-1, descending. Ascending is not offered."`
 }
 
 func (*SessionSort) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

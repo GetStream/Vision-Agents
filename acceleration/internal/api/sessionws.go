@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/gorilla/websocket"
+	"github.com/oapi-codegen/runtime"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -32,7 +35,254 @@ const pingEvery = 30 * time.Second
 const pongWait = 90 * time.Second
 
 // newUpgrader accepts the origins the deployment named, and any request that names none.
-//
+type SessionRespondCommandType string
+
+const (
+	Respond SessionRespondCommandType = "respond"
+)
+
+// Valid indicates whether the value is a known member of the SessionRespondCommandType enum.
+func (e SessionRespondCommandType) Valid() bool {
+	switch e {
+	case Respond:
+		return true
+	default:
+		return false
+	}
+}
+
+type SessionRespondCommand struct {
+	Type      SessionRespondCommandType `json:"type" enum:"respond"`
+	Text      string                    `json:"text"`
+	CommandId *string                   `json:"command_id,omitempty" doc:"Required for personal persistent text conversations; reuse on retries. Text only when present." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Images    *[]ImageSource            `json:"images,omitempty"`
+}
+
+type ToolResultCommandType string
+
+const (
+	ToolResultCommandTypeToolResult ToolResultCommandType = "tool_result"
+)
+
+// Valid indicates whether the value is a known member of the ToolResultCommandType enum.
+func (e ToolResultCommandType) Valid() bool {
+	switch e {
+	case ToolResultCommandTypeToolResult:
+		return true
+	default:
+		return false
+	}
+}
+
+type ToolResultCommand struct {
+	Type       ToolResultCommandType `json:"type" enum:"tool_result"`
+	ToolCallId string                `json:"tool_call_id"`
+	CommandId  *string               `json:"command_id,omitempty"`
+	TurnId     *string               `json:"turn_id,omitempty"`
+	Output     *MessageContent       `json:"output,omitempty"`
+	Error      *string               `json:"error,omitempty"`
+}
+
+// MessageContent defines model for MessageContent.
+type MessageContent struct {
+	union json.RawMessage
+}
+
+// MessageContent0 defines model for MessageContent.0.
+type MessageContent0 = string
+
+// MessageContent1 defines model for MessageContent.1.
+type MessageContent1 = []ContentPart
+
+// AsMessageContent0 returns the union data inside the MessageContent as a MessageContent0
+func (t MessageContent) AsMessageContent0() (MessageContent0, error) {
+	var body MessageContent0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMessageContent0 overwrites any union data inside the MessageContent as the provided MessageContent0
+func (t *MessageContent) FromMessageContent0(v MessageContent0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMessageContent0 performs a merge with any union data inside the MessageContent, using the provided MessageContent0
+func (t *MessageContent) MergeMessageContent0(v MessageContent0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsMessageContent1 returns the union data inside the MessageContent as a MessageContent1
+func (t MessageContent) AsMessageContent1() (MessageContent1, error) {
+	var body MessageContent1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMessageContent1 overwrites any union data inside the MessageContent as the provided MessageContent1
+func (t *MessageContent) FromMessageContent1(v MessageContent1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMessageContent1 performs a merge with any union data inside the MessageContent, using the provided MessageContent1
+func (t *MessageContent) MergeMessageContent1(v MessageContent1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t MessageContent) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *MessageContent) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+func (MessageContent) Schema(registry huma.Registry) *huma.Schema {
+	return namedUnion(registry, "MessageContent", "",
+		&huma.Schema{Type: huma.TypeString}, &huma.Schema{Type: huma.TypeArray, Items: &huma.Schema{Ref: "#/components/schemas/ContentPart"}})
+}
+
+// ContentPart defines model for ContentPart.
+type ContentPart struct {
+	union json.RawMessage
+}
+
+// AsTextContentPart returns the union data inside the ContentPart as a TextContentPart
+func (t ContentPart) AsTextContentPart() (TextContentPart, error) {
+	var body TextContentPart
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromTextContentPart overwrites any union data inside the ContentPart as the provided TextContentPart
+func (t *ContentPart) FromTextContentPart(v TextContentPart) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeTextContentPart performs a merge with any union data inside the ContentPart, using the provided TextContentPart
+func (t *ContentPart) MergeTextContentPart(v TextContentPart) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsImageContentPart returns the union data inside the ContentPart as a ImageContentPart
+func (t ContentPart) AsImageContentPart() (ImageContentPart, error) {
+	var body ImageContentPart
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromImageContentPart overwrites any union data inside the ContentPart as the provided ImageContentPart
+func (t *ContentPart) FromImageContentPart(v ImageContentPart) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeImageContentPart performs a merge with any union data inside the ContentPart, using the provided ImageContentPart
+func (t *ContentPart) MergeImageContentPart(v ImageContentPart) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ContentPart) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ContentPart) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+func (ContentPart) Schema(registry huma.Registry) *huma.Schema {
+	return namedUnion(registry, "ContentPart", "",
+		&huma.Schema{Ref: "#/components/schemas/TextContentPart"}, &huma.Schema{Ref: "#/components/schemas/ImageContentPart"})
+}
+
+type TextContentPartType string
+
+const (
+	TextContentPartTypeText TextContentPartType = "text"
+)
+
+// Valid indicates whether the value is a known member of the TextContentPartType enum.
+func (e TextContentPartType) Valid() bool {
+	switch e {
+	case TextContentPartTypeText:
+		return true
+	default:
+		return false
+	}
+}
+
+type TextContentPart struct {
+	Type TextContentPartType `json:"type" enum:"text"`
+	Text string              `json:"text"`
+}
+
+type ImageContentPartType string
+
+const (
+	ImageUrl ImageContentPartType = "image_url"
+)
+
+// Valid indicates whether the value is a known member of the ImageContentPartType enum.
+func (e ImageContentPartType) Valid() bool {
+	switch e {
+	case ImageUrl:
+		return true
+	default:
+		return false
+	}
+}
+
+type ImageContentPart struct {
+	Type     ImageContentPartType `json:"type" enum:"image_url"`
+	ImageUrl ImageSource          `json:"image_url"`
+}
+
+// registerSocketFrames declares the frames the session socket takes, which no operation
+// names, so the spec and the clients describe them.
+func registerSocketFrames(registry huma.Registry) {
+	for _, frame := range []reflect.Type{reflect.TypeFor[SessionRespondCommand](), reflect.TypeFor[ToolResultCommand](), reflect.TypeFor[MessageContent](), reflect.TypeFor[ContentPart](), reflect.TypeFor[TextContentPart](), reflect.TypeFor[ImageContentPart]()} {
+		registry.Schema(frame, true, "")
+	}
+}
+
 // A request without an Origin header did not come from a browser, so there is no session
 // for another site to ride on and nothing for this check to protect. One that does carry
 // an origin is held to the same list as an ordinary cross-origin request: a socket that
