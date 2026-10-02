@@ -248,6 +248,21 @@ go run ./cmd/voicebench compare out/<run1> out/<run2> out/<run3> out/<run4> out/
 
 Repeat for `healthcare` and `telecom`, since `run` takes one pack at a time. The largest P50 difference between any two of those runs is the smallest change the bench can detect for that target and pack. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`.
 
+### Posting to Slack
+
+`voicebench digest` reads run directories, folds each system's per-pack runs into one, and writes a scorecard (`voicebench.png`) and a full report (`voicebench.html`): pass rate, reply time P50 and P95, tool-turn P50 and first response, each with its 95% interval, then every call with what failed it. A row names a winner only when the intervals clear; otherwise it says the gap is within noise. With `--slack` it posts the summary, the scorecard and the report in one message, as a Slack app's bot. The app needs the `chat:write` and `files:write` scopes and has to be in the channel. Put its token and the channel id in `.env`:
+
+```bash
+VOICEBENCH_SLACK_BOT_TOKEN=xoxb-...
+VOICEBENCH_SLACK_CHANNEL=C0...
+```
+
+```bash
+go run ./cmd/voicebench digest --title "Voicebench" --out out/digest --slack out/<ours> out/<livekit>
+```
+
+`scripts/digest.sh` runs the frozen set for every pack against our stack and LiveKit Inference, then posts the digest: the nightly run. `VOICEBENCH_K=3 VOICEBENCH_LIVEKIT_ARMS="inference realtime"` makes it the weekly one. It builds the router from this checkout unless `STREAM_ACCELERATION_URL` names a hosted one, and `VOICEBENCH_DIGEST_POST=0` writes the digest without posting it.
+
 ## Public benchmark basis
 
 Voicebench combines ideas from public work; it does not import their datasets or reproduce any one benchmark:
