@@ -168,3 +168,19 @@ type Outcome struct {
 	Claims     string
 	RetryAfter time.Duration
 }
+
+// OutcomeError is a failed Mint or Revoke with the outcome it was classified as, so the
+// resolver acts on Outcome (errors.As) without knowing the scheme. Err says what happened
+// and, like every error a scheme returns, carries no secret.
+type OutcomeError struct {
+	Outcome Outcome
+	Err     error
+}
+
+func (e *OutcomeError) Error() string {
+	return string(e.Outcome.Kind) + ": " + e.Err.Error()
+}
+
+func (e *OutcomeError) Unwrap() error {
+	return e.Err
+}
