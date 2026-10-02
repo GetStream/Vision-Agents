@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/run"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/slack"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
 )
 
@@ -34,7 +35,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: voicebench <synth|run|report|calibrate|compare|stt|tts> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: voicebench <synth|run|report|calibrate|compare|digest|stt|tts> [flags]")
 }
 
 func dispatch(cmd string, args []string) error {
@@ -53,6 +54,8 @@ func dispatch(cmd string, args []string) error {
 		return cmdCalibrate(root, args)
 	case "compare":
 		return cmdCompare(root, args)
+	case "digest":
+		return cmdDigest(ctx, args)
 	case "stt":
 		return cmdSTT(args)
 	case "tts":
@@ -278,6 +281,62 @@ func cmdCompare(root string, args []string) error {
 		return os.WriteFile(*out, []byte(md), 0o644)
 	}
 	return nil
+}
+
+func cmdDigest(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("digest", flag.ExitOnError)
+	title := fs.String("title", "Voicebench", "headline of the card and the message")
+	out := fs.String("out", "", "directory to write voicebench.png and voicebench.html into")
+	post := fs.Bool("slack", false, "post to VOICEBENCH_SLACK_CHANNEL as the bot behind VOICEBENCH_SLACK_BOT_TOKEN")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return fmt.Errorf("digest: need at least one run directory")
+	}
+	var runs []report.LabeledRun
+	for _, dir := range fs.Args() {
+		sum, err := report.LoadSummary(dir)
+		if err != nil {
+			return fmt.Errorf("digest: %s: %w", dir, err)
+		}
+		label := sum.System
+		if label == "" {
+			label = filepath.Base(dir)
+		}
+		runs = append(runs, report.LabeledRun{Label: label, Summary: sum})
+	}
+	runs = report.MergeRuns(runs)
+	digest := report.BuildDigest(runs)
+	card, err := digest.PNG(*title)
+	if err != nil {
+		return fmt.Errorf("digest: draw card: %w", err)
+	}
+	page, err := digest.HTML(*title, card, runs)
+	if err != nil {
+		return fmt.Errorf("digest: render report: %w", err)
+	}
+	text := digest.SlackText(*title)
+	fmt.Print(text)
+	if *out != "" {
+		if err := os.MkdirAll(*out, 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(*out, "voicebench.png"), card, 0o644); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(*out, "voicebench.html"), []byte(page), 0o644); err != nil {
+			return err
+		}
+	}
+	if !*post {
+		return nil
+	}
+	client := slack.Client{Token: os.Getenv("VOICEBENCH_SLACK_BOT_TOKEN")}
+	return client.Post(ctx, os.Getenv("VOICEBENCH_SLACK_CHANNEL"), text, []slack.File{
+		{Name: "voicebench.png", Title: *title, Data: card},
+		{Name: "voicebench.html", Title: "Full report", Data: []byte(page)},
+	})
 }
 
 func cmdSTT(args []string) error {
