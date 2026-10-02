@@ -126,18 +126,67 @@ func (s *Store) LatestConnectorDefinition(ctx context.Context, customerID, id st
 	return definition, nil
 }
 
+// How many connector definitions are handed back at once: the session list's numbers
+// (sessions.go), since a catalog is read a page at a time in a picker the same way a
+// sidebar is. Not measured for a catalog.
+const (
+	defaultConnectorDefinitionLimit = 25
+	maxConnectorDefinitionLimit     = 200
+)
+
+// ConnectorDefinitionLimit is the page size a definition list uses for the limit asked for.
+// ListConnectorDefinitions returns one row more than this.
+func ConnectorDefinitionLimit(asked int) int {
+	return clampLimit(asked, defaultConnectorDefinitionLimit, maxConnectorDefinitionLimit)
+}
+
+// ConnectorDefinitionFilter narrows a definition list and says where its page starts.
+type ConnectorDefinitionFilter struct {
+	// Text keeps the definitions whose id, name, category or description holds it, ignoring
+	// case, as the prototype's catalog search did (internal/api/connectors.go:72 on
+	// codex/connector-support at cf62af0d). It is matched on the newest revision only.
+	Text   string
+	Cursor *ConnectorDefinitionPosition
+	Limit  int
+}
+
+// ConnectorDefinitionPosition is the last definition of a page. Custom stands in for the
+// customer id, so a cursor holds nothing of whose it was and the order is the same for
+// every customer: built-ins, then the customer's own.
+type ConnectorDefinitionPosition struct {
+	Custom bool   `json:"c"`
+	ID     string `json:"id"`
+}
+
 // ListConnectorDefinitions returns the newest revision of every definition the customer can
-// see: the built-ins first, then its own, each by id.
-func (s *Store) ListConnectorDefinitions(ctx context.Context, customerID string) ([]ConnectorDefinition, error) {
+// see that matches the filter: the built-ins first, then its own, each by id. It returns up
+// to one more than ConnectorDefinitionLimit, so a caller can tell the page is not the last.
+func (s *Store) ListConnectorDefinitions(ctx context.Context, customerID string, filter ConnectorDefinitionFilter) ([]ConnectorDefinition, error) {
 	if customerID == "" {
 		return nil, errors.New("store: customer id is required")
 	}
 
-	var definitions []ConnectorDefinition
-	err := s.db.NewSelect().Model(&definitions).
+	// The newest revision first, then the text matched on it, so an older revision that
+	// matched cannot stand in for a newer one that does not.
+	latest := s.db.NewSelect().Model((*ConnectorDefinition)(nil)).
 		DistinctOn("customer_id, id").
 		Where("customer_id IN (?, ?)", BuiltinCustomer, customerID).
-		Order("customer_id", "id", "revision DESC").
+		Order("customer_id", "id", "revision DESC")
+	if after := filter.Cursor; after != nil {
+		// customer_id <> '' is false for a built-in, so it sorts first, as customer_id does.
+		latest = latest.Where("(customer_id <> ?, id) > (?, ?)", BuiltinCustomer, after.Custom, after.ID)
+	}
+	var definitions []ConnectorDefinition
+	query := s.db.NewSelect().Model(&definitions).ModelTableExpr("(?) AS cd", latest)
+	if filter.Text != "" {
+		// Backslash is ILIKE's default escape, so the caller's % and _ match themselves.
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(filter.Text)
+		// Each field on its own, so a query cannot match across the boundary of two.
+		query = query.Where("(cd.id ILIKE ?0 OR cd.name ILIKE ?0 OR cd.category ILIKE ?0 OR cd.description ILIKE ?0)", "%"+escaped+"%")
+	}
+	err := query.
+		OrderExpr("cd.customer_id, cd.id").
+		Limit(ConnectorDefinitionLimit(filter.Limit) + 1).
 		Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("store: list connector definitions: %w", err)
@@ -193,7 +242,9 @@ func (s *Store) saveRevision(ctx context.Context, customerID string, manifest co
 			Manifest:    manifest,
 			CreatedAt:   time.Now().UTC(),
 		}
-		_, err = tx.NewInsert().Model(&saved).Exec(ctx)
+		// Read back what Postgres stored, which keeps microseconds, so the answer to a create
+		// is the row a later read returns.
+		_, err = tx.NewInsert().Model(&saved).Returning("created_at").Exec(ctx)
 		return err
 	})
 	if err != nil {

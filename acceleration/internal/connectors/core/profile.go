@@ -9,7 +9,8 @@ type Profile struct {
 	Revision int
 	Scheme   string
 	// Endpoints are resolved URLs by role: authorize, token, refresh, revoke, issuer,
-	// api_base. A role whose template needs a value not captured yet is absent.
+	// api_base, mcp, resource. A role whose template needs a value not captured yet is
+	// absent.
 	Endpoints map[string]string
 	// Inputs are what the connection was created with, defaults applied: shop, instance,
 	// region, tenant.

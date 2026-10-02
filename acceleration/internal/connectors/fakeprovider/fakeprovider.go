@@ -116,6 +116,14 @@ const (
 	ForeignIssuer Personality = "foreign_issuer"
 	// ConsentDenied sends the browser back with error=access_denied (RFC 6749 §4.1.2.1).
 	ConsentDenied Personality = "consent_denied"
+	// ClientMetadataDocuments makes the server accept an https URL as client_id, fetching
+	// the client's metadata from it at authorize, as draft-ietf-oauth-client-id-metadata-
+	// document-02 («CIMD» below) describes: it advertises
+	// client_id_metadata_document_supported (§6), fetches with the client
+	// FetchClientMetadataWith set, without following redirects (§5), and checks the
+	// document's client_id (§4), its redirect_uris (§4.2) and that it holds no shared secret
+	// (§4.1). The document is fetched again on every authorize; §5.2 only allows caching.
+	ClientMetadataDocuments Personality = "client_metadata_documents"
 )
 
 // tokenEndpoint are the personalities that decide what the token endpoint does; at most one
@@ -150,6 +158,8 @@ type Server struct {
 	refresh       map[string]*refreshToken
 	hits          map[string]int
 	refreshes     int
+	// metadataClient fetches client metadata documents under ClientMetadataDocuments.
+	metadataClient *http.Client
 }
 
 type client struct {
@@ -260,6 +270,18 @@ func (s *Server) AllowRedirect(uri string) {
 	defer s.mu.Unlock()
 	c := s.clients[s.ClientID]
 	c.redirects = append(c.redirects, uri)
+}
+
+// FetchClientMetadataWith sets the client ClientMetadataDocuments fetches a client_id URL
+// with, such as the Client of the test's TLS server that serves the document. CIMD §8.6
+// allows a server on loopback, in testing only, to fetch from loopback.
+func (s *Server) FetchClientMetadataWith(c *http.Client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fetch := *c
+	// CIMD §5: «MUST NOT automatically follow HTTP redirects».
+	fetch.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	s.metadataClient = &fetch
 }
 
 // Advance moves the server's clock, so expiry and grace windows pass without sleeping.

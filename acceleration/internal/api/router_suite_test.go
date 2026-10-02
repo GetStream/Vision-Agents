@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -145,6 +146,10 @@ type RouterSuite struct {
 	// starts the harness. Nil keeps them in memories.
 	memoryStore memory.Store
 
+	// connectors is what connector adapters the router has, for a suite about connectors to
+	// set before it starts the harness. Empty has none.
+	connectors core.Registry
+
 	utils testUtils
 	data  testData
 }
@@ -235,6 +240,7 @@ func (s *RouterSuite) SetupSuite() {
 		VoiceLibrary:  voices.NewCatalogue(),
 		Dispatch:      s.dispatch,
 		Policies:      policies,
+		Connectors:    s.connectors,
 		Quota:         limiter,
 		StreamKey:     suiteStreamKey,
 		StreamSecret:  suiteStreamSecret,

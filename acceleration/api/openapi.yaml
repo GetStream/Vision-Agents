@@ -1216,6 +1216,135 @@ components:
         - state
         - duplicate
       type: object
+    ConnectorClient:
+      additionalProperties: false
+      description: Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
+      properties:
+        alg:
+          description: How a private_key_jwt assertion is signed, and set only for it.
+          enum:
+            - RS256
+            - PS256
+          type: string
+        auth_method:
+          $ref: '#/components/schemas/ConnectorClientAuthMethod'
+        policy:
+          description: Who may own the OAuth client. Empty when the connector needs none.
+          items:
+            $ref: '#/components/schemas/ConnectorClientOwner'
+          nullable: true
+          type: array
+          uniqueItems: true
+      type: object
+    ConnectorClientAuthMethod:
+      description: How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
+      enum:
+        - none
+        - client_secret_post
+        - client_secret_basic
+        - private_key_jwt
+        - tls_client_auth
+      type: string
+    ConnectorClientOwner:
+      description: operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+      enum:
+        - operator
+        - customer
+        - dcr
+        - cimd
+      type: string
+    ConnectorDefinition:
+      description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
+      properties:
+        category:
+          type: string
+        client:
+          $ref: '#/components/schemas/ConnectorClient'
+        created_at:
+          description: When this revision was stored.
+          format: date-time
+          readOnly: true
+          type: string
+        custom:
+          description: The app's own definition rather than a built-in.
+          readOnly: true
+          type: boolean
+        description:
+          type: string
+        id:
+          description: Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does.
+          type: string
+        inputs:
+          description: What a connection is created with, such as a region or a shop.
+          items:
+            $ref: '#/components/schemas/ConnectorInput'
+          nullable: true
+          type: array
+        name:
+          type: string
+        revision:
+          description: The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
+          format: int64
+          readOnly: true
+          type: integer
+        schemes:
+          description: How a connection may authenticate, such as oauth2_code.
+          items:
+            type: string
+          nullable: true
+          type: array
+        scopes:
+          description: The scopes a consent asks for.
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - id
+        - revision
+        - name
+        - custom
+        - schemes
+        - inputs
+        - scopes
+        - client
+        - created_at
+      type: object
+    ConnectorDefinitionPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ConnectorDefinition'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page, with the same q. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    ConnectorInput:
+      properties:
+        default:
+          description: Used when the connection gives no value. An input without one is required.
+          type: string
+        enum:
+          description: The values it may take. Absent when a pattern decides.
+          items:
+            type: string
+          nullable: true
+          type: array
+        name:
+          type: string
+        pattern:
+          description: A regular expression the whole value must match.
+          type: string
+      required:
+        - name
+      type: object
     Contact:
       properties:
         attempts:
@@ -1430,6 +1559,54 @@ components:
         voice:
           description: Provider-specific voice id.
           type: string
+      type: object
+    CustomConnectorRequest:
+      additionalProperties: false
+      description: A custom MCP server for the app's agents to connect to. An unknown field is refused rather than ignored.
+      properties:
+        category:
+          maxLength: 80
+          type: string
+        client:
+          $ref: '#/components/schemas/ConnectorClient'
+        description:
+          maxLength: 1000
+          type: string
+        endpoint:
+          description: 'The MCP server, over Streamable HTTP: a public https URL without userinfo, query or fragment. An address on a private network, loopback or link-local is refused.'
+          maxLength: 2048
+          type: string
+        id:
+          description: Starts with custom_, which no built-in does, so a custom definition never stands in for one. Creating an id that exists stores the next revision, unless the newest already says the same.
+          pattern: ^custom_[a-z][a-z0-9_]{0,56}$
+          patternDescription: custom_ then a lowercase letter, then up to 56 lowercase letters, digits or underscores
+          type: string
+        name:
+          maxLength: 120
+          minLength: 1
+          type: string
+        schemes:
+          description: How a connection may authenticate. Each must be a scheme this deployment has.
+          items:
+            type: string
+          minItems: 1
+          nullable: true
+          type: array
+        scopes:
+          description: The scopes a consent asks for, each an RFC 6749 scope token.
+          items:
+            pattern: ^[!#-\[\]-~]+$
+            patternDescription: an RFC 6749 scope token
+            type: string
+          maxItems: 100
+          nullable: true
+          type: array
+          uniqueItems: true
+      required:
+        - id
+        - name
+        - endpoint
+        - schemes
       type: object
     DataChange:
       description: One thing that happened to one row of the calling app's data.
@@ -5805,6 +5982,128 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
       summary: Start a plugin login
+  /v1/agents/connectors:
+    get:
+      description: |-
+        The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listConnectors
+      parameters:
+        - description: Keeps the connectors whose id, name, category or description holds this, ignoring case.
+          explode: false
+          in: query
+          name: q
+          schema:
+            description: Keeps the connectors whose id, name, category or description holds this, ignoring case.
+            maxLength: 120
+            type: string
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorDefinitionPage'
+          description: A page of connectors
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: List or search connectors
+    post:
+      description: |-
+        Stores a custom MCP server as one of the app's connectors. Sending an id the app already has stores its next revision, which connections pick up when they reconnect; sending the same definition again changes nothing. A built-in cannot be changed this way.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: createConnector
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomConnectorRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorDefinition'
+          description: The connector as stored
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Add a custom MCP connector
+  /v1/agents/connectors/{id}:
+    get:
+      description: |-
+        A built-in or one of the app's own, at its newest revision. Another app's custom connector is not found.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: getConnector
+      parameters:
+        - description: The connector, such as slack or custom_crm.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack or custom_crm.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorDefinition'
+          description: The connector
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Read a connector
   /v1/agents/conversations/{cid}/commands/{command_id}:
     get:
       description: |

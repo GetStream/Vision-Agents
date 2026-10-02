@@ -41,8 +41,10 @@ type Manifest struct {
 	// Vars are fixed strings picked by an enum input's value, such as a login host per
 	// environment.
 	Vars map[string]Var `yaml:"vars,omitempty" json:"vars,omitempty"`
-	// Endpoints are URL templates by role (authorize, token, revoke, issuer, api_base, mcp).
-	// A placeholder is an input, a vars entry, or metadata.<name> for a captured value.
+	// Endpoints are URL templates by role (authorize, token, revoke, issuer, api_base, mcp,
+	// resource). A placeholder is an input, a vars entry, or metadata.<name> for a captured
+	// value. resource is the RFC 8707 resource indicator an OAuth scheme sends when the
+	// manifest pins its endpoints and so discovers no RFC 9728 resource.
 	Endpoints map[string]string `yaml:"endpoints,omitempty" json:"endpoints,omitempty"`
 	// Schemes are the registered scheme names a connection may use.
 	Schemes []string     `yaml:"schemes" json:"schemes"`
