@@ -3915,6 +3915,9 @@ type SttOptions struct {
 	// Diarize Label each stretch of speech with who said it.
 	Diarize *bool `json:"diarize,omitempty"`
 
+	// EagerEndOfTurn Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency.
+	EagerEndOfTurn *bool `json:"eager_end_of_turn,omitempty"`
+
 	// Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 	Endpointing *Endpointing `json:"endpointing,omitempty"`
 

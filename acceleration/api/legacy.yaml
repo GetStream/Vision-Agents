@@ -4460,6 +4460,13 @@ components:
         utterance_end_ms:
           type: integer
           description: How long after the last word an utterance is declared over. Live only.
+        eager_end_of_turn:
+          type: boolean
+          description: >
+            Send a transcript as soon as the model guesses the turn may be over, before it
+            is sure, so a reply can start early. Live only. A model without an eager end of
+            turn transcribes as normal rather than being refused. On by default for
+            en-low-latency and multilingual-low-latency.
         diarize:
           type: boolean
           description: Label each stretch of speech with who said it.

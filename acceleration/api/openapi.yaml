@@ -3888,6 +3888,10 @@ components:
         diarize:
           description: Label each stretch of speech with who said it.
           type: boolean
+        eager_end_of_turn:
+          description: |
+            Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency.
+          type: boolean
         endpointing:
           $ref: '#/components/schemas/Endpointing'
         entities:

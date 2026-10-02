@@ -4422,6 +4422,8 @@ export type components = {
             readonly detect_language?: boolean;
             /** @description Label each stretch of speech with who said it. */
             readonly diarize?: boolean;
+            /** @description Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency. */
+            readonly eager_end_of_turn?: boolean;
             readonly endpointing?: components["schemas"]["Endpointing"];
             /** @description Extract named entities from the recording. Recording only. */
             readonly entities?: boolean;
