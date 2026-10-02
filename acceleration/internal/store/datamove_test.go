@@ -407,3 +407,72 @@ func (s *DataMoveSuite) seedPluginConnection(store *Store, customerID, token str
 	s.Require().NoError(err)
 	return id
 }
+
+func (s *DataMoveSuite) TestAMovedConnectorConnectionArrivesNeedingReauthorization() {
+	id := s.seedConnectorConnection(s.source, "acme")
+
+	exported := s.export("acme").of("connector_connections")
+	s.Require().Len(exported, 1)
+	s.NotContains(exported[0], "material_sealed", "sealed material is not part of a customer's data")
+
+	s.move("acme", "moved")
+
+	var material []byte
+	var status, owner string
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT material_sealed, status, customer_id FROM connector_connections WHERE id = ?", id).Scan(&material, &status, &owner))
+	s.Empty(material)
+	s.Equal(ConnectionNeedsReauthorization, status)
+	s.Equal("moved", owner)
+}
+
+func (s *DataMoveSuite) TestACustomConnectorDefinitionMovesAndABuiltInDoesNot() {
+	s.seedConnectorConnection(s.source, "acme")
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"INSERT INTO connector_definitions (customer_id, id, revision, name, manifest) VALUES ('', 'acme', 1, 'Acme', '{}')")
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	definitions := s.exportFrom(s.destination, "moved").of("connector_definitions")
+	s.Require().Len(definitions, 1)
+	s.Equal("custom_acme", definitions[0]["id"])
+	s.Equal("moved", definitions[0]["customer_id"])
+}
+
+func (s *DataMoveSuite) TestAChangeToAConnectorConnectionLeavesItsMaterialBehind() {
+	s.capture("acme")
+	id := s.seedConnectorConnection(s.source, "acme")
+
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE connector_connections SET material_sealed = 'rotated grant', revision = 2 WHERE id = ?", id)
+	s.Require().NoError(err)
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	recorded := 0
+	for _, change := range changes {
+		if change.Table != "connector_connections" {
+			continue
+		}
+		recorded++
+		s.NotContains(string(change.Payload), "material_sealed")
+	}
+	s.Equal(2, recorded, "the insert and the update")
+}
+
+// seedConnectorConnection stores a custom definition and a connected connection to it with
+// sealed material, the state a grant leaves.
+func (s *DataMoveSuite) seedConnectorConnection(store *Store, customerID string) string {
+	_, err := store.DB().ExecContext(s.ctx,
+		"INSERT INTO connector_definitions (customer_id, id, revision, name, manifest) VALUES (?, 'custom_acme', 1, 'Acme', '{}')",
+		customerID)
+	s.Require().NoError(err)
+	id := newID()
+	_, err = store.DB().ExecContext(s.ctx,
+		"INSERT INTO connector_connections (id, customer_id, connector_id, definition_revision, owner_type, auth_scheme,"+
+			" status, material_sealed, material_kek_version) VALUES (?, ?, 'custom_acme', 1, 'app', 'test_key', ?, 'sealed grant', 1)",
+		id, customerID, ConnectionConnected)
+	s.Require().NoError(err)
+	return id
+}
