@@ -1,6 +1,7 @@
 package providers_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -88,14 +90,55 @@ func (s *ConsentSuite) TestGitHubConnectsWithThePreregisteredClientAndRegistersN
 	query := s.query(out.AuthorizeURL)
 	s.True(strings.HasPrefix(out.AuthorizeURL, srv.URL+fakeprovider.PathAuthorize+"?"), "the authorize endpoint from the issuer's metadata")
 	s.Equal(srv.ClientID, query.Get("client_id"))
-	s.Equal("repo read:org read:user user:email read:packages write:packages read:project project gist notifications", query.Get("scope"))
+	s.Equal("repo read:org read:user user:email read:packages write:packages read:project project gist notifications offline_access", query.Get("scope"))
 	s.Equal(srv.URL+fakeprovider.PathMCP, query.Get("resource"))
 
 	material, captured, err := s.complete(srv, scheme, profile, out)
-	s.Require().NoError(err, "client_secret_post, which the manifest names, is accepted")
+	s.Require().NoError(err)
 	s.Equal(http.StatusOK, s.call(srv, s.accessToken(material)))
 	s.Equal(profile.Scopes.List, captured.Scopes)
 	s.Empty(captured.AccountID)
+}
+
+// The fake's preregistered client accepts both secret methods, so only the request on the
+// wire shows which one the manifest made the scheme send.
+func (s *ConsentSuite) TestGitHubSendsTheClientSecretInTheTokenRequestBody() {
+	srv := fakeprovider.New(s.T())
+	profile := s.atFake(srv, s.profile("github", nil))
+	wire := &tokenWire{next: srv.Client().Transport}
+	scheme := s.schemeOver(&http.Client{Transport: wire}, s.preregistered(srv, core.ClientOperator))
+
+	_, _, err := s.complete(srv, scheme, profile, s.begin(scheme, profile))
+	s.Require().NoError(err)
+	s.Require().Len(wire.sent, 1, "one code exchange")
+	s.Empty(wire.sent[0].authorization, "no HTTP Basic credentials")
+	s.Equal(srv.ClientID, wire.sent[0].form.Get("client_id"))
+	s.Equal(srv.ClientSecret, wire.sent[0].form.Get("client_secret"))
+}
+
+func (s *ConsentSuite) TestGitHubTakesACustomersClientBeforeTheOperators() {
+	srv := fakeprovider.New(s.T())
+	profile := s.atFake(srv, s.profile("github", nil))
+	scheme := s.scheme(srv, func(_ context.Context, _ core.ConnectionRef, _ core.Profile, owner core.ClientOwner) (oauth2code.Client, bool, error) {
+		if owner == core.ClientCustomer {
+			return oauth2code.Client{ID: srv.ClientID, Secret: srv.ClientSecret}, true, nil
+		}
+		return oauth2code.Client{ID: "operator-client", Secret: "operator-secret"}, true, nil
+	})
+
+	out := s.begin(scheme, profile)
+	s.Equal(srv.ClientID, s.query(out.AuthorizeURL).Get("client_id"), "the customer's client, though the policy lists the operator first")
+	_, _, err := s.complete(srv, scheme, profile, out)
+	s.Require().NoError(err)
+}
+
+// expires_in decides a GitHub token's expiry. GitHub leaves it out only for a token that does
+// not expire, so the manifest names no fallback lifetime, which oauth2_code would otherwise
+// store on such a token. The fake always sends expires_in, so this is read from the profile.
+func (s *ConsentSuite) TestGitHubNamesNoAccessLifetimeForATokenThatDoesNotExpire() {
+	refresh := s.profile("github", nil).Refresh
+	s.Zero(refresh.AccessTTL)
+	s.True(refresh.Rotating)
 }
 
 func (s *ConsentSuite) TestGitHubWithoutAPreregisteredClientIsRefusedRatherThanRegistered() {
@@ -226,7 +269,12 @@ func (s *ConsentSuite) preregistered(srv *fakeprovider.Server, owner core.Client
 }
 
 func (s *ConsentSuite) scheme(srv *fakeprovider.Server, clients oauth2code.ClientLookup) *oauth2code.Scheme {
-	scheme, err := oauth2code.New(oauth2code.Config{HTTP: srv.Client(), Clients: clients, PublicEndpoint: loopbackOrPublic})
+	return s.schemeOver(srv.Client(), clients)
+}
+
+// schemeOver is the scheme sending every request through client.
+func (s *ConsentSuite) schemeOver(client *http.Client, clients oauth2code.ClientLookup) *oauth2code.Scheme {
+	scheme, err := oauth2code.New(oauth2code.Config{HTTP: client, Clients: clients, PublicEndpoint: loopbackOrPublic})
 	s.Require().NoError(err)
 	return scheme
 }
@@ -285,4 +333,40 @@ func loopbackOrPublic(ctx context.Context, raw string) error {
 		}
 	}
 	return egress.ValidatePublicHTTPSURL(ctx, raw)
+}
+
+// tokenWire passes every request on to next and keeps what each one to the fake's token
+// endpoint carried: its Authorization header and its form body.
+type tokenWire struct {
+	next http.RoundTripper
+	mu   sync.Mutex
+	sent []tokenRequest
+}
+
+type tokenRequest struct {
+	authorization string
+	form          url.Values
+}
+
+func (w *tokenWire) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Path != fakeprovider.PathToken || r.Body == nil {
+		return w.next.RoundTrip(r)
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.Body.Close(); err != nil {
+		return nil, err
+	}
+	form, err := url.ParseQuery(string(raw))
+	if err != nil {
+		return nil, err
+	}
+	w.mu.Lock()
+	w.sent = append(w.sent, tokenRequest{authorization: r.Header.Get("Authorization"), form: form})
+	w.mu.Unlock()
+	forwarded := r.Clone(r.Context())
+	forwarded.Body = io.NopCloser(bytes.NewReader(raw))
+	return w.next.RoundTrip(forwarded)
 }

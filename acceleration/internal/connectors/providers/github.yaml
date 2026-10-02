@@ -18,7 +18,8 @@
 #         https://github.com/login/oauth/authorize, token
 #         https://github.com/login/oauth/access_token, code_challenge_methods_supported
 #         [S256], authorization_response_iss_parameter_supported true, no
-#         registration_endpoint, no token_endpoint_auth_methods_supported.
+#         registration_endpoint, no token_endpoint_auth_methods_supported; fetched again at
+#         2026-10-02T22:13:25Z, scopes_supported [offline_access].
 id: github
 # A new revision for any change to what this file says; see AGENTS.md.
 revision: 1
@@ -47,8 +48,9 @@ client:
   # NOT supported by Remote GitHub MCP Server at this time» ([host]), and [as] has neither a
   # registration_endpoint nor a CIMD flag. The prototype said dcr ([proto]:83); the vendor
   # page wins. [host] recommends a GitHub App and says a user's organization may have to
-  # approve or install it, which is why a customer may bring its own; operator before
-  # customer otherwise is our policy, not a vendor fact.
+  # approve or install it, which is why a customer may bring its own; that is our policy,
+  # not a vendor fact. The list order is not the order: oauth2_code tries a customer's
+  # client before the operator's (ownerOrder in schemes/oauth2code/client.go).
   policy: [operator, customer]
   # client_id and client_secret go in the token request body: [oauth], [user]. [as] lists no
   # methods, so without this oauth2_code would pick client_secret_basic, which neither page
@@ -61,6 +63,11 @@ scopes:
   # OAuth App takes them; a GitHub App's user token has fine-grained permissions instead and
   # its scope «will always be an empty string» ([user]). The prototype asked for none
   # ([proto]:77-84, docs/connector-design.md:148 there), before [prm] listed them.
+  # offline_access is [as]'s one scope: with it «you will receive an expiring access token
+  # and a refresh token even if your app is not configured to use expiring tokens», and it
+  # «will not alter the scope behavior» ([oauth], opened October 2, 2026). So an OAuth App
+  # gets the 8-hour token and rotating refresh token below rather than a token that never
+  # expires. What a GitHub App does with it is not on [user]. # unverified
   list:
     - repo
     - read:org
@@ -72,6 +79,7 @@ scopes:
     - project
     - gist
     - notifications
+    - offline_access
   # No separator, so a space: [oauth] («A space-delimited list of scopes»). The token
   # response answers granted scopes with commas («"scope":"repo,gist"», [oauth]), which one
   # separator cannot say; see the PR.
@@ -81,9 +89,12 @@ refresh:
   # A GitHub App's user token: «expires after 8 hours», the refresh token after 6 months
   # (refresh_token_expires_in 15897600 seconds, 4416h), and «Once you use a refresh token,
   # that refresh token and the old user access token will no longer work»: [user],
-  # [refresh]. An OAuth App's token does not expire unless expiry is enabled ([oauth]).
+  # [refresh]. No access_ttl: it is used only when a response has no expires_in, and GitHub
+  # leaves expires_in out exactly when the token does not expire: «If you disabled
+  # expiration of user access tokens, this parameter will be omitted» ([user]), and an
+  # OAuth App sends it only with expiring tokens or offline_access ([oauth]). Both pages
+  # opened October 2, 2026.
   rotating: true
-  access_ttl: 8h
   refresh_ttl: 4416h
 sources:
   - kind: mcp
