@@ -348,34 +348,7 @@ class EventManager:
                 logger.exception(f"Can't convert dict {event} to event class, skipping")
                 return
 
-        # Handle raw protobuf messages - wrap in BaseEvent subclass
-        # Check for protobuf DESCRIPTOR but exclude already-wrapped BaseEvent subclasses
-        elif (
-            hasattr(event, "DESCRIPTOR")
-            and hasattr(event.DESCRIPTOR, "full_name")
-            and not hasattr(event, "event_id")
-        ):  # event_id is unique to BaseEvent
-            proto_type = event.DESCRIPTOR.full_name
-
-            # Look up the registered event class by protobuf type
-            proto_event_class = self._events.get(proto_type)
-            if proto_event_class and hasattr(proto_event_class, "from_proto"):
-                try:
-                    event = proto_event_class.from_proto(event)
-                except Exception:
-                    logger.exception(
-                        f"Failed to convert protobuf {proto_type} to event class {proto_event_class}"
-                    )
-                    return
-            else:
-                # No matching event class found
-                if self._ignore_unknown_events:
-                    logger.debug(f"Protobuf event not registered: {proto_type}")
-                    return
-                else:
-                    raise RuntimeError(f"Protobuf event not registered: {proto_type}")
-
-        # Validate event is registered (handles both BaseEvent and generated protobuf events)
+        # Validate event is registered
         if hasattr(event, "type") and event.type in self._events:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Received event {_truncate_event_for_logging(event)}")
