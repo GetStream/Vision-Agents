@@ -18,6 +18,10 @@ import (
 
 const noConnections = "connections are not available: no database configured"
 
+// connectorsOff is the answer to a create on a deployment with no scheme registered, which is
+// what cmd/router builds with connectors.enabled off (newConnectorRegistry).
+const connectorsOff = "connections cannot be created: connectors are not enabled on this deployment"
+
 // noSuchConnection is the one answer for a connection the caller may not have: none was
 // made, it is another app's, another user's, or it was deleted. One answer, so a guessed id
 // learns nothing (architecture doc, PolicyContract: «a guessed connection id gives
@@ -161,7 +165,8 @@ func (s *Server) registerConnections(api huma.API) {
 		Description: "A pending connection to one account at a connector, made from the " +
 			"connector's newest revision. An app-owned connection is the app's, for any of its " +
 			"agents. A user-owned one is the user's the backend acts for: owner.user_id must be " +
-			"the user X-Stream-User-Id names. Credentials are added afterwards.\n\n" +
+			"the user X-Stream-User-Id names. Credentials are added afterwards. A deployment " +
+			"with connectors off refuses every create.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		Responses: map[string]*huma.Response{"201": {Description: "The pending connection"}},
@@ -219,6 +224,11 @@ func (s *Server) createConnectorConnection(ctx context.Context, request *createC
 	if s.store == nil {
 		return nil, huma.Error400BadRequest(noConnections)
 	}
+	// Before the body is read, so a deployment that cannot connect anything says so rather
+	// than naming an input or a scheme the caller never chose.
+	if len(s.connectors.Schemes) == 0 {
+		return nil, huma.Error400BadRequest(connectorsOff)
+	}
 	sent := request.Body
 	ownerID, err := ownerOf(ctx, sent.Owner)
 	if err != nil {
@@ -259,9 +269,6 @@ func (s *Server) createConnectorConnection(ctx context.Context, request *createC
 	err = s.store.CreateConnectorConnection(ctx, s.connectors, &connection)
 	if errors.Is(err, store.ErrUnregisteredScheme) {
 		known := slices.Sorted(maps.Keys(s.connectors.Schemes))
-		if len(known) == 0 {
-			return nil, huma.Error400BadRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has: it has none", scheme))
-		}
 		return nil, huma.Error400BadRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has (%s)",
 			scheme, strings.Join(known, ", ")))
 	}
@@ -331,6 +338,9 @@ func (s *Server) deleteConnectorConnection(ctx context.Context, request *deleteC
 	if err != nil {
 		return nil, err
 	}
+	// The check and the delete are two statements. Nothing writes bindings yet, so no bind
+	// can land between them; once one does (AI-842), make the unforced delete one statement
+	// that refuses a bound row, or a bind in between leaves the binding this 409 prevents.
 	if !request.Force {
 		referenced, err := s.store.ConnectorConnectionReferenced(ctx, connection.CustomerID, connection.ID)
 		if errors.Is(err, store.ErrNoConnectorConnection) {

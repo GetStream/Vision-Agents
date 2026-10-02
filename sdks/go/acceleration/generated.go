@@ -5919,7 +5919,7 @@ type ClientInterface interface {
 
 	// CreateConnectorConnectionWithBody Create a connection
 	//
-	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -5930,7 +5930,7 @@ type ClientInterface interface {
 
 	// CreateConnectorConnection Create a connection
 	//
-	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -7845,7 +7845,7 @@ func (c *Client) ListConnectorConnections(ctx context.Context, params *ListConne
 
 // CreateConnectorConnectionWithBody Create a connection
 //
-// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -7866,7 +7866,7 @@ func (c *Client) CreateConnectorConnectionWithBody(ctx context.Context, contentT
 
 // CreateConnectorConnection Create a connection
 //
-// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -17382,7 +17382,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateConnectorConnectionWithBodyWithResponse Create a connection
 	//
-	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -17393,7 +17393,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateConnectorConnectionWithResponse Create a connection
 	//
-	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -28213,7 +28213,7 @@ func (c *ClientWithResponses) ListConnectorConnectionsWithResponse(ctx context.C
 
 // CreateConnectorConnectionWithBodyWithResponse Create a connection
 //
-// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -28230,7 +28230,7 @@ func (c *ClientWithResponses) CreateConnectorConnectionWithBodyWithResponse(ctx 
 
 // CreateConnectorConnectionWithResponse Create a connection
 //
-// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //

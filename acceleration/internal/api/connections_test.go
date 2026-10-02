@@ -408,6 +408,38 @@ func (s *ConnectionsSuite) TestACursorThisListDidNotHandOutIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 }
 
+// ConnectionsWithoutConnectorsSuite is a router with connectors off: no scheme registered,
+// which is what cmd/router builds when connectors.enabled is false.
+type ConnectionsWithoutConnectorsSuite struct {
+	RouterSuite
+}
+
+func TestConnectionsWithoutConnectorsSuite(t *testing.T) {
+	runSuite(t, new(ConnectionsWithoutConnectorsSuite))
+}
+
+func (s *ConnectionsWithoutConnectorsSuite) SetupSuite() {
+	s.RouterSuite.SetupSuite()
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
+}
+
+func (s *ConnectionsWithoutConnectorsSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+func (s *ConnectionsWithoutConnectorsSuite) TestACreateSaysConnectorsAreNotEnabled() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connections", appOwned("linear"))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(connectorsOff, failure, "not a scheme or an input the caller never chose")
+}
+
+func (s *ConnectionsWithoutConnectorsSuite) TestTheListStillAnswers() {
+	var listed ConnectorConnectionPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app", nil, &listed))
+	s.Empty(listed.Items)
+}
+
 // assertNotFoundLikeAMissingOne checks the caller is told what an id nobody used is told,
 // status and body, so the answer does not confirm the connection exists.
 func (s *ConnectionsSuite) assertNotFoundLikeAMissingOne(as *testClient, method, id string) {
