@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -76,6 +77,9 @@ func (s *Server) CreateAgentConfig(ctx context.Context, request CreateAgentConfi
 	}
 
 	config := storedConfig(*request.Body, customerID)
+	if message, ok := pluginAliasComplaint(config); !ok {
+		return CreateAgentConfig400JSONResponse{badRequest(message)}, nil
+	}
 	if err := s.store.CreateAgentConfig(ctx, &config); err != nil {
 		return CreateAgentConfig400JSONResponse{badRequest(err.Error())}, nil
 	}
@@ -133,6 +137,9 @@ func (s *Server) UpdateAgentConfig(ctx context.Context, request UpdateAgentConfi
 	// take away every tool the agent was granted.
 	if request.Body.Connectors == nil {
 		config.Connectors = existing.Connectors
+	}
+	if message, ok := pluginAliasComplaint(config); !ok {
+		return UpdateAgentConfig400JSONResponse{badRequest(message)}, nil
 	}
 	if err := s.store.UpdateAgentConfig(ctx, &config); err != nil {
 		return UpdateAgentConfig400JSONResponse{badRequest(err.Error())}, nil
@@ -313,10 +320,13 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 }
 
 // connectorAlias is what a binding may be called: a lowercase letter, then up to 62
-// lowercase letters, digits, - or _. It is the prototype's connectorAliasPattern
-// (internal/api/connectors.go:54 on codex/connector-support at cf62af0d), which gives no
-// reason for the length of 63; that is unverified.
-var connectorAlias = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+// lowercase letters, digits, - or _, the last of them not _. It is the prototype's
+// connectorAliasPattern (internal/api/connectors.go:54 on codex/connector-support at
+// cf62af0d), which gives no reason for the length of 63; that is unverified. The trailing _
+// is refused because the offered name would not split back: alias a_ and tool search are
+// offered as a___search, and a cut at the first aliasSeparator reads alias a and tool
+// _search.
+var connectorAlias = regexp.MustCompile(`^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$`)
 
 // aliasSeparator joins an alias to its tool's name in the name the model is offered,
 // <alias>__<tool>, which is split back at the first one: Prefix and Split in
@@ -331,6 +341,15 @@ const aliasSeparator = "__"
 // internal/api/connectors.go:56).
 var schemaDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
+// maxConnectorBindings and maxGrantedTools bound what one write makes the store look up and
+// a session offer the model. 64 bindings is the cap visible_tools already has
+// (config_patch.go, legacy.yaml), and 128 tools is the most OpenAI documents taking in one
+// request. Neither was measured for connectors, so both are unverified.
+const (
+	maxConnectorBindings = 64
+	maxGrantedTools      = 128
+)
+
 // maxConnectorTimeoutMs is the longest one connector call may be given. It is the
 // prototype's ceiling (internal/api/connectors.go:1176 at cf62af0d), and nothing there says
 // why 30 seconds; it is unverified.
@@ -344,12 +363,15 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 	if bindings == nil {
 		return "", true
 	}
+	if len(*bindings) > maxConnectorBindings {
+		return fmt.Sprintf("a config may bind at most %d connectors", maxConnectorBindings), false
+	}
 	aliases := make(map[string]bool, len(*bindings))
 	for index, binding := range *bindings {
 		alias := binding.Name
 		if !connectorAlias.MatchString(alias) {
 			return fmt.Sprintf("connectors[%d].name %q is not an alias: a lowercase letter, then up to 62 "+
-				"lowercase letters, digits, - or _", index, alias), false
+				"lowercase letters, digits, - or _, not ending in _", index, alias), false
 		}
 		if strings.Contains(alias, aliasSeparator) {
 			return fmt.Sprintf("connector binding %q has %s in its name, which is what separates an alias "+
@@ -379,6 +401,14 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 		if binding.TimeoutMs != nil && (*binding.TimeoutMs < 1 || *binding.TimeoutMs > maxConnectorTimeoutMs) {
 			return fmt.Sprintf("connector binding %q: timeout_ms is between 1 and %d, not %d", alias,
 				maxConnectorTimeoutMs, *binding.TimeoutMs), false
+		}
+		// The legacy create and update read the body without the schema, so a missing tools,
+		// which the schema requires, is refused here as the patch and the sync refuse it.
+		if binding.Tools == nil {
+			return fmt.Sprintf("connector binding %q has no tools: send [] to grant none", alias), false
+		}
+		if len(binding.Tools) > maxGrantedTools {
+			return fmt.Sprintf("connector binding %q may grant at most %d tools", alias, maxGrantedTools), false
 		}
 		tools := make(map[string]bool, len(binding.Tools))
 		for _, tool := range binding.Tools {
@@ -432,8 +462,31 @@ func (s *Server) unboundConnectors(ctx context.Context, customerID string, bindi
 			return fmt.Sprintf("connector binding %q is fixed, so its connection has to be the app's own, and "+
 				"%q is a user's: bind it with connection.type session instead", binding.Name, id), false, nil
 		}
+		// The grants and digests describe the connector the binding names, so a connection to
+		// another one would call them with the wrong provider's credentials.
+		if connection.ConnectorID != binding.ConnectorId {
+			return fmt.Sprintf("connector binding %q names connector %q, but connection %q is to %q",
+				binding.Name, binding.ConnectorId, id, connection.ConnectorID), false, nil
+		}
 	}
 	return "", true, nil
+}
+
+// pluginAliasComplaint reports a binding called what a plugin of the same config is. A
+// plugin's tools are offered as <plugin>__<tool> (plugins.Prefix, internal/plugins/mcp.go)
+// and a binding's as <alias>__<tool>, and the built-in connectors share ids with the plugin
+// catalog (slack is in both internal/plugins/plugins.yaml and
+// internal/connectors/providers/slack.yaml), so the two would offer the same names. It reads
+// the config as it is about to be stored, so a patch or a sync adding either side is checked
+// against what the other already is.
+func pluginAliasComplaint(config store.AgentConfig) (string, bool) {
+	for _, binding := range config.Connectors {
+		if slices.Contains(config.Plugins, binding.Name) {
+			return fmt.Sprintf("connector binding %q is called what the config's plugin %q is, and both "+
+				"would offer their tools as %s%stool", binding.Name, binding.Name, binding.Name, aliasSeparator), false
+		}
+	}
+	return "", true
 }
 
 // storedBindings turns the bindings a caller sent into what a config stores, as written.

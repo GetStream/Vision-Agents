@@ -241,6 +241,7 @@ components:
           description: The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
           items:
             $ref: '#/components/schemas/AgentConnectorBinding'
+          maxItems: 64
           type: array
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
@@ -311,9 +312,10 @@ components:
       properties:
         connectors:
           description: |
-            The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own, is refused.
+            The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
           items:
             $ref: '#/components/schemas/AgentConnectorBinding'
+          maxItems: 64
           type: array
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
@@ -417,8 +419,8 @@ components:
           type: string
         name:
           description: |
-            The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, and never __. The model is offered each tool as <name>__<tool>, so a __ inside the alias would split it in the wrong place.
-          pattern: ^[a-z][a-z0-9_-]{0,62}$
+            The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.
+          pattern: ^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$
           type: string
         required:
           default: false
@@ -435,6 +437,7 @@ components:
             The exact tools allowed, each named once. There is no wildcard, and an empty list grants none.
           items:
             $ref: '#/components/schemas/ConnectorToolGrant'
+          maxItems: 128
           type: array
       required:
         - name
@@ -4301,6 +4304,7 @@ components:
           description: The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone.
           items:
             $ref: '#/components/schemas/AgentConnectorBinding'
+          maxItems: 64
           type: array
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'

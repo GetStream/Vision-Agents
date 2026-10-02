@@ -1688,7 +1688,7 @@ type AgentConfigPatch struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
-	// Connectors The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own, is refused.
+	// Connectors The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
@@ -1764,7 +1764,7 @@ type AgentConnectorBinding struct {
 	// ConnectorId A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_.
 	ConnectorId string `json:"connector_id"`
 
-	// Name The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, and never __. The model is offered each tool as <name>__<tool>, so a __ inside the alias would split it in the wrong place.
+	// Name The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.
 	Name string `json:"name"`
 
 	// Required Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.

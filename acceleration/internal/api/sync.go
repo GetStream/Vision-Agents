@@ -37,7 +37,7 @@ type SyncAgentRequest struct {
 	Search        *string                    `json:"search,omitempty"`
 	Greeting      *string                    `json:"greeting,omitempty"`
 	Plugins       *[]string                  `json:"plugins,omitempty"`
-	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
+	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Harness       *Harness                   `json:"harness,omitempty"`
@@ -167,6 +167,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok, err := s.unboundConnectors(ctx, customerID, body.Connectors); err != nil {
 		return nil, err
 	} else if !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	merged := existing
+	applySettings(&merged, body)
+	if message, ok := pluginAliasComplaint(merged); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 

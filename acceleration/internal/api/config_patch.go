@@ -25,7 +25,7 @@ type AgentConfigPatch struct {
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
 	Skills             *[]string                `json:"skills,omitempty"`
 	Plugins            *[]string                `json:"plugins,omitempty"`
-	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
+	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
 	Keyterms           *[]string                `json:"keyterms,omitempty"`
 	VisibleTools       *[]string                `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
 	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty"`
@@ -163,6 +163,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	// The config no longer matches the directory last synced onto it, so the next sync of
 	// that directory writes it again rather than finding nothing changed.
 	config.SyncHash = ""
+	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 
 	if err := s.store.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())

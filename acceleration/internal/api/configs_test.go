@@ -680,3 +680,97 @@ func (s *ConfigsSuite) read(id string) AgentConfig {
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+id, nil, &read))
 	return read
 }
+
+func (s *ConfigsSuite) TestAnAliasEndingInAnUnderscoreIsRefused() {
+	// a_ and search would be offered as a___search, which splits back as a and _search.
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("a_")}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `"a_"`)
+}
+
+func (s *ConfigsSuite) TestAFixedBindingThroughAnotherConnectorsConnectionIsRefused() {
+	slack := s.connection("")
+	binding := fixedSlack("crm", slack)
+	binding["connector_id"] = "linear"
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "linear")
+	s.Contains(failure, slack)
+}
+
+func (s *ConfigsSuite) TestABindingCalledWhatAPluginOfTheConfigIsIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "support", "plugins": []string{"slack"}, "connectors": []map[string]any{sessionSlack("slack")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "plugin")
+}
+
+func (s *ConfigsSuite) TestPatchingInAPluginABindingIsCalledIsRefused() {
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("slack")}})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"plugins": []string{"slack"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "plugin")
+	s.Nil(s.read(created.Id).Plugins)
+}
+
+func (s *ConfigsSuite) TestUpdatingInAPluginAKeptBindingIsCalledIsRefused() {
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("slack")}})
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "plugins": []string{"slack"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "plugin")
+}
+
+func (s *ConfigsSuite) TestMoreBindingsThanAConfigMayHoldAreRefused() {
+	bindings := make([]map[string]any, 0, 65)
+	for index := range 65 {
+		bindings = append(bindings, sessionSlack(fmt.Sprintf("inbox-%d", index)))
+	}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "connectors": bindings})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "64")
+}
+
+func (s *ConfigsSuite) TestMoreToolsThanABindingMayGrantAreRefused() {
+	tools := make([]map[string]any, 0, 129)
+	for index := range 129 {
+		tools = append(tools, map[string]any{"name": fmt.Sprintf("tool-%d", index), "schema_digest": toolDigest})
+	}
+	binding := sessionSlack("inbox")
+	binding["tools"] = tools
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "128")
+}
+
+func (s *ConfigsSuite) TestABindingWithoutAToolsListIsRefusedOnCreateAsOnPatch() {
+	binding := sessionSlack("inbox")
+	delete(binding, "tools")
+	created := s.createConfig(map[string]any{"name": "support"})
+
+	created400, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "other", "connectors": []map[string]any{binding}})
+	patched400, _ := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, created400)
+	s.Equal(http.StatusBadRequest, patched400)
+}
