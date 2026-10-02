@@ -1,0 +1,199 @@
+//go:build integration
+
+package store
+
+import (
+	"errors"
+	"strings"
+	"sync"
+	"testing/fstest"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+)
+
+// seed runs the seeder over one built-in file, as a router start with that file would.
+func (s *StoreSuite) seed(raw string) {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"acme.yaml": {Data: []byte(raw)}}))
+}
+
+// revisions is every stored revision of a built-in, oldest first.
+func (s *StoreSuite) revisions(id string) []ConnectorDefinition {
+	var definitions []ConnectorDefinition
+	s.Require().NoError(s.store.DB().NewSelect().Model(&definitions).
+		Where("customer_id = ?", BuiltinCustomer).Where("id = ?", id).
+		Order("revision").Scan(s.ctx))
+	return definitions
+}
+
+func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtRevisionOne() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+
+	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme")
+	s.Require().NoError(err)
+	s.Require().Len(listed, 2)
+	for i, id := range []string{"linear", "slack"} {
+		s.Equal(id, listed[i].ID)
+		s.Equal(BuiltinCustomer, listed[i].CustomerID)
+		s.Equal(1, listed[i].Revision)
+		s.Equal(1, listed[i].Manifest.Revision, "the stored manifest names the revision it is stored as")
+		s.Equal(listed[i].Manifest.Name, listed[i].Name)
+		s.NotEmpty(listed[i].Category)
+		s.NotEmpty(listed[i].Description)
+	}
+}
+
+func (s *StoreSuite) TestSeedingAnUnchangedManifestAddsNoRevision() {
+	s.seed(acmeManifest)
+	s.seed(acmeManifest)
+	s.seed(acmeReformatted)
+
+	stored := s.revisions("acme")
+	s.Require().Len(stored, 1, "neither a restart nor a reformatted file is a change")
+	s.Equal(1, stored[0].Revision)
+}
+
+func (s *StoreSuite) TestAChangedManifestIsTheNextRevisionAndTheLastOneStays() {
+	s.seed(acmeManifest)
+	s.seed(acmeChanged)
+
+	latest, err := s.store.LatestConnectorDefinition(s.ctx, "anyone", "acme")
+	s.Require().NoError(err)
+	s.Equal(2, latest.Revision)
+	s.Equal(2, latest.Manifest.Revision)
+	s.Equal([]string{"read"}, latest.Manifest.Scopes.List)
+
+	first, err := s.store.ConnectorDefinition(s.ctx, "anyone", "acme", 1)
+	s.Require().NoError(err)
+	s.Equal([]string{"read", "write"}, first.Manifest.Scopes.List, "a connection pinned to revision 1 still reads what it was made from")
+}
+
+func (s *StoreSuite) TestTwoRoutersSeedingAChangeAtOnceStoreOneRevision() {
+	s.seed(acmeManifest)
+
+	// Each router has a pool of its own, connected before they all start at once, so the
+	// seeders overlap rather than queue behind each other's dial.
+	const routers = 8
+	stores := make([]*Store, routers)
+	for i := range stores {
+		router, err := Open(s.dsn)
+		s.Require().NoError(err)
+		s.T().Cleanup(func() { router.Close() })
+		s.Require().NoError(router.Ping(s.ctx))
+		stores[i] = router
+	}
+	errs := make([]error, routers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, router := range stores {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = router.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"acme.yaml": {Data: []byte(acmeChanged)}})
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for _, err := range errs {
+		s.NoError(err, "a router that loses the race waits and finds the change already stored")
+	}
+	stored := s.revisions("acme")
+	s.Require().Len(stored, 2)
+	s.Equal(2, stored[1].Revision)
+}
+
+func (s *StoreSuite) TestAnInvalidBuiltInStoresNoneOfTheBuiltIns() {
+	broken := strings.Replace(acmeManifest, "id: acme", "id: broken", 1)
+	broken = strings.Replace(broken, "schemes: [oauth2_code]", "schemes: []", 1)
+
+	err := s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{
+		"acme.yaml":   {Data: []byte(acmeManifest)},
+		"broken.yaml": {Data: []byte(broken)},
+	})
+
+	s.ErrorContains(err, "broken.yaml")
+	s.ErrorContains(err, "schemes: is empty")
+	s.Empty(s.revisions("acme"), "a valid file beside an invalid one is not stored either")
+}
+
+func (s *StoreSuite) TestACustomDefinitionIdStartsWithTheCustomPrefix() {
+	_, err := s.store.CreateConnectorDefinition(s.ctx, "acme", parsed(s.T(), acmeManifest))
+
+	s.ErrorContains(err, "a custom connector id starts with custom_")
+}
+
+func (s *StoreSuite) TestACustomDefinitionCannotShadowABuiltIn() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+	shadow := parsed(s.T(), strings.Replace(acmeManifest, "id: acme", "id: slack", 1))
+
+	_, err := s.store.CreateConnectorDefinition(s.ctx, "acme", shadow)
+	s.Error(err)
+
+	latest, err := s.store.LatestConnectorDefinition(s.ctx, "acme", "slack")
+	s.Require().NoError(err)
+	s.Equal(BuiltinCustomer, latest.CustomerID, "slack is still the built-in for this customer")
+	s.Equal("Slack", latest.Name)
+}
+
+func (s *StoreSuite) TestNoCustomerCanCreateABuiltIn() {
+	custom := parsed(s.T(), strings.Replace(acmeManifest, "id: acme", "id: custom_crm", 1))
+
+	_, err := s.store.CreateConnectorDefinition(s.ctx, BuiltinCustomer, custom)
+
+	s.ErrorContains(err, "customer id is required")
+}
+
+func (s *StoreSuite) TestCreatingACustomDefinitionAgainIsTheNextRevisionOnlyWhenItChanged() {
+	custom := strings.Replace(acmeManifest, "id: acme", "id: custom_crm", 1)
+
+	created, err := s.store.CreateConnectorDefinition(s.ctx, "acme", parsed(s.T(), custom))
+	s.Require().NoError(err)
+	s.Equal(1, created.Revision)
+	s.Equal("acme", created.CustomerID)
+
+	again, err := s.store.CreateConnectorDefinition(s.ctx, "acme", parsed(s.T(), custom))
+	s.Require().NoError(err)
+	s.Equal(1, again.Revision, "the same manifest again is the revision already stored")
+
+	changed, err := s.store.CreateConnectorDefinition(s.ctx, "acme",
+		parsed(s.T(), strings.Replace(acmeChanged, "id: acme", "id: custom_crm", 1)))
+	s.Require().NoError(err)
+	s.Equal(2, changed.Revision)
+}
+
+func (s *StoreSuite) TestACustomDefinitionIsOnlyItsOwnCustomers() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+	_, err := s.store.CreateConnectorDefinition(s.ctx, "acme",
+		parsed(s.T(), strings.Replace(acmeManifest, "id: acme", "id: custom_crm", 1)))
+	s.Require().NoError(err)
+
+	_, err = s.store.ConnectorDefinition(s.ctx, "globex", "custom_crm", 1)
+	s.True(errors.Is(err, ErrNoConnectorDefinition), "fetched by id and revision: %v", err)
+	_, err = s.store.LatestConnectorDefinition(s.ctx, "globex", "custom_crm")
+	s.True(errors.Is(err, ErrNoConnectorDefinition), "fetched as the latest: %v", err)
+
+	theirs, err := s.store.ListConnectorDefinitions(s.ctx, "globex")
+	s.Require().NoError(err)
+	s.Equal([]string{"linear", "slack"}, definitionIDs(theirs), "another customer sees the built-ins alone")
+
+	ours, err := s.store.ListConnectorDefinitions(s.ctx, "acme")
+	s.Require().NoError(err)
+	s.Equal([]string{"linear", "slack", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
+}
+
+func (s *StoreSuite) TestAnUnknownRevisionIsNoDefinition() {
+	s.seed(acmeManifest)
+
+	_, err := s.store.ConnectorDefinition(s.ctx, "acme", "acme", 2)
+
+	s.True(errors.Is(err, ErrNoConnectorDefinition), "got %v", err)
+}
+
+func definitionIDs(definitions []ConnectorDefinition) []string {
+	ids := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		ids = append(ids, definition.ID)
+	}
+	return ids
+}
