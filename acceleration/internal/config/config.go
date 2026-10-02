@@ -140,6 +140,13 @@ type Stream struct {
 	// AppID is the deployment's own app's id, which Stream is asked for when it is not
 	// set. A pin naming it is finished with the deployment's own key, in either mode.
 	AppID int64 `koanf:"app_id"`
+	// TrustAPIKeyHeader lets the X-Stream-Api-Key a gateway forwards choose which of the
+	// calling app's registered keys mints its tokens. Off, the primary key always does.
+	// Only a gateway that writes that header itself, rather than passing a caller's on,
+	// may have it on.
+	TrustAPIKeyHeader bool `koanf:"trust_api_key_header"`
+	// DenyRegistration are Stream app ids that may never be registered as a customer's own.
+	DenyRegistration []string `koanf:"deny_registration"`
 }
 
 // What Stream.Tenancy holds.
@@ -207,6 +214,9 @@ var variables = map[string]string{
 	"stream.fallback":     "ROUTER_STREAM_FALLBACK",
 	"stream.app_id":       "ROUTER_STREAM_APP_ID",
 
+	"stream.trust_api_key_header": "ROUTER_STREAM_TRUST_API_KEY_HEADER",
+	"stream.deny_registration":    "ROUTER_STREAM_DENY_REGISTRATION",
+
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
@@ -216,7 +226,7 @@ var variables = map[string]string{
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
-var lists = map[string]bool{"cors_origins": true, "trusted_proxies": true}
+var lists = map[string]bool{"cors_origins": true, "trusted_proxies": true, "stream.deny_registration": true}
 
 // Defaults are what a deployment gets for saying nothing at all.
 func Defaults() Config {
@@ -394,6 +404,8 @@ func (c Config) export() error {
 		"stream.tenancy":              c.Stream.Tenancy,
 		"stream.fallback":             c.Stream.Fallback,
 		"stream.app_id":               appID(c.Stream.AppID),
+		"stream.trust_api_key_header": fmt.Sprint(c.Stream.TrustAPIKeyHeader),
+		"stream.deny_registration":    strings.Join(c.Stream.DenyRegistration, ","),
 		"data_move.retention":         c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day": fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":   fmt.Sprint(c.RateLimit.TokensPerDay),

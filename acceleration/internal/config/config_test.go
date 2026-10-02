@@ -269,3 +269,17 @@ func (s *ConfigSuite) TestALimitThatIsNotANumberIsRefused() {
 	_, _, err := Load("")
 	s.Error(err)
 }
+
+func (s *ConfigSuite) TestRegistrationSettingsAreOffAndEmptyUnlessSet() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.False(config.Stream.TrustAPIKeyHeader)
+	s.Empty(config.Stream.DenyRegistration)
+
+	s.T().Setenv("ROUTER_STREAM_TRUST_API_KEY_HEADER", "true")
+	s.T().Setenv("ROUTER_STREAM_DENY_REGISTRATION", "11,22")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Stream.TrustAPIKeyHeader)
+	s.Equal([]string{"11", "22"}, config.Stream.DenyRegistration)
+}
