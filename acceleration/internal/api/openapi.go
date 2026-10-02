@@ -111,9 +111,12 @@ func init() {
 		}
 		details := make([]string, 0, len(errs))
 		for _, err := range errs {
-			// A detail names the value it refused, and the value of a secret is the secret.
+			// A detail names the value it refused. The value of a secret is the secret, and
+			// for a field missing or unexpected the value is the whole object around it,
+			// whatever else it carries. Only a single value at a field that is not a
+			// secret is repeated back.
 			var detail *huma.ErrorDetail
-			if errors.As(err, &detail) && strings.Contains(strings.ToLower(detail.Location), "secret") {
+			if errors.As(err, &detail) && (strings.Contains(strings.ToLower(detail.Location), "secret") || !scalar(detail.Value)) {
 				details = append(details, detail.Message+" ("+detail.Location+")")
 				continue
 			}
@@ -124,6 +127,18 @@ func init() {
 		}
 		return &apiError{status: status, Message: message}
 	}
+}
+
+// scalar reports whether a value is one thing rather than an object or a list of them.
+func scalar(value any) bool {
+	if value == nil {
+		return true
+	}
+	switch reflect.ValueOf(value).Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Pointer, reflect.Interface:
+		return false
+	}
+	return true
 }
 
 // apiError is how a Huma operation reports a failure, in the {"error": "..."} shape the

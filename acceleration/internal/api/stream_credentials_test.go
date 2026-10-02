@@ -253,3 +253,26 @@ func (s *StreamAppsSuite) TestStreamCredentialsAreRefusedInDeploymentMode() {
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "stream.tenancy=app")
 }
+
+func (s *StreamCredentialsSuite) TestAMalformedBodyNeverEchoesTheSecretsInIt() {
+	// A validation error names the value it refused, and for a missing or unexpected field
+	// that value is the whole object around it, secrets and all.
+	secret := "a-secret-in-a-bad-body-" + s.utils.uuid()
+	many := make([]keyInput, 9)
+	for i := range many {
+		many[i] = key("key-"+strconv.Itoa(i), secret)
+	}
+	for name, body := range map[string]map[string]any{
+		"no revision":     {"keys": []keyInput{key("own-key", secret)}},
+		"no api key":      {"keys": []keyInput{{"api_secret": secret}}, "expected_revision": 0},
+		"too many keys":   {"keys": many, "expected_revision": 0},
+		"a mistyped name": {"keys": []keyInput{key("own-key", secret)}, "expected_revision": "zero"},
+	} {
+		s.Run(name, func() {
+			status, failure := s.put(body)
+
+			s.Equal(http.StatusBadRequest, status)
+			s.NotContains(failure, secret)
+		})
+	}
+}
