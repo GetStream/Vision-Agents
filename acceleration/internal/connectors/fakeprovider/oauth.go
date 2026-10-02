@@ -268,6 +268,14 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	if r.PostForm.Get("grant_type") == "refresh_token" {
 		s.refreshes++
+		_, s.refreshScopeSent = r.PostForm["scope"]
+		s.refreshScope = r.PostForm.Get("scope")
+		if s.is(RateLimited) {
+			// RFC 9110 §10.2.3: delay-seconds.
+			w.Header().Set("Retry-After", strconv.Itoa(int(RetryAfter.Seconds())))
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 	}
 	if s.is(Unavailable) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -413,8 +421,28 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request, c *client)
 			return
 		}
 	}
+	if requested, sent := r.PostForm["scope"]; sent {
+		separator := " " // RFC 6749 §3.3
+		if s.is(CommaScopes) {
+			separator = ","
+		}
+		// RFC 6749 §6: the scope «MUST NOT include any scope not originally granted by the
+		// resource owner»; §5.2 names the error invalid_scope.
+		for _, scope := range split(requested[0], separator) {
+			if !slices.Contains(rt.grant.scopes, scope) {
+				s.tokenError(w, http.StatusBadRequest, "invalid_scope", "")
+				return
+			}
+		}
+	}
 	body := s.shape(s.issue(rt.grant, !s.is(NonRotatingRefresh)), rt.grant)
-	if s.is(LostResponse) {
+	if s.is(ServerError) {
+		// The rotation is committed and the answer says only that something failed.
+		s.tokenError(w, http.StatusInternalServerError, "server_error", "internal_error")
+		return
+	}
+	if s.is(LostResponse) || (s.is(LostResponseOnce) && !s.lostOnce) {
+		s.lostOnce = true
 		// The rotation is committed; the answer never leaves. net/http closes the connection
 		// without a response for this panic value.
 		panic(http.ErrAbortHandler)

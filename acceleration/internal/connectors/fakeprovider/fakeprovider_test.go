@@ -346,6 +346,99 @@ func (s *FakeProviderSuite) TestRateLimitedAnswers429WithRetryAfter() {
 	s.Equal("30", response.Header.Get("Retry-After"))
 }
 
+func (s *FakeProviderSuite) TestRateLimitedRefusesARefreshWith429AndSpendsNothing() {
+	srv := fakeprovider.New(s.T())
+	first := s.connect(srv, nil)
+	srv.Use(fakeprovider.RateLimited)
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathToken, strings.NewReader(url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {first["refresh_token"].(string)},
+	}.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.SetBasicAuth(srv.ClientID, srv.ClientSecret)
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Equal(http.StatusTooManyRequests, response.StatusCode)
+	s.Equal("30", response.Header.Get("Retry-After"))
+
+	srv.Use()
+	status, _ := s.refresh(srv, first["refresh_token"].(string))
+	s.Equal(http.StatusOK, status, "the refused refresh spent nothing")
+}
+
+func (s *FakeProviderSuite) TestLostResponseWithGraceLeavesTheSpentTokenUsableInTheWindow() {
+	srv := fakeprovider.New(s.T())
+	first := s.connect(srv, nil)
+	srv.Use(fakeprovider.LostResponse, fakeprovider.RotatingRefreshWithGrace)
+	s.Require().Error(s.lostRefresh(srv, first["refresh_token"].(string)))
+	s.Require().Error(s.lostRefresh(srv, first["refresh_token"].(string)), "every refresh is lost")
+	s.Equal(2, srv.Refreshes())
+
+	srv.Use(fakeprovider.RotatingRefreshWithGrace)
+	status, _ := s.refresh(srv, first["refresh_token"].(string))
+	s.Equal(http.StatusOK, status, "inside the grace window the spent token still works")
+}
+
+func (s *FakeProviderSuite) TestLostResponseOnceDropsOneAnswerAndAnswersTheNext() {
+	srv := fakeprovider.New(s.T())
+	first := s.connect(srv, nil)
+	srv.Use(fakeprovider.LostResponseOnce, fakeprovider.RotatingRefreshWithGrace)
+	s.Require().Error(s.lostRefresh(srv, first["refresh_token"].(string)))
+
+	status, body := s.refresh(srv, first["refresh_token"].(string))
+	s.Equal(http.StatusOK, status, "the retry inside the window is answered")
+	s.NotEqual(first["refresh_token"], body["refresh_token"])
+	s.Equal(2, srv.Refreshes())
+}
+
+func (s *FakeProviderSuite) TestServerErrorAnswers500AfterTheRotationWasCommitted() {
+	srv := fakeprovider.New(s.T())
+	first := s.connect(srv, nil)
+	srv.Use(fakeprovider.ServerError)
+	status, body := s.refresh(srv, first["refresh_token"].(string))
+	s.Equal(http.StatusInternalServerError, status)
+	s.Equal("server_error", body["error"])
+
+	srv.Use()
+	status, body = s.refresh(srv, first["refresh_token"].(string))
+	s.Equal(http.StatusBadRequest, status, "the refresh took effect, so the old token is spent")
+	s.Equal("invalid_grant", body["error"])
+}
+
+func (s *FakeProviderSuite) TestServerErrorUnderCommaScopesIsSlacksInternalError() {
+	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
+	first := s.connect(srv, nil)
+	srv.Use(fakeprovider.CommaScopes, fakeprovider.ServerError)
+	status, body := s.refresh(srv, first["refresh_token"].(string))
+	s.Equal(http.StatusOK, status)
+	s.Equal(false, body["ok"])
+	s.Equal("internal_error", body["error"])
+}
+
+func (s *FakeProviderSuite) TestARefreshScopeIsRecordedAndCannotWidenTheGrant() {
+	srv := fakeprovider.New(s.T())
+	first := s.connect(srv, url.Values{"scope": {"files:read"}})
+	status, second := s.post(srv, fakeprovider.PathToken, url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {first["refresh_token"].(string)}, "scope": {"files:read"},
+	}, true)
+	s.Require().Equal(http.StatusOK, status)
+	scope, sent := srv.RefreshScope()
+	s.True(sent)
+	s.Equal("files:read", scope)
+
+	status, body := s.post(srv, fakeprovider.PathToken, url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {second["refresh_token"].(string)}, "scope": {"files:read files:write"},
+	}, true)
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("invalid_scope", body["error"])
+
+	status, _ = s.refresh(srv, second["refresh_token"].(string))
+	s.Equal(http.StatusOK, status, "the refused widening spent nothing")
+	_, sent = srv.RefreshScope()
+	s.False(sent)
+}
+
 func (s *FakeProviderSuite) TestCommaScopesAnswersInSlackShapeThatTheSlackManifestCaptures() {
 	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
 	body := s.connect(srv, url.Values{"scope": {"channels:history,chat:write"}, "user_scope": {"search:read"}})
@@ -594,6 +687,19 @@ func (s *FakeProviderSuite) exchange(srv *fakeprovider.Server, code, verifier st
 
 func (s *FakeProviderSuite) refresh(srv *fakeprovider.Server, refreshToken string) (int, map[string]any) {
 	return s.post(srv, fakeprovider.PathToken, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}}, true)
+}
+
+// lostRefresh is a refresh whose answer a lost-response personality drops; it returns the
+// transport error.
+func (s *FakeProviderSuite) lostRefresh(srv *fakeprovider.Server, refreshToken string) error {
+	response, err := srv.Client().PostForm(srv.URL+fakeprovider.PathToken, url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {refreshToken},
+		"client_id": {srv.ClientID}, "client_secret": {srv.ClientSecret},
+	})
+	if err == nil {
+		s.Require().NoError(response.Body.Close())
+	}
+	return err
 }
 
 // post sends a form, authenticated as the preregistered client with client_secret_basic

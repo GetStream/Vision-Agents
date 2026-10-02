@@ -87,10 +87,23 @@ const (
 	// needs the grant gone as well revokes a token at PathRevoke.
 	InvalidGrant Personality = "invalid_grant"
 	// LostResponse performs a refresh, rotation included, then closes the connection before
-	// answering. The old refresh token is spent and the new one never arrives.
+	// answering. The old refresh token is spent and the new one never arrives. It changes how
+	// a refresh is delivered, not what it does, so it combines with RotatingRefreshWithGrace
+	// (the spent token still works for Grace) and NonRotatingRefresh (nothing is spent).
 	LostResponse Personality = "lost_response"
+	// LostResponseOnce is LostResponse for the next refresh only; the refreshes after it
+	// answer. With RotatingRefreshWithGrace it is the case a grace retry exists for: the
+	// rotation happened, its answer was lost, and the old token is presented again inside
+	// the window.
+	LostResponseOnce Personality = "lost_response_once"
 	// Unavailable answers the token endpoint with 503 (RFC 9110 §15.6.4) and changes nothing.
 	Unavailable Personality = "unavailable"
+	// ServerError performs a refresh, rotation included, then answers 500 (RFC 9110 §15.6.1)
+	// with error server_error (RFC 6749 §4.1.2.1's name for a 500). A 500 does not say the
+	// request had no effect; Slack's internal_error, which CommaScopes answers instead, says
+	// so outright: «It's possible some aspect of the operation succeeded before the error
+	// was raised» (docs.slack.dev/reference/methods/oauth.v2.access).
+	ServerError Personality = "server_error"
 	// InsufficientScope answers tools/call with 403 and error="insufficient_scope" (RFC 6750
 	// §3.1) unless the token carries RequiredScope.
 	InsufficientScope Personality = "insufficient_scope"
@@ -98,8 +111,8 @@ const (
 	// «Claims challenges, claims requests and client capabilities») until the token came
 	// from a consent that passed those claims.
 	ClaimsChallenge Personality = "claims_challenge"
-	// RateLimited answers MCP requests with 429 (RFC 6585 §4) and Retry-After (RFC 9110
-	// §10.2.3) of RetryAfter.
+	// RateLimited answers MCP requests and refresh grants with 429 (RFC 6585 §4) and
+	// Retry-After (RFC 9110 §10.2.3) of RetryAfter. A refresh it refuses changes nothing.
 	RateLimited Personality = "rate_limited"
 	// CommaScopes plays Slack's OAuth v2: scope and user_scope are comma-separated, the token
 	// response, refresh included, is oauth.v2.access's shape with team and authed_user, access
@@ -128,7 +141,7 @@ const (
 
 // tokenEndpoint are the personalities that decide what the token endpoint does; at most one
 // can be on.
-var tokenEndpoint = []Personality{RotatingRefreshWithGrace, NonRotatingRefresh, NoRefreshToken, InvalidGrant, LostResponse, Unavailable}
+var tokenEndpoint = []Personality{RotatingRefreshWithGrace, NonRotatingRefresh, NoRefreshToken, InvalidGrant, Unavailable, ServerError}
 
 // Server is the fake provider. Its fields are fixed when New returns.
 type Server struct {
@@ -158,6 +171,12 @@ type Server struct {
 	refresh       map[string]*refreshToken
 	hits          map[string]int
 	refreshes     int
+	// refreshScope is the scope parameter of the last refresh grant, and refreshScopeSent
+	// whether it had one at all.
+	refreshScope     string
+	refreshScopeSent bool
+	// lostOnce is set when LostResponseOnce has dropped its one answer.
+	lostOnce bool
 	// metadataClient fetches client metadata documents under ClientMetadataDocuments.
 	metadataClient *http.Client
 }
@@ -255,6 +274,7 @@ func (s *Server) Use(personalities ...Personality) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.personalities = set
+	s.lostOnce = false
 }
 
 // Client trusts the server's certificate. Hand it to the code under test in place of an
@@ -303,6 +323,14 @@ func (s *Server) Refreshes() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.refreshes
+}
+
+// RefreshScope is the scope parameter the last refresh grant carried, and whether it
+// carried one (RFC 6749 §6: scope is OPTIONAL there).
+func (s *Server) RefreshScope() (scope string, sent bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.refreshScope, s.refreshScopeSent
 }
 
 // Consent plays the browser: it opens authorizeURL as a user who approves and returns where
