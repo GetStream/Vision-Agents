@@ -149,35 +149,14 @@ func lookBack(window string) (time.Duration, error) {
 }
 
 func runBackfillPins(ctx context.Context, settings config.Config, logger *slog.Logger, out io.Writer) error {
-	if settings.Stream.Tenancy != config.TenancyApp {
-		return fmt.Errorf("backfill-pins is for stream.tenancy=%s, where every row names its app; "+
-			"deployment mode reads an unpinned row as the deployment's own already", config.TenancyApp)
-	}
-	pgStore, err := openStore(ctx, settings)
-	if err != nil {
+	return withStored(ctx, settings, logger, func(_ *streamapp.Stored, clients *streamapp.Clients, pgStore *store.Store) error {
+		deployment := clients.DeploymentApp()
+		pinned, err := pgStore.BackfillStreamPins(ctx, deployment)
+		for _, table := range slices.Sorted(maps.Keys(pinned)) {
+			fmt.Fprintf(out, "%s: %d rows pinned to app %d\n", table, pinned[table], deployment)
+		}
 		return err
-	}
-	defer pgStore.Close()
-	secrets, err := newSecretSealer(settings)
-	if err != nil {
-		return err
-	}
-	clients, err := newStreamClients(settings, pgStore, secrets, logger)
-	if err != nil {
-		return err
-	}
-	learning, cancel := context.WithTimeout(ctx, learnTimeout)
-	defer cancel()
-	deployment, err := clients.LearnDeploymentApp(learning)
-	if err != nil {
-		return fmt.Errorf("backfill-pins needs the deployment's own Stream app id, which could not be read: %w", err)
-	}
-
-	pinned, err := pgStore.BackfillStreamPins(ctx, deployment)
-	for _, table := range slices.Sorted(maps.Keys(pinned)) {
-		fmt.Fprintf(out, "%s: %d rows pinned to app %d\n", table, pinned[table], deployment)
-	}
-	return err
+	})
 }
 
 // withStored runs a command against app mode's source, with the deployment's own app
@@ -204,15 +183,15 @@ func withStored(ctx context.Context, settings config.Config, logger *slog.Logger
 	learning, cancel := context.WithTimeout(ctx, learnTimeout)
 	defer cancel()
 	if _, err := clients.LearnDeploymentApp(learning); err != nil {
-		return fmt.Errorf("the deployment's own Stream app id could not be read, and nothing may be registered "+
-			"until it is: %w", err)
+		return fmt.Errorf("the deployment's own Stream app id could not be read, and stream-apps acts only "+
+			"once it is known: %w", err)
 	}
 	return run(stored, clients, pgStore)
 }
 
 func runRegister(ctx context.Context, args []string, settings config.Config, logger *slog.Logger, stdin io.Reader, out io.Writer) error {
 	flags := flag.NewFlagSet("stream-apps register", flag.ContinueOnError)
-	customer := flags.String("customer", "", "the app id the customer is known by here")
+	customerFlag := flags.String("customer", "", "the app id the customer is known by here")
 	named := flags.Int64("stream-app", 0, "the Stream app's id, for a customer whose id is not it")
 	primary := flags.String("primary", "", "the key tokens are minted with")
 	allowGuests := flags.Bool("allow-guests", false, "let guests be made in the app")
@@ -220,7 +199,8 @@ func runRegister(ctx context.Context, args []string, settings config.Config, log
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *customer == "" || flags.NArg() == 0 {
+	customer := *customerFlag
+	if customer == "" || flags.NArg() == 0 {
 		return errors.New(streamAppsUsage)
 	}
 	keys, err := readKeys(flags.Args(), stdin)
@@ -229,15 +209,15 @@ func runRegister(ctx context.Context, args []string, settings config.Config, log
 	}
 	return withStored(ctx, settings, logger, func(stored *streamapp.Stored, clients *streamapp.Clients, _ *store.Store) error {
 		registered, err := stored.Register(ctx, streamapp.Registration{
-			CustomerID: *customer, OrganizationID: *organization, Keys: keys, PrimaryKey: *primary,
+			CustomerID: customer, OrganizationID: *organization, Keys: keys, PrimaryKey: *primary,
 			AllowGuests: *allowGuests, UpdatedBy: "router stream-apps register", StreamApp: *named,
 		})
 		if err != nil {
 			return err
 		}
-		clients.Invalidate(*customer)
+		clients.Invalidate(customer)
 		fmt.Fprintf(out, "%s acts in Stream app %d with %d keys, revision %d\n",
-			*customer, registered.App.StreamAppPK, len(registered.App.Keys), registered.App.Revision)
+			customer, registered.App.StreamAppPK, len(registered.App.Keys), registered.App.Revision)
 		return nil
 	})
 }
@@ -295,19 +275,15 @@ func listStreamApps(ctx context.Context, pgStore *store.Store, out io.Writer) er
 }
 
 func runCheck(ctx context.Context, args []string, settings config.Config, logger *slog.Logger, out io.Writer) error {
-	flags := flag.NewFlagSet("stream-apps check", flag.ContinueOnError)
-	customer := flags.String("customer", "", "the customer whose app to check")
-	if err := flags.Parse(args); err != nil {
+	customer, err := customerArg("check", args)
+	if err != nil {
 		return err
 	}
-	if *customer == "" {
-		return errors.New(streamAppsUsage)
-	}
 	return withStored(ctx, settings, logger, func(stored *streamapp.Stored, clients *streamapp.Clients, pgStore *store.Store) error {
-		if err := stored.CheckApp(ctx, clients, *customer, nil); err != nil {
+		if err := stored.CheckApp(ctx, clients, customer, nil); err != nil {
 			return err
 		}
-		app, err := pgStore.StreamApp(ctx, *customer)
+		app, err := pgStore.StreamApp(ctx, customer)
 		if err != nil {
 			return err
 		}
@@ -317,20 +293,16 @@ func runCheck(ctx context.Context, args []string, settings config.Config, logger
 }
 
 func runForget(ctx context.Context, args []string, settings config.Config, logger *slog.Logger, out io.Writer) error {
-	flags := flag.NewFlagSet("stream-apps forget", flag.ContinueOnError)
-	customer := flags.String("customer", "", "the customer whose app to forget")
-	if err := flags.Parse(args); err != nil {
+	customer, err := customerArg("forget", args)
+	if err != nil {
 		return err
 	}
-	if *customer == "" {
-		return errors.New(streamAppsUsage)
-	}
 	return withStored(ctx, settings, logger, func(_ *streamapp.Stored, clients *streamapp.Clients, pgStore *store.Store) error {
-		if err := pgStore.ForgetStreamApp(ctx, *customer); err != nil {
+		if err := pgStore.ForgetStreamApp(ctx, customer); err != nil {
 			return err
 		}
-		clients.Invalidate(*customer)
-		fmt.Fprintf(out, "%s has no registered Stream app now\n", *customer)
+		clients.Invalidate(customer)
+		fmt.Fprintf(out, "%s has no registered Stream app now\n", customer)
 		return nil
 	})
 }
@@ -425,4 +397,17 @@ func printLegacy(out io.Writer, counted []store.LegacyCount, byCustomer bool) er
 		fmt.Fprintf(table, "%s\t%s\t%d\n", one.Kind, one.CustomerID, one.Rows)
 	}
 	return table.Flush()
+}
+
+// customerArg reads the --customer a command acts on, which it needs.
+func customerArg(command string, args []string) (string, error) {
+	flags := flag.NewFlagSet("stream-apps "+command, flag.ContinueOnError)
+	customer := flags.String("customer", "", "the customer whose app to "+command)
+	if err := flags.Parse(args); err != nil {
+		return "", err
+	}
+	if *customer == "" {
+		return "", errors.New(streamAppsUsage)
+	}
+	return *customer, nil
 }
