@@ -33,6 +33,8 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 
+from .remote_video_track import RemoteVideoTrack
+
 if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
 
@@ -428,7 +430,11 @@ class StreamEdge(EdgeTransport[StreamCall]):
         )  # default to webrtc framerate
 
     def add_track_subscriber(self, track_id: str) -> Optional[aiortc.VideoStreamTrack]:
-        return None
+        track = self._remote_tracks.get(track_id)
+        if track is None:
+            return None
+        # Each call gets an independent frame stream.
+        return RemoteVideoTrack(track.video_frames())
 
     async def publish_tracks(
         self,

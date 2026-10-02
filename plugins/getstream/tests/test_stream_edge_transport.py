@@ -1,10 +1,14 @@
 import asyncio
+from fractions import Fraction
 from typing import AsyncIterator
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import aiortc
+import av
 import numpy as np
 import pytest
+from aiortc.mediastreams import MediaStreamError
 from getstream import AsyncStream
 from getstream.models import QueryUsersPayload, UserRequest
 from getstream.video import rtc
@@ -46,6 +50,19 @@ class _SilentTTS(TTS):
 
     async def stop_audio(self) -> None:
         pass
+
+
+class _GreyVideoTrack(aiortc.VideoStreamTrack):
+    """Video track that sends grey 640x480 frames at 30 fps."""
+
+    async def recv(self) -> av.VideoFrame:
+        pts, time_base = await self.next_timestamp()
+        frame = av.VideoFrame.from_ndarray(
+            np.full((480, 640, 3), 128, dtype=np.uint8), format="rgb24"
+        )
+        frame.pts = pts
+        frame.time_base = time_base
+        return frame
 
 
 @pytest.fixture
@@ -117,6 +134,14 @@ async def peer_audio(peer: ConnectionManager) -> AsyncIterator[AudioStreamTrack]
     task = asyncio.create_task(write_tone())
     yield track
     task.cancel()
+
+
+@pytest.fixture
+async def peer_video(peer: ConnectionManager) -> _GreyVideoTrack:
+    """The second participant publishes grey video."""
+    track = _GreyVideoTrack()
+    await peer.add_tracks(video=track)
+    return track
 
 
 @pytest.fixture
@@ -517,3 +542,130 @@ class TestStreamEdge:
         assert event.call is call
         await asyncio.sleep(1)
         assert call_ended_events.empty()
+
+    async def test_add_track_subscriber_for_unknown_track_gives_none(
+        self, stream_edge: StreamEdge
+    ):
+        assert stream_edge.add_track_subscriber("unknown-session:2") is None
+
+    @pytest.mark.integration
+    async def test_published_video_gives_yuv420p_frames(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer_video: _GreyVideoTrack,
+        track_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+        event = await asyncio.wait_for(track_events.get(), timeout=10)
+        assert event.track_type == TrackType.VIDEO
+
+        track = edge.add_track_subscriber(event.track_id)
+
+        frame = await asyncio.wait_for(track.recv(), timeout=10)
+        assert frame.format.name == "yuv420p"
+        assert (frame.width, frame.height) == (640, 480)
+        assert frame.time_base == Fraction(1, 90000)
+
+    @pytest.mark.integration
+    async def test_two_subscribers_both_get_frames(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer_video: _GreyVideoTrack,
+        track_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+        event = await asyncio.wait_for(track_events.get(), timeout=10)
+
+        first = edge.add_track_subscriber(event.track_id)
+        second = edge.add_track_subscriber(event.track_id)
+
+        assert first is not second
+        assert isinstance(
+            await asyncio.wait_for(first.recv(), timeout=10), av.VideoFrame
+        )
+        assert isinstance(
+            await asyncio.wait_for(second.recv(), timeout=10), av.VideoFrame
+        )
+
+    @pytest.mark.integration
+    async def test_video_ends_when_publisher_leaves(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        peer_video: _GreyVideoTrack,
+        track_events: asyncio.Queue,
+        participant_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+        event = await asyncio.wait_for(track_events.get(), timeout=10)
+        track = edge.add_track_subscriber(event.track_id)
+        await asyncio.wait_for(track.recv(), timeout=10)
+
+        await peer.leave()
+
+        with pytest.raises(MediaStreamError):
+            while True:
+                await asyncio.wait_for(track.recv(), timeout=10)
+        assert track.readyState == "ended"
+        # StreamEdge drops the RemoteTrack before it sends ParticipantLeftEvent.
+        while not isinstance(
+            await asyncio.wait_for(participant_events.get(), timeout=10),
+            ParticipantLeftEvent,
+        ):
+            pass
+        assert edge.add_track_subscriber(event.track_id) is None
+
+    @pytest.mark.integration
+    async def test_video_ends_when_edge_closes(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer_video: _GreyVideoTrack,
+        track_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+        event = await asyncio.wait_for(track_events.get(), timeout=10)
+        track = edge.add_track_subscriber(event.track_id)
+        await asyncio.wait_for(track.recv(), timeout=10)
+
+        await edge.close()
+
+        with pytest.raises(MediaStreamError):
+            while True:
+                await asyncio.wait_for(track.recv(), timeout=10)
+
+    @pytest.mark.integration
+    @pytest.mark.xfail(
+        strict=True,
+        reason="stream-py: a video publish after stop() fails in the SDK "
+        "(MediaError: no unused vp9 publish option, or RtcError: participant not found)",
+    )
+    async def test_republished_video_gives_frames(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        peer_video: _GreyVideoTrack,
+        track_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+        await asyncio.wait_for(track_events.get(), timeout=10)
+        peer_video.stop()
+        removed = await asyncio.wait_for(track_events.get(), timeout=10)
+        assert isinstance(removed, TrackRemovedEvent)
+
+        await peer.add_tracks(video=_GreyVideoTrack())
+
+        added = await asyncio.wait_for(track_events.get(), timeout=10)
+        assert isinstance(added, TrackAddedEvent)
+        track = edge.add_track_subscriber(added.track_id)
+        frame = await asyncio.wait_for(track.recv(), timeout=10)
+        assert (frame.width, frame.height) == (640, 480)
