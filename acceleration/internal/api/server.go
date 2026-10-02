@@ -26,7 +26,10 @@ import (
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
@@ -40,12 +43,17 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 )
+
+// tracer records the spans this package opens around work a route pattern does not say.
+var tracer = tracing.Tracer("api")
 
 // CustomerHeader names the tenant directly, with no organization around it. It is what a
 // local deployment with no proxy and no keys uses, and it is read in noauth and proxy
@@ -90,6 +98,10 @@ type Options struct {
 	// Routers is the router serving each modality. A modality that is absent is a 404.
 	Routers map[routing.Modality]routing.Inspector
 	Store   *store.Store
+	// Configs reads and writes the tenant's configuration -- keys, policies, agent and
+	// router configs, voices -- through whatever cache is in front of Postgres. Built
+	// over Store when it is not given, in which case every read is a query.
+	Configs *appconfig.Store
 	Live    *live.Client
 	// Phone serves the telephony paths. Absent when the deployment has no vendors, in
 	// which case those paths say so rather than pretending numbers can be bought.
@@ -97,6 +109,11 @@ type Options struct {
 	// Sessions runs conversations. Absent when the deployment only inspects routing, in
 	// which case the session paths report that there are none rather than 500ing.
 	Sessions *session.Manager
+	// Relay reaches the sessions the other nodes of this deployment are running, so a
+	// watcher's socket need not land on the node holding the conversation. Absent when
+	// there is no Redis to carry it, in which case this node is the whole deployment as
+	// far as a socket is concerned.
+	Relay *relay.Bus
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
@@ -181,9 +198,11 @@ type Options struct {
 type Server struct {
 	routers       map[routing.Modality]routing.Inspector
 	store         *store.Store
+	configs       *appconfig.Store
 	live          *live.Client
 	phone         *phone.Service
 	sessions      *session.Manager
+	relayed       *relayed
 	streams       *Streams
 	transcripts   *chatlog.Reader
 	campaigns     *campaign.Runner
@@ -269,9 +288,18 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	configs := options.Configs
+	if configs == nil && options.Store != nil {
+		var err error
+		if configs, err = appconfig.New(appconfig.Options{Store: options.Store, Logger: logger}); err != nil {
+			return nil, err
+		}
+	}
 	server := &Server{
 		routers:       options.Routers,
 		store:         options.Store,
+		configs:       configs,
 		live:          options.Live,
 		phone:         options.Phone,
 		sessions:      options.Sessions,
@@ -309,6 +337,15 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		return nil, err
 	}
 	server.serverSide = serverSide
+
+	// The subscriptions outlive every request, so they are held against the process
+	// rather than against a context a handler brought with it. Closing the Redis client
+	// is what ends them, which is what shutting the deployment down already does.
+	if options.Relay != nil {
+		if server.relayed, err = server.newRelayed(context.Background(), options.Relay); err != nil {
+			return nil, fmt.Errorf("api: subscribe to the session relay: %w", err)
+		}
+	}
 	return server, nil
 }
 
@@ -342,6 +379,9 @@ func (s *Server) Handler() http.Handler {
 	// Sentry is outermost so it sees panics from every middleware below it, not
 	// only from the route handlers.
 	//
+	// Tracing sits directly inside it, so a span covers authentication and the quota
+	// as well as the handler, which is the whole of what a caller waited for.
+	//
 	// Repanic is false, which is a change in behaviour worth knowing about: this
 	// service had no recovery anywhere, so a panic in one request used to take
 	// the process down, and the router runs as a single pod -- every call it was
@@ -355,8 +395,29 @@ func (s *Server) Handler() http.Handler {
 		Repanic:         false,
 		WaitForDelivery: false,
 	})
-	return instrumented.Handle(withCORS(s.corsOrigins,
-		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))
+	return instrumented.Handle(withTrace(withCORS(s.corsOrigins,
+		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))))
+}
+
+// withTrace opens a span for the whole request and names it after the route that served
+// it.
+//
+// The name is settled afterwards because the pattern is not known until chi has matched
+// one, and a span per session id is a trace nobody can group by. A route context is seeded
+// here so that the mux fills in the one this can read back; chi only makes its own when
+// there is none.
+func withTrace(next http.Handler) http.Handler {
+	traced := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routes := chi.NewRouteContext()
+		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, routes))
+		next.ServeHTTP(w, r)
+		if pattern := routes.RoutePattern(); pattern != "" {
+			trace.SpanFromContext(r.Context()).SetName(r.Method + " " + pattern)
+		}
+	}), "router", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+		return r.Method
+	}))
+	return traced
 }
 
 // withRequestLog records one line per request served.
@@ -584,7 +645,9 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 // withQuota looks at whether the caller is server-side rather than at whether there is one.
 func (s *Server) withCustomer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		principal, err := s.authenticator.Authenticate(r.Context(), r)
+		ctx, span := tracer.Start(r.Context(), "auth.authenticate")
+		principal, err := s.authenticator.Authenticate(ctx, r)
+		span.End()
 		if errors.Is(err, auth.ErrLevelRefused) {
 			s.logger.Debug("refused a level of user this app turns away",
 				"method", r.Method, "path", r.URL.Path, "kind", principal.Kind)

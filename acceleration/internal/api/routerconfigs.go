@@ -58,7 +58,7 @@ func (s *Server) CreateRouterConfig(ctx context.Context, request CreateRouterCon
 	}
 
 	config := storedRouterConfig(*request.Body, customerID)
-	if err := s.store.CreateRouterConfig(ctx, &config); err != nil {
+	if err := s.configs.CreateRouterConfig(ctx, &config); err != nil {
 		return CreateRouterConfig400JSONResponse{badRequest(err.Error())}, nil
 	}
 	return CreateRouterConfig201JSONResponse(routerConfigOf(config)), nil
@@ -74,7 +74,7 @@ func (s *Server) GetRouterConfig(ctx context.Context, request GetRouterConfigReq
 		return GetRouterConfig400JSONResponse{badRequest(noRouterConfigs)}, nil
 	}
 
-	config, err := s.store.RouterConfig(ctx, customerID, request.Id)
+	config, err := s.configs.RouterConfig(ctx, customerID, request.Id)
 	if err != nil {
 		return GetRouterConfig404JSONResponse{NotFoundJSONResponse{Error: unknownRouterConfig}}, nil
 	}
@@ -97,7 +97,7 @@ func (s *Server) UpdateRouterConfig(ctx context.Context, request UpdateRouterCon
 		return UpdateRouterConfig400JSONResponse{badRequest(message)}, nil
 	}
 
-	existing, err := s.store.RouterConfig(ctx, customerID, request.Id)
+	existing, err := s.configs.RouterConfig(ctx, customerID, request.Id)
 	if err != nil {
 		return UpdateRouterConfig404JSONResponse{NotFoundJSONResponse{Error: unknownRouterConfig}}, nil
 	}
@@ -105,7 +105,7 @@ func (s *Server) UpdateRouterConfig(ctx context.Context, request UpdateRouterCon
 	config := storedRouterConfig(*request.Body, customerID)
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
-	if err := s.store.UpdateRouterConfig(ctx, &config); err != nil {
+	if err := s.configs.UpdateRouterConfig(ctx, &config); err != nil {
 		return UpdateRouterConfig400JSONResponse{badRequest(err.Error())}, nil
 	}
 	return UpdateRouterConfig200JSONResponse(routerConfigOf(config)), nil
@@ -121,7 +121,7 @@ func (s *Server) DeleteRouterConfig(ctx context.Context, request DeleteRouterCon
 		return DeleteRouterConfig400JSONResponse{badRequest(noRouterConfigs)}, nil
 	}
 
-	if err := s.store.DeleteRouterConfig(ctx, customerID, request.Id); err != nil {
+	if err := s.configs.DeleteRouterConfig(ctx, customerID, request.Id); err != nil {
 		return DeleteRouterConfig404JSONResponse{NotFoundJSONResponse{Error: unknownRouterConfig}}, nil
 	}
 	return DeleteRouterConfig204Response{}, nil
@@ -343,10 +343,10 @@ func (s *Server) routerOptions(ctx context.Context, customerID, configID string)
 		return store.RouterConfig{}, fmt.Errorf("%s", noRouterConfigs)
 	}
 
-	if config, err := s.store.RouterConfig(ctx, customerID, configID); err == nil {
+	if config, err := s.configs.RouterConfig(ctx, customerID, configID); err == nil {
 		return config, nil
 	}
-	config, found, err := s.store.RouterConfigByName(ctx, customerID, configID)
+	config, found, err := s.configs.RouterConfigByName(ctx, customerID, configID)
 	if err != nil {
 		return store.RouterConfig{}, err
 	}

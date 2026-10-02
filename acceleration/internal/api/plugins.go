@@ -34,7 +34,7 @@ func (s *Server) ListConfigPlugins(ctx context.Context, request ListConfigPlugin
 	if s.store == nil {
 		return ListConfigPlugins400JSONResponse{badRequest(noConfigs)}, nil
 	}
-	if _, err := s.store.AgentConfig(ctx, customerID, request.Id); err != nil {
+	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
 		return ListConfigPlugins404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
 	}
 
@@ -76,7 +76,7 @@ func (s *Server) AuthorizePlugin(ctx context.Context, request AuthorizePluginReq
 	if s.store == nil {
 		return AuthorizePlugin400JSONResponse{badRequest(noConfigs)}, nil
 	}
-	if _, err := s.store.AgentConfig(ctx, customerID, request.Id); err != nil {
+	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
 		return AuthorizePlugin404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
 	}
 
@@ -114,7 +114,7 @@ func (s *Server) DisconnectPlugin(ctx context.Context, request DisconnectPluginR
 	if _, ok := plugins.Lookup(string(request.PluginId)); !ok {
 		return DisconnectPlugin400JSONResponse{badRequest(unknownPlugin)}, nil
 	}
-	if _, err := s.store.AgentConfig(ctx, customerID, request.Id); err != nil {
+	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
 		return DisconnectPlugin404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
 	}
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil {

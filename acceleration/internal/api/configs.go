@@ -30,7 +30,7 @@ func (s *Server) ListAgentConfigs(ctx context.Context, request ListAgentConfigsR
 	// here, and an empty answer is an empty list rather than a 404: this is a list endpoint,
 	// and a caller looking a name up is asking whether it is there.
 	if named := value(request.Params.Name); named != "" {
-		found, exists, err := s.store.AgentConfigByName(ctx, customerID, named)
+		found, exists, err := s.configs.AgentConfigByName(ctx, customerID, named)
 		if err != nil {
 			return nil, err
 		}
@@ -69,7 +69,7 @@ func (s *Server) CreateAgentConfig(ctx context.Context, request CreateAgentConfi
 	}
 
 	config := storedConfig(*request.Body, customerID)
-	if err := s.store.CreateAgentConfig(ctx, &config); err != nil {
+	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
 		return CreateAgentConfig400JSONResponse{badRequest(err.Error())}, nil
 	}
 	return CreateAgentConfig201JSONResponse(agentConfigOf(config)), nil
@@ -85,7 +85,7 @@ func (s *Server) GetAgentConfig(ctx context.Context, request GetAgentConfigReque
 		return GetAgentConfig400JSONResponse{badRequest(noConfigs)}, nil
 	}
 
-	config, err := s.store.AgentConfig(ctx, customerID, request.Id)
+	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
 		return GetAgentConfig404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
 	}
@@ -108,7 +108,7 @@ func (s *Server) UpdateAgentConfig(ctx context.Context, request UpdateAgentConfi
 		return UpdateAgentConfig400JSONResponse{badRequest(message)}, nil
 	}
 
-	existing, err := s.store.AgentConfig(ctx, customerID, request.Id)
+	existing, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
 		return UpdateAgentConfig404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
 	}
@@ -116,7 +116,7 @@ func (s *Server) UpdateAgentConfig(ctx context.Context, request UpdateAgentConfi
 	config := storedConfig(*request.Body, customerID)
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
-	if err := s.store.UpdateAgentConfig(ctx, &config); err != nil {
+	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return UpdateAgentConfig400JSONResponse{badRequest(err.Error())}, nil
 	}
 	return UpdateAgentConfig200JSONResponse(agentConfigOf(config)), nil
@@ -132,7 +132,7 @@ func (s *Server) DeleteAgentConfig(ctx context.Context, request DeleteAgentConfi
 		return DeleteAgentConfig400JSONResponse{badRequest(noConfigs)}, nil
 	}
 
-	if err := s.store.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
+	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return DeleteAgentConfig404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
 	}
 	return DeleteAgentConfig204Response{}, nil
@@ -176,12 +176,12 @@ func (s *Server) CreateSkill(ctx context.Context, request CreateSkillRequestObje
 	if message, ok := skillComplaint(*request.Body); !ok {
 		return CreateSkill400JSONResponse{badRequest(message)}, nil
 	}
-	if _, err := s.store.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
+	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
 		return CreateSkill400JSONResponse{badRequest(unknownConfig)}, nil
 	}
 
 	skill := storedSkill(*request.Body, customerID)
-	if err := s.store.CreateSkill(ctx, &skill); err != nil {
+	if err := s.configs.CreateSkill(ctx, &skill); err != nil {
 		return CreateSkill400JSONResponse{badRequest(err.Error())}, nil
 	}
 	return CreateSkill201JSONResponse(skillOf(skill)), nil
@@ -219,7 +219,7 @@ func (s *Server) UpdateSkill(ctx context.Context, request UpdateSkillRequestObje
 	if message, ok := skillComplaint(*request.Body); !ok {
 		return UpdateSkill400JSONResponse{badRequest(message)}, nil
 	}
-	if _, err := s.store.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
+	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
 		return UpdateSkill400JSONResponse{badRequest(unknownConfig)}, nil
 	}
 
@@ -231,7 +231,7 @@ func (s *Server) UpdateSkill(ctx context.Context, request UpdateSkillRequestObje
 	skill := storedSkill(*request.Body, customerID)
 	skill.ID = existing.ID
 	skill.CreatedAt = existing.CreatedAt
-	if err := s.store.UpdateSkill(ctx, &skill); err != nil {
+	if err := s.configs.UpdateSkill(ctx, &skill); err != nil {
 		return UpdateSkill400JSONResponse{badRequest(err.Error())}, nil
 	}
 	return UpdateSkill200JSONResponse(skillOf(skill)), nil
@@ -247,7 +247,7 @@ func (s *Server) DeleteSkill(ctx context.Context, request DeleteSkillRequestObje
 		return DeleteSkill400JSONResponse{badRequest(noConfigs)}, nil
 	}
 
-	if err := s.store.DeleteSkill(ctx, customerID, request.Id); err != nil {
+	if err := s.configs.DeleteSkill(ctx, customerID, request.Id); err != nil {
 		return DeleteSkill404JSONResponse{NotFoundJSONResponse{Error: unknownSkill}}, nil
 	}
 	return DeleteSkill204Response{}, nil

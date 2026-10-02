@@ -61,7 +61,7 @@ func (s *Server) CreateCampaign(ctx context.Context, request CreateCampaignReque
 
 	// A campaign that names a config nobody has would fail one call at a time, at
 	// whatever hour it was started.
-	if _, err := s.store.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
+	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
 		return CreateCampaign400JSONResponse{badRequest(unknownConfig)}, nil
 	}
 

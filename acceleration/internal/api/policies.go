@@ -235,7 +235,7 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 
 // policyOf reads a scope's policy, with what its budget has spent in the current interval.
 func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id string) (Policy, error) {
-	document, err := s.store.Policy(ctx, scope, id)
+	document, err := s.configs.Policy(ctx, scope, id)
 	if err != nil {
 		return Policy{}, err
 	}

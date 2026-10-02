@@ -4892,11 +4892,10 @@ components:
         - audio_out_ms_total
       type: object
     UpdateSessionRequest:
-      description: |
-        What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended; everything else needs it running.
+      description: What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
       properties:
         custom:
-          additionalProperties: true
+          additionalProperties: {}
           description: Replaces the caller's labels whole. An empty object clears them.
           type: object
         description:
@@ -4910,8 +4909,7 @@ components:
         max_output_tokens:
           type: integer
         sts:
-          description: |
-            A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
+          description: A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
           type: string
         stt:
           type: string
@@ -4937,8 +4935,7 @@ components:
             - high
           type: string
         voice:
-          description: |
-            The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+          description: The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
           type: string
       type: object
     VideoSource:
@@ -5124,7 +5121,7 @@ info:
   description: |
     Routes speech-to-text and text-to-speech traffic across providers and reports what it cost. Every path is scoped by modality, so the same provider serving two modalities is reported on separately. Who the caller is depends on ROUTER_AUTH_MODE: `api_key`, the default, wants an API key and a token signed with its secret; `proxy` believes the X-Stream- headers something in front of the router set; `noauth` reads a trusted X-Customer-Id header and takes every caller for that customer's own backend.
 
-    Every operation is server-side only unless it is marked `x-client-accessible`, and seven are: `createSession`, `querySessions`, `getSession`, `stopSession`, `deleteSession`, the session events socket and `search`. Those are the whole of holding a conversation and looking something up, which is all an end user's device has any business doing. Everything else is refused with a 403 unless the caller is a process the customer runs, because a device holding a token its own backend minted may hold a conversation and may not rewrite the agent holding it. A server-side caller sends `Stream-Auth-Type: server` and a token carrying `server: true` and no `user_id` claim. Both are required, and the token is what proves it, since nothing signs the header.
+    Every operation is server-side only unless it is marked `x-client-accessible`, and eight are: `createSession`, `querySessions`, `getSession`, `updateSession`, `stopSession`, `deleteSession`, the session events socket and `search`. Those are the whole of holding a conversation and looking something up, which is all an end user's device has any business doing. Everything else is refused with a 403 unless the caller is a process the customer runs, because a device holding a token its own backend minted may hold a conversation and may not rewrite the agent holding it. A server-side caller sends `Stream-Auth-Type: server` and a token carrying `server: true` and no `user_id` claim. Both are required, and the token is what proves it, since nothing signs the header.
 
     The default is that way round because the cost of forgetting is asymmetric. An operation left unmarked is one nobody decided to open, and refusing it is a bug report; opening it silently is a breach.
 
@@ -6808,13 +6805,23 @@ paths:
       summary: One session
       x-client-accessible: true
     patch:
-      description: |
+      description: |-
         Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-        A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+
+        An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+
+        A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+
         Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
       operationId: updateSession
       parameters:
-        - $ref: '#/components/parameters/SessionID'
+        - description: The session, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The session, as returned when it was created.
+            type: string
       requestBody:
         content:
           application/json:
@@ -6836,7 +6843,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: Change a session
+      x-client-accessible: true
   /v1/agents/sessions/{id}/commands/{command_id}:
     get:
       description: |

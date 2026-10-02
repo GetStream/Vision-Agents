@@ -96,7 +96,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if s.store == nil {
 		return nil, huma.Error400BadRequest(noConfigs)
 	}
-	config, err := s.store.AgentConfig(ctx, customerID, request.ID)
+	config, err := s.configs.AgentConfig(ctx, customerID, request.ID)
 	if err != nil {
 		return nil, huma.Error404NotFound(unknownConfig)
 	}
@@ -154,7 +154,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	// that directory writes it again rather than finding nothing changed.
 	config.SyncHash = ""
 
-	if err := s.store.UpdateAgentConfig(ctx, &config); err != nil {
+	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 	return &agentConfigResponse{Body: agentConfigOf(config)}, nil

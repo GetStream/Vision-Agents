@@ -37,14 +37,14 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 	}
 
 	if id != "" {
-		found, err := s.store.AgentConfig(ctx, customerID, id)
+		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
 			return nil, &lookupFailure{status: notFound, message: unknownConfig}
 		}
 		return &found, nil
 	}
 
-	found, exists, err := s.store.AgentConfigByName(ctx, customerID, named)
+	found, exists, err := s.configs.AgentConfigByName(ctx, customerID, named)
 	if err != nil {
 		return nil, &lookupFailure{status: badInput, message: err.Error()}
 	}
@@ -321,76 +321,6 @@ func (s *Server) SetSessionSettings(ctx context.Context, request SetSessionSetti
 		return SetSessionSettings400JSONResponse{badRequest(err.Error())}, nil
 	}
 	return SetSessionSettings200JSONResponse(sessionOf(found)), nil
-}
-
-// UpdateSession renames, relabels, re-instructs or moves one session onto other models. A
-// session that ended can only be renamed and relabelled.
-func (s *Server) UpdateSession(ctx context.Context, request UpdateSessionRequestObject) (UpdateSessionResponseObject, error) {
-	found, failure := s.storedOrLiveSession(ctx, request.Id)
-	if failure == nil && found.Live != nil && !canReadSession(ctx, found.Live.Spec()) {
-		failure = &lookupFailure{status: notFound, message: unknownSession}
-	}
-	if failure != nil {
-		if failure.status == unauthorized {
-			return UpdateSession401JSONResponse{missingCustomer()}, nil
-		}
-		return UpdateSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
-	}
-	if request.Body == nil {
-		return UpdateSession400JSONResponse{badRequest("a request body is required")}, nil
-	}
-
-	body := request.Body
-	settings, moving := settingsOf(*body)
-	labels := session.Labels{Title: body.Title, Description: body.Description, Custom: body.Custom}
-
-	if found.Live == nil {
-		if moving || body.Instructions != nil {
-			return UpdateSession400JSONResponse{badRequest(
-				"the session has ended, so only its title, description and custom can change")}, nil
-		}
-		row := *found.Stored
-		row.Title = override(row.Title, body.Title)
-		row.Description = override(row.Description, body.Description)
-		row.Custom = override(row.Custom, body.Custom)
-		if err := s.store.DescribeSession(ctx, row.CustomerID, row.ID, row.Title, row.Description,
-			value(body.Custom)); err != nil {
-			return nil, err
-		}
-		return UpdateSession200JSONResponse(storedSessionOf(row)), nil
-	}
-
-	live := found.Live
-	if moving {
-		if err := live.SetSettings(ctx, settings); err != nil {
-			return UpdateSession400JSONResponse{badRequest(err.Error())}, nil
-		}
-	}
-	if body.Instructions != nil {
-		live.SetInstructions(*body.Instructions)
-	}
-	if labels.Title != nil || labels.Description != nil || labels.Custom != nil {
-		live.Describe(ctx, labels)
-	}
-	return UpdateSession200JSONResponse(sessionOf(live)), nil
-}
-
-// settingsOf reads the models and voice an update asks for, and reports whether it asks
-// for any.
-func settingsOf(body UpdateSessionRequest) (session.Settings, bool) {
-	settings := session.Settings{
-		LLM: body.Llm, STT: body.Stt, TTS: body.Tts, STS: body.Sts,
-		Voice: body.Voice, Temperature: body.Temperature, MaxOutputTokens: body.MaxOutputTokens,
-	}
-	if body.Thinking != nil {
-		thinking := string(*body.Thinking)
-		settings.Thinking = &thinking
-	}
-	if body.Verbosity != nil {
-		verbosity := string(*body.Verbosity)
-		settings.Verbosity = &verbosity
-	}
-	return settings, settings != session.Settings{}
 }
 
 // lookupStatus says which way finding a session failed.

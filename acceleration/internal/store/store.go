@@ -22,6 +22,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
+	"github.com/uptrace/bun/extra/bunotel"
 
 	"github.com/GetStream/Vision-Agents/acceleration/migrations"
 )
@@ -43,7 +44,11 @@ func Open(dsn string) (*Store, error) {
 	}
 
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	return &Store{db: bun.NewDB(sqldb, pgdialect.New())}, nil
+	db := bun.NewDB(sqldb, pgdialect.New())
+	// A span per query, so a request's trace says which reads it waited on. Queries are
+	// recorded unformatted: the arguments of these are customer ids and api keys.
+	db.AddQueryHook(bunotel.NewQueryHook(bunotel.WithDBName("router")))
+	return &Store{db: db}, nil
 }
 
 // DB exposes the bun handle so callers can run queries this store does not wrap.

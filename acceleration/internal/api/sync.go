@@ -155,7 +155,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		return nil, huma.Error400BadRequest(message)
 	}
 
-	existing, found, err := s.store.AgentConfigByName(ctx, customerID, name)
+	existing, found, err := s.configs.AgentConfigByName(ctx, customerID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -215,11 +215,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	applySettings(&config, body)
 
 	if found {
-		if err := s.store.UpdateAgentConfig(ctx, &config); err != nil {
+		if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 			return nil, huma.Error400BadRequest(err.Error())
 		}
 	} else {
-		if err := s.store.CreateAgentConfig(ctx, &config); err != nil {
+		if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
 			return nil, huma.Error400BadRequest(err.Error())
 		}
 	}
@@ -422,7 +422,7 @@ func (s *Server) upsertSkills(ctx context.Context, customerID, configID string, 
 		names = append(names, strings.TrimSpace(skill.Name))
 	}
 
-	stored, err := s.store.SkillsNamed(ctx, customerID, configID, names)
+	stored, err := s.configs.SkillsNamed(ctx, customerID, configID, names)
 	if err != nil {
 		return err
 	}
@@ -437,12 +437,12 @@ func (s *Server) upsertSkills(ctx context.Context, customerID, configID string, 
 		if existing, ok := known[row.Name]; ok {
 			row.ID = existing.ID
 			row.CreatedAt = existing.CreatedAt
-			if err := s.store.UpdateSkill(ctx, &row); err != nil {
+			if err := s.configs.UpdateSkill(ctx, &row); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := s.store.CreateSkill(ctx, &row); err != nil {
+		if err := s.configs.CreateSkill(ctx, &row); err != nil {
 			return err
 		}
 	}

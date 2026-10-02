@@ -28,6 +28,7 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
@@ -46,6 +47,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -106,11 +108,22 @@ const (
 type RouterSuite struct {
 	suite.Suite
 
-	store  *store.Store
-	live   *live.Client
-	sealer *auth.Sealer
-	server *httptest.Server
-	app    testApp
+	store   *store.Store
+	configs *appconfig.Store
+	live    *live.Client
+	sealer  *auth.Sealer
+	server  *httptest.Server
+	app     testApp
+
+	// streams, modalities and conversations are what the suite's router was built from,
+	// kept so that otherNode can build a second one over the same routing.
+	streams       *Streams
+	modalities    map[routing.Modality]routing.Inspector
+	conversations *conversation.Service
+	// relayPrefix names this suite's relay channels. Pub/sub ignores the database number
+	// the rest of a suite's keys are kept apart by, so this is the only thing stopping
+	// one suite's nodes from reading another's sessions.
+	relayPrefix string
 
 	// unauthenticatedClient sends no credentials. The rest hold the app's key:
 	// anonymousClient goes by a name nothing proves, guestClient and client are signed-in
@@ -209,27 +222,38 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.data = testData{suite: s}
 
+	s.configs, err = appconfig.New(appconfig.Options{
+		Store: pgStore, Address: redisAddr, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(s.configs.Close)
+	s.relayPrefix = uuid.NewString()
+
 	limiter := s.quota(liveClient, logger)
 	policies := s.policies(logger)
 	streams := s.routers(limiter, policies, logger)
 	sessions := s.sessionManager(streams, logger)
 	s.dispatch = dispatch.NewPool()
+	s.streams = streams
+	s.modalities = map[routing.Modality]routing.Inspector{
+		routing.LLM:    streams.LLM,
+		routing.STT:    streams.STT,
+		routing.TTS:    streams.TTS,
+		routing.STS:    streams.STS,
+		routing.Search: streams.Search,
+		routing.LCM:    streams.LCM,
+		routing.Image:  streams.Image,
+	}
 
 	server, err := NewServer(Options{
-		Routers: map[routing.Modality]routing.Inspector{
-			routing.LLM:    streams.LLM,
-			routing.STT:    streams.STT,
-			routing.TTS:    streams.TTS,
-			routing.STS:    streams.STS,
-			routing.Search: streams.Search,
-			routing.LCM:    streams.LCM,
-			routing.Image:  streams.Image,
-		},
+		Routers:       s.modalities,
 		Streams:       streams,
+		Relay:         s.relayBus(logger),
 		Sessions:      sessions,
 		Store:         pgStore,
+		Configs:       s.configs,
 		Live:          liveClient,
-		Auth:          s.authenticator(pgStore),
+		Auth:          s.authenticator(),
 		AuthMode:      auth.APIKey,
 		Phone:         s.telephony(logger),
 		Campaigns:     s.campaigns(sessions, logger),
@@ -370,6 +394,7 @@ func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *ses
 	conversations, err := conversation.NewForChat(s.outbox, chattest.Client(s.T()))
 	s.Require().NoError(err)
 	s.T().Cleanup(conversations.Close)
+	s.conversations = conversations
 
 	s.memories = &keptMemories{}
 	var remembering memory.Store = s.memories
@@ -383,6 +408,7 @@ func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *ses
 		Memory:        remembering,
 		Conversations: conversations,
 		Store:         s.store,
+		Configs:       s.configs,
 		Logger:        logger,
 		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
@@ -395,29 +421,8 @@ func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *ses
 
 // authenticator resolves a key the way a deployment in api_key mode does: the row is read
 // from Postgres and its secret unsealed, so the credentials a test holds are real ones.
-func (s *RouterSuite) authenticator(pgStore *store.Store) auth.Authenticator {
-	authenticator, err := auth.New(auth.APIKey, func(ctx context.Context, key string) (auth.App, error) {
-		if !auth.ValidKey(key) {
-			return auth.App{}, auth.ErrUnauthenticated
-		}
-		owner, err := pgStore.LiveAPIKey(ctx, key)
-		if err != nil {
-			return auth.App{}, auth.ErrUnauthenticated
-		}
-		secret, err := s.sealer.Open(owner.Sealed)
-		if err != nil {
-			return auth.App{}, err
-		}
-		return auth.App{
-			OrganizationID: owner.OrganizationID,
-			AppID:          owner.AppID,
-			Secret:         secret,
-			Levels: auth.Levels{
-				NoAnonymous: !owner.Settings.AnonymousAllowed(),
-				NoGuest:     !owner.Settings.GuestAllowed(),
-			},
-		}, nil
-	})
+func (s *RouterSuite) authenticator() auth.Authenticator {
+	authenticator, err := auth.New(auth.APIKey, s.configs.Lookup(s.sealer))
 	s.Require().NoError(err)
 	return authenticator
 }
@@ -503,13 +508,65 @@ func (s *RouterSuite) voiceService() *voices.Service {
 	cloners := voices.NewRegistry()
 	cloners.Register("elevenlabs", cloner)
 
-	service, err := voices.NewService(voices.Options{Store: s.store, Bucket: bucket, Cloners: cloners})
+	service, err := voices.NewService(voices.Options{Store: s.configs, Bucket: bucket, Cloners: cloners})
 	s.Require().NoError(err)
 	return service
 }
 
+// otherNode is a second router over the same Postgres, Redis and relay channels as the
+// suite's own, with sessions of its own.
+//
+// It is what a deployment of more than one process looks like: a session opened on one
+// node is in the other's memory nowhere, so a socket that lands on the wrong one has to
+// be served over the relay or not at all. The routing is shared because what differs
+// between two nodes is which conversations they are holding, not what they route to.
+func (s *RouterSuite) otherNode() *httptest.Server {
+	logger := slog.New(slog.DiscardHandler)
+	sessions, err := session.NewManager(session.ManagerOptions{
+		LLM:           s.streams.LLM,
+		STT:           s.streams.STT,
+		TTS:           s.streams.TTS,
+		Memory:        &keptMemories{},
+		Conversations: s.conversations,
+		Store:         s.store,
+		Configs:       s.configs,
+		Logger:        logger,
+		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
+			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
+		},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = sessions.Shutdown() })
+
+	server, err := NewServer(Options{
+		Routers:  s.modalities,
+		Streams:  s.streams,
+		Sessions: sessions,
+		Relay:    s.relayBus(logger),
+		Store:    s.store,
+		Configs:  s.configs,
+		Live:     s.live,
+		Auth:     s.authenticator(),
+		AuthMode: auth.APIKey,
+		Logger:   logger,
+	})
+	s.Require().NoError(err)
+	node := httptest.NewServer(server.Handler())
+	s.T().Cleanup(node.Close)
+	return node
+}
+
+// relayBus is one node's end of the suite's relay.
+func (s *RouterSuite) relayBus(logger *slog.Logger) *relay.Bus {
+	bus, err := relay.New(relay.Options{
+		Redis: s.live.Redis(), Prefix: s.relayPrefix, Logger: logger,
+	})
+	s.Require().NoError(err)
+	return bus
+}
+
 func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
-	enforcer, err := policy.New(s.store, logger)
+	enforcer, err := policy.New(s.configs, logger)
 	s.Require().NoError(err)
 	return enforcer
 }
@@ -583,6 +640,8 @@ type testClient struct {
 	userID string
 	// token is what signs for the client, which a socket sends in its query string.
 	token string
+	// address is the node the client sends to, empty for the suite's own.
+	address string
 }
 
 // actingFor is the backend naming user as who it acts for, so what it opens is theirs.
@@ -592,6 +651,23 @@ func (c *testClient) actingFor(user *testClient) *testClient {
 	named.header.Set(auth.UserHeader, user.userID)
 	named.userID = user.userID
 	return &named
+}
+
+// on is the same caller sending to another node of the same deployment, for a test about
+// what a caller reaches when their request did not land where the session is.
+func (c *testClient) on(node *httptest.Server) *testClient {
+	elsewhere := *c
+	elsewhere.header = c.header.Clone()
+	elsewhere.address = node.URL
+	return &elsewhere
+}
+
+// base is the node the client sends to.
+func (c *testClient) base() string {
+	if c.address != "" {
+		return c.address
+	}
+	return c.suite.server.URL
 }
 
 // do sends body as JSON and decodes the answer into into, when there is one to decode.
@@ -612,7 +688,7 @@ func (c *testClient) call(method, path string, body any) (int, []byte) {
 		require.NoError(err)
 		payload = bytes.NewReader(encoded)
 	}
-	request, err := http.NewRequest(method, c.suite.server.URL+path, payload)
+	request, err := http.NewRequest(method, c.base()+path, payload)
 	require.NoError(err)
 	request.Header = c.header.Clone()
 	request.Header.Set("Content-Type", "application/json")
@@ -642,7 +718,7 @@ func (c *testClient) failure(method, path string, body any) (int, string) {
 //
 // It returns the status when the handshake is refused.
 func (c *testClient) watch(path string) (*websocket.Conn, int) {
-	address := "ws" + strings.TrimPrefix(c.suite.server.URL, "http") + path
+	address := "ws" + strings.TrimPrefix(c.base(), "http") + path
 	query := url.Values{}
 	if key := c.header.Get(auth.APIKeyHeader); key != "" {
 		query.Set(auth.APIKeyParam, key)

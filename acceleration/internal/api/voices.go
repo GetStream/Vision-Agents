@@ -85,7 +85,7 @@ func (s *Server) GetVoice(ctx context.Context, request GetVoiceRequestObject) (G
 		return GetVoice400JSONResponse{badRequest(noVoices)}, nil
 	}
 
-	voice, err := s.store.Voice(ctx, customerID, request.Id)
+	voice, err := s.configs.Voice(ctx, customerID, request.Id)
 	if err != nil {
 		return GetVoice404JSONResponse{NotFoundJSONResponse{Error: unknownVoice}}, nil
 	}
@@ -119,7 +119,7 @@ func (s *Server) UpdateVoice(ctx context.Context, request UpdateVoiceRequestObje
 		Name:        request.Body.Name,
 		Description: text(request.Body.Description),
 	}
-	if err := s.store.UpdateVoice(ctx, &voice); err != nil {
+	if err := s.configs.UpdateVoice(ctx, &voice); err != nil {
 		if errors.Is(err, store.ErrNoVoice) {
 			return UpdateVoice404JSONResponse{NotFoundJSONResponse{Error: unknownVoice}}, nil
 		}
@@ -178,7 +178,7 @@ func (s *Server) AddVoiceSample(ctx context.Context, request AddVoiceSampleReque
 		return AddVoiceSample400JSONResponse{badRequest(err.Error())}, nil
 	}
 
-	voice, err := s.store.Voice(ctx, customerID, request.Id)
+	voice, err := s.configs.Voice(ctx, customerID, request.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func (s *Server) PrepareVoice(ctx context.Context, request PrepareVoiceRequestOb
 		return PrepareVoice400JSONResponse{badRequest(err.Error())}, nil
 	}
 
-	voice, err := s.store.Voice(ctx, customerID, request.Id)
+	voice, err := s.configs.Voice(ctx, customerID, request.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +318,7 @@ func (s *Server) PreviewVoice(ctx context.Context, request PreviewVoiceRequestOb
 	if request.Body == nil || strings.TrimSpace(request.Body.Provider) == "" {
 		return PreviewVoice400JSONResponse{badRequest("name the provider to hear the voice through")}, nil
 	}
-	if _, err := s.store.Voice(ctx, customerID, request.Id); err != nil {
+	if _, err := s.configs.Voice(ctx, customerID, request.Id); err != nil {
 		return PreviewVoice404JSONResponse{NotFoundJSONResponse{Error: unknownVoice}}, nil
 	}
 

@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
@@ -42,6 +43,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
@@ -50,6 +52,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
@@ -76,14 +79,12 @@ const (
 	// crawled live rather than served from an index takes seconds, and giving up on it
 	// leaves a subscription that never works.
 	crawlTimeout = 60 * time.Second
-	// lastUsedInterval throttles how often a key's use is recorded. Writing on every
-	// request would double the writes of a busy key, and recording nothing means nobody
-	// can answer whether a key is still in use, so nobody ever revokes one.
-	lastUsedInterval = time.Minute
 	// sentryFlushTimeout bounds how long the process spends delivering buffered
 	// events on the way out. Short, because this runs while the orchestrator is
 	// already counting down the termination grace period.
 	sentryFlushTimeout = 2 * time.Second
+	// traceFlushTimeout bounds the same thing for spans, on the same reasoning.
+	traceFlushTimeout = 2 * time.Second
 )
 
 // usage is what the binary does besides serving.
@@ -262,7 +263,7 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 // api_key needs both a store to look keys up in and the key that unseals their secrets, and
 // says which is missing rather than starting and refusing every request for a reason only
 // visible in a 401.
-func newAuthenticator(settings config.Config, pgStore *store.Store, logger *slog.Logger) (auth.Authenticator, error) {
+func newAuthenticator(settings config.Config, configs *appconfig.Store, logger *slog.Logger) (auth.Authenticator, error) {
 	mode, err := auth.ParseMode(settings.Auth.Mode)
 	if err != nil {
 		return nil, err
@@ -285,7 +286,7 @@ func newAuthenticator(settings config.Config, pgStore *store.Store, logger *slog
 			"answering for itself embeds the module and passes api.WithAuthenticator", auth.Custom)
 	}
 
-	if pgStore == nil {
+	if configs == nil {
 		return nil, fmt.Errorf("auth.mode=%s needs postgres.dsn, because that is where the keys are",
 			auth.APIKey)
 	}
@@ -294,38 +295,7 @@ func newAuthenticator(settings config.Config, pgStore *store.Store, logger *slog
 		return nil, fmt.Errorf("auth.mode=%s needs auth.kek: %w", auth.APIKey, err)
 	}
 
-	return auth.New(mode, func(ctx context.Context, key string) (auth.App, error) {
-		// The shape of the key is checked before the database is, so a truncated paste
-		// costs nothing to reject.
-		if !auth.ValidKey(key) {
-			return auth.App{}, auth.ErrUnauthenticated
-		}
-		owner, err := pgStore.LiveAPIKey(ctx, key)
-		if err != nil {
-			return auth.App{}, auth.ErrUnauthenticated
-		}
-		secret, err := sealer.Open(owner.Sealed)
-		if err != nil {
-			return auth.App{}, fmt.Errorf("unseal key %s: %w", key, err)
-		}
-		if err := pgStore.TouchAPIKey(ctx, key, lastUsedInterval); err != nil {
-			logger.Debug("could not record key use", "key", key, "error", err)
-		}
-		// The app's settings came back on the same row, so which levels of end user it
-		// admits costs nothing beyond the lookup that was already happening. They are
-		// inverted on the way across because auth measures a caller against a zero value
-		// in the three modes that resolve no app at all, and that zero value has to admit
-		// everybody.
-		return auth.App{
-			OrganizationID: owner.OrganizationID,
-			AppID:          owner.AppID,
-			Secret:         secret,
-			Levels: auth.Levels{
-				NoAnonymous: !owner.Settings.AnonymousAllowed(),
-				NoGuest:     !owner.Settings.GuestAllowed(),
-			},
-		}, nil
-	})
+	return auth.New(mode, configs.Lookup(sealer))
 }
 
 func run(settings config.Config, logger *slog.Logger) error {
@@ -336,6 +306,20 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+
+	// Traces go nowhere unless the deployment names a collector in the environment, so
+	// this is a no-op on a laptop and on every deployment that has not asked for them.
+	flushTraces, err := tracing.Setup(ctx, "acceleration-router", release)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), traceFlushTimeout)
+		defer cancel()
+		if err := flushTraces(shutdown); err != nil {
+			logger.Error("could not flush the last traces", "error", err)
+		}
+	}()
 
 	// Checked before anything is opened, so a deployment that turned connectors on without
 	// a keyring is refused at startup rather than on its first connection.
@@ -394,12 +378,31 @@ func run(settings config.Config, logger *slog.Logger) error {
 			"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
 	}
 
+	// What every request is measured against -- the key it presented, the app behind it,
+	// their policies and what they have configured -- read through Redis and the cache
+	// rueidis keeps beside it. Without Redis it is Postgres on every read, which is what
+	// this deployment did before the cache existed.
+	var configs *appconfig.Store
+	if pgStore != nil {
+		configs, err = appconfig.New(appconfig.Options{
+			Store:    pgStore,
+			Address:  settings.Redis.Addr,
+			Username: settings.Redis.Username,
+			Password: settings.Redis.Password,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer configs.Close()
+	}
+
 	// Budgets, data policies and prompt injection screening are stored per organization
 	// and app, so a deployment without a database enforces none of them.
 	var policies *policy.Enforcer
 	var gate routing.Gate
-	if pgStore != nil {
-		if policies, err = policy.New(pgStore, logger); err != nil {
+	if configs != nil {
+		if policies, err = policy.New(configs, logger); err != nil {
 			return err
 		}
 		gate = policies
@@ -423,8 +426,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// resolver only reads the tables, so a deployment with a database but no bucket can
 	// still speak in voices another one prepared.
 	var resolver routing.VoiceResolver
-	if pgStore != nil {
-		resolver = voices.NewResolver(pgStore)
+	if configs != nil {
+		resolver = voices.NewResolver(configs)
 	}
 
 	bucket, err := blob.Open(ctx, settings.VoicesBucketURL)
@@ -626,7 +629,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, liveClient, telephony, base, finding, judging, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, telephony, base, finding, judging, logger)
 	if err != nil {
 		return err
 	}
@@ -689,7 +692,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Bringing a voice needs somewhere to keep the recordings, a place to record them and
 	// at least one provider willing to be taught. Missing any of those, the voice paths
 	// say so rather than half-working.
-	voiceService, err := buildVoices(pgStore, bucket, logger)
+	voiceService, err := buildVoices(configs, bucket, logger)
 	if err != nil {
 		return err
 	}
@@ -716,7 +719,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		sessions.HostTools(workers)
 	}
 
-	authenticator, err := newAuthenticator(settings, pgStore, logger)
+	authenticator, err := newAuthenticator(settings, configs, logger)
 	if err != nil {
 		return err
 	}
@@ -731,15 +734,32 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go pruneDataChanges(ctx, pgStore, settings.DataMove.Retention, logger)
 	}
 
+	// A session lives in one process's memory, so a deployment running more than one
+	// node needs the sessions reachable from whichever node a socket lands on. The relay
+	// is what reaches them, and Redis is all it takes: a single-node deployment gets one
+	// anyway and nothing is published that nobody asks for.
+	var sessionRelay *relay.Bus
+	if liveClient != nil {
+		sessionRelay, err = relay.New(relay.Options{Redis: liveClient.Redis(), Logger: logger})
+		if err != nil {
+			return err
+		}
+	} else {
+		logger.Warn("no redis configured, so a session socket only reaches the node running it",
+			"setting", "redis.addr")
+	}
+
 	options := api.Options{
 		Routers:        routers,
 		Voices:         voiceService,
 		VoiceLibrary:   buildLibrary(logger),
 		KnowledgeURLs:  pages,
 		Store:          pgStore,
+		Configs:        configs,
 		Live:           liveClient,
 		Phone:          telephony,
 		Sessions:       sessions,
+		Relay:          sessionRelay,
 		Streams:        streams,
 		Transcripts:    transcripts,
 		Campaigns:      campaigns,
@@ -861,6 +881,7 @@ func buildSessions(
 	settings config.Config,
 	streams *api.Streams,
 	pgStore *store.Store,
+	configs *appconfig.Store,
 	liveClient *live.Client,
 	telephony *phone.Service,
 	base *turbopuffer.Store,
@@ -905,6 +926,7 @@ func buildSessions(
 		// be answered already holds it, so there is no second secret to hand out.
 		WebhookSecret: settings.Stream.APISecret,
 		Store:         pgStore,
+		Configs:       configs,
 		Live:          liveClient,
 		Logger:        logger,
 		Edge: func(spec session.Spec, logger *slog.Logger) (agent.Edge, error) {
@@ -1002,12 +1024,12 @@ func buildLibrary(logger *slog.Logger) *voices.Catalogue {
 // teach them to. The voice paths report the absence rather than failing halfway through an
 // upload.
 func buildVoices(
-	pgStore *store.Store,
+	configs *appconfig.Store,
 	bucket *blob.Bucket,
 	logger *slog.Logger,
 ) (*voices.Service, error) {
-	if pgStore == nil || bucket == nil {
-		logger.Debug("not serving voices of your own", "database", pgStore != nil, "bucket", bucket != nil)
+	if configs == nil || bucket == nil {
+		logger.Debug("not serving voices of your own", "database", configs != nil, "bucket", bucket != nil)
 		return nil, nil
 	}
 
@@ -1027,7 +1049,7 @@ func buildVoices(
 	}
 
 	return voices.NewService(voices.Options{
-		Store:   pgStore,
+		Store:   configs,
 		Bucket:  bucket,
 		Cloners: cloners,
 		Logger:  logger,

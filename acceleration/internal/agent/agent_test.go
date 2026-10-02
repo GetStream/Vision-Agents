@@ -2190,6 +2190,33 @@ func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
 	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
 }
 
+func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 2 },
+		"the tool result was never answered")
+	var asked, followed Responding
+	for _, event := range s.reported() {
+		if responding, ok := event.(Responding); ok {
+			if asked.TurnID == "" {
+				asked = responding
+			} else {
+				followed = responding
+			}
+		}
+	}
+	s.Empty(asked.Continues, "a question somebody asked continues nothing")
+	s.Equal(asked.TurnID, followed.Continues)
+}
+
 func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	// Only a caller talking over the agent abandons a turn. The agent starting one for
 	// itself, to say what a tool came back with, does not: the reply that promised to go

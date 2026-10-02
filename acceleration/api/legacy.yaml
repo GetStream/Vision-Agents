@@ -2840,47 +2840,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-    patch:
-      operationId: updateSession
-      summary: Change a session
-      description: >
-        Renames a session, relabels it, rewrites its instructions or moves it onto other
-        models, for this session only: the agent config it started from is untouched. A
-        field left out is left as it is. The id, the call and incognito are what the session
-        is, so they cannot change; forking is how to get a session that differs in those.
-
-        A session that ended can still be renamed and relabelled, since that is when a person
-        tidies up their conversations. Instructions and models only mean something to a
-        session that is running, so asking to change them on one that ended is refused.
-
-        Model changes are opened before anything changes, so a target that does not route
-        is refused and the session carries on as it was. Instructions and models take over
-        from the next turn; a reply being spoken finishes on what it started with. Naming
-        sts makes the session native, and an empty sts makes it a cascade again. A title or
-        description given here stops the router naming the conversation for what was said.
-      parameters:
-        - $ref: "#/components/parameters/SessionID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateSessionRequest"
-      responses:
-        "200":
-          description: The session as it now is
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Session"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
 
   /v1/agents/sessions/{id}/fork:
     post:
@@ -7509,53 +7468,6 @@ components:
         What to change about one running session's models. A field left out is left as it
         is. The same safe knobs as ModelOverwrites, plus the voice.
       properties:
-        llm:
-          type: string
-          description: The conversation model, a provider/model or a capability shortcut.
-        stt:
-          type: string
-        tts:
-          type: string
-        sts:
-          type: string
-          description: >
-            A speech-to-speech target, which makes the session native. Empty makes it a
-            cascade again.
-        voice:
-          type: string
-          description: >
-            The voice to speak in, in the provider's own terms. Empty returns to the
-            provider's default.
-        thinking:
-          type: string
-          enum: [none, minimal, low, medium, high]
-        temperature:
-          type: number
-          format: double
-        max_output_tokens:
-          type: integer
-        verbosity:
-          type: string
-          enum: [low, medium, high]
-
-    UpdateSessionRequest:
-      type: object
-      description: >
-        What to change about one session. A field left out is left as it is. Title,
-        description and custom can change on a session that ended; everything else needs it
-        running.
-      properties:
-        title:
-          type: string
-        description:
-          type: string
-        custom:
-          type: object
-          additionalProperties: true
-          description: Replaces the caller's labels whole. An empty object clears them.
-        instructions:
-          type: string
-          description: What the agent is told to be, from the next turn.
         llm:
           type: string
           description: The conversation model, a provider/model or a capability shortcut.

@@ -100,6 +100,9 @@ type Responding struct {
 	Participant stt.Participant
 	// Prompt is what the agent is replying to.
 	Prompt string
+	// Continues is the turn whose tools or delegated work this reply delivers, empty on a
+	// reply to something somebody said.
+	Continues string
 }
 
 func (Responding) isAgentEvent() {}

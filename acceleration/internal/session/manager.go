@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
@@ -98,9 +99,13 @@ type ManagerOptions struct {
 	// Without one the manager opens its own over the configured outbox directory.
 	Conversations *persistent.Service
 
-	Store  *store.Store
-	Live   *live.Client
-	Logger *slog.Logger
+	Store *store.Store
+	// Configs reads what a session is opened from -- the skills it names -- through
+	// whatever cache is in front of Postgres. Built over Store when it is not given, in
+	// which case every read is a query, which is what a deployment without Redis does.
+	Configs *appconfig.Store
+	Live    *live.Client
+	Logger  *slog.Logger
 }
 
 // Manager owns the sessions this process is running.
@@ -147,6 +152,13 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		conversations: options.Conversations,
 	}
 	if options.Store != nil {
+		if options.Configs == nil {
+			configs, err := appconfig.New(appconfig.Options{Store: options.Store, Logger: options.Logger})
+			if err != nil {
+				return nil, err
+			}
+			manager.options.Configs = configs
+		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
 		manager.records = newSessionRecorder(options.Store, options.Logger)
