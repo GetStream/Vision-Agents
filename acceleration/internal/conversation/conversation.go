@@ -595,7 +595,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 
 	lookup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	client, app, err := s.clientFor(lookup, customer, cid)
+	client, app, err := s.readerFor(lookup, customer, cid)
 	if err != nil {
 		return CommandReceipt{}, err
 	}
@@ -647,7 +647,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 
 // history reads a conversation back in the app it is kept in.
 func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string, voiceAgent ...string) (Page, error) {
-	client, _, err := s.clientFor(ctx, customer, cid)
+	client, _, err := s.readerFor(ctx, customer, cid)
 	if err != nil {
 		return Page{}, err
 	}

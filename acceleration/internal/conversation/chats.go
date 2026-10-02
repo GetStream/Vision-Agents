@@ -70,11 +70,26 @@ func (a streamApps) ForApp(ctx context.Context, customer string, app int64) (*ge
 	return bound.Client, nil
 }
 
+// ForAppReading is the client a conversation is read back with, which reaches one kept in
+// the deployment's app even once it can no longer be written there.
+func (a streamApps) ForAppReading(ctx context.Context, customer string, app int64) (*getstream.Stream, error) {
+	bound, err := a.clients.ForAppReading(ctx, customer, app)
+	if err != nil {
+		return nil, err
+	}
+	return bound.Client, nil
+}
+
 func (a streamApps) DeploymentApp() int64 { return a.clients.DeploymentApp() }
 
+// readingChats is Chats that can read back a conversation it would no longer write to.
+type readingChats interface {
+	ForAppReading(ctx context.Context, customer string, app int64) (*getstream.Stream, error)
+}
+
 // parked reports whether an error means the conversation's app cannot be reached from here
-// at all. Its writes stay on disk and are tried again much later, rather than delivered
-// anywhere else.
+// at all, or can only be read. Its writes stay on disk and are tried again much later,
+// rather than delivered anywhere else.
 func parked(err error) bool {
 	return errors.Is(err, streamapp.ErrStreamAppMoved) ||
 		errors.Is(err, streamapp.ErrStreamAppDisconnected) ||
@@ -141,17 +156,46 @@ func (s *Service) lookupPin(ctx context.Context, pins Pins, customer, cid string
 	return otherwise, nil
 }
 
-// clientFor is the client a conversation for a customer is reached with: in the app it is
+// clientFor is the client a conversation for a customer is written with: in the app it is
 // kept in, or a new one's in the customer's own.
 func (s *Service) clientFor(ctx context.Context, customer, cid string) (*getstream.Stream, int64, error) {
-	_, own, err := s.chats.For(ctx, customer)
-	if err != nil && !errors.Is(err, streamapp.ErrNoIdentity) {
-		return nil, 0, err
-	}
-	app, err := s.pinOf(ctx, customer, cid, own)
+	app, err := s.appOf(ctx, customer, cid, false)
 	if err != nil {
 		return nil, 0, err
 	}
 	client, err := s.chats.ForApp(ctx, customer, app)
 	return client, app, err
+}
+
+// readerFor is the client a conversation is read back with, which is clientFor's except
+// for a conversation kept where it can no longer be written, which can still be read.
+func (s *Service) readerFor(ctx context.Context, customer, cid string) (*getstream.Stream, int64, error) {
+	reading, ok := s.chats.(readingChats)
+	if !ok {
+		return s.clientFor(ctx, customer, cid)
+	}
+	app, err := s.appOf(ctx, customer, cid, true)
+	if err != nil {
+		return nil, 0, err
+	}
+	client, err := reading.ForAppReading(ctx, customer, app)
+	return client, app, err
+}
+
+// appOf is the app a conversation is kept in, or for one nobody has word of, the app the
+// customer acts in. A customer with no app at all reads as the deployment's. So does one
+// whose app is disconnected, for reading only: what it wrote is still its to read.
+func (s *Service) appOf(ctx context.Context, customer, cid string, reading bool) (int64, error) {
+	_, own, err := s.chats.For(ctx, customer)
+	tolerated := errors.Is(err, streamapp.ErrNoIdentity) || (reading && errors.Is(err, streamapp.ErrStreamAppDisconnected))
+	if err != nil && !tolerated {
+		return 0, err
+	}
+	return s.pinOf(ctx, customer, cid, own)
+}
+
+// AppOf is the app a conversation is kept in, for a caller deciding whether a session in
+// another app may be bound to it.
+func (s *Service) AppOf(ctx context.Context, customer, cid string) (int64, error) {
+	return s.appOf(ctx, customer, cid, true)
 }

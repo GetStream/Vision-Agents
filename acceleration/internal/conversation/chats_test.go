@@ -28,12 +28,14 @@ type twoApps struct {
 	own        map[string]int64
 	down       map[int64]bool
 	pk         int64
+	// readOnly are the customers whose work in the deployment's app can only be read.
+	readOnly map[string]bool
 }
 
 func newTwoApps(t *testing.T) *twoApps {
 	return &twoApps{
 		deployment: chattest.NewServer(t), apps: map[int64]*chattest.Server{},
-		own: map[string]int64{}, down: map[int64]bool{}, pk: 1,
+		own: map[string]int64{}, down: map[int64]bool{}, pk: 1, readOnly: map[string]bool{},
 	}
 }
 
@@ -58,6 +60,8 @@ func (a *twoApps) ForApp(_ context.Context, customer string, app int64) (*getstr
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	switch {
+	case (app == 0 || app == a.pk) && a.readOnly[customer]:
+		return nil, streamapp.ErrReadOnly
 	case app == 0 || app == a.pk:
 		return a.deployment.Client, nil
 	case a.down[app]:
@@ -66,6 +70,13 @@ func (a *twoApps) ForApp(_ context.Context, customer string, app int64) (*getstr
 		return a.apps[app].Client, nil
 	}
 	return nil, streamapp.ErrStreamAppMoved
+}
+
+func (a *twoApps) ForAppReading(ctx context.Context, customer string, app int64) (*getstream.Stream, error) {
+	if app == 0 || app == a.pk {
+		return a.deployment.Client, nil
+	}
+	return a.ForApp(ctx, customer, app)
 }
 
 func (a *twoApps) DeploymentApp() int64 { return a.pk }
@@ -310,3 +321,30 @@ func (p *pinnedTo) ForApp(ctx context.Context, customer string, app int64) (*get
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestAConversationInTheSharedAppIsOnlyReadOnceItCannotBeWrittenThere(t *testing.T) {
+	// acme registered an app of its own and the fallback is off: what it said in the
+	// deployment's app is still its to read, and nothing more is added there.
+	apps := newTwoApps(t)
+	service, err := NewForChats(t.TempDir(), apps)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c := replied(t, service, 0, "acme", "said in the shared app")
+	c.Release()
+	apps.give(t, "acme", 77)
+	apps.mu.Lock()
+	apps.readOnly["acme"] = true
+	apps.mu.Unlock()
+
+	page, err := service.HistoryForCaller(t.Context(), "acme", "agent", c.CID(), "", "employee")
+	require.NoError(t, err)
+	var texts []string
+	for _, message := range page.Messages {
+		texts = append(texts, message.Text)
+	}
+	require.Contains(t, texts, "said in the shared app")
+
+	_, _, _, err = service.OpenInApp(t.Context(), 77, "acme", "agent", c.CID(), "employee", "", nil)
+	require.ErrorIs(t, err, streamapp.ErrReadOnly, "resuming it would write there")
+	require.Error(t, service.Describe(t.Context(), "acme", c.CID(), "renamed", ""))
+}
