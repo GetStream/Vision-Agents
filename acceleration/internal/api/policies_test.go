@@ -138,3 +138,28 @@ func (s *PoliciesSuite) put(body map[string]any) Policy {
 		s.serverClient.do(http.MethodPut, "/v1/policies/app", body, &stored))
 	return stored
 }
+
+func (s *PoliciesSuite) TestTheOrganizationRequirementIsNotWritableOverHTTP() {
+	// Any app's backend can write its organization's policy, and this setting would let one
+	// app keep all its siblings out of the shared app. It is the operator's.
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/organization",
+		map[string]any{"require_own_stream_app": true})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "operator")
+
+	required := true
+	s.Require().NoError(s.store.SavePolicy(context.Background(), store.ScopeOrganization,
+		s.app.organization.ID, store.PolicyDocument{RequireOwnStreamApp: &required}))
+	var written Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/organization",
+		map[string]any{"prompt_injection": true}, &written))
+	s.Require().NotNil(written.RequireOwnStreamApp, "a write over HTTP keeps what the operator set")
+	s.True(*written.RequireOwnStreamApp)
+}
+
+func (s *PoliciesSuite) TestAnAppMayRequireItsOwnStreamApp() {
+	stored := s.put(map[string]any{"require_own_stream_app": true})
+
+	s.Require().NotNil(stored.RequireOwnStreamApp)
+	s.True(*stored.RequireOwnStreamApp)
+}

@@ -84,6 +84,10 @@ type PolicyDocument struct {
 	AllowedModels *[]string `json:"allowed_models,omitempty"`
 	// Tags are laid over the request's own on every row of usage.
 	Tags map[string]string `json:"tags,omitempty"`
+	// RequireOwnStreamApp keeps an app out of the deployment's own Stream app: it is never
+	// written there for want of one of its own, and what it wrote there before can only be
+	// read. An organization's is set only by the operator.
+	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
 }
 
 // Policy is one scope's stored document.

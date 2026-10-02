@@ -270,3 +270,51 @@ func (s *PolicySuite) TestAClassifierThatFailsLetsTheResponseStand() {
 	s.Require().NotNil(verdict)
 	s.NoError(<-verdict)
 }
+
+func (s *PolicySuite) TestAnOrganizationThatRequiresItsOwnAppRequiresItOfEveryApp() {
+	required := true
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{RequireOwnStreamApp: &required})
+
+	requires, err := s.enforcer.RequiresOwnStreamApp(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.True(requires)
+}
+
+func (s *PolicySuite) TestAnAppCannotLoosenItsOrganizationsRequirement() {
+	required, loosened := true, false
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{RequireOwnStreamApp: &required})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{RequireOwnStreamApp: &loosened})
+
+	requires, err := s.enforcer.RequiresOwnStreamApp(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.True(requires)
+}
+
+func (s *PolicySuite) TestAnAppMayRequireItsOwnAppWhateverItsOrganizationSays() {
+	required := true
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{RequireOwnStreamApp: &required})
+
+	requires, err := s.enforcer.RequiresOwnStreamApp(s.ctx, s.app)
+
+	s.Require().NoError(err)
+	s.True(requires)
+}
+
+func (s *PolicySuite) TestAPolicyReadErrorRequiresItsOwnApp() {
+	// Everything else here fails open. This fails closed, since the other answer writes a
+	// customer into an app it may have been kept out of on purpose.
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	enforcer, err := New(closed, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+
+	requires, err := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
+
+	s.Error(err)
+	s.True(requires)
+	_, admitted := enforcer.Admit(s.ctx, s.app)
+	s.NoError(admitted, "a request is still admitted when the policies cannot be read")
+}

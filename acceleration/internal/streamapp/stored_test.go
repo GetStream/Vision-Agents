@@ -4,6 +4,7 @@ package streamapp
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strconv"
 	"testing"
@@ -380,4 +381,49 @@ func (s *StoredSuite) TestADeploymentSignedHookWaitsForTheDeploymentApp() {
 	s.Require().NoError(err, "a registered app's hooks do not wait on the deployment's")
 	s.Require().Len(verifiers, 1)
 	s.Equal(s.customer, verifiers[0].CustomerID)
+}
+
+// floored is app mode's source with the fallback on and a floor answering as given.
+func (s *StoredSuite) floored(required bool, err error) *Stored {
+	source := s.source(true)
+	source.SetFloor(func(context.Context, string) (bool, error) { return required, err })
+	return source
+}
+
+func (s *StoredSuite) TestAnOrganizationThatRequiresItsOwnAppRefusesTheDeploymentApp() {
+	_, err := s.floored(true, nil).For(s.ctx, s.customer)
+
+	s.ErrorIs(err, ErrNoIdentity, "the fallback is never used for an app that must have its own")
+}
+
+func (s *StoredSuite) TestARequiredOwnAppParksLegacyWrites() {
+	source := s.floored(true, nil)
+
+	_, err := source.ForApp(s.ctx, s.customer, 0)
+	s.ErrorIs(err, ErrReadOnly)
+	identity, err := source.ForAppReading(s.ctx, s.customer, 0)
+	s.Require().NoError(err, "what it wrote there is still read back")
+	s.Equal("deploy-key", identity.APIKey)
+}
+
+func (s *StoredSuite) TestAPolicyReadErrorRefusesTheFallback() {
+	_, err := s.floored(false, errors.New("the policies could not be read")).For(s.ctx, s.customer)
+
+	s.ErrorIs(err, ErrNoIdentity)
+}
+
+func (s *StoredSuite) TestTheDeploymentAppIsUnaffectedByTheRequirement() {
+	identity, err := s.floored(true, nil).For(s.ctx, "1")
+
+	s.Require().NoError(err)
+	s.Equal("deploy-key", identity.APIKey)
+}
+
+func (s *StoredSuite) TestARegisteredAppIsUnaffectedByTheRequirement() {
+	s.register("own-key")
+
+	identity, err := s.floored(true, nil).For(s.ctx, s.customer)
+
+	s.Require().NoError(err)
+	s.Equal("own-key", identity.APIKey)
 }

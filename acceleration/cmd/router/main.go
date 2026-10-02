@@ -632,6 +632,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err := checkDeploymentApp(ctx, settings, streamClients); err != nil {
 		return err
 	}
+	// An app whose policies require one of its own is never written into the deployment's.
+	if stored, ok := streamClients.Stored(); ok && policies != nil {
+		stored.SetFloor(policies.RequiresOwnStreamApp)
+	}
 	if pgStore != nil {
 		pgStore.SetStreamPins(streamPins(streamClients))
 	}

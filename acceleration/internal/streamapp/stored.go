@@ -58,6 +58,40 @@ type Stored struct {
 	mu        sync.Mutex
 	warned    map[string]time.Time
 	fallbacks map[string]*tally
+	floor     Floor
+}
+
+// Floor reports whether a customer must act in a Stream app of its own, which keeps it out
+// of the deployment's: never written there for want of one, and what it wrote there before
+// only read. An error is taken to require it.
+type Floor func(ctx context.Context, customer string) (bool, error)
+
+// SetFloor says where to ask whether a customer must act in an app of its own.
+func (s *Stored) SetFloor(floor Floor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.floor = floor
+}
+
+// fallsBack reports whether a customer may be written into the deployment's app for want of
+// an app of its own: only while the fallback allows it, and its policies do not forbid it.
+func (s *Stored) fallsBack(ctx context.Context, customer string) bool {
+	if !s.fallback {
+		return false
+	}
+	s.mu.Lock()
+	floor := s.floor
+	s.mu.Unlock()
+	if floor == nil {
+		return true
+	}
+	required, err := floor(ctx, customer)
+	if err != nil {
+		s.logger.Warn("stream: could not read whether a customer must act in its own app, so it may not fall back",
+			"customer_id", customer, "error", err)
+		return false
+	}
+	return !required
 }
 
 // tally is the fallback uses of one customer not written down yet.
@@ -111,7 +145,7 @@ func (s *Stored) For(ctx context.Context, customer string) (Identity, error) {
 		// Until the deployment's own app is known, this may be its customer.
 		return Identity{}, ErrDeploymentAppUnknown
 	}
-	if !s.fallback {
+	if !s.fallsBack(ctx, customer) {
 		return Identity{}, ErrNoIdentity
 	}
 	if deployment == 0 {
@@ -165,7 +199,7 @@ func (s *Stored) forApp(ctx context.Context, customer string, app int64) (Identi
 // identities or from deployment mode, or pinned to the deployment app by id. Its customer's
 // own work is finished there; anybody else's is written to only while the fallback allows.
 func (s *Stored) legacy(ctx context.Context, customer string, app, deployment int64) (Identity, bool, error) {
-	if s.ownsDeploymentApp(customer, deployment) || s.fallback {
+	if s.ownsDeploymentApp(customer, deployment) || s.fallsBack(ctx, customer) {
 		identity, err := s.inDeploymentApp(ctx, customer, app)
 		return identity, false, err
 	}

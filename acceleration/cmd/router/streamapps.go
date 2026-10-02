@@ -32,6 +32,8 @@ const streamAppsUsage = `usage: router stream-apps <command> [flags]
   check           ask Stream about one customer's app now (--customer)
   rewrap          seal every key again under the current key version
   forget          delete a customer's app outright, tombstone and all (--customer)
+  require         keep every app of an organization out of the deployment's own Stream
+                  app (--org), or let them back in (--off)
 
   fallbacks       who app mode still writes into the deployment's own Stream app
     --since       how far back to look, as 14d or 36h (default 14d)
@@ -64,6 +66,8 @@ func runStreamApps(args []string, settings config.Config, logger *slog.Logger) e
 		})
 	case "forget":
 		return runForget(ctx, args[1:], settings, logger, os.Stdout)
+	case "require":
+		return runRequire(ctx, args[1:], settings, os.Stdout)
 	case "fallbacks":
 		return runFallbacks(ctx, args[1:], settings, os.Stdout)
 	case "backfill-pins":
@@ -326,4 +330,40 @@ func runForget(ctx context.Context, args []string, settings config.Config, logge
 		fmt.Fprintf(out, "%s has no registered Stream app now\n", *customer)
 		return nil
 	})
+}
+
+// runRequire sets an organization's require_own_stream_app, which only the operator may:
+// any app's backend can write its organization's policy, and this is the one setting that
+// would let one app keep all its siblings out of the shared app.
+func runRequire(ctx context.Context, args []string, settings config.Config, out io.Writer) error {
+	flags := flag.NewFlagSet("stream-apps require", flag.ContinueOnError)
+	organization := flags.String("org", "", "the organization whose apps it applies to")
+	off := flags.Bool("off", false, "let the organization's apps fall back again")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *organization == "" {
+		return errors.New(streamAppsUsage)
+	}
+	pgStore, err := openStore(ctx, settings)
+	if err != nil {
+		return err
+	}
+	defer pgStore.Close()
+
+	document, err := pgStore.Policy(ctx, store.ScopeOrganization, *organization)
+	if err != nil {
+		return err
+	}
+	required := !*off
+	document.RequireOwnStreamApp = &required
+	if err := pgStore.SavePolicy(ctx, store.ScopeOrganization, *organization, document); err != nil {
+		return err
+	}
+	if required {
+		fmt.Fprintf(out, "every app of organization %s now acts only in a Stream app of its own\n", *organization)
+	} else {
+		fmt.Fprintf(out, "apps of organization %s may fall back to the deployment's own Stream app again\n", *organization)
+	}
+	return nil
 }
