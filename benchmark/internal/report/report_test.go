@@ -294,3 +294,38 @@ func TestSummaryReportsReplyTimeOnNonToolTurnsWithToolTurnsApart(t *testing.T) {
 		t.Fatalf("reply time table missing:\n%s", md)
 	}
 }
+
+func TestSummaryPoolsTheRoutersStagesOverEveryTurn(t *testing.T) {
+	stage := func(decision int) score.StageTiming {
+		return score.StageTiming{TurnID: "t", CadenceMs: 350, DecisionMs: decision, RoundtripMs: 2000 + decision}
+	}
+	sum := BuildSummary("accelerated", "run1", 2, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true,
+			Metrics: score.Metrics{Stages: []score.StageTiming{stage(400), stage(500)}, AgentMetrics: map[string]float64{"stt_latency_ms__avg": 100}}},
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 2, Outcome: OutcomePass, Passed: true,
+			Metrics: score.Metrics{Stages: []score.StageTiming{stage(1200)}, AgentMetrics: map[string]float64{"stt_latency_ms__avg": 300}}},
+	})
+	pack := sum.Packs[0]
+	if pack.StageSamples != 3 || pack.StageP50["decision_ms"] != 500 || pack.StageP50["cadence_ms"] != 350 {
+		t.Fatalf("stages are pooled over turns, not calls: %+v", pack)
+	}
+	if pack.AgentMetricsP50["stt_latency_ms__avg"] != 100 {
+		t.Fatalf("agent metrics %+v", pack.AgentMetricsP50)
+	}
+	md := Markdown(sum)
+	if !strings.Contains(md, "## Where the router's time goes") || !strings.Contains(md, "| restaurant | 0 ms | 350 ms | 500 ms | 0 ms | 0 ms | 0 ms | 2500 ms | 3 |") {
+		t.Fatalf("stage table missing:\n%s", md)
+	}
+	if !strings.Contains(md, "## What the agent measured") || !strings.Contains(md, "| restaurant | 100 ms | — |") {
+		t.Fatalf("agent metrics table missing:\n%s", md)
+	}
+}
+
+func TestAReportWithoutStagesLeavesTheirTablesOut(t *testing.T) {
+	md := Markdown(BuildSummary("livekit", "run1", 1, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true},
+	}))
+	if strings.Contains(md, "Where the router's time goes") || strings.Contains(md, "What the agent measured") {
+		t.Fatalf("a run with nothing to break down should not print an empty breakdown:\n%s", md)
+	}
+}
