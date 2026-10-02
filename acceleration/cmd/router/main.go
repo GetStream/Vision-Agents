@@ -19,13 +19,10 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/hibiken/asynq"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
@@ -47,6 +44,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
@@ -625,7 +623,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, liveClient, telephony, base, finding, judging, logger)
+	// Every Stream action taken for a customer, a call joined, a transcript written, a
+	// token minted, is taken in the app this resolves for them.
+	streamClients := newStreamClients(settings)
+
+	sessions, err := buildSessions(settings, streams, pgStore, liveClient, telephony, base, finding, judging, streamClients, logger)
 	if err != nil {
 		return err
 	}
@@ -705,10 +707,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if sessions != nil {
 		sessions.HostTools(workers)
 	}
-
-	// Every Stream action the API takes for a customer, a token, a guest, a transcript read
-	// back, is taken in the app this resolves for them.
-	streamClients := newStreamClients(settings)
 
 	authenticator, err := newAuthenticator(settings, pgStore, logger)
 	if err != nil {
@@ -853,6 +851,7 @@ func buildSessions(
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
 	judging *lcmrouter.Router,
+	stream *streamapp.Clients,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -887,35 +886,12 @@ func buildSessions(
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
 		SpeculativeReplies: settings.Agent.SpeculativeReplies,
-		// The same app secret that verifies Stream's inbound hooks, now signing one going
-		// the other way. A customer who wants to decide for themselves whether a turn may
-		// be answered already holds it, so there is no second secret to hand out.
-		WebhookSecret: settings.Stream.APISecret,
-		Store:         pgStore,
-		Live:          liveClient,
-		Logger:        logger,
-		Edge: func(spec session.Spec, logger *slog.Logger) (agent.Edge, error) {
-			return streamedge.New(streamedge.Options{
-				CallID:   spec.CallID,
-				CallType: spec.CallType,
-				User:     streamedge.User{ID: spec.UserID, Name: spec.UserName},
-				Logger:   logger,
-			})
-		},
-		Transcript: func(spec session.Spec, logger *slog.Logger) (session.Transcript, error) {
-			channel := strings.TrimPrefix(spec.ConversationID, "agent:")
-			if channel == spec.ConversationID {
-				channel = ""
-			}
-			return chatlog.New(chatlog.Options{
-				AgentID:      spec.AgentID,
-				Channel:      channel,
-				CustomerID:   spec.CustomerID,
-				Agent:        chatlog.User{ID: spec.UserID, Name: spec.UserName},
-				VisibleTools: spec.VisibleTools,
-				Logger:       logger,
-			})
-		},
+		Stream:             stream,
+		Store:              pgStore,
+		Live:               liveClient,
+		Logger:             logger,
+		Edge:               edgeFor(stream),
+		Transcript:         transcriptFor(),
 	})
 }
 

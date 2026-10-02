@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -41,7 +43,10 @@ import (
 // The production edge is Stream's WebRTC, whose Opus path is cgo; keeping that in the
 // command that wires it means a session can be tested without a sound library or a Stream
 // account.
-type EdgeFactory func(spec Spec, logger *slog.Logger) (agent.Edge, error)
+//
+// It is handed the Stream app the session is pinned to, which is the app the call has to
+// be joined in: the one the customer's clients created it in.
+type EdgeFactory func(ctx context.Context, spec Spec, stream streamapp.Bound, logger *slog.Logger) (agent.Edge, error)
 
 // Transcript stores what was said, so a call leaves something behind.
 type Transcript interface {
@@ -56,9 +61,9 @@ type Transcript interface {
 	Close()
 }
 
-// TranscriptFactory opens the transcript for a session. A nil factory, or one that
-// declines, means the conversation is simply not kept.
-type TranscriptFactory func(spec Spec, logger *slog.Logger) (Transcript, error)
+// TranscriptFactory opens the transcript for a session, in the Stream app the session is
+// pinned to. A nil factory, or one that declines, means the conversation is simply not kept.
+type TranscriptFactory func(ctx context.Context, spec Spec, stream streamapp.Bound, logger *slog.Logger) (Transcript, error)
 
 // ManagerOptions is everything a session needs that is the same for all of them.
 type ManagerOptions struct {
@@ -90,10 +95,10 @@ type ManagerOptions struct {
 	// SpeculativeReplies has every agent start its reply before the flow controller has
 	// ruled on the words, and hold it until the ruling says to answer.
 	SpeculativeReplies bool
-	// WebhookSecret signs a guardrail's outbound webhook. It is the app secret that
-	// already verifies Stream's inbound hooks, so a customer asking to decide for
-	// themselves has the key to check it with and there is no second secret to store.
-	WebhookSecret string
+	// Stream says which Stream app, and with which credential, each session acts in. It
+	// is optional: without it a session has no app, and anything needing one fails where
+	// it needs it, as it does on a deployment with no Stream credentials.
+	Stream *streamapp.Clients
 	// Conversations is optional, and is the persistent text store a caller already holds.
 	// Without one the manager opens its own over the configured outbox directory.
 	Conversations *persistent.Service
@@ -205,6 +210,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}
 
+	// The Stream app the session acts in is settled once, before anything is done there,
+	// and the whole session keeps it: its call, its transcript and the rows it writes.
+	stream, err := m.stream(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	spec.StreamApp = stream.Identity.StreamApp
+
 	var remembering memory.Store
 	if spec.Memory.UserID != "" {
 		if m.options.Memory == nil {
@@ -303,7 +316,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	case spec.Edge != nil:
 		edge = spec.Edge
 	default:
-		edge, err = m.options.Edge(spec, m.logger)
+		edge, err = m.options.Edge(ctx, spec, stream, m.logger)
 		if err != nil {
 			return nil, err
 		}
@@ -362,7 +375,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if conv != nil {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
 	}
-	screening, err := m.guardrail(ctx, spec)
+	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +457,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.options.Transcript != nil && conv == nil && !spec.Incognito {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
-		transcript, err := m.options.Transcript(spec, m.logger)
+		transcript, err := m.options.Transcript(ctx, spec, stream, m.logger)
 		if err != nil {
 			m.logger.Warn("not storing the transcript", "call", spec.CallID, "error", err)
 		} else if err := transcript.Start(ctx); err != nil {
@@ -1004,7 +1017,7 @@ func (m *Manager) searching(spec Spec) bool {
 // screens nothing. That is the one decision in this feature worth being strict about:
 // every other failure here loses a reply, and this one would answer a question the
 // customer wrote a file to prevent being answered.
-func (m *Manager) guardrail(ctx context.Context, spec Spec) (guardrail.Guardrail, error) {
+func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Identity) (guardrail.Guardrail, error) {
 	if strings.TrimSpace(spec.Guardrail) == "" {
 		return nil, nil
 	}
@@ -1032,9 +1045,38 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec) (guardrail.Guardrail
 		},
 		Classifier: m.options.Classifier,
 		LLM:        m.options.LLM,
-		Secret:     m.options.WebhookSecret,
+		Secret:     stream.Secret.Reveal(),
+		APIKey:     ownKey(spec.CustomerID, stream),
 		Logger:     m.logger,
 	})
+}
+
+// stream is the Stream app a new session acts in. A deployment with no Stream app still
+// holds a text conversation, so having none is not an error here: what needs one fails
+// where it needs it.
+func (m *Manager) stream(ctx context.Context, spec Spec) (streamapp.Bound, error) {
+	nowhere := streamapp.Bound{Identity: streamapp.Identity{CustomerID: spec.CustomerID}}
+	if m.options.Stream == nil {
+		return nowhere, nil
+	}
+	bound, err := m.options.Stream.For(ctx, spec.CustomerID)
+	if errors.Is(err, streamapp.ErrNoIdentity) {
+		return nowhere, nil
+	}
+	if err != nil {
+		return streamapp.Bound{}, fmt.Errorf("session: which Stream app to act in: %w", err)
+	}
+	return bound, nil
+}
+
+// ownKey is the key a guardrail webhook names when the session acts in its customer's own
+// app, so the customer can tell which of their keys signed it. A session acting in the
+// deployment's shared app names none, and is signed as it always was.
+func ownKey(customer string, stream streamapp.Identity) string {
+	if stream.StreamApp == 0 || strconv.FormatInt(stream.StreamApp, 10) != customer {
+		return ""
+	}
+	return stream.APIKey
 }
 
 // line is what the session may do to the call it is on, which is nothing unless it was

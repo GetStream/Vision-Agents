@@ -291,6 +291,7 @@ func sessionRow(created *Session) store.AgentSession {
 	row := store.AgentSession{
 		ID:              created.id,
 		CustomerID:      spec.CustomerID,
+		StreamAppPK:     spec.StreamApp,
 		ConfigID:        spec.ConfigID,
 		AgentName:       spec.AgentName,
 		AgentID:         spec.AgentID,

@@ -81,3 +81,19 @@ func (s *StreamAppsSuite) TestAGuestIsCreatedInTheCallingApp() {
 	_, inDeployment := s.chat.User(guest.Id)
 	s.False(inDeployment)
 }
+
+func (s *StreamAppsSuite) TestASessionRecordsTheAppItWasCreatedIn() {
+	// The rows a session leaves behind say which app it was in, so what is finished or read
+	// back later is done there, wherever the customer acts by then.
+	call := s.utils.callID()
+	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call})
+
+	s.Require().Eventually(func() bool {
+		stored, err := s.store.StoredSession(context.Background(), s.customerID(), created.Id)
+		return err == nil && stored.StreamAppPK == 4242
+	}, settleFor, 10*time.Millisecond, "the session row carries its app")
+	s.Require().Eventually(func() bool {
+		row, err := s.store.Call(context.Background(), s.customerID(), created.Id)
+		return err == nil && row.StreamAppPK == 4242
+	}, settleFor, 10*time.Millisecond, "the call row carries its app")
+}

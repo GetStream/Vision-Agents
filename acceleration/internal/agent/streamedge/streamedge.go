@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"slices"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/GetStream/getstream-go-webrtc/audio/opus"
 	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
 	"github.com/GetStream/getstream-go-webrtc/track"
+	getstream "github.com/GetStream/getstream-go/v5"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
 	"github.com/GetStream/protocol/protobuf/video/sfu/signal_rpc"
@@ -67,6 +69,14 @@ type Options struct {
 	APISecret string
 	// UserToken defaults to STREAM_USER_TOKEN and is used in preference to a secret.
 	UserToken string
+	// Explicit says the credentials above are the whole answer: nothing is read from the
+	// environment to fill them in. The router sets it, because a session acts in the
+	// Stream app it was pinned to, never in whichever app the environment names.
+	Explicit bool
+	// BaseURL is the Stream API the app is reached at, and HTTPClient what reaches it.
+	// Empty leaves both to the SDK.
+	BaseURL    string
+	HTTPClient *http.Client
 
 	Logger *slog.Logger
 }
@@ -118,14 +128,16 @@ func New(options Options) (*Edge, error) {
 	if options.CallType == "" {
 		options.CallType = defaultCallType
 	}
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
-	if options.UserToken == "" {
-		options.UserToken = os.Getenv(userTokenEnvVar)
+	if !options.Explicit {
+		if options.APIKey == "" {
+			options.APIKey = os.Getenv(apiKeyEnvVar)
+		}
+		if options.APISecret == "" {
+			options.APISecret = os.Getenv(apiSecretEnvVar)
+		}
+		if options.UserToken == "" {
+			options.UserToken = os.Getenv(userTokenEnvVar)
+		}
 	}
 	if options.APIKey == "" {
 		return nil, fmt.Errorf("streamedge: %s is not set", apiKeyEnvVar)
@@ -323,7 +335,14 @@ func (e *Edge) connect() (*rtc.Client, error) {
 		return client, nil
 	}
 
-	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, rtc.WithUser(user))
+	options := []rtc.ClientOption{rtc.WithUser(user)}
+	if e.options.BaseURL != "" {
+		options = append(options, getstream.WithBaseUrl(e.options.BaseURL))
+	}
+	if e.options.HTTPClient != nil {
+		options = append(options, getstream.WithHTTPClient(e.options.HTTPClient))
+	}
+	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, options...)
 	if err != nil {
 		return nil, fmt.Errorf("streamedge: connect: %w", err)
 	}

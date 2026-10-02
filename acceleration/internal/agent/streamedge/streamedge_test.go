@@ -359,3 +359,41 @@ func (s *StreamEdgeSuite) TestPublishingAfterLeavingFails() {
 	s.ErrorContains(talker.Write(speech(48_000, 20)), "left")
 	s.NoError(talker.Close(), "closing twice is safe")
 }
+
+func (s *StreamEdgeSuite) TestAnExplicitIdentityIsNotOverriddenByAUserTokenInTheEnvironment() {
+	// A session acts in the app it was pinned to. A token in the environment belongs to the
+	// deployment's app, and preferring it would join somebody else's call as somebody else.
+	s.T().Setenv(apiKeyEnvVar, "deploy-key")
+	s.T().Setenv(apiSecretEnvVar, "deploy-secret")
+	s.T().Setenv(userTokenEnvVar, "deploy-token")
+
+	edge, err := New(Options{
+		CallID: "call-1", User: User{ID: "agent"},
+		APIKey: "own-key", APISecret: "own-secret", Explicit: true,
+	})
+
+	s.Require().NoError(err)
+	s.Equal("own-key", edge.options.APIKey)
+	s.Equal("own-secret", edge.options.APISecret)
+	s.Empty(edge.options.UserToken)
+}
+
+func (s *StreamEdgeSuite) TestAnExplicitIdentityNeedsItsOwnCredentials() {
+	s.T().Setenv(apiKeyEnvVar, "deploy-key")
+	s.T().Setenv(apiSecretEnvVar, "deploy-secret")
+
+	_, err := New(Options{CallID: "call-1", User: User{ID: "agent"}, Explicit: true})
+
+	s.Error(err, "an empty identity must not quietly become the deployment's")
+}
+
+func (s *StreamEdgeSuite) TestDeploymentModeStillHonoursAUserToken() {
+	s.T().Setenv(apiKeyEnvVar, "deploy-key")
+	s.T().Setenv(apiSecretEnvVar, "")
+	s.T().Setenv(userTokenEnvVar, "deploy-token")
+
+	edge, err := New(Options{CallID: "call-1", User: User{ID: "agent"}})
+
+	s.Require().NoError(err)
+	s.Equal("deploy-token", edge.options.UserToken)
+}

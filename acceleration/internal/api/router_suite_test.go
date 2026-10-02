@@ -390,9 +390,10 @@ func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *ses
 		TTS:           streams.TTS,
 		Memory:        remembering,
 		Conversations: conversations,
+		Stream:        s.stream,
 		Store:         s.store,
 		Logger:        logger,
-		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
+		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
 	})

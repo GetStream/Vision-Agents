@@ -118,6 +118,10 @@ type Options struct {
 	// whose it is. A bound conversation's channel already carries the stamp.
 	CustomerID string
 
+	// Client writes with a client the caller already holds for the app, which is how the
+	// router writes in the Stream app a session is pinned to. With it set, nothing is read
+	// from the environment and the key and secret below are not used.
+	Client *getstream.Stream
 	// APIKey defaults to STREAM_API_KEY.
 	APIKey string
 	// APISecret defaults to STREAM_API_SECRET. These are server-side writes, so a secret
@@ -176,22 +180,24 @@ func New(options Options) (*Log, error) {
 	if options.Agent.ID == "" {
 		return nil, errors.New("chatlog: an agent user id is required")
 	}
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
-	if options.APIKey == "" || options.APISecret == "" {
-		return nil, errors.New("chatlog: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required")
-	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
-
-	client, err := getstream.NewClient(options.APIKey, options.APISecret)
-	if err != nil {
-		return nil, err
+	client := options.Client
+	if client == nil {
+		if options.APIKey == "" {
+			options.APIKey = os.Getenv(apiKeyEnvVar)
+		}
+		if options.APISecret == "" {
+			options.APISecret = os.Getenv(apiSecretEnvVar)
+		}
+		if options.APIKey == "" || options.APISecret == "" {
+			return nil, errors.New("chatlog: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required")
+		}
+		var err error
+		if client, err = getstream.NewClient(options.APIKey, options.APISecret); err != nil {
+			return nil, err
+		}
 	}
 
 	channel := options.Channel

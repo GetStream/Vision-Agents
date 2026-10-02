@@ -128,6 +128,10 @@ type Deps struct {
 	// Secret signs a webhook, so the customer's server can tell our request from anyone
 	// who found the URL.
 	Secret string
+	// APIKey names the key whose secret signed it, sent beside the signature, when the
+	// session acts in the customer's own app: an app with several keys can then tell which
+	// one to check with. Empty sends none.
+	APIKey string
 	// HTTPClient calls a webhook. Nil builds one with the check timeout.
 	HTTPClient *http.Client
 	Logger     *slog.Logger
