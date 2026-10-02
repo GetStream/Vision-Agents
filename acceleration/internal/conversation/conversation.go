@@ -626,8 +626,15 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 		}
 	}
 
+	// A channel id is only unique within one app, and the conversation open under it may be
+	// another customer's.
 	if open != nil {
-		return open.receipt(commandID, caller)
+		open.mu.Lock()
+		owner := open.data.Customer
+		open.mu.Unlock()
+		if owner == customer {
+			return open.receipt(commandID, caller)
+		}
 	}
 	var stored disk
 	raw, err := os.ReadFile(filepath.Join(s.recordDir(customer, app, id), "state.json"))
