@@ -123,11 +123,7 @@ func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenReq
 	if s.store == nil {
 		return CreateCallToken400JSONResponse{badRequest(noCalls)}, nil
 	}
-	bound, joinable, err := s.streamFor(ctx, customerID)
-	if err != nil {
-		return nil, err
-	}
-	if !joinable {
+	if s.stream == nil {
 		return CreateCallToken400JSONResponse{badRequest(noStreamKeys)}, nil
 	}
 
@@ -149,11 +145,22 @@ func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenReq
 		userName = userID
 	}
 
-	callType := defaultCallType
+	// The token is for the app the agent joined the call in, which the running session
+	// knows best and the call row remembers after it.
+	callType, pin := defaultCallType, call.StreamAppPK
 	if s.sessions != nil {
 		if found, running := s.sessions.Get(call.ID, OwnerFrom(ctx)); running {
-			callType = found.Spec().CallType
+			callType, pin = found.Spec().CallType, found.Spec().StreamApp
 		}
+	}
+	bound, err := s.streamForApp(ctx, customerID, pin)
+	switch {
+	case errors.Is(err, errNoStream):
+		return CreateCallToken400JSONResponse{badRequest(noStreamKeys)}, nil
+	case elsewhere(err):
+		return CreateCallToken400JSONResponse{badRequest(callElsewhere)}, nil
+	case err != nil:
+		return nil, err
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
@@ -183,11 +190,7 @@ func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenReq
 	if !ok {
 		return CreateChatToken401JSONResponse{missingCustomer()}, nil
 	}
-	bound, readable, err := s.streamFor(ctx, customerID)
-	if err != nil {
-		return nil, err
-	}
-	if !readable {
+	if s.stream == nil {
 		return CreateChatToken400JSONResponse{badRequest(noStreamKeys)}, nil
 	}
 	if request.Body == nil {
@@ -210,6 +213,15 @@ func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenReq
 		userName = userID
 	}
 
+	bound, err := s.agentStream(ctx, customerID, agentID)
+	switch {
+	case errors.Is(err, errNoStream):
+		return CreateChatToken400JSONResponse{badRequest(noStreamKeys)}, nil
+	case elsewhere(err):
+		return CreateChatToken400JSONResponse{badRequest("that agent's conversation is kept in a Stream app this customer no longer acts in")}, nil
+	case err != nil:
+		return nil, err
+	}
 	client := bound.Client
 	if err := conversation.CreateMissingUsers(ctx, client, map[string]getstream.UserRequest{
 		agentID: {ID: agentID},
@@ -265,11 +277,7 @@ func (s *Server) GetCallTranscript(ctx context.Context, request GetCallTranscrip
 	if s.store == nil {
 		return GetCallTranscript400JSONResponse{badRequest(noCalls)}, nil
 	}
-	bound, readable, err := s.streamFor(ctx, customerID)
-	if err != nil {
-		return nil, err
-	}
-	if !readable {
+	if s.stream == nil {
 		return GetCallTranscript400JSONResponse{badRequest(noTranscripts)}, nil
 	}
 
@@ -278,7 +286,10 @@ func (s *Server) GetCallTranscript(ctx context.Context, request GetCallTranscrip
 		return GetCallTranscript404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
 	}
 
-	said, err := chatlog.NewReaderFromClient(bound.Client).Transcript(ctx, s.transcriptRead(ctx, customerID, call))
+	said, err := s.transcriptOf(ctx, customerID, call)
+	if errors.Is(err, errNoStream) {
+		return GetCallTranscript400JSONResponse{badRequest(noTranscripts)}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -311,6 +322,64 @@ func (s *Server) streamFor(ctx context.Context, customerID string) (streamapp.Bo
 		return streamapp.Bound{}, false, err
 	}
 	return bound, true, nil
+}
+
+// errNoStream is a deployment with no Stream app, or none for the customer.
+var errNoStream = errors.New("api: no Stream app is configured for this customer")
+
+// streamForApp is the Stream app work already pinned to one is finished in: the app the
+// call or session was made in, wherever its customer acts now. errNoStream says there is no
+// Stream at all; streamapp's errors say the pinned app is not one this customer can act in.
+func (s *Server) streamForApp(ctx context.Context, customerID string, app int64) (streamapp.Bound, error) {
+	if s.stream == nil {
+		return streamapp.Bound{}, errNoStream
+	}
+	bound, err := s.stream.ForApp(ctx, customerID, app)
+	if errors.Is(err, streamapp.ErrNoIdentity) {
+		return streamapp.Bound{}, errNoStream
+	}
+	return bound, err
+}
+
+// elsewhere reports whether a pinned app is one the customer cannot act in from here:
+// moved away from, disconnected, or never theirs.
+func elsewhere(err error) bool {
+	return errors.Is(err, streamapp.ErrStreamAppMoved) || errors.Is(err, streamapp.ErrStreamAppDisconnected)
+}
+
+// callElsewhere is what a call made in an app the customer no longer acts in answers.
+const callElsewhere = "that call was made in a Stream app this customer no longer acts in"
+
+// transcriptOf is what was said on a call, read in the app the call was made in. A call
+// made in an app the customer no longer acts in has nothing readable from here.
+func (s *Server) transcriptOf(ctx context.Context, customerID string, call store.Call) ([]chatlog.Spoken, error) {
+	bound, err := s.streamForApp(ctx, customerID, call.StreamAppPK)
+	if elsewhere(err) {
+		return []chatlog.Spoken{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return chatlog.NewReaderFromClient(bound.Client).Transcript(ctx, s.transcriptRead(ctx, customerID, call))
+}
+
+// agentStream is the app an agent's channel is in: the one its most recent session was
+// made in, or for an agent nobody has spoken to yet, the customer's own.
+func (s *Server) agentStream(ctx context.Context, customerID, agentID string) (streamapp.Bound, error) {
+	if s.store != nil {
+		latest, err := s.store.QuerySessions(ctx, customerID, store.SessionFilter{AgentID: agentID, Limit: 1})
+		if err != nil {
+			return streamapp.Bound{}, err
+		}
+		if len(latest) == 1 {
+			return s.streamForApp(ctx, customerID, latest[0].StreamAppPK)
+		}
+	}
+	bound, ok, err := s.streamFor(ctx, customerID)
+	if err == nil && !ok {
+		return streamapp.Bound{}, errNoStream
+	}
+	return bound, err
 }
 
 // transcriptSlack widens a call's window by the time the router's clock and Stream's may
@@ -401,15 +470,9 @@ func (s *Server) GetCallTimeline(ctx context.Context, request GetCallTimelineReq
 
 	// The transcript is worth having but not worth failing over: the timings are the
 	// part of this view that only this service holds.
-	var said []chatlog.Spoken
-	if bound, readable, err := s.streamFor(ctx, customerID); err != nil {
-		s.logger.Error("could not resolve the Stream app for a timeline", "call", call.ID, "error", err)
-	} else if readable {
-		said, err = chatlog.NewReaderFromClient(bound.Client).Transcript(ctx, s.transcriptRead(ctx, customerID, call))
-		if err != nil {
-			s.logger.Error("could not read the transcript for a timeline",
-				"call", call.ID, "error", err)
-		}
+	said, err := s.transcriptOf(ctx, customerID, call)
+	if err != nil && !errors.Is(err, errNoStream) {
+		s.logger.Error("could not read the transcript for a timeline", "call", call.ID, "error", err)
 	}
 
 	return GetCallTimeline200JSONResponse(timelineOf(turns, said, models)), nil

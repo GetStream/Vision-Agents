@@ -94,6 +94,9 @@ const suiteKEK = "router suite"
 const (
 	suiteStreamKey    = "suite-stream-key"
 	suiteStreamSecret = "suite-stream-secret"
+	// suiteStreamApp is that app's id, which the router knows, so work pinned to any other
+	// app is recognised as somebody else's.
+	suiteStreamApp = 1
 )
 
 // RouterSuite runs the whole router against Postgres and Redis with real API key auth, for
@@ -214,7 +217,7 @@ func (s *RouterSuite) SetupSuite() {
 
 	s.chat = chattest.NewServer(s.T())
 	s.apps = &suiteApps{own: map[string]streamapp.Identity{}, deployment: streamapp.NewDeployment(streamapp.DeploymentOptions{
-		APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL,
+		APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL, App: suiteStreamApp,
 	})}
 	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
 	limiter := s.quota(liveClient, logger)

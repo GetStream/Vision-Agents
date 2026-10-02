@@ -88,6 +88,22 @@ func (s *Server) PutUser(user map[string]any) {
 	s.db.users[user["id"].(string)] = user
 }
 
+// Members returns the user ids a channel holds as members.
+func (s *Server) Members(id string) []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	var ids []string
+	members, _ := s.db.channels[id]["members"].([]any)
+	for _, member := range members {
+		if named, ok := member.(map[string]any); ok {
+			if userID, ok := named["user_id"].(string); ok {
+				ids = append(ids, userID)
+			}
+		}
+	}
+	return ids
+}
+
 // refuse answers the way Chat does when it will not do what was asked.
 func refuse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusBadRequest)
@@ -141,6 +157,19 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		result["users"] = written
+	case r.Method == http.MethodPost && len(parts) >= 2 && parts[len(parts)-2] == "agent":
+		// An update adds the members it names to the channel, which is how a reader comes
+		// to be able to watch it.
+		id := parts[len(parts)-1]
+		data, exists := db.channels[id]
+		if !exists {
+			refuse(w, "channel "+id+" does not exist")
+			return
+		}
+		added, _ := body["add_members"].([]any)
+		members, _ := data["members"].([]any)
+		data["members"] = append(members, added...)
+		result["channel"] = data
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/channels"):
 		// A query finds channels and never creates one.
 		channels := []map[string]any{}

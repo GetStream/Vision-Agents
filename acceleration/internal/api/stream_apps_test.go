@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -32,17 +36,105 @@ func (s *StreamAppsSuite) SetupTest() {
 func (s *StreamAppsSuite) TestACallTokenNamesTheIdentitysKey() {
 	// The browser joins whichever app the token names, so it has to be the one the agent
 	// joined the call in.
-	call := store.Call{
-		ID: s.utils.uuid(), CustomerID: s.customerID(), CallID: s.utils.callID(),
-		AgentID: "agent-" + s.utils.uuid(), StartedAt: time.Now().UTC(),
-	}
-	s.Require().NoError(s.store.StartCall(context.Background(), &call))
+	call := s.called(4242)
 
 	var minted CallToken
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost,
 		"/v1/agents/calls/"+call.ID+"/token", map[string]any{}, &minted))
 
 	s.Equal("own-key", minted.ApiKey)
+}
+
+func (s *StreamAppsSuite) TestACallTokenIsMintedInTheCallsApp() {
+	// A call made before the customer had an app of its own was made in the deployment's,
+	// and joining it means joining it there.
+	call := s.called(0)
+
+	var minted CallToken
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost,
+		"/v1/agents/calls/"+call.ID+"/token", map[string]any{}, &minted))
+
+	s.Equal(suiteStreamKey, minted.ApiKey)
+}
+
+func (s *StreamAppsSuite) TestACallInAnAppTheCustomerLeftMintsNothing() {
+	call := s.called(7)
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/calls/"+call.ID+"/token", map[string]any{})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "no longer acts in")
+}
+
+func (s *StreamAppsSuite) TestATranscriptIsReadFromTheCallsApp() {
+	call := s.called(0)
+	s.lineIn(s.chat, call.AgentID, call.StartedAt.Add(time.Minute), "said in the deployment's app")
+	s.lineIn(s.own, call.AgentID, call.StartedAt.Add(time.Minute), "not where this call was")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said in the deployment's app", read[0].Text)
+}
+
+func (s *StreamAppsSuite) TestAClaimJoinsEachChannelInItsOwnApp() {
+	// A guest's conversations may span the time before and after the customer had an app
+	// of its own, and each is joined where it is.
+	guest := guestPrefix + s.utils.uuid()
+	s.Require().NoError(s.store.RecordGuest(context.Background(), &store.GuestUser{
+		ID: guest, CustomerID: s.customerID(), Name: "Guest",
+	}))
+	before, after := "support-"+s.utils.uuid(), "support-"+s.utils.uuid()
+	s.talkedIn(s.chat, guest, before, 0)
+	s.talkedIn(s.own, guest, after, 4242)
+	account := "account-" + s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/guests/claim",
+		ClaimGuestRequest{GuestId: guest, UserId: account}, nil))
+
+	s.Contains(s.chat.Members(before), account)
+	s.Contains(s.own.Members(after), account)
+	s.NotContains(s.own.Members(before), account)
+}
+
+// called records a call the suite's customer made in the app given, zero being the
+// deployment's.
+func (s *StreamAppsSuite) called(app int64) store.Call {
+	call := store.Call{
+		ID: s.utils.uuid(), CustomerID: s.customerID(), StreamAppPK: app, CallID: s.utils.callID(),
+		AgentID: "agent-" + s.utils.uuid(), StartedAt: time.Now().UTC().Add(-time.Hour),
+	}
+	s.Require().NoError(s.store.StartCall(context.Background(), &call))
+	return call
+}
+
+// lineIn writes one line into a channel of one app, creating it stamped for the customer.
+func (s *StreamAppsSuite) lineIn(chat *chattest.Server, channel string, at time.Time, text string) {
+	ctx := context.Background()
+	creator, speaker := "vision-agent", "alice"
+	_, err := chat.Client.Chat().GetOrCreateChannel(ctx, chatlog.ChannelType, channel,
+		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{
+			CreatedByID: &creator, Custom: map[string]any{conversation.CustomerField: s.customerID()},
+		}})
+	s.Require().NoError(err)
+	chat.At(at)
+	_, err = chat.Client.Chat().SendMessage(ctx, chatlog.ChannelType, channel,
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &speaker}})
+	s.Require().NoError(err)
+}
+
+// talkedIn is a finished conversation a user had in one app's channel.
+func (s *StreamAppsSuite) talkedIn(chat *chattest.Server, user, channel string, app int64) {
+	creator := "vision-agent"
+	_, err := chat.Client.Chat().GetOrCreateChannel(context.Background(), chatlog.ChannelType, channel,
+		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &creator}})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SaveSession(context.Background(), &store.AgentSession{
+		ID: s.utils.uuid(), CustomerID: s.customerID(), StreamAppPK: app, UserID: user,
+		AgentID: "agent", ConversationID: chatlog.ChannelType + ":" + channel, State: store.SessionClosed,
+	}))
 }
 
 func (s *StreamAppsSuite) TestAChatTokenNamesTheCallingAppsKey() {

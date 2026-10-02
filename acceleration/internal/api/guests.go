@@ -191,9 +191,8 @@ func (s *Server) ClaimGuestUser(ctx context.Context, request ClaimGuestUserReque
 // addToGuestChannels puts the real account into the transcripts the guest was talking in, so
 // the conversations a claim just moved are readable by the person they moved to.
 func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, userID string) error {
-	bound, joinable, err := s.streamFor(ctx, customerID)
-	if err != nil || !joinable {
-		return err
+	if s.stream == nil {
+		return nil
 	}
 
 	// The sessions have already been rewritten, so they are found by the account rather than
@@ -205,14 +204,23 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 		return err
 	}
 
-	client := bound.Client
 	var failures []error
 	for _, one := range moved {
 		channel := transcriptChannel(one)
 		if channel == "" {
 			continue
 		}
-		_, err := client.Chat().UpdateChannel(ctx, chatlog.ChannelType, channel,
+		// Each conversation is joined in the app it was held in, which for a guest who
+		// talked before their app had an identity of its own is the deployment's.
+		bound, err := s.streamForApp(ctx, customerID, one.StreamAppPK)
+		if errors.Is(err, errNoStream) || elsewhere(err) {
+			continue
+		}
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		_, err = bound.Client.Chat().UpdateChannel(ctx, chatlog.ChannelType, channel,
 			&getstream.UpdateChannelRequest{
 				AddMembers: []getstream.ChannelMemberRequest{{UserID: userID}},
 			})
