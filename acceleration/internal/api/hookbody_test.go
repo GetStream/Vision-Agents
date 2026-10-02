@@ -44,9 +44,9 @@ func (s *HookBodySuite) SetupTest() {
 			s.asked.Add(1)
 			return auth.Principal{AppID: "globex", OrganizationID: "org-1", Kind: auth.KindServer, ServerSide: true}, nil
 		}),
-		AuthMode:     auth.Custom,
-		StreamSecret: "hook-secret",
-		Logger:       slog.New(slog.DiscardHandler),
+		AuthMode:   auth.Custom,
+		HookSecret: "hook-secret",
+		Logger:     slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
 	s.router = httptest.NewServer(server.Handler())

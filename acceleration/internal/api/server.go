@@ -30,7 +30,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -43,6 +42,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 )
 
@@ -99,9 +99,10 @@ type Options struct {
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
-	// Transcripts reads back what was said on a call. Absent when the deployment has no
-	// chat credentials, in which case nothing was written down to read.
-	Transcripts *chatlog.Reader
+	// Stream resolves which Stream app, and which credential, the router acts in for each
+	// customer: tokens, guests and the transcripts read back. Absent when the deployment
+	// has no Stream app at all, in which case those paths say so.
+	Stream *streamapp.Clients
 	// Campaigns rings lists of people. Absent without telephony or sessions, in which
 	// case a campaign can be written down but not run.
 	Campaigns *campaign.Runner
@@ -129,13 +130,10 @@ type Options struct {
 	// meant to answer a phone, in which case the dispatch socket says so rather than
 	// accepting a worker whose calls would never arrive.
 	Dispatch *dispatch.Pool
-	// StreamSecret signs the call events Stream sends. Without it the webhook refuses
-	// every request, because an unsigned webhook is anyone who found the URL. It also
-	// mints the tokens a browser joins a call with, which is why it never leaves here.
-	StreamSecret string
-	// StreamKey names the Stream app those tokens are for. A browser needs it to join,
-	// so unlike the secret it is meant to be handed out.
-	StreamKey string
+	// HookSecret is the deployment app's secret, which signs the events Stream sends to
+	// the hooks. Without it the hooks refuse every request, because an unsigned hook is
+	// anyone who found the URL.
+	HookSecret string
 	// CORSOrigins are the browser origins allowed to call this API directly, which is
 	// what a dashboard talking to the router without a proxy in between needs. Empty
 	// means no browser may, which is right for a deployment only servers reach.
@@ -181,7 +179,7 @@ type Server struct {
 	phone         *phone.Service
 	sessions      *session.Manager
 	streams       *Streams
-	transcripts   *chatlog.Reader
+	stream        *streamapp.Clients
 	campaigns     *campaign.Runner
 	simulations   *simulation.Runner
 	knowledge     knowledge.Writer
@@ -189,8 +187,7 @@ type Server struct {
 	voices        *voices.Service
 	library       *voices.Catalogue
 	dispatch      *dispatch.Pool
-	streamSecret  string
-	streamKey     string
+	hookSecret    string
 	corsOrigins   []string
 	publicURL     string
 	dashboardURL  string
@@ -271,7 +268,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		phone:         options.Phone,
 		sessions:      options.Sessions,
 		streams:       options.Streams,
-		transcripts:   options.Transcripts,
+		stream:        options.Stream,
 		campaigns:     options.Campaigns,
 		simulations:   options.Simulations,
 		knowledge:     options.Knowledge,
@@ -279,8 +276,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		voices:        options.Voices,
 		library:       options.VoiceLibrary,
 		dispatch:      options.Dispatch,
-		streamSecret:  options.StreamSecret,
-		streamKey:     options.StreamKey,
+		hookSecret:    options.HookSecret,
 		corsOrigins:   options.CORSOrigins,
 		publicURL:     options.PublicURL,
 		dashboardURL:  options.DashboardURL,

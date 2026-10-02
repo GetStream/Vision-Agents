@@ -55,7 +55,7 @@ type callEvent struct {
 // belonging to nobody — get better on a second delivery, while the caller is on the line for
 // the whole of it.
 func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
-	if s.streamSecret == "" {
+	if s.hookSecret == "" {
 		// Refusing is the only safe answer: without the secret there is no way to tell
 		// Stream from anyone who found the URL, and this path starts agents.
 		http.Error(w, "call events are not configured", http.StatusNotFound)
@@ -67,7 +67,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("rejected a call event before reading its signature")
 		return
 	}
-	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.streamSecret) {
+	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.hookSecret) {
 		s.logger.Warn("rejected a call event with a bad signature", "bytes", len(payload))
 		http.Error(w, "that is not a call event from Stream", http.StatusUnauthorized)
 		return

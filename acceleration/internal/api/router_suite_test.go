@@ -31,7 +31,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -51,6 +50,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -134,8 +134,12 @@ type RouterSuite struct {
 	// outbox is where the conversations service queues what it could not write down.
 	outbox string
 
-	// chat is the Stream Chat the conversations are written to and transcripts read from.
-	chat *chattest.Server
+	// chat is the Stream Chat the conversations are written to and transcripts read from:
+	// the deployment's own app. apps gives a customer an app of its own instead, and
+	// stream is what the API resolves through.
+	chat   *chattest.Server
+	apps   *suiteApps
+	stream *streamapp.Clients
 
 	// dispatch is the pool the hooks hand an arriving call or message to, for a test to
 	// register a worker in and read back what it was given.
@@ -209,6 +213,10 @@ func (s *RouterSuite) SetupSuite() {
 	s.data = testData{suite: s}
 
 	s.chat = chattest.NewServer(s.T())
+	s.apps = &suiteApps{own: map[string]streamapp.Identity{}, deployment: streamapp.NewDeployment(streamapp.DeploymentOptions{
+		APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL,
+	})}
+	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
 	limiter := s.quota(liveClient, logger)
 	policies := s.policies(logger)
 	streams := s.routers(limiter, policies, logger)
@@ -225,25 +233,25 @@ func (s *RouterSuite) SetupSuite() {
 			routing.LCM:    streams.LCM,
 			routing.Image:  streams.Image,
 		},
-		Streams:       streams,
-		Sessions:      sessions,
-		Store:         pgStore,
-		Live:          liveClient,
-		Auth:          s.authenticator(pgStore),
-		AuthMode:      auth.APIKey,
-		Phone:         s.telephony(logger),
-		Campaigns:     s.campaigns(sessions, logger),
-		Simulations:   s.simulations(sessions, streams, logger),
-		Knowledge:     s.knowledgeWriter(),
-		Transcripts:   chatlog.NewReaderFromClient(s.chat.Client),
+		Streams:     streams,
+		Sessions:    sessions,
+		Store:       pgStore,
+		Live:        liveClient,
+		Auth:        s.authenticator(pgStore),
+		AuthMode:    auth.APIKey,
+		Phone:       s.telephony(logger),
+		Campaigns:   s.campaigns(sessions, logger),
+		Simulations: s.simulations(sessions, streams, logger),
+		Knowledge:   s.knowledgeWriter(),
+
 		KnowledgeURLs: s.pages(redisAddr),
 		Voices:        s.voiceService(),
 		VoiceLibrary:  voices.NewCatalogue(),
 		Dispatch:      s.dispatch,
 		Policies:      policies,
 		Quota:         limiter,
-		StreamKey:     suiteStreamKey,
-		StreamSecret:  suiteStreamSecret,
+		Stream:        s.stream,
+		HookSecret:    suiteStreamSecret,
 		DataRetention: time.Hour,
 		Logger:        logger,
 	})
@@ -869,4 +877,45 @@ func readAll(response *http.Response) ([]byte, error) {
 	var buffer bytes.Buffer
 	_, err := buffer.ReadFrom(response.Body)
 	return buffer.Bytes(), err
+}
+
+// suiteApps is the Stream apps the suite's customers act in. A customer given none acts in
+// the deployment's app, which is the suite's chattest.
+type suiteApps struct {
+	mu         sync.Mutex
+	own        map[string]streamapp.Identity
+	deployment *streamapp.Deployment
+}
+
+func (a *suiteApps) For(ctx context.Context, customer string) (streamapp.Identity, error) {
+	a.mu.Lock()
+	identity, ok := a.own[customer]
+	a.mu.Unlock()
+	if ok {
+		return identity, nil
+	}
+	return a.deployment.For(ctx, customer)
+}
+
+func (a *suiteApps) ForApp(ctx context.Context, customer string, app int64) (streamapp.Identity, error) {
+	a.mu.Lock()
+	identity, ok := a.own[customer]
+	a.mu.Unlock()
+	if ok && identity.StreamApp == app {
+		return identity, nil
+	}
+	return a.deployment.ForApp(ctx, customer, app)
+}
+
+// giveApp makes the customer act in an app of its own, a chattest of its own, from now on.
+func (s *RouterSuite) giveApp(customer string, app int64, key string) *chattest.Server {
+	own := chattest.NewServer(s.T())
+	s.apps.mu.Lock()
+	s.apps.own[customer] = streamapp.Identity{
+		CustomerID: customer, StreamApp: app, APIKey: key,
+		Secret: streamapp.NewSecret(key + "-secret"), BaseURL: own.URL,
+	}
+	s.apps.mu.Unlock()
+	s.stream.Invalidate(customer)
+	return own
 }

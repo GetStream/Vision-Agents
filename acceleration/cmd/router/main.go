@@ -676,15 +676,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 	}
 
-	// Reading a transcript back needs the same credentials writing one does. Without
-	// them the calls are still listed; only what was said on them is missing.
-	var transcripts *chatlog.Reader
-	if reader, err := chatlog.NewReader(chatlog.ReaderOptions{}); err != nil {
-		logger.Debug("transcripts will not be readable", "error", err)
-	} else {
-		transcripts = reader
-	}
-
 	// Bringing a voice needs somewhere to keep the recordings, a place to record them and
 	// at least one provider willing to be taught. Missing any of those, the voice paths
 	// say so rather than half-working.
@@ -715,6 +706,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 		sessions.HostTools(workers)
 	}
 
+	// Every Stream action the API takes for a customer, a token, a guest, a transcript read
+	// back, is taken in the app this resolves for them.
+	streamClients := newStreamClients(settings)
+
 	authenticator, err := newAuthenticator(settings, pgStore, logger)
 	if err != nil {
 		return err
@@ -740,7 +735,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Phone:          telephony,
 		Sessions:       sessions,
 		Streams:        streams,
-		Transcripts:    transcripts,
 		Campaigns:      campaigns,
 		Simulations:    simulations,
 		Dispatch:       workers,
@@ -749,20 +743,20 @@ func run(settings config.Config, logger *slog.Logger) error {
 		TrustedProxies: trustedProxies,
 		AuthMode:       authMode,
 		DataRetention:  settings.DataMove.Retention,
-		StreamSecret:   settings.Stream.APISecret,
-		StreamKey:      settings.Stream.APIKey,
+		Stream:         streamClients,
+		HookSecret:     settings.Stream.APISecret,
 		CORSOrigins:    settings.CORSOrigins,
 		PublicURL:      settings.PublicURL,
 		DashboardURL:   settings.DashboardURL,
 		Auth:           authenticator,
 		Logger:         logger,
 	}
-	if options.StreamSecret == "" {
+	if options.HookSecret == "" {
 		logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+
 			"the call events Stream sends cannot be told apart from anyone who found the url",
 			"hook", "POST /v1/phone/hooks/stream")
 	}
-	if options.StreamKey == "" {
+	if settings.Stream.APIKey == "" {
 		logger.Warn("no stream.api_key set, so nobody can join a call from a browser",
 			"endpoint", "POST /v1/agents/calls/{id}/token")
 	}

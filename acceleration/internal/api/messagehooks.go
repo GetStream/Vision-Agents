@@ -56,7 +56,7 @@ type messageEvent struct {
 // from Stream is a 200: Stream retries a non-2xx, and a message nobody can answer is not
 // answerable on the second delivery either.
 func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
-	if s.streamSecret == "" {
+	if s.hookSecret == "" {
 		// Refusing is the only safe answer: without the secret there is no way to tell
 		// Stream from anyone who found the URL, and this path starts agents.
 		http.Error(w, "message events are not configured", http.StatusNotFound)
@@ -68,7 +68,7 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("rejected a message event before reading its signature")
 		return
 	}
-	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.streamSecret) {
+	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.hookSecret) {
 		s.logger.Warn("rejected a message event with a bad signature", "bytes", len(payload))
 		http.Error(w, "that is not a message event from Stream", http.StatusUnauthorized)
 		return

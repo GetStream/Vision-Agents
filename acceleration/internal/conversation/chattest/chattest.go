@@ -29,7 +29,9 @@ type store struct {
 type Server struct {
 	// Client talks to it.
 	Client *getstream.Stream
-	db     *store
+	// URL is where it is served, for a client of one's own to be pointed at.
+	URL string
+	db  *store
 }
 
 // NewServer serves Chat from memory for the life of the test.
@@ -45,7 +47,7 @@ func NewServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("chattest: %v", err)
 	}
-	return &Server{Client: client, db: db}
+	return &Server{Client: client, URL: server.URL, db: db}
 }
 
 // Client serves Chat from memory for the life of the test.

@@ -40,7 +40,11 @@ func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserReq
 	if !ok {
 		return CreateGuestUser401JSONResponse{missingCustomer()}, nil
 	}
-	if s.streamKey == "" || s.streamSecret == "" {
+	bound, mintable, err := s.streamFor(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
+	if !mintable {
 		return CreateGuestUser400JSONResponse{badRequest(noStreamKeys)}, nil
 	}
 
@@ -89,11 +93,7 @@ func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserReq
 		}
 	}
 
-	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
-	if err != nil {
-		return nil, err
-	}
-
+	client := bound.Client
 	role := guestRole
 	if _, err := client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
 		Users: map[string]getstream.UserRequest{
@@ -191,8 +191,9 @@ func (s *Server) ClaimGuestUser(ctx context.Context, request ClaimGuestUserReque
 // addToGuestChannels puts the real account into the transcripts the guest was talking in, so
 // the conversations a claim just moved are readable by the person they moved to.
 func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, userID string) error {
-	if s.streamKey == "" || s.streamSecret == "" {
-		return nil
+	bound, joinable, err := s.streamFor(ctx, customerID)
+	if err != nil || !joinable {
+		return err
 	}
 
 	// The sessions have already been rewritten, so they are found by the account rather than
@@ -204,11 +205,7 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 		return err
 	}
 
-	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
-	if err != nil {
-		return err
-	}
-
+	client := bound.Client
 	var failures []error
 	for _, one := range moved {
 		channel := transcriptChannel(one)
