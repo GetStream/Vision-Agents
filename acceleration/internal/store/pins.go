@@ -142,3 +142,34 @@ func writePin(fields map[string]json.RawMessage, pin *int64) (json.RawMessage, e
 // pins is held atomically because the router sets it once at startup while suites share a
 // store across goroutines.
 type pinsHolder = atomic.Pointer[StreamPins]
+
+// backfillBatch is how many rows one statement of a backfill pins, so no table is locked
+// for long.
+const backfillBatch = 5000
+
+// BackfillStreamPins pins every unpinned session, call, number and call leg to the
+// deployment's own app, which is what an unpinned row meant all along. It is for app mode,
+// where every row names its app, once that app's id is known. It reports how many rows of
+// each table it pinned.
+func (s *Store) BackfillStreamPins(ctx context.Context, deployment int64) (map[string]int64, error) {
+	if deployment <= 0 {
+		return nil, errors.New("store: pins are backfilled with the deployment's own app id")
+	}
+	pinned := map[string]int64{}
+	for _, table := range []string{"agent_sessions", "calls", "phone_numbers", "call_resources"} {
+		for {
+			result, err := s.db.ExecContext(ctx, fmt.Sprintf(
+				"UPDATE %[1]s SET %[2]s = ? WHERE ctid IN (SELECT ctid FROM %[1]s WHERE %[2]s IS NULL LIMIT ?)",
+				table, pinColumn), deployment, backfillBatch)
+			if err != nil {
+				return pinned, fmt.Errorf("store: backfill %s: %w", table, err)
+			}
+			written, _ := result.RowsAffected()
+			pinned[table] += written
+			if written < backfillBatch {
+				break
+			}
+		}
+	}
+	return pinned, nil
+}

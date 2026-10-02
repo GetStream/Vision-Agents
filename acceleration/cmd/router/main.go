@@ -89,6 +89,7 @@ const usage = `usage: router [--config path] [command]
   serve                 serve the API (the default)
   keys create           mint a credential for an app, printing the secret once
   replicate             copy another deployment's data here and follow its changes
+  stream-apps           look after the Stream apps customers registered in app mode
 `
 
 func main() {
@@ -168,6 +169,8 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runKeys(args, settings, logger)
 	case "replicate":
 		return runReplicate(args, settings, logger)
+	case "stream-apps":
+		return runStreamApps(args, settings, logger)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil

@@ -348,3 +348,20 @@ func TestAConversationInTheSharedAppIsOnlyReadOnceItCannotBeWrittenThere(t *test
 	require.ErrorIs(t, err, streamapp.ErrReadOnly, "resuming it would write there")
 	require.Error(t, service.Describe(t.Context(), "acme", c.CID(), "renamed", ""))
 }
+
+func TestRollingBackToDeploymentModeKeepsTheDeploymentAppsConversationsOpen(t *testing.T) {
+	// App mode wrote this conversation for the deployment's own customer, pinned to the
+	// deployment app by its id. Deployment mode, knowing that id, still delivers it there.
+	deployment := chattest.NewServer(t)
+	root := t.TempDir()
+	id := pendingRecord(t, root, "1", 1, "written by app mode")
+	clients := streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
+		APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: deployment.URL, App: 1,
+	}), streamapp.ClientsOptions{})
+
+	service, err := NewForChats(root, StreamApps(clients))
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+
+	require.Eventually(t, func() bool { return len(deployment.Messages(id)) == 1 }, 8*time.Second, 20*time.Millisecond)
+}

@@ -530,3 +530,20 @@ func (s *DataMoveSuite) TestStreamAppsRecordNoDataChanges() {
 		"SELECT count(*) FROM data_changes WHERE table_name IN ('stream_apps', 'stream_app_keys')").Scan(&recorded))
 	s.Zero(recorded)
 }
+
+func (s *DataMoveSuite) TestBackfillPinsTheDeploymentAppsRows() {
+	unpinned, own := s.pinnedSession("acme", 0), s.pinnedSession("acme", 4242)
+
+	pinned, err := s.source.BackfillStreamPins(s.ctx, 1)
+
+	s.Require().NoError(err)
+	s.GreaterOrEqual(pinned["agent_sessions"], int64(1))
+	for id, want := range map[string]int64{unpinned: 1, own: 4242} {
+		var pin int64
+		s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
+			"SELECT stream_app_pk FROM agent_sessions WHERE id = ?", id).Scan(&pin))
+		s.Equal(want, pin, "a row already pinned keeps its app")
+	}
+	_, err = s.source.BackfillStreamPins(s.ctx, 0)
+	s.Error(err, "an unknown deployment app pins nothing")
+}
