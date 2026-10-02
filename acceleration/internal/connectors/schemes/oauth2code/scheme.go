@@ -4,8 +4,10 @@
 // Begin discovers the authorization server when the manifest does not pin it, picks or
 // registers a client, and builds the authorize URL. Complete checks the callback against
 // the state Begin returned, redeems the code and applies the manifest's capture and
-// identity rules. Nothing here knows a provider: what differs between them is a
-// core.Profile field. Mint, Wrap, Classify and Revoke are part 2 (AI-836).
+// identity rules. Mint renews the access token by the manifest's refresh policy, Wrap puts
+// it on a request, Classify says what a provider's answer means, and Revoke ends the grant
+// at the provider. Nothing here knows a provider: what differs between them is a
+// core.Profile field.
 package oauth2code
 
 import (
@@ -17,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/url"
@@ -68,9 +71,6 @@ var (
 	ErrNoClient = errors.New("oauth2code: no OAuth client available for this connector")
 )
 
-// errPart2 is what the methods AI-836 implements return until then.
-var errPart2 = errors.New("oauth2code: Mint, Wrap, Classify and Revoke are not implemented yet (AI-836)")
-
 // AuthorizationError is the error a provider sent back to the callback (RFC 6749 section
 // 4.1.2.1), such as access_denied when the user declined.
 type AuthorizationError struct {
@@ -105,6 +105,9 @@ type Config struct {
 	// the browser and never through the egress client, so this is the only check it gets.
 	// Tests that run against a loopback fake pass one that lets the fake's host through.
 	PublicEndpoint func(ctx context.Context, raw string) error
+	// Logger gets Mint's warning that a grant is about to need a reconnect; nil is
+	// slog.Default(). Nothing logged names a token.
+	Logger *slog.Logger
 }
 
 // Scheme is the oauth2_code scheme. It is safe for concurrent use.
@@ -136,6 +139,9 @@ func New(cfg Config) (*Scheme, error) {
 	if cfg.PublicEndpoint == nil {
 		cfg.PublicEndpoint = egress.ValidatePublicHTTPSURL
 	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 	return &Scheme{cfg: cfg, spent: map[string]time.Time{}}, nil
 }
 
@@ -166,16 +172,23 @@ type attempt struct {
 // material is the sealed payload of a connection's Material: everything a refresh and a
 // revocation need, so neither has to discover the server again.
 type material struct {
-	Client             client    `json:"client"`
-	TokenEndpoint      string    `json:"token_endpoint"`
-	RevocationEndpoint string    `json:"revocation_endpoint,omitempty"`
-	Issuer             string    `json:"issuer,omitempty"`
-	Resource           string    `json:"resource,omitempty"`
-	AccessToken        string    `json:"access_token"`
-	TokenType          string    `json:"token_type,omitempty"`
-	RefreshToken       string    `json:"refresh_token,omitempty"`
-	ExpiresAt          time.Time `json:"expires_at,omitzero"`
-	Scopes             []string  `json:"scopes,omitempty"`
+	// Ref is the connection Complete ran for. Mint and Revoke look a preregistered client's
+	// secret up by it, as Complete did, since core.Scheme hands them no ConnectionRef. The
+	// core seals Material bound to that same connection, so it cannot name another.
+	Ref                core.ConnectionRef `json:"ref"`
+	Client             client             `json:"client"`
+	TokenEndpoint      string             `json:"token_endpoint"`
+	RevocationEndpoint string             `json:"revocation_endpoint,omitempty"`
+	Issuer             string             `json:"issuer,omitempty"`
+	Resource           string             `json:"resource,omitempty"`
+	AccessToken        string             `json:"access_token"`
+	TokenType          string             `json:"token_type,omitempty"`
+	RefreshToken       string             `json:"refresh_token,omitempty"`
+	ExpiresAt          time.Time          `json:"expires_at,omitzero"`
+	// RefreshExpiresAt is when RefreshToken dies by the manifest's refresh.refresh_ttl,
+	// zero when the manifest does not say.
+	RefreshExpiresAt time.Time `json:"refresh_expires_at,omitzero"`
+	Scopes           []string  `json:"scopes,omitempty"`
 }
 
 // Begin discovers what the manifest leaves out, picks a client and returns the authorize
@@ -311,6 +324,7 @@ func (s *Scheme) Complete(ctx context.Context, in core.CompleteInput) (core.Mate
 	captured.Scopes = token.scopes(in.Profile, a.Scopes)
 
 	m := material{
+		Ref:                in.Ref,
 		Client:             a.Client,
 		TokenEndpoint:      a.TokenEndpoint,
 		RevocationEndpoint: a.Revocation,
@@ -322,32 +336,14 @@ func (s *Scheme) Complete(ctx context.Context, in core.CompleteInput) (core.Mate
 		ExpiresAt:          token.expiresAt(in.Profile, now),
 		Scopes:             captured.Scopes,
 	}
+	if m.RefreshToken != "" {
+		m.RefreshExpiresAt = refreshExpiresAt(in.Profile, now)
+	}
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return core.Material{}, core.Captured{}, err
 	}
 	return core.Material{Scheme: Name, Version: materialVersion, Payload: payload}, captured, nil
-}
-
-// Mint is part 2 (AI-836).
-func (s *Scheme) Mint(context.Context, core.Material, core.Profile) (core.Credential, core.Material, error) {
-	return core.Credential{}, core.Material{}, errPart2
-}
-
-// Wrap is part 2 (AI-836). Until then every request it would carry fails, rather than
-// leaving without a credential.
-func (s *Scheme) Wrap(http.RoundTripper, core.Credential) http.RoundTripper {
-	return refuse{}
-}
-
-// Classify is part 2 (AI-836): no outcome yet.
-func (s *Scheme) Classify(*http.Response, []byte, error) core.Outcome {
-	return core.Outcome{}
-}
-
-// Revoke is part 2 (AI-836).
-func (s *Scheme) Revoke(context.Context, core.Material, core.Profile) error {
-	return errPart2
 }
 
 // spend records state as used until expires and reports whether it was unused. Entries
@@ -380,10 +376,4 @@ func random() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-type refuse struct{}
-
-func (refuse) RoundTrip(*http.Request) (*http.Response, error) {
-	return nil, errPart2
 }
