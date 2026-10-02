@@ -119,6 +119,12 @@ func (s *Service) unwire(ctx context.Context, customer string, app int64, routeI
 			"trunk", trunkID, "route", routeID, "error", err)
 		return
 	}
+	s.deleteLines(ctx, stream, routeID, trunkID, why)
+}
+
+// deleteLines deletes a routing rule and the trunk beside it from a Stream app. It is
+// best-effort: a failure is logged, never returned, so it cannot mask what is being undone.
+func (s *Service) deleteLines(ctx context.Context, stream *Stream, routeID, trunkID, why string) {
 	if err := stream.DeleteRoute(ctx, routeID); err != nil {
 		s.logger.Error("could not delete a routing rule", "why", why, "route", routeID, "error", err)
 	}
@@ -392,14 +398,7 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		// Roll back what this attach created but did not finish wiring up, so a failed
 		// attach does not leave a billable Stream trunk behind. Best-effort: a cleanup
 		// error is logged, never returned, so it cannot mask the real failure.
-		if err := stream.DeleteRoute(ctx, routeID); err != nil {
-			s.logger.Error("could not roll back a routing rule after a failed attach",
-				"route", routeID, "error", err)
-		}
-		if err := stream.DeleteTrunk(ctx, trunkID); err != nil {
-			s.logger.Error("could not roll back a trunk after a failed attach",
-				"trunk", trunkID, "error", err)
-		}
+		s.deleteLines(ctx, stream, routeID, trunkID, "rolling back a failed attach")
 	}()
 
 	// The rule serves one number, so the call is named outright rather than through the
@@ -566,14 +565,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		// Roll back what this call created but never placed, so a call that did not
 		// start does not leave a billable Stream trunk behind. Best-effort: a cleanup
 		// error is logged, never returned, so it cannot mask the real failure.
-		if err := stream.DeleteRoute(ctx, routeID); err != nil {
-			s.logger.Error("could not roll back a routing rule after a call that did not place",
-				"route", routeID, "error", err)
-		}
-		if err := stream.DeleteTrunk(ctx, trunkID); err != nil {
-			s.logger.Error("could not roll back a trunk after a call that did not place",
-				"trunk", trunkID, "error", err)
-		}
+		s.deleteLines(ctx, stream, routeID, trunkID, "rolling back a call that did not place")
 	}()
 
 	routeID, err = stream.CreateRoute(ctx, Route{
@@ -829,14 +821,7 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		// Roll back what this transfer created but never placed, so a transfer that did
 		// not start does not leave a billable Stream trunk behind. Best-effort: a cleanup
 		// error is logged, never returned, so it cannot mask the real failure.
-		if err := stream.DeleteRoute(ctx, routeID); err != nil {
-			s.logger.Error("could not roll back a routing rule after a transfer that did not place",
-				"route", routeID, "error", err)
-		}
-		if err := stream.DeleteTrunk(ctx, trunkID); err != nil {
-			s.logger.Error("could not roll back a trunk after a transfer that did not place",
-				"trunk", trunkID, "error", err)
-		}
+		s.deleteLines(ctx, stream, routeID, trunkID, "rolling back a transfer that did not place")
 	}()
 
 	// Resolve the call type the same way CreateRoute does, so the row recorded below
