@@ -45,6 +45,7 @@ vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
 vision-agents-plugins-twelvelabs = { workspace = true }
 vision-agents-plugins-speechify = { workspace = true }
+getstream = { path = "../stream-py", editable = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
