@@ -159,11 +159,11 @@ func (c *Clients) LearnDeploymentApp(ctx context.Context) (int64, error) {
 	return learner.learn(ctx, c)
 }
 
-// learn reads the deployment app's id with its own credential and records it. An id that
-// is already known is kept: it was configured, or learned already.
+// learn reads the deployment app's id with its own credential and records it, or checks
+// it against the one configured. An id learned or checked already is not asked for again.
 func (d *Deployment) learn(ctx context.Context, clients *Clients) (int64, error) {
-	if known := d.App(); known != 0 {
-		return known, nil
+	if app, settled, err := d.settled(); settled {
+		return app, err
 	}
 	if !d.Configured() {
 		return 0, ErrNoIdentity
@@ -178,6 +178,5 @@ func (d *Deployment) learn(ctx context.Context, clients *Clients) (int64, error)
 	if err != nil {
 		return 0, err
 	}
-	d.SetApp(readiness.App)
-	return readiness.App, nil
+	return d.verifyOrLearn(readiness.App)
 }

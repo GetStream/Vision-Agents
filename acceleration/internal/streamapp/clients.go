@@ -65,6 +65,7 @@ type Clients struct {
 type resolution struct {
 	customer string
 	pinned   bool
+	reading  bool
 	app      int64
 }
 
@@ -146,6 +147,31 @@ func (c *Clients) ForApp(ctx context.Context, customer string, app int64) (Bound
 		return Bound{}, err
 	}
 	return c.bind(identity)
+}
+
+// ForAppReading is the identity and client work pinned to an app is read back with. It
+// differs from ForApp only for a source that keeps some work readable and no longer
+// writable, which only something reading back what was written asks for.
+func (c *Clients) ForAppReading(ctx context.Context, customer string, app int64) (Bound, error) {
+	reader, ok := c.source.(interface {
+		ForAppReading(context.Context, string, int64) (Identity, error)
+	})
+	if !ok {
+		return c.ForApp(ctx, customer, app)
+	}
+	identity, err := c.resolve(resolution{customer: customer, pinned: true, reading: true, app: app}, func() (Identity, error) {
+		return reader.ForAppReading(ctx, customer, app)
+	})
+	if err != nil {
+		return Bound{}, err
+	}
+	return c.bind(identity)
+}
+
+// PerApp reports whether customers act in apps of their own, which is app mode.
+func (c *Clients) PerApp() bool {
+	_, ok := c.source.(*Stored)
+	return ok
 }
 
 // Invalidate forgets what was resolved for a customer, so the next use asks the source.

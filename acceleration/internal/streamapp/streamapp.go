@@ -36,7 +36,16 @@ type Identity struct {
 	UserToken string
 	// BaseURL is the Stream API the app is reached at. Empty is Stream's default.
 	BaseURL string
+	// Registered is an app its customer registered with its own keys, rather than the
+	// deployment's own.
+	Registered bool
+	// AllowGuests is a registered app that agreed to have guests minted in it. The
+	// deployment's own app always has.
+	AllowGuests bool
 }
+
+// MintsGuests reports whether guests may be created in the identity's app.
+func (i Identity) MintsGuests() bool { return !i.Registered || i.AllowGuests }
 
 // Fingerprint names the credential without revealing it, for caches and logs.
 func (i Identity) Fingerprint() string {
@@ -67,4 +76,7 @@ var (
 	// ErrDeploymentAppUnknown is work pinned to an app while the router does not yet know
 	// which app its own is. It waits rather than guesses.
 	ErrDeploymentAppUnknown = errors.New("streamapp: the deployment's own Stream app is not known yet")
+	// ErrDeploymentAppMismatch is a configured deployment app id that Stream says is not
+	// the app the deployment's key belongs to.
+	ErrDeploymentAppMismatch = errors.New("streamapp: the deployment's key belongs to another Stream app than stream.app_id names")
 )

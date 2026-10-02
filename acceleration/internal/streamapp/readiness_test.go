@@ -113,14 +113,46 @@ func (s *ReadinessSuite) TestTheDeploymentLearnsItsOwnAppFromStream() {
 	s.Equal(int64(1234), s.cache.DeploymentApp())
 }
 
-func (s *ReadinessSuite) TestAConfiguredDeploymentAppIsNotAskedFor() {
+func (s *ReadinessSuite) TestAConfiguredDeploymentAppIsCheckedOnce() {
+	s.stream.SetApp(chattest.App{ID: 99})
 	source := NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: s.stream.URL, App: 99})
+	cache := NewClients(source, ClientsOptions{})
 
-	learned, err := NewClients(source, ClientsOptions{}).LearnDeploymentApp(s.ctx)
-
+	learned, err := cache.LearnDeploymentApp(s.ctx)
 	s.Require().NoError(err)
+	_, err = cache.LearnDeploymentApp(s.ctx)
+	s.Require().NoError(err)
+
 	s.Equal(int64(99), learned)
-	s.Zero(s.stream.AppReads())
+	s.Equal(1, s.stream.AppReads())
+}
+
+func (s *ReadinessSuite) TestAMismatchedDeploymentAppStopsNamingPins() {
+	// In deployment mode new work carries on, and a pin naming the configured id waits
+	// rather than being finished with a key that belongs to another app.
+	s.stream.SetApp(chattest.App{ID: 1})
+	source := NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: s.stream.URL, App: 99})
+	cache := NewClients(source, ClientsOptions{})
+
+	_, err := cache.LearnDeploymentApp(s.ctx)
+
+	s.ErrorIs(err, ErrDeploymentAppMismatch)
+	s.Zero(cache.DeploymentApp())
+	_, err = source.ForApp(s.ctx, "acme", 99)
+	s.ErrorIs(err, ErrDeploymentAppUnknown)
+	_, err = source.For(s.ctx, "acme")
+	s.NoError(err)
+}
+
+func (s *ReadinessSuite) TestAStrictDeploymentStopsAnsweringOnAMismatch() {
+	s.stream.SetApp(chattest.App{ID: 1})
+	source := NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: s.stream.URL, App: 99, Strict: true})
+
+	_, err := NewClients(source, ClientsOptions{}).LearnDeploymentApp(s.ctx)
+
+	s.ErrorIs(err, ErrDeploymentAppMismatch)
+	_, err = source.For(s.ctx, "acme")
+	s.ErrorIs(err, ErrDeploymentAppMismatch)
 }
 
 func (s *ReadinessSuite) TestAnUnreachableStreamLeavesTheDeploymentAppUnknown() {
