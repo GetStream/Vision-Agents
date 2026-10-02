@@ -713,11 +713,11 @@ func (s *Service) SweepBridges(ctx context.Context) (int64, error) {
 // made before apps had identities. It is safe to call for any call: one with no per-call
 // resources (an inbound or video call) releases nothing. Deletes are best-effort so a
 // cleanup failure cannot wedge the event that triggered it.
-func (s *Service) ReleaseCall(ctx context.Context, app int64, unpinned bool, callType, callID string) error {
+func (s *Service) ReleaseCall(ctx context.Context, scope store.AppScope, callType, callID string) error {
 	if s.store == nil || (s.stream == nil && s.apps == nil) {
 		return nil
 	}
-	resources, err := s.store.ReleaseCallResourcesInApp(ctx, app, unpinned, callType, callID)
+	resources, err := s.store.ReleaseCallResourcesInApp(ctx, scope, callType, callID)
 	if err != nil {
 		return fmt.Errorf("phone: release call resources: %w", err)
 	}

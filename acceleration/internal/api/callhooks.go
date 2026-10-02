@@ -174,7 +174,7 @@ func (s *Server) releaseEndedCall(r *http.Request, origin hookOrigin, event call
 	}
 	// The event is about a call in the app that signed it, and only what was made there is
 	// released: a call's id is only unique within its app.
-	if err := s.phone.ReleaseCall(r.Context(), origin.app, origin.deployment, callType, callID); err != nil {
+	if err := s.phone.ReleaseCall(r.Context(), origin.scope(), callType, callID); err != nil {
 		s.logger.Error("could not release an ended call's resources", "call", event.CallCid, "error", err)
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -991,55 +990,6 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 	}
 	if err != nil {
 		return PhoneNumber{}, fmt.Errorf("store: number: %w", err)
-	}
-	return number, nil
-}
-
-// NumberByCall returns the number whose callers land in a Stream call.
-//
-// This is the way back from an arriving call to the customer whose call it is: the webhook
-// that reports one is app-wide and names the call rather than the number or the customer.
-//
-// A number attached before the call was recorded is found by the "phone-<e164>" the default
-// routing rule names, which is derivable rather than stored. Without that fallback every
-// number already in service would have to be attached again to answer a call.
-func (s *Store) NumberByCall(ctx context.Context, callType, callID string) (PhoneNumber, error) {
-	if callID == "" {
-		return PhoneNumber{}, errors.New("store: a call id is required")
-	}
-	if callType == "" {
-		callType = "agent"
-	}
-
-	var number PhoneNumber
-	err := s.db.NewSelect().Model(&number).
-		Where("stream_call_id = ?", callID).
-		Where("stream_call_type = ?", callType).
-		Where("released_at IS NULL").
-		Limit(1).
-		Scan(ctx)
-	if err == nil {
-		return number, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
-	}
-
-	e164, named := strings.CutPrefix(callID, "phone-")
-	if !named {
-		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
-	}
-	err = s.db.NewSelect().Model(&number).
-		Where("e164 = ?", e164).
-		Where("stream_trunk_id IS NOT NULL").
-		Where("released_at IS NULL").
-		Limit(1).
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
-	}
-	if err != nil {
-		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
 	}
 	return number, nil
 }

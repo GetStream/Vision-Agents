@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // askTimeout bounds answering one written message. It is generous compared with a spoken
@@ -220,15 +221,16 @@ func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEv
 		return "", "", false
 	}
 
-	config, err := s.store.AgentConfigOwner(ctx, declared)
-	if err != nil {
-		s.logger.Error("an arriving message's channel names a config nobody holds",
-			"channel", event.ChannelID, "config", declared, "error", err)
-		return "", "", false
+	var config store.AgentConfig
+	var err error
+	if owner, scoped := s.configOwnerOf(origin); scoped {
+		config, err = s.store.AgentConfig(ctx, owner, declared)
+	} else {
+		config, err = s.store.AgentConfigOwner(ctx, declared)
 	}
-	if owner, scoped := s.configOwnerOf(origin); scoped && config.CustomerID != owner {
-		s.logger.Warn("an arriving message's channel names another app's config",
-			"channel", event.ChannelID, "config", declared, "stream_app", origin.app)
+	if err != nil {
+		s.logger.Error("an arriving message's channel names a config nobody in its app holds",
+			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "error", err)
 		return "", "", false
 	}
 	return config.CustomerID, config.ID, true

@@ -662,7 +662,7 @@ func (s *StoreSuite) TestAnArrivingCallNamesTheCustomerWhoseNumberWasRung() {
 	s.Require().NoError(s.store.AttachNumber(
 		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "support", CallID: "the-support-line"}))
 
-	number, err := s.store.NumberByCall(s.ctx, "support", "the-support-line")
+	number, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "support", "the-support-line")
 
 	s.Require().NoError(err)
 	s.Equal("acme", number.CustomerID)
@@ -681,7 +681,7 @@ func (s *StoreSuite) TestANumberAttachedBeforeItsCallWasRecordedIsStillFound() {
 		Exec(s.ctx)
 	s.Require().NoError(err)
 
-	number, err := s.store.NumberByCall(s.ctx, "default", "phone-+15125551234")
+	number, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "phone-+15125551234")
 
 	s.Require().NoError(err)
 	s.Equal("acme", number.CustomerID)
@@ -693,7 +693,7 @@ func (s *StoreSuite) TestACallNoNumberReachesIsNotAttributedToAnybody() {
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 
-	_, err := s.store.NumberByCall(s.ctx, "default", "some-video-call")
+	_, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "some-video-call")
 
 	s.ErrorContains(err, "no number reaches call default:some-video-call")
 }
@@ -707,7 +707,7 @@ func (s *StoreSuite) TestAReleasedNumbersCallIsNotAttributedToItsFormerHolder() 
 		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "default", CallID: "phone-+15125551234"}))
 	s.Require().NoError(s.store.ReleaseNumber(s.ctx, "acme", "+15125551234", s.base.Add(time.Hour)))
 
-	_, err := s.store.NumberByCall(s.ctx, "default", "phone-+15125551234")
+	_, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "phone-+15125551234")
 
 	s.ErrorContains(err, "no number reaches call")
 }

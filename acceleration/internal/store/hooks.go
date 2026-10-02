@@ -20,9 +20,9 @@ type AppScope struct {
 	Unpinned bool
 }
 
-// where narrows a query to the rows in the scope's app.
-func (a AppScope) where(query *bun.SelectQuery) *bun.SelectQuery {
-	return query.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+// where narrows a query, of any kind, to the rows in the scope's app.
+func (a AppScope) where(query bun.QueryBuilder) bun.QueryBuilder {
+	return query.WhereGroup(" AND ", func(q bun.QueryBuilder) bun.QueryBuilder {
 		if a.App != 0 {
 			q = q.WhereOr("stream_app_pk = ?", a.App)
 		}
@@ -53,8 +53,11 @@ func (s *Store) StreamAppByPK(ctx context.Context, app int64) (StreamApp, error)
 	return s.StreamApp(ctx, found.CustomerID)
 }
 
-// NumberByCallInApp is NumberByCall, among the numbers attached in one app. A call's id is
-// only unique within its app, so each lookup is made there rather than narrowed to it after.
+// NumberByCallInApp finds the number whose lines reach a call, among the numbers attached
+// in one app. A routing rule names the call its callers are put in, which is what an
+// arriving call is recognised by; a number attached before its call was stored is found by
+// the name the call is given after it. A call's id is only unique within its app, so each
+// lookup is made there.
 func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType, callID string) (PhoneNumber, error) {
 	if callID == "" {
 		return PhoneNumber{}, errors.New("store: a call id is required")
@@ -63,39 +66,39 @@ func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType,
 		callType = "agent"
 	}
 	var held []PhoneNumber
-	if err := scope.where(s.db.NewSelect().Model(&held).
+	if err := s.db.NewSelect().Model(&held).
 		Where("stream_call_id = ?", callID).Where("stream_call_type = ?", callType).
-		Where("released_at IS NULL")).Limit(20).Scan(ctx); err != nil {
+		Where("released_at IS NULL").ApplyQueryBuilder(scope.where).Limit(20).Scan(ctx); err != nil {
 		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
 	}
 	if len(held) == 0 {
 		e164, named := strings.CutPrefix(callID, "phone-")
 		if !named {
-			return PhoneNumber{}, fmt.Errorf("store: no number in that app reaches call %s:%s", callType, callID)
+			return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
 		}
-		if err := scope.where(s.db.NewSelect().Model(&held).
+		if err := s.db.NewSelect().Model(&held).
 			Where("e164 = ?", e164).Where("stream_trunk_id IS NOT NULL").
-			Where("released_at IS NULL")).Limit(20).Scan(ctx); err != nil {
+			Where("released_at IS NULL").ApplyQueryBuilder(scope.where).Limit(20).Scan(ctx); err != nil {
 			return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
 		}
 	}
 	switch customers(held, func(n PhoneNumber) string { return n.CustomerID }) {
 	case 0:
-		return PhoneNumber{}, fmt.Errorf("store: no number in that app reaches call %s:%s", callType, callID)
+		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
 	case 1:
 		return held[0], nil
 	}
 	return PhoneNumber{}, ErrAmbiguousHook
 }
 
-// CallByAgentInApp is CallByAgent, among the calls made in one app.
+// CallByAgentInApp is the newest call an agent ran, among the calls made in one app.
 func (s *Store) CallByAgentInApp(ctx context.Context, scope AppScope, agentID string) (Call, error) {
 	if agentID == "" {
 		return Call{}, errors.New("store: an agent id is required")
 	}
 	var calls []Call
-	err := scope.where(s.db.NewSelect().Model(&calls).Where("agent_id = ?", agentID)).
-		Order("started_at DESC").Limit(20).Scan(ctx)
+	err := s.db.NewSelect().Model(&calls).Where("agent_id = ?", agentID).
+		ApplyQueryBuilder(scope.where).Order("started_at DESC").Limit(20).Scan(ctx)
 	if err != nil {
 		return Call{}, fmt.Errorf("store: call by agent: %w", err)
 	}
@@ -106,18 +109,6 @@ func (s *Store) CallByAgentInApp(ctx context.Context, scope AppScope, agentID st
 		return calls[0], nil
 	}
 	return Call{}, ErrAmbiguousHook
-}
-
-// AgentConfigFor is a config a customer holds, by id.
-func (s *Store) AgentConfigFor(ctx context.Context, customerID, id string) (AgentConfig, error) {
-	config, err := s.AgentConfigOwner(ctx, id)
-	if err != nil {
-		return AgentConfig{}, err
-	}
-	if config.CustomerID != customerID {
-		return AgentConfig{}, unknownAgentConfig(id)
-	}
-	return config, nil
 }
 
 func customers[T any](rows []T, of func(T) string) int {

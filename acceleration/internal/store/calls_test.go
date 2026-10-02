@@ -18,7 +18,7 @@ func (s *StoreSuite) TestAnAgentIdSaysWhoseChannelItIsAndWhatRanOnIt() {
 	}
 	s.Require().NoError(s.store.StartCall(s.ctx, &call))
 
-	found, err := s.store.CallByAgent(s.ctx, agentID)
+	found, err := s.store.CallByAgentInApp(s.ctx, AppScope{Unpinned: true}, agentID)
 
 	s.Require().NoError(err)
 	s.Equal("acme", found.CustomerID)
@@ -42,7 +42,7 @@ func (s *StoreSuite) TestWritingToAChannelReachesTheLastConversationOnIt() {
 	s.Require().NoError(s.store.StartCall(s.ctx, &older))
 	s.Require().NoError(s.store.StartCall(s.ctx, &newer))
 
-	found, err := s.store.CallByAgent(s.ctx, agentID)
+	found, err := s.store.CallByAgentInApp(s.ctx, AppScope{Unpinned: true}, agentID)
 
 	s.Require().NoError(err)
 	s.Equal(newer.ID, found.ID)
@@ -52,7 +52,7 @@ func (s *StoreSuite) TestWritingToAChannelReachesTheLastConversationOnIt() {
 func (s *StoreSuite) TestNoConversationIsFoundForAChannelNoAgentHasBeenOn() {
 	// This is a message in a channel that merely looks like an agent's. There is nobody to
 	// bill it to and nothing to start, and saying so is the whole answer.
-	_, err := s.store.CallByAgent(s.ctx, "a-channel-nobody-ran-on")
+	_, err := s.store.CallByAgentInApp(s.ctx, AppScope{Unpinned: true}, "a-channel-nobody-ran-on")
 
 	s.Require().Error(err)
 }

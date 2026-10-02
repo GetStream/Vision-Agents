@@ -159,7 +159,7 @@ func (s *AppsSuite) TestReleasingDeletesEachTrunkInTheAppThatMadeIt() {
 	})
 	s.Require().NoError(err)
 
-	s.Require().NoError(s.service.ReleaseCall(s.ctx, 4242, false, placed.CallType, placed.CallID))
+	s.Require().NoError(s.service.ReleaseCall(s.ctx, store.AppScope{App: 4242}, placed.CallType, placed.CallID))
 
 	s.Empty(s.own.Trunks())
 	s.Empty(s.own.Rules())
@@ -174,7 +174,7 @@ func (s *AppsSuite) TestAnotherAppsEndedCallReleasesNothing() {
 	})
 	s.Require().NoError(err)
 
-	s.Require().NoError(s.service.ReleaseCall(s.ctx, 1, true, placed.CallType, placed.CallID))
+	s.Require().NoError(s.service.ReleaseCall(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID))
 
 	s.Len(s.own.Trunks(), 1)
 }
@@ -186,7 +186,7 @@ func (s *AppsSuite) TestALegacyNumberStillReleasesInTheDeploymentApp() {
 	s.Require().NoError(err)
 	s.Require().Len(s.deployment.Trunks(), 1)
 
-	s.Require().NoError(s.service.ReleaseCall(s.ctx, 1, true, placed.CallType, placed.CallID))
+	s.Require().NoError(s.service.ReleaseCall(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID))
 
 	s.Empty(s.deployment.Trunks())
 }

@@ -30,40 +30,19 @@ func (s *Store) RecordCallResource(ctx context.Context, resource *CallResource) 
 	return nil
 }
 
-// ReleaseCallResources returns every trunk and route recorded for a call and removes them,
-// so a caller can delete them at Stream and a retried delivery of the same event finds
-// nothing left to release.
-func (s *Store) ReleaseCallResources(ctx context.Context, callType, callID string) ([]CallResource, error) {
-	var released []CallResource
-	err := s.db.NewDelete().Model((*CallResource)(nil)).
-		Where("call_type = ?", callType).
-		Where("call_id = ?", callID).
-		Returning("*").
-		Scan(ctx, &released)
-	if err != nil {
-		return nil, fmt.Errorf("store: release call resources: %w", err)
-	}
-	return released, nil
-}
-
 // ReleaseCallResourcesInApp deletes the trunks and routes one call's legs were given in
 // one Stream app, and returns them. A call's id is only unique within an app, so an event
 // about it releases only what that app holds; unpinned also takes the rows written before
 // apps had identities, which were all made in the deployment's own app.
-func (s *Store) ReleaseCallResourcesInApp(ctx context.Context, app int64, unpinned bool, callType, callID string) ([]CallResource, error) {
+func (s *Store) ReleaseCallResourcesInApp(ctx context.Context, scope AppScope, callType, callID string) ([]CallResource, error) {
 	var released []CallResource
-	query := s.db.NewDelete().Model((*CallResource)(nil)).
+	err := s.db.NewDelete().Model((*CallResource)(nil)).
 		Where("call_type = ?", callType).
-		Where("call_id = ?", callID)
-	switch {
-	case unpinned && app != 0:
-		query = query.Where("(stream_app_pk = ? OR stream_app_pk IS NULL)", app)
-	case unpinned:
-		query = query.Where("stream_app_pk IS NULL")
-	default:
-		query = query.Where("stream_app_pk = ?", app)
-	}
-	if err := query.Returning("*").Scan(ctx, &released); err != nil {
+		Where("call_id = ?", callID).
+		ApplyQueryBuilder(scope.where).
+		Returning("*").
+		Scan(ctx, &released)
+	if err != nil {
 		return nil, fmt.Errorf("store: release call resources: %w", err)
 	}
 	return released, nil
