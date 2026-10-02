@@ -480,7 +480,10 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		// answers and never records what they said.
 		ruling.Disposition = harness.Respond
 		if !ruling.Floor.Valid() {
-			ruling.Floor = harness.Continue
+			// Nobody ruled on who has the floor. Holding a finished thought until the agent
+			// stops talking cost callers up to ten seconds, so they are given it: noise
+			// spoken over the agent is still set aside below.
+			ruling.Floor = harness.Stop
 		}
 	}
 
