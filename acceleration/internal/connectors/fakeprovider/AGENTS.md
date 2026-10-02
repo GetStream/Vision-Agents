@@ -14,6 +14,7 @@ That is the whole setup. The server closes when the test ends (`t.Cleanup`). It 
 - `srv.ClientID`, `srv.ClientSecret`: a preregistered confidential client (basic or post) redirecting to `fakeprovider.RedirectURI`; `srv.AllowRedirect(uri)` adds another redirect URI. Public and other clients register through `/register`.
 - `srv.Consent(authorizeURL)`: the browser. It approves and returns the callback URL with `code`, `state`, `iss` (or `error`).
 - `srv.Client()`: an `*http.Client` that trusts the server's certificate. Hand it to the code under test.
+- `srv.FetchClientMetadataWith(c)`: the client `ClientMetadataDocuments` fetches a client_id URL with, such as the `Client()` of the test's own TLS server that serves the document. Fetching from loopback is the testing exception CIMD §8.6 allows; production code never does it.
 - `srv.Use(...)` to switch personalities mid-test, `srv.Advance(d)` to move the server's clock past expiry or grace, `srv.Hits(path)` and `srv.Refreshes()` to count what reached it.
 - `TeamID`, `UserID`, `RealmID`, `Shop`: the synthetic identities the vendor-shaped personalities report.
 
@@ -41,6 +42,7 @@ With no personality the server is strict: PKCE with `S256` only (RFC 7636 §4.4.
 | `SignedCallback` | `shop`, `host`, `timestamp` and an `hmac` over the callback; `Sign` recomputes it | shopify.dev «Authorization code grant» | the `shopify.callback_hmac` hook (architecture doc, stress-test row 4) |
 | `ForeignIssuer` | The callback names `ForeignIssuerURL` as `iss` | RFC 9207 §2.4 | T9 |
 | `ConsentDenied` | The callback carries `error=access_denied` | RFC 6749 §4.1.2.1 | T9, T17 |
+| `ClientMetadataDocuments` | Metadata advertises `client_id_metadata_document_supported`; an https `client_id` the server does not know is fetched at authorize with the client `srv.FetchClientMetadataWith` set (no redirects, 5 KB cap) and accepted only if the document names that URL as `client_id`, lists the `redirect_uri`, has a `client_name` and no shared secret; the client is public (`none`) | draft-ietf-oauth-client-id-metadata-document-02 §4, §4.1, §4.2, §5, §6, §8.7; MCP 2025-11-25 «Client ID Metadata Documents» | T9 |
 
 At most one of the token-endpoint personalities (`tokenEndpoint` in `fakeprovider.go`) can be on; `New` and `Use` fail the test otherwise. The rest combine.
 

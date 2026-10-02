@@ -192,6 +192,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerMemories(api)
 	s.registerConfigPatch(api)
 	s.registerSync(api)
+	s.registerConnectors(api)
 	return api
 }
 

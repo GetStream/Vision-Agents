@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -49,18 +52,26 @@ func (s *OpenStoreSuite) SetupTest() {
 	s.Require().NoError(err)
 }
 
-func (s *OpenStoreSuite) TestARouterStartingOnAnEmptyDatabaseHasTheBuiltInsAtRevisionOne() {
+func (s *OpenStoreSuite) TestARouterStartingOnAnEmptyDatabaseHasTheBuiltInsAtTheRevisionsTheyName() {
+	revisions := map[string]int{}
+	for _, id := range []string{"linear", "slack"} {
+		raw, err := fs.ReadFile(providers.FS, id+".yaml")
+		s.Require().NoError(err)
+		manifest, err := core.ParseManifest(raw)
+		s.Require().NoError(err)
+		revisions[id] = manifest.Revision
+	}
 	for range 2 {
 		opened, err := openStore(s.ctx, s.settings)
 		s.Require().NoError(err)
 		s.T().Cleanup(func() { opened.Close() })
 
-		definitions, err := opened.ListConnectorDefinitions(s.ctx, "acme")
+		definitions, err := opened.ListConnectorDefinitions(s.ctx, "acme", store.ConnectorDefinitionFilter{})
 		s.Require().NoError(err)
 		s.Require().Len(definitions, 2, "a restart adds no revision")
 		for i, id := range []string{"linear", "slack"} {
 			s.Equal(id, definitions[i].ID)
-			s.Equal(1, definitions[i].Revision)
+			s.Equal(revisions[id], definitions[i].Revision)
 		}
 	}
 }

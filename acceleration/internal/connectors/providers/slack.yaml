@@ -10,8 +10,9 @@
 # Architecture rows cited are «Stress test: 12 awkward providers», row 5, in
 # acceleration/docs/connectors/architecture.md on connectors/planning.
 id: slack
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 adds
+# endpoints.resource.
+revision: 2
 # [proto]:3-5
 name: Slack
 category: Communication
@@ -25,6 +26,12 @@ endpoints:
   revoke: https://slack.com/api/auth.revoke
   # [mcp]; [proto]:6
   mcp: https://mcp.slack.com/mcp
+  # The RFC 8707 resource indicator sent on authorize and on the code exchange. The
+  # endpoints above are pinned, so oauth2_code discovers nothing and needs it here. It is
+  # [proto]:9, and the MCP server's own protected resource metadata says the same:
+  # GET https://mcp.slack.com/.well-known/oauth-protected-resource at 2026-10-02T19:01:52Z
+  # answered "resource":"https://mcp.slack.com" (RFC 9728 section 2).
+  resource: https://mcp.slack.com
 # Authorization code: [proto]:7-8 (auth: oauth, oauth_mode: confidential).
 schemes: [oauth2_code]
 client:
