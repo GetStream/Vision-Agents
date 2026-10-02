@@ -19,6 +19,10 @@ const (
 	// and earns them a second answer to the first thing they said. It is a guess at how
 	// long a transcriber goes over itself for, and only used where there is nothing better.
 	defaultCadenceSettle = 2 * time.Second
+	// cadenceFinalGap is how long a final transcript waits instead of the usual gap. A
+	// transcriber that finalizes has already decided the caller stopped, so waiting the
+	// whole gap again for the words to hold still only delays the answer.
+	cadenceFinalGap = 60 * time.Millisecond
 )
 
 // candidate is a stable transcript revision worth asking the flow controller about.
@@ -71,6 +75,10 @@ type cadenceSpeaker struct {
 	revisedAt   time.Time
 	// utterance is the run of speech the words being gathered came from.
 	utterance int64
+	// carried is what was still unanswered when the transcriber started this utterance.
+	// Every revision of the utterance replaces only its own words, so it is put back in
+	// front of each one rather than only the first.
+	carried string
 	// committed is the utterance the agent last acted on, kept so the transcriber's own
 	// restatement of it is not mistaken for the caller repeating themselves.
 	committed string
@@ -127,11 +135,18 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 
 	newUtterance := transcript.Utterance != 0 && current.utterance != 0 &&
 		transcript.Utterance != current.utterance
-	if current.text != "" && newUtterance && !revisesTranscript(current.text, text) {
-		// A new utterance that is not a revision of the words in flight, which is how a
-		// transcriber splitting "7:30" into "7:00." and "thirty" arrives. Keep both so
-		// the next answer is about everything the caller said, not only the tail.
-		text = strings.TrimSpace(current.text) + " " + strings.TrimSpace(text)
+	if newUtterance {
+		current.carried = ""
+		if current.text != "" && !revisesTranscript(current.text, text) {
+			// A new utterance that is not a revision of the words in flight, which is how a
+			// transcriber splitting "7:30" into "7:00." and "thirty" arrives. Keep both so
+			// the next answer is about everything the caller said, not only the tail.
+			current.carried = strings.TrimSpace(current.text)
+		}
+	}
+	if current.carried != "" && transcript.Mode != stt.ModeDelta &&
+		!strings.HasPrefix(words(text), words(current.carried)) {
+		text = current.carried + " " + strings.TrimSpace(text)
 	}
 
 	current.participant = transcript.Participant
@@ -145,7 +160,14 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.confidence = transcript.Confidence
 	current.latencyMs = transcript.ProcessingTimeMs
 	current.utterance = transcript.Utterance
+	final := transcript.Mode == stt.ModeFinal && !incompleteIdentifier(text)
 	if sameWords(current.text, text) {
+		// The transcriber finalizing words already waited on means they have stopped, so
+		// the wait is cut short. It is never lengthened: a final that arrives late must
+		// not hold back words that already held still.
+		if final && current.timer != nil && current.candidateID == "" {
+			c.scheduleLocked(current, c.finalGapLocked())
+		}
 		return "", ""
 	}
 	// Nothing new has been said since the agent answered, so these are the words it
@@ -163,6 +185,9 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.generation++
 	current.revisedAt = time.Now()
 	delay := c.gap + c.grace
+	if final {
+		delay = c.finalGapLocked()
+	}
 	if incompleteIdentifier(text) {
 		// Member IDs, PINs and clock times arrive a digit at a time. Answering
 		// "ABC12345" 350ms before the last 6 is how verify_identity got the wrong id.
@@ -195,6 +220,7 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 			current.committedUtterance = current.utterance
 			current.committedAt = time.Now()
 			current.text = ""
+			current.carried = ""
 			current.speaker = ""
 			current.language = ""
 			current.confidence = 0
@@ -267,6 +293,12 @@ func (c *cadence) Close() {
 			current.timer.Stop()
 		}
 	}
+}
+
+// finalGapLocked is the wait for words a transcriber has finalized, with any grace still owed
+// after an overlap. The caller holds the lock.
+func (c *cadence) finalGapLocked() time.Duration {
+	return min(c.gap, cadenceFinalGap) + c.grace
 }
 
 func (c *cadence) scheduleLocked(current *cadenceSpeaker, delay time.Duration) {

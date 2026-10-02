@@ -839,6 +839,7 @@ started per call becomes a session in a process that is already running.
 | `POST /v1/agents/sessions/{id}/instructions` | Change what the agent is, from the next turn |
 | `GET  /v1/agents/sessions/{id}/events`  | WebSocket: everything the agent does             |
 | `GET  /v1/{modality}/stream`            | WebSocket: one modality, for a pipeline elsewhere |
+| `GET  /v1/agents/socket`               | WebSocket: a voice session with no call, its audio on the socket |
 
 ```bash
 curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
@@ -880,6 +881,26 @@ It is driven over the session's own socket: `respond` goes in, `response_delta` 
 `responded` come back, along with `looked_up`, `delegated` and `task_settled` as the agent
 works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
 interrupt.
+
+### Conversations held over a socket
+
+`GET /v1/agents/socket` holds a voice conversation with no call to join: the audio travels
+on the socket itself. It is for callers that are neither a browser nor a phone, such as a
+benchmark's simulated caller, and everything between hearing and answering is the agent's
+own, the cadence, the flow controller, speculation and barge-in included.
+
+The first frame is `{"type": "start", "sample_rate": 16000, "session": {...}}`, where
+`session` is what `POST /v1/agents/sessions` takes and `call_id` may be left out. The
+answer is `{"type": "session", "session": {...}, "sample_rate": 16000}`. From then on
+binary frames are PCM16 mono at that rate both ways: the caller's audio in, and the agent's
+speech out in 20 ms frames at the pace it is heard on a call, so a reply the caller cuts
+into stops within a frame. `{"type": "cleared"}` says speech already sent was thrown away
+because the caller cut in. Tool calls and everything else the conversation does go over the
+session's events socket as they would for a call.
+
+The session lasts as long as the socket. Closing it, or sending `{"type": "stop"}`, ends
+the conversation, and a conversation that ends closes the socket. Like the events socket,
+it has to reach the router instance holding the session, which is the one it opened on.
 
 ## Agents that are configured rather than spelled out
 

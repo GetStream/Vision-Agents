@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -77,5 +78,43 @@ func TestCompareBaselineFlagsMDE(t *testing.T) {
 	})
 	if !strings.Contains(md, "regression") {
 		t.Fatalf("expected regression flag:\n%s", md)
+	}
+}
+
+func TestCompareShowsFirstResponseWithSampleCount(t *testing.T) {
+	run := func(label string, first *score.Timing) LabeledRun {
+		return LabeledRun{Label: label, Summary: BuildSummary(label, label, 1, []CallResult{
+			{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Passed: true, Outcome: OutcomePass, Metrics: score.Metrics{FirstResponse: first}},
+		})}
+	}
+	md := CompareMarkdown(CompareConfig{Baseline: 0, Runs: []LabeledRun{
+		run("accelerated", &score.Timing{TurnID: "t1", V2VMS: 700}),
+		run("livekit", &score.Timing{TurnID: "t1", V2VMS: 900}),
+		run("livekit-inference", nil),
+	}})
+	if !strings.Contains(md, "| First response P50 (ms) | 700 (n=1) ** | 900 (n=1) | — |") {
+		t.Fatalf("first response row missing or a run without samples was marked best:\n%s", md)
+	}
+	if !strings.Contains(md, "| livekit | +0.0 pp | +0 ms | — | — | +200 ms |") {
+		t.Fatalf("first response baseline delta missing:\n%s", md)
+	}
+}
+
+func TestCompareMarksAReplyTimeTheSampleCanTellApart(t *testing.T) {
+	run := func(label string, base int) LabeledRun {
+		var turns []score.Timing
+		for i := range 30 {
+			turns = append(turns, score.Timing{TurnID: fmt.Sprintf("t%d", i), V2VMS: base + 10*(i%5)})
+		}
+		return LabeledRun{Label: label, Summary: BuildSummary(label, label, 1, []CallResult{
+			{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Passed: true, Outcome: OutcomePass, Metrics: score.Metrics{V2V: turns}},
+		})}
+	}
+	md := CompareMarkdown(CompareConfig{Baseline: 0, Runs: []LabeledRun{run("accelerated", 2000), run("livekit", 3000)}})
+	if !strings.Contains(md, "| Reply time, non-tool P50 (ms) | 2020 (2010–2030, n=30) ** | 3020 (3010–3030, n=30)* |") {
+		t.Fatalf("a slower run whose interval clears the best one should be marked:\n%s", md)
+	}
+	if !strings.Contains(md, "| livekit | +0.0 pp | +1000 ms | +1000 ms (+990 to +1010) | 10 ms |") {
+		t.Fatalf("the baseline delta should carry its interval and smallest detectable difference:\n%s", md)
 	}
 }

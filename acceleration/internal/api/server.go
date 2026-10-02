@@ -323,6 +323,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/data/import", s.importData)
 	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
+	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
 	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)

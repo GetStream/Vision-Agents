@@ -420,6 +420,14 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A reply starts speaking sooner
+
+The first chunk of a reply now goes to the voice at its first clause, once it has 20
+characters, rather than waiting for the first full stop; the rest still goes by the
+sentence. A transcript the speech-to-text provider has finalized is put to the flow
+controller after 60 ms instead of the 350 ms a revision waits, except when it ends in digits
+that may still be growing.
+
 ### A reply can start before the flow controller rules: `ROUTER_SPECULATIVE_REPLIES`
 
 The flow controller decides whether the words a caller settled on were meant for the agent,
@@ -1313,6 +1321,9 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A caller who kept talking after the first part of their turn was queued is no longer
+  answered twice. The whole turn was answered, and then the queued part again once the
+  agent stopped, in one Voicebench call 17.9 s later.
 - The Python client now adds a `command_id` when it asks a stored text conversation
   something, as the JavaScript SDK does, so a user's question is no longer refused.
 - An incognito voice call is no longer written into Stream Chat. The transcript writer was

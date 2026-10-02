@@ -52,13 +52,28 @@ func (a *Accelerated) Prepare(ctx context.Context) (func(), error) {
 }
 
 func acceleratedPipelineEnv() []string {
-	return []string{
+	env := []string{
 		"VOICEBENCH_MODEL=" + envOr("VOICEBENCH_MODEL", DefaultAcceleratedModel),
 		"VOICEBENCH_STT=" + envOr("VOICEBENCH_STT", DefaultAcceleratedSTT),
 		"VOICEBENCH_TTS=" + envOr("VOICEBENCH_TTS", DefaultAcceleratedTTS),
 		"VOICEBENCH_SUBAGENT=" + envOr("VOICEBENCH_SUBAGENT", DefaultAcceleratedSubagent),
-		"STREAM_ACCELERATION_CUSTOMER_ID=" + envOr("STREAM_ACCELERATION_CUSTOMER_ID", "voicebench"),
 	}
+	// A hosted router sits behind Stream's proxy and is reached with STREAM_API_KEY and
+	// STREAM_API_SECRET. A customer id would make the SDK drop that credential, so it is set
+	// empty rather than left out: the agent loads .env, which may name one.
+	if authenticatesToRouter() {
+		return append(env, "STREAM_ACCELERATION_CUSTOMER_ID=")
+	}
+	return append(env, "STREAM_ACCELERATION_CUSTOMER_ID="+envOr("STREAM_ACCELERATION_CUSTOMER_ID", "voicebench"))
+}
+
+// authenticatesToRouter reads STREAM_ACCELERATION_AUTHENTICATE the way the Python SDK does.
+func authenticatesToRouter() bool {
+	switch strings.ToLower(os.Getenv("STREAM_ACCELERATION_AUTHENTICATE")) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func envOr(name, fallback string) string {
