@@ -330,9 +330,13 @@ func (t dataTable) identity() string {
 		return "jsonb_build_object('scope_id', ?::text, 'scope', 'app')"
 	}
 	// A connector connection arrives without its material, so it arrives saying it needs
-	// one, rather than connected with nothing to connect with.
+	// one, rather than connected with nothing to connect with. Key version 0 and no
+	// expiry are what a connection without material holds (20261002193000_connector_connections.sql),
+	// so the source grant's version and expiry do not come along either, on an import or
+	// on every change applied after it.
 	if t.name == "connector_connections" {
-		return "jsonb_build_object('customer_id', ?::text, 'status', '" + ConnectionNeedsReauthorization + "')"
+		return "jsonb_build_object('customer_id', ?::text, 'status', '" + ConnectionNeedsReauthorization + "'," +
+			" 'material_kek_version', 0, 'expires_at', NULL)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }
