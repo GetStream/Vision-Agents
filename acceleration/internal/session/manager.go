@@ -1265,7 +1265,7 @@ func (m *Manager) sameApp(ctx context.Context, service *persistent.Service, spec
 		}
 		return a == b
 	}
-	if kept != spec.StreamApp && !same(kept, spec.StreamApp) {
+	if !same(kept, spec.StreamApp) {
 		return ErrConversationElsewhere
 	}
 	return nil

@@ -126,12 +126,7 @@ func streamKeys(keys []StreamKey) []acceleration.StreamKeyInput {
 	sent := make([]acceleration.StreamKeyInput, 0, len(keys))
 	for _, key := range keys {
 		secret := key.APISecret
-		one := acceleration.StreamKeyInput{ApiKey: key.APIKey, ApiSecret: &secret}
-		if !key.CreatedAt.IsZero() {
-			created := key.CreatedAt
-			one.CreatedAt = &created
-		}
-		sent = append(sent, one)
+		sent = append(sent, acceleration.StreamKeyInput{ApiKey: key.APIKey, ApiSecret: &secret, CreatedAt: pointer(key.CreatedAt)})
 	}
 	return sent
 }
