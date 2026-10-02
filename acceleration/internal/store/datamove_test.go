@@ -492,3 +492,41 @@ func (s *DataMoveSuite) TestARowPinnedWhileThisDeploymentsAppIsUnknownWaits() {
 	s.Require().NotNil(s.pinOnDestination(id))
 	s.Equal(int64(1), *s.pinOnDestination(id))
 }
+
+func (s *DataMoveSuite) TestStreamAppsAreNeverExported() {
+	// A sealed key opens only under the keyring that sealed it, and registering an app is
+	// done again where the customer moves to.
+	_, err := s.source.DB().ExecContext(s.ctx, "TRUNCATE stream_apps CASCADE")
+	s.Require().NoError(err)
+	_, err = s.source.PutStreamApp(s.ctx, StreamAppRegistration{
+		CustomerID: "acme", StreamAppPK: 4242, PrimaryKey: "own-key", VerifiedAt: time.Now(),
+		Keys: []StreamAppKey{{APIKey: "own-key", Sealed: []byte("sealed"), KEKVersion: 1}},
+	})
+	s.Require().NoError(err)
+	s.pinnedSession("acme", 0)
+
+	exported := s.export("acme")
+
+	s.NotEmpty(exported.of("agent_sessions"))
+	s.Empty(exported.of("stream_apps"))
+	s.Empty(exported.of("stream_app_keys"))
+	s.NotContains(DataTables(), "stream_apps")
+	s.NotContains(DataTables(), "stream_app_keys")
+}
+
+func (s *DataMoveSuite) TestStreamAppsRecordNoDataChanges() {
+	_, err := s.source.DB().ExecContext(s.ctx, "TRUNCATE stream_apps CASCADE")
+	s.Require().NoError(err)
+	s.capture("acme")
+
+	_, err = s.source.PutStreamApp(s.ctx, StreamAppRegistration{
+		CustomerID: "acme", StreamAppPK: 4242, PrimaryKey: "own-key", VerifiedAt: time.Now(),
+		Keys: []StreamAppKey{{APIKey: "own-key", Sealed: []byte("sealed"), KEKVersion: 1}},
+	})
+	s.Require().NoError(err)
+
+	var recorded int
+	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
+		"SELECT count(*) FROM data_changes WHERE table_name IN ('stream_apps', 'stream_app_keys')").Scan(&recorded))
+	s.Zero(recorded)
+}

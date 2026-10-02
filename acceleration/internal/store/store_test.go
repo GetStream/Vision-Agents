@@ -68,7 +68,7 @@ func (s *StoreSuite) SetupTest() {
 			" turns, turn_stats_hourly, turn_stats_daily, calls, call_events, phone_numbers,"+
 			" voices, agent_sessions, agent_responses, agent_response_items, guest_users,"+
 			" policies, app_organizations, call_resources, organizations, agent_configs,"+
-			" agent_plugin_connections, data_changes, data_change_capture CASCADE",
+			" agent_plugin_connections, data_changes, data_change_capture, stream_apps CASCADE",
 	)
 	s.Require().NoError(err)
 }
