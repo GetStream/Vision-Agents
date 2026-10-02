@@ -127,9 +127,9 @@ func (s *Service) SetPins(pins Pins) {
 	s.pins = pins
 }
 
-// pinOf is the app a conversation is kept in: its record's, the deployment's memory of its
-// sessions, or for a conversation nobody has word of, the app given.
-func (s *Service) pinOf(ctx context.Context, customer, cid string, otherwise int64) (int64, error) {
+// pinOf is the app a conversation is kept in, from its record or the deployment's memory of
+// its sessions. Found is false for a conversation nobody has word of.
+func (s *Service) pinOf(ctx context.Context, customer, cid string) (int64, bool, error) {
 	s.mu.Lock()
 	open, pins := s.all[cid], s.pins
 	s.mu.Unlock()
@@ -138,23 +138,18 @@ func (s *Service) pinOf(ctx context.Context, customer, cid string, otherwise int
 		owner, app := open.data.Customer, open.data.StreamApp
 		open.mu.Unlock()
 		if owner == customer {
-			return app, nil
+			return app, true, nil
 		}
 	}
-	return s.lookupPin(ctx, pins, customer, cid, otherwise)
+	return lookupPin(ctx, pins, customer, cid)
 }
 
-func (s *Service) lookupPin(ctx context.Context, pins Pins, customer, cid string, otherwise int64) (int64, error) {
-	if pins != nil {
-		app, found, err := pins(ctx, customer, cid)
-		if err != nil {
-			return 0, err
-		}
-		if found {
-			return app, nil
-		}
+// lookupPin asks the deployment's memory of its sessions which app a conversation is in.
+func lookupPin(ctx context.Context, pins Pins, customer, cid string) (int64, bool, error) {
+	if pins == nil {
+		return 0, false, nil
 	}
-	return otherwise, nil
+	return pins(ctx, customer, cid)
 }
 
 // clientFor is the client a conversation for a customer is written with: in the app it is
@@ -187,12 +182,17 @@ func (s *Service) readerFor(ctx context.Context, customer, cid string) (*getstre
 // customer acts in. A customer with no app at all reads as the deployment's. So does one
 // whose app is disconnected, for reading only: what it wrote is still its to read.
 func (s *Service) appOf(ctx context.Context, customer, cid string, reading bool) (int64, error) {
+	// Where the conversation was written settles it; which app the customer acts in now is
+	// asked only for one nothing has a record of.
+	if app, found, err := s.pinOf(ctx, customer, cid); err != nil || found {
+		return app, err
+	}
 	_, own, err := s.chats.For(ctx, customer)
 	tolerated := errors.Is(err, streamapp.ErrNoIdentity) || (reading && errors.Is(err, streamapp.ErrStreamAppDisconnected))
 	if err != nil && !tolerated {
 		return 0, err
 	}
-	return s.pinOf(ctx, customer, cid, own)
+	return own, nil
 }
 
 // AppOf is the app a conversation is kept in, for a caller deciding whether a session in

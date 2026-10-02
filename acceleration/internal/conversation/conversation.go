@@ -409,9 +409,12 @@ func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, c
 	}
 	pin := app
 	if !fresh {
-		var err error
-		if pin, err = s.lookupPin(ctx, s.pins, customer, cid, app); err != nil {
+		kept, found, err := lookupPin(ctx, s.pins, customer, cid)
+		if err != nil {
 			return nil, nil, false, err
+		}
+		if found {
+			pin = kept
 		}
 	}
 	client, err := s.chats.ForApp(ctx, customer, pin)
