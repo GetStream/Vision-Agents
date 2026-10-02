@@ -3,6 +3,7 @@ package streamapp
 import (
 	"container/list"
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -100,6 +101,25 @@ func NewClients(source Source, options ClientsOptions) *Clients {
 
 // Source is what the clients resolve through.
 func (c *Clients) Source() Source { return c.source }
+
+// DeploymentApp is the deployment's own Stream app id, zero while it is not known or when
+// the source has no deployment app at all.
+func (c *Clients) DeploymentApp() int64 {
+	if own, ok := c.source.(interface{ App() int64 }); ok {
+		return own.App()
+	}
+	return 0
+}
+
+// Pin is the pin new work for a customer is given: the app it acts in, or zero for the
+// deployment's own, or for a customer with no app to act in at all.
+func (c *Clients) Pin(ctx context.Context, customer string) (int64, error) {
+	bound, err := c.For(ctx, customer)
+	if errors.Is(err, ErrNoIdentity) {
+		return 0, nil
+	}
+	return bound.Identity.StreamApp, err
+}
 
 // HTTPClient is the transport every Stream client shares, for anything else that talks to
 // Stream on the router's behalf, such as a voice edge.

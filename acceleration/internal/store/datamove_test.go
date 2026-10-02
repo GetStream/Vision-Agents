@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun/driver/pgdriver"
 
@@ -89,6 +90,7 @@ func (s *DataMoveSuite) SetupTest() {
 	for _, store := range []*Store{s.source, s.destination} {
 		_, err := store.DB().ExecContext(s.ctx, "TRUNCATE "+tables+" CASCADE")
 		s.Require().NoError(err)
+		store.SetStreamPins(StreamPins{})
 	}
 }
 
@@ -406,4 +408,67 @@ func (s *DataMoveSuite) seedPluginConnection(store *Store, customerID, token str
 		id, customerID, newID(), "slack", token)
 	s.Require().NoError(err)
 	return id
+}
+
+// pinnedSession is a session row on the source, pinned to the app given; zero leaves it
+// unpinned, as everything written before pins was.
+func (s *DataMoveSuite) pinnedSession(customerID string, app int64) string {
+	id := uuid.NewString()
+	s.Require().NoError(s.source.SaveSession(s.ctx, &AgentSession{
+		ID: id, CustomerID: customerID, StreamAppPK: app, AgentID: "agent", UserID: "user",
+	}))
+	return id
+}
+
+// pinOnDestination is the pin a moved session arrived with, nil for none.
+func (s *DataMoveSuite) pinOnDestination(id string) *int64 {
+	var pin *int64
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT stream_app_pk FROM agent_sessions WHERE id = ?", id).Scan(&pin))
+	return pin
+}
+
+func (s *DataMoveSuite) TestAnImportedRowCannotChooseItsStreamApp() {
+	// A pin decides which app a row's work is finished in, so an import may name only the
+	// app its customer acts in on this side.
+	s.destination.SetStreamPins(StreamPins{For: func(context.Context, string) (int64, error) { return 4242, nil }})
+	own, other, unpinned := s.pinnedSession("acme", 4242), s.pinnedSession("acme", 999), s.pinnedSession("acme", 0)
+
+	s.move("acme", "acme")
+
+	s.Equal(int64(4242), *s.pinOnDestination(own))
+	s.Equal(ForeignStreamApp, *s.pinOnDestination(other))
+	s.Equal(ForeignStreamApp, *s.pinOnDestination(unpinned), "an unpinned row was in somebody's deployment app, not this customer's")
+}
+
+func (s *DataMoveSuite) TestAnExportNamesTheAppANullPinMeant() {
+	// NULL is the app of whichever deployment wrote it, which means nothing elsewhere.
+	s.source.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	id := s.pinnedSession("acme", 0)
+
+	rows := s.export("acme").of("agent_sessions")
+
+	s.Require().Len(rows, 1)
+	s.Equal(id, rows[0]["id"])
+	s.EqualValues(1, rows[0]["stream_app_pk"])
+}
+
+func (s *DataMoveSuite) TestAMoveWithinOneDeploymentAppKeepsItsPins() {
+	// Both sides act in the same deployment app, so what it wrote stays its.
+	s.source.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	s.destination.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	id := s.pinnedSession("acme", 0)
+
+	s.move("acme", "acme")
+
+	s.Require().NotNil(s.pinOnDestination(id))
+	s.Equal(int64(1), *s.pinOnDestination(id))
+}
+
+func (s *DataMoveSuite) TestAMoveBetweenDeploymentsThatNeverPinnedLeavesRowsUnpinned() {
+	id := s.pinnedSession("acme", 0)
+
+	s.move("acme", "acme")
+
+	s.Nil(s.pinOnDestination(id), "every move before pins existed worked this way")
 }

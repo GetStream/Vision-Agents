@@ -184,7 +184,7 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 	}
 
 	for _, table := range dataTables {
-		if err := exportTable(ctx, tx, table, customerID, write); err != nil {
+		if err := s.exportTable(ctx, tx, table, customerID, write); err != nil {
 			return 0, err
 		}
 	}
@@ -202,7 +202,7 @@ SELECT COALESCE(
     (SELECT MIN(seq) - 1 FROM data_changes WHERE tx >= pg_snapshot_xmin(pg_current_snapshot())),
     (SELECT COALESCE(MAX(seq), 0) FROM data_changes))`
 
-func exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
+func (s *Store) exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
 	query, args := table.selectRows(customerID)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -214,6 +214,9 @@ func exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID str
 		var row json.RawMessage
 		if err := rows.Scan(&row); err != nil {
 			return fmt.Errorf("store: export %s: %w", table.name, err)
+		}
+		if row, err = s.exportPin(table.name, row); err != nil {
+			return err
 		}
 		if err := write(table.name, row); err != nil {
 			return err
@@ -265,6 +268,10 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	spec, found := dataTableByName(table)
 	if !found {
 		return fmt.Errorf("store: %q is not a table an export carries", table)
+	}
+	row, err := s.importPin(ctx, customerID, table, row)
+	if err != nil {
+		return err
 	}
 	shape, err := s.shapeOf(ctx, table)
 	if err != nil {
@@ -388,6 +395,11 @@ LIMIT ?`, changeWatermark), customerID, after, limit)
 			return nil, 0, fmt.Errorf("store: changes: %w", err)
 		}
 		change.Payload = payload
+		if change.Op != ChangeDelete && len(payload) > 0 {
+			if change.Payload, err = s.exportPin(change.Table, payload); err != nil {
+				return nil, 0, err
+			}
+		}
 		changes = append(changes, change)
 		cursor = change.Seq
 	}

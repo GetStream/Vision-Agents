@@ -33,6 +33,8 @@ type Store struct {
 	// shapes is what each table an export carries looks like, read from the catalogue
 	// once rather than kept in a list here that a migration could leave behind.
 	shapes tableShapes
+	// pins says how Stream app pins cross between deployments, once the router has said.
+	pins pinsHolder
 }
 
 // Open connects to Postgres using a pgdriver DSN, for example

@@ -67,6 +67,10 @@ func (d *Deployment) ForApp(ctx context.Context, customer string, app int64) (Id
 	if app == 0 {
 		return d.For(ctx, customer)
 	}
+	// A negative pin is one an import could not vouch for, and names no app at all.
+	if app < 0 {
+		return Identity{}, ErrStreamAppMoved
+	}
 	known := d.app.Load()
 	switch {
 	case known == 0:

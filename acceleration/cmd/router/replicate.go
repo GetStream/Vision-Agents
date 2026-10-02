@@ -63,6 +63,8 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 		return err
 	}
 	defer pgStore.Close()
+	// An imported row may be pinned only to the app its customer acts in here.
+	pgStore.SetStreamPins(streamPins(newStreamClients(settings)))
 
 	source := &deployment{
 		url:    strings.TrimSuffix(*from, "/"),

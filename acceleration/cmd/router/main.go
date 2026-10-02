@@ -626,6 +626,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Every Stream action taken for a customer, a call joined, a transcript written, a
 	// token minted, is taken in the app this resolves for them.
 	streamClients := newStreamClients(settings)
+	if pgStore != nil {
+		pgStore.SetStreamPins(streamPins(streamClients))
+	}
 
 	sessions, err := buildSessions(settings, streams, pgStore, liveClient, telephony, base, finding, judging, streamClients, logger)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
@@ -21,4 +22,9 @@ func newStreamClients(settings config.Config) *streamapp.Clients {
 		BaseURL:   settings.Stream.BaseURL,
 	})
 	return streamapp.NewClients(deployment, streamapp.ClientsOptions{})
+}
+
+// streamPins tells the store how this deployment's Stream app pins cross to another one.
+func streamPins(clients *streamapp.Clients) store.StreamPins {
+	return store.StreamPins{Deployment: clients.DeploymentApp, For: clients.Pin}
 }
