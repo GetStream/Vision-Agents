@@ -416,6 +416,38 @@ func (s *FakeProviderSuite) TestServerErrorUnderCommaScopesIsSlacksInternalError
 	s.Equal("internal_error", body["error"])
 }
 
+func (s *FakeProviderSuite) TestCutOffRefusalSends400ThenLosesTheBodyAndSpendsNothing() {
+	srv := fakeprovider.New(s.T())
+	first := s.connect(srv, nil)
+	srv.Use(fakeprovider.CutOffRefusal)
+	response, err := srv.Client().PostForm(srv.URL+fakeprovider.PathToken, url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {first["refresh_token"].(string)},
+		"client_id": {srv.ClientID}, "client_secret": {srv.ClientSecret},
+	})
+	s.Require().NoError(err, "the status line and headers arrive")
+	s.Equal(http.StatusBadRequest, response.StatusCode)
+	_, err = io.ReadAll(response.Body)
+	s.Require().Error(err, "the body does not")
+	s.Require().NoError(response.Body.Close())
+
+	srv.Use()
+	status, _ := s.refresh(srv, first["refresh_token"].(string))
+	s.Equal(http.StatusOK, status, "the refused refresh spent nothing")
+}
+
+func (s *FakeProviderSuite) TestAccessTokenNotRevocableRefusesAnAccessTokenAndRevokesARefreshToken() {
+	srv := fakeprovider.New(s.T(), fakeprovider.AccessTokenNotRevocable)
+	first := s.connect(srv, nil)
+	status, body := s.post(srv, fakeprovider.PathRevoke, url.Values{"token": {first["access_token"].(string)}}, true)
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("unsupported_token_type", body["error"])
+	s.Equal(http.StatusOK, s.call(srv, first["access_token"].(string)).StatusCode, "nothing was revoked")
+
+	status, _ = s.post(srv, fakeprovider.PathRevoke, url.Values{"token": {first["refresh_token"].(string)}}, true)
+	s.Equal(http.StatusOK, status)
+	s.Equal(http.StatusUnauthorized, s.call(srv, first["access_token"].(string)).StatusCode, "revoking the refresh token ended the grant")
+}
+
 func (s *FakeProviderSuite) TestARefreshScopeIsRecordedAndCannotWidenTheGrant() {
 	srv := fakeprovider.New(s.T())
 	first := s.connect(srv, url.Values{"scope": {"files:read"}})

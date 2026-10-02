@@ -104,6 +104,17 @@ const (
 	// so outright: «It's possible some aspect of the operation succeeded before the error
 	// was raised» (docs.slack.dev/reference/methods/oauth.v2.access).
 	ServerError Personality = "server_error"
+	// CutOffRefusal answers a refresh with 400 and a body cut off midway: the headers arrive,
+	// Content-Length promises more than is sent, and the connection closes. The refresh is
+	// refused before anything changes, so the status is all a client can go by. Not a vendor
+	// behaviour: a transport failure after the status line, which any provider can have.
+	CutOffRefusal Personality = "cut_off_refusal"
+	// AccessTokenNotRevocable refuses to revoke an access token with 400
+	// unsupported_token_type, which RFC 7009 section 2.2.1 defines for «the client tried to
+	// revoke an access token on a server not supporting this feature» (section 2: a server
+	// MUST revoke refresh tokens and only SHOULD revoke access tokens). Refresh tokens are
+	// revoked as before.
+	AccessTokenNotRevocable Personality = "access_token_not_revocable"
 	// InsufficientScope answers tools/call with 403 and error="insufficient_scope" (RFC 6750
 	// §3.1) unless the token carries RequiredScope.
 	InsufficientScope Personality = "insufficient_scope"
@@ -141,7 +152,7 @@ const (
 
 // tokenEndpoint are the personalities that decide what the token endpoint does; at most one
 // can be on.
-var tokenEndpoint = []Personality{RotatingRefreshWithGrace, NonRotatingRefresh, NoRefreshToken, InvalidGrant, Unavailable, ServerError}
+var tokenEndpoint = []Personality{RotatingRefreshWithGrace, NonRotatingRefresh, NoRefreshToken, InvalidGrant, Unavailable, ServerError, CutOffRefusal}
 
 // Server is the fake provider. Its fields are fixed when New returns.
 type Server struct {

@@ -36,6 +36,8 @@ With no personality the server is strict: PKCE with `S256` only (RFC 7636 §4.4.
 | `LostResponseOnce` | `LostResponse` for the next refresh only; the ones after it answer | as `LostResponse` | T10 grace retry that succeeds |
 | `Unavailable` | The token endpoint answers 503 and changes nothing | RFC 9110 §15.6.4 | T10 Transient, T11 |
 | `ServerError` | A refresh rotates, then answers 500 `server_error` (Slack's 200 `internal_error` under `CommaScopes`) | RFC 9110 §15.6.1; RFC 6749 §4.1.2.1; docs.slack.dev oauth.v2.access («It's possible some aspect of the operation succeeded») | T10 Uncertain |
+| `CutOffRefusal` | A refresh gets 400 whose body is cut off (Content-Length promises more, the connection closes); nothing changes | not a vendor behaviour: a transport failure after the status line | T10 a refusal is not Uncertain |
+| `AccessTokenNotRevocable` | Revoking an access token gets 400 `unsupported_token_type`; refresh tokens revoke as before | RFC 7009 §2, §2.2.1 | T10 Revoke |
 | `InsufficientScope` | `tools/call` without `RequiredScope` gets 403 `insufficient_scope` with the scope to ask for | RFC 6750 §3.1; MCP 2025-11-25 «Scope Challenge Handling» | T10 ScopeRequired, T27 |
 | `ClaimsChallenge` | MCP requests get 401 `insufficient_claims` with `claims` until the token came from a consent passing them | Microsoft «Claims challenges, claims requests and client capabilities» | T10 ScopeRequired, T27 |
 | `RateLimited` | MCP requests and refresh grants get 429 with `Retry-After: 30`; a refused refresh spends nothing | RFC 6585 §4; RFC 9110 §10.2.3 | T10 RateLimited, T28 |

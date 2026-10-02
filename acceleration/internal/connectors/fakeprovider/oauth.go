@@ -276,6 +276,15 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
+		if s.is(CutOffRefusal) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Length", "64")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":`))
+			w.(http.Flusher).Flush()
+			// net/http closes the connection for this panic value, 55 bytes short.
+			panic(http.ErrAbortHandler)
+		}
 	}
 	if s.is(Unavailable) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -527,6 +536,10 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := r.PostForm.Get("token")
+	if s.is(AccessTokenNotRevocable) && s.access[token] != nil {
+		s.tokenError(w, http.StatusBadRequest, "unsupported_token_type", "")
+		return
+	}
 	if a := s.access[token]; a != nil {
 		a.grant.revoked = true
 	}
