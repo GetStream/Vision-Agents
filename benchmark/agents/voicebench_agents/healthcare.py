@@ -18,7 +18,7 @@ async def create_agent(**kwargs) -> Agent:
     )
 
     @llm.register_function(
-        description="Verify a patient with name, DOB, and member ID or phone"
+        description="Verify a patient with name, DOB, and member ID or phone. dob is YYYY-MM-DD, like 1990-01-31"
     )
     async def verify_identity(
         name: str, dob: str, member_id: str = "", phone: str = ""
