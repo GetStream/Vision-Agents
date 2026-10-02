@@ -55,7 +55,7 @@ func (s *OpenStoreSuite) TestARouterStartingOnAnEmptyDatabaseHasTheBuiltInsAtRev
 		s.Require().NoError(err)
 		s.T().Cleanup(func() { opened.Close() })
 
-		definitions, err := opened.ListConnectorDefinitions(s.ctx, "acme")
+		definitions, err := opened.ListConnectorDefinitions(s.ctx, "acme", store.ConnectorDefinitionFilter{})
 		s.Require().NoError(err)
 		s.Require().Len(definitions, 2, "a restart adds no revision")
 		for i, id := range []string{"linear", "slack"} {
