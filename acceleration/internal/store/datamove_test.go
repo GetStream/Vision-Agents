@@ -407,3 +407,88 @@ func (s *DataMoveSuite) seedPluginConnection(store *Store, customerID, token str
 	s.Require().NoError(err)
 	return id
 }
+
+func (s *DataMoveSuite) TestAMovedConnectorConnectionArrivesNeedingReauthorization() {
+	id := s.seedConnectorConnection(s.source, "acme")
+
+	exported := s.export("acme").of("connector_connections")
+	s.Require().Len(exported, 1)
+	s.NotContains(exported[0], "material_sealed", "sealed material is not part of a customer's data")
+
+	s.move("acme", "moved")
+
+	s.assertArrivedWithoutMaterial(id, "moved")
+}
+
+func (s *DataMoveSuite) TestACustomConnectorDefinitionMovesAndABuiltInDoesNot() {
+	s.seedConnectorConnection(s.source, "acme")
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"INSERT INTO connector_definitions (customer_id, id, revision, name, manifest) VALUES ('', 'acme', 1, 'Acme', '{}')")
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	definitions := s.exportFrom(s.destination, "moved").of("connector_definitions")
+	s.Require().Len(definitions, 1)
+	s.Equal("custom_acme", definitions[0]["id"])
+	s.Equal("moved", definitions[0]["customer_id"])
+}
+
+func (s *DataMoveSuite) TestAChangeToAConnectorConnectionLeavesItsMaterialBehind() {
+	s.capture("acme")
+	id := s.seedConnectorConnection(s.source, "acme")
+
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE connector_connections SET material_sealed = 'rotated grant', revision = 2 WHERE id = ?", id)
+	s.Require().NoError(err)
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	recorded := 0
+	for _, change := range changes {
+		if change.Table != "connector_connections" {
+			continue
+		}
+		recorded++
+		s.NotContains(string(change.Payload), "material_sealed")
+	}
+	s.Equal(2, recorded, "the insert and the update")
+
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+	s.assertArrivedWithoutMaterial(id, "acme")
+}
+
+// assertArrivedWithoutMaterial checks a connection the destination received holds what a
+// connection with no material holds: none, key version 0, no expiry, and a status asking
+// for a new grant.
+func (s *DataMoveSuite) assertArrivedWithoutMaterial(id, owner string) {
+	var material []byte
+	var kekVersion int
+	var expiresAt sql.NullTime
+	var status, customer string
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT material_sealed, material_kek_version, expires_at, status, customer_id FROM connector_connections WHERE id = ?",
+		id).Scan(&material, &kekVersion, &expiresAt, &status, &customer))
+	s.Empty(material)
+	s.Zero(kekVersion, "the source grant's key version does not come along")
+	s.False(expiresAt.Valid, "the source grant's expiry does not come along")
+	s.Equal(ConnectionNeedsReauthorization, status)
+	s.Equal(owner, customer)
+}
+
+// seedConnectorConnection stores a custom definition and a connected connection to it with
+// sealed material under key version 1 and an expiry, the state a grant leaves.
+func (s *DataMoveSuite) seedConnectorConnection(store *Store, customerID string) string {
+	_, err := store.DB().ExecContext(s.ctx,
+		"INSERT INTO connector_definitions (customer_id, id, revision, name, manifest) VALUES (?, 'custom_acme', 1, 'Acme', '{}')",
+		customerID)
+	s.Require().NoError(err)
+	id := newID()
+	_, err = store.DB().ExecContext(s.ctx,
+		"INSERT INTO connector_connections (id, customer_id, connector_id, definition_revision, owner_type, auth_scheme,"+
+			" status, material_sealed, material_kek_version, expires_at)"+
+			" VALUES (?, ?, 'custom_acme', 1, 'app', 'test_key', ?, 'sealed grant', 1, now() + interval '1 hour')",
+		id, customerID, ConnectionConnected)
+	s.Require().NoError(err)
+	return id
+}
