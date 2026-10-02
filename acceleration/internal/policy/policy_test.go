@@ -318,3 +318,17 @@ func (s *PolicySuite) TestAPolicyReadErrorRequiresItsOwnApp() {
 	_, admitted := enforcer.Admit(s.ctx, s.app)
 	s.NoError(admitted, "a request is still admitted when the policies cannot be read")
 }
+
+func (s *PolicySuite) TestANewAppsFirstRequestsAreHeldToItsOrganizationsRequirement() {
+	// The membership is written in the background, and the first decision is made before
+	// it lands.
+	required := true
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{RequireOwnStreamApp: &required})
+	fresh := fmt.Sprintf("app-new-%d", time.Now().UnixNano())
+	s.enforcer.members.Store(fresh, s.org)
+
+	requires, err := s.enforcer.RequiresOwnStreamApp(s.ctx, fresh)
+
+	s.Require().NoError(err)
+	s.True(requires)
+}

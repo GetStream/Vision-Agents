@@ -185,6 +185,12 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 	if err != nil {
 		return decision{}, err
 	}
+	// An app seen for the first time is recorded under its organization in the background.
+	// Until that lands, the organization it came in under is the one whose floor applies:
+	// an app's first requests are not the ones to escape it.
+	if pending, ok := e.members.Load(appID); ok && organizationID == "" {
+		organizationID, _ = pending.(string)
+	}
 	var organization store.PolicyDocument
 	if organizationID != "" {
 		if organization, err = e.store.Policy(ctx, store.ScopeOrganization, organizationID); err != nil {
