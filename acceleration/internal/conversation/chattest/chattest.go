@@ -41,6 +41,10 @@ type App struct {
 	ChannelTypes map[string]map[string][]string
 	// CallTypes are the call types it holds.
 	CallTypes []string
+	// Suspended and DisableAuthChecks are what the app says of its standing.
+	Suspended, DisableAuthChecks bool
+	// Refuses answers 401 to being asked, as Stream does for a key it does not accept.
+	Refuses bool
 }
 
 // safeGrants are the agent channel type as an app set up for the router holds it: members
@@ -209,6 +213,11 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/api/v2/app"):
 		db.appReads++
+		if db.app.Refuses {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 5, "message": "api key not valid", "StatusCode": http.StatusUnauthorized})
+			return
+		}
 		channels, calls := map[string]any{}, map[string]any{}
 		for name := range db.app.ChannelTypes {
 			channels[name] = map[string]any{"name": name}
@@ -216,7 +225,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		for _, name := range db.app.CallTypes {
 			calls[name] = map[string]any{"name": name}
 		}
-		result["app"] = map[string]any{"id": db.app.ID, "channel_configs": channels, "call_types": calls}
+		result["app"] = map[string]any{
+			"id": db.app.ID, "channel_configs": channels, "call_types": calls,
+			"suspended": db.app.Suspended, "disable_auth_checks": db.app.DisableAuthChecks,
+		}
 	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/channeltypes/"):
 		name := parts[len(parts)-1]
 		grants, ok := db.app.ChannelTypes[name]

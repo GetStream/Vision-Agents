@@ -112,8 +112,10 @@ type RouterSuite struct {
 	store  *store.Store
 	live   *live.Client
 	sealer *auth.Sealer
-	server *httptest.Server
-	app    testApp
+	// manager runs the suite's sessions, for a test about what ends them from inside.
+	manager *session.Manager
+	server  *httptest.Server
+	app     testApp
 
 	// unauthenticatedClient sends no credentials. The rest hold the app's key:
 	// anonymousClient goes by a name nothing proves, guestClient and client are signed-in
@@ -403,6 +405,7 @@ func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *ses
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = sessions.Shutdown() })
+	s.manager = sessions
 	return sessions
 }
 

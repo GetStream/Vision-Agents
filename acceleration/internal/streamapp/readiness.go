@@ -46,6 +46,11 @@ type Readiness struct {
 	CallType TypeState
 	// CheckedAt is when Stream was asked.
 	CheckedAt time.Time
+	// Suspended is an app Stream suspended.
+	Suspended bool
+	// AuthChecksOff is an app that takes requests without checking the tokens they carry,
+	// so a token the router mints there proves nothing.
+	AuthChecksOff bool
 }
 
 // ReadReadiness asks Stream what the app a client acts in holds. Nothing it reads leaves
@@ -60,6 +65,7 @@ func ReadReadiness(ctx context.Context, client *getstream.Stream, now time.Time)
 	}
 	readiness := Readiness{
 		App: int64(app.Data.App.ID), ChannelType: TypeMissing, CallType: TypeMissing, CheckedAt: now,
+		Suspended: app.Data.App.Suspended, AuthChecksOff: app.Data.App.DisableAuthChecks,
 	}
 	if app.Data.App.CallTypes[AgentCallType] != nil {
 		readiness.CallType = TypePresent

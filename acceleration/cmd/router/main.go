@@ -658,6 +658,16 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if sessions != nil {
 		defer sessions.Shutdown()
 	}
+	// In app mode every connected app is checked on, and what the router stops acting in
+	// takes the sessions pinned to it with it.
+	if stored, ok := streamClients.Source().(*streamapp.Stored); ok {
+		ended := func(customer string, app int64) {
+			if sessions != nil {
+				sessions.EndPinned(customer, app)
+			}
+		}
+		go stored.Watch(ctx, streamClients, streamapp.WatchEvery, ended)
+	}
 
 	// A campaign is a phone call, a conversation and a row, so it runs only where all
 	// three are configured. Elsewhere the campaign paths say so.

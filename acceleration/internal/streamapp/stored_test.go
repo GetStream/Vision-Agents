@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -28,6 +29,8 @@ type StoredSuite struct {
 	clock      *clock
 	customer   string
 	app        int64
+	// stream is the Stream every app in the suite is reached at.
+	stream *chattest.Server
 }
 
 func TestStoredSuite(t *testing.T) {
@@ -53,7 +56,8 @@ func (s *StoredSuite) SetupTest() {
 	// The database is this suite's own, and an api key is the same key in every test.
 	_, err := s.store.DB().ExecContext(s.ctx, "TRUNCATE stream_apps, stream_fallback_uses CASCADE")
 	s.Require().NoError(err)
-	s.deployment = NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", App: 1, Strict: true})
+	s.stream = chattest.NewServer(s.T())
+	s.deployment = NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", App: 1, Strict: true, BaseURL: s.stream.URL})
 	s.clock = &clock{now: time.Unix(1_700_000_000, 0)}
 	// An app id of the test's own, so a registration left by an earlier run is not this one.
 	s.app = int64(uuid.New().ID()) + 1_000_000
@@ -293,4 +297,71 @@ func customersOf(uses []store.StreamFallbackUse) []string {
 		customers = append(customers, use.CustomerID)
 	}
 	return customers
+}
+
+// checked runs one check of every connected app, and says which apps it ended.
+func (s *StoredSuite) checked(source *Stored) []int64 {
+	var ended []int64
+	source.CheckApps(s.ctx, NewClients(source, ClientsOptions{}), func(customer string, app int64) {
+		s.Equal(s.customer, customer)
+		ended = append(ended, app)
+	})
+	return ended
+}
+
+func (s *StoredSuite) TestAnAppThatDisablesAuthChecksIsBlocked() {
+	// A token the router mints there proves nothing, so nothing more is written there.
+	s.register("own-key")
+	s.stream.SetApp(chattest.App{ID: s.app, DisableAuthChecks: true})
+	source := s.source(true)
+
+	s.Equal([]int64{s.app}, s.checked(source))
+
+	held, err := s.store.StreamApp(s.ctx, s.customer)
+	s.Require().NoError(err)
+	s.Equal(store.StreamAppBlocked, held.State)
+	_, err = source.For(s.ctx, s.customer)
+	s.ErrorIs(err, ErrStreamAppDisconnected, "a blocked app never falls back")
+}
+
+func (s *StoredSuite) TestASuspendedAppIsBlocked() {
+	s.register("own-key")
+	s.stream.SetApp(chattest.App{ID: s.app, Suspended: true})
+
+	s.Equal([]int64{s.app}, s.checked(s.source(false)))
+}
+
+func (s *StoredSuite) TestAnAppWhoseKeyIsAnotherAppsIsBlocked() {
+	s.register("own-key")
+	s.stream.SetApp(chattest.App{ID: s.app + 1})
+
+	s.Equal([]int64{s.app}, s.checked(s.source(false)))
+}
+
+func (s *StoredSuite) TestAKeyStreamRefusesIsRejectedAndTheNextOneUsed() {
+	s.register("primary", "secondary")
+	s.stream.SetApp(chattest.App{ID: s.app, Refuses: true})
+	source := s.source(false)
+
+	s.Empty(s.checked(source))
+
+	held, err := s.store.StreamApp(s.ctx, s.customer)
+	s.Require().NoError(err)
+	primary, _ := held.Key("primary")
+	s.Equal(store.StreamAppKeyRejected, primary.Status)
+	identity, err := source.For(s.ctx, s.customer)
+	s.Require().NoError(err)
+	s.Equal("secondary", identity.APIKey)
+}
+
+func (s *StoredSuite) TestAHealthyAppStaysConnectedWithWhatItsCheckFound() {
+	s.register("own-key")
+	s.stream.SetApp(chattest.App{ID: s.app, CallTypes: []string{AgentCallType}})
+
+	s.Empty(s.checked(s.source(false)))
+
+	held, err := s.store.StreamApp(s.ctx, s.customer)
+	s.Require().NoError(err)
+	s.Equal(store.StreamAppConnected, held.State)
+	s.JSONEq(`{"channel_type":"missing","call_type":"present","suspended":false,"auth_checks_off":false}`, string(held.Checks))
 }

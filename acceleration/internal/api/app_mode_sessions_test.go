@@ -102,3 +102,15 @@ func (s *AppModeSessionsSuite) TestAVoiceCallOnAConversationKeptInAnotherAppIsRe
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "kept in another Stream app")
 }
+
+func (s *AppModeSessionsSuite) TestDisconnectingEndsSessionsPinnedToTheApp() {
+	// What the router no longer acts in, nothing it holds goes on acting in.
+	s.giveApp(s.customerID(), 4242, "own-key")
+	s.serverClient.createSession(textSession(nil))
+	s.setApps(s.customerID(), func(apps *suiteApps) { delete(apps.own, s.customerID()) })
+	s.serverClient.createSession(textSession(nil))
+
+	s.Equal(1, s.manager.EndPinned(s.customerID(), 4242))
+	s.Zero(s.manager.EndPinned(s.customerID(), 4242), "it ended already")
+	s.Equal(1, s.manager.EndPinned(s.customerID(), 0), "the session in the deployment's app was left running")
+}

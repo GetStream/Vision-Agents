@@ -931,6 +931,30 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	return true, found.Close()
 }
 
+// EndPinned ends every session acting in one of a customer's Stream apps, which is what
+// the router does once it stops acting there: the app disconnected, blocked, or the key it
+// was opened with dropped. Each closes its call, transcript and guardrail with it. It
+// reports how many it ended.
+func (m *Manager) EndPinned(customer string, app int64) int {
+	m.mu.Lock()
+	var pinned []*Session
+	for id, found := range m.sessions {
+		if spec := found.Spec(); spec.CustomerID == customer && spec.StreamApp == app {
+			pinned = append(pinned, found)
+			delete(m.sessions, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, found := range pinned {
+		if err := found.Close(); err != nil {
+			m.logger.Warn("a session pinned to a Stream app the router stopped acting in did not close cleanly",
+				"session", found.ID(), "customer_id", customer, "error", err)
+		}
+	}
+	return len(pinned)
+}
+
 // Delete stops a session if it is running and deletes it: its row, its turns, and what it
 // taught the memory store. Whoever asks has to have checked the session is the owner's, since
 // one that ended is no longer here to check against.
