@@ -6,6 +6,7 @@ from .agent_config import AgentConfig
 from .agent_config_request import AgentConfigRequest
 from .agent_config_request_tags import AgentConfigRequestTags
 from .agent_config_tags import AgentConfigTags
+from .agent_dispatch import AgentDispatch
 from .agent_log import AgentLog
 from .agent_log_details import AgentLogDetails
 from .agent_log_page import AgentLogPage
@@ -72,6 +73,7 @@ from .data_import import DataImport
 from .data_import_tables import DataImportTables
 from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
+from .dispatch_setting import DispatchSetting
 from .endpointing import Endpointing
 from .error import Error
 from .fork_session_request import ForkSessionRequest
@@ -252,6 +254,7 @@ __all__ = (
     "AgentConfigRequest",
     "AgentConfigRequestTags",
     "AgentConfigTags",
+    "AgentDispatch",
     "AgentLog",
     "AgentLogDetails",
     "AgentLogPage",
@@ -318,6 +321,7 @@ __all__ = (
     "DataImportTables",
     "DataPolicy",
     "DecisionKind",
+    "DispatchSetting",
     "Endpointing",
     "Error",
     "ForkSessionRequest",

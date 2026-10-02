@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -199,6 +201,10 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			Output json.RawMessage `json:"output"`
 			// Error is what to tell the model instead, when the tool did not work.
 			Error string `json:"error"`
+			// Allowed and Summary carry tool_approval: a person's answer to a call that
+			// waited for them, and what a declined call shows.
+			Allowed *bool  `json:"allowed"`
+			Summary string `json:"summary"`
 			// Text carries say and respond.
 			Text string `json:"text"`
 			// Images attach to a respond command, and become image parts on that turn.
@@ -230,12 +236,34 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 					"session", found.ID(), "call", command.ToolCallID)
 			}
 
+		case "tool_approval":
+			if command.Allowed == nil {
+				found.Report(fmt.Errorf("tool_approval needs allowed"), "tool")
+				continue
+			}
+			if !found.DecideCommandTool(command.ToolCallID, command.CommandID, command.TurnID, *command.Allowed, command.Summary) {
+				s.logger.Debug("a tool approval answered nothing",
+					"session", found.ID(), "call", command.ToolCallID)
+			}
+
 		case "say":
 			if err := found.Say(context.Background(), command.Text); err != nil {
 				s.logger.Debug("could not say it", "session", found.ID(), "error", err)
 			}
 
 		case "respond":
+			if leftToDispatch(found, owner.Kind) {
+				if len(command.Images) > 0 {
+					found.Report(errors.New("this agent hands what is written to its server, which takes text only"), "dispatch")
+					continue
+				}
+				if _, err := s.dispatchText(context.Background(), found, dispatch.Message{
+					Text: command.Text, CommandID: command.CommandID, UserID: owner.UserID,
+				}, ""); err != nil {
+					found.Report(err, "dispatch")
+				}
+				continue
+			}
 			if command.CommandID != "" {
 				if len(command.Images) > 0 {
 					found.Report(fmt.Errorf("durable commands currently support text only"), "llm")

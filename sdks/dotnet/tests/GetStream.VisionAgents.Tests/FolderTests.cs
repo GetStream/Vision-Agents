@@ -140,7 +140,7 @@ public sealed class FolderTests : IDisposable
     [Fact]
     public void TheDeclarationSaysWhatTheAgentIsCalledAndRunsOn()
     {
-        Write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\nkeyterms: [Vision Agents]\nvideo:\n  source: camera\n");
+        Write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\nkeyterms: [Vision Agents]\nvideo:\n  source: camera\ndispatch:\n  incoming_call: disabled\n  text: enabled\n");
 
         var folder = Folder.Load(_root);
 
@@ -149,6 +149,7 @@ public sealed class FolderTests : IDisposable
         Assert.Equal(["Vision Agents"], folder.Declaration.Keyterms);
         Assert.Equal("", folder.Declaration.Sts);
         Assert.Equal(new VideoDeclaration("camera", 1), folder.Declaration.Video);
+        Assert.Equal(new DispatchDeclaration("disabled", "enabled"), folder.Declaration.Dispatch);
     }
 
     [Fact]
@@ -157,11 +158,13 @@ public sealed class FolderTests : IDisposable
         Write("agent.yaml", "name: jean\n");
 
         Assert.Null(Folder.Load(_root).Declaration.Sts);
+        Assert.Null(Folder.Load(_root).Declaration.Dispatch);
     }
 
     [Theory]
     [InlineData("name: jean\nlmm: openai/gpt-5.6\n")]
     [InlineData("video:\n  max_frames: 9\n")]
+    [InlineData("dispatch:\n  sms: enabled\n")]
     [InlineData("keyterms: Vision Agents\n")]
     public void ADeclarationKeyNobodyKnowsIsRefused(string declaration)
     {

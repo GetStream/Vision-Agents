@@ -184,7 +184,7 @@ module GetStream
         }.freeze,
         "dispatchCalls" => {
           method: :get, path: "/v1/dispatch",
-          path_params: [].freeze, query: %w[capacity].freeze,
+          path_params: [].freeze, query: %w[capacity active handles].freeze,
           body: nil, body_required: false,
           socket: true, client_accessible: false
         }.freeze,
@@ -778,12 +778,16 @@ module GetStream
           required: %w[bucket active_users sessions messages calls voice_minutes phone_minutes].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[id name mode stt tts sts voice llm video subagent search instructions greeting guardrail skills plugins keyterms knowledge_namespace sandbox tags sync_hash created_at updated_at].freeze,
+          properties: %w[id name mode stt tts sts voice llm video subagent search instructions greeting guardrail skills plugins keyterms knowledge_namespace sandbox tags dispatch sync_hash created_at updated_at].freeze,
           required: %w[id name mode created_at updated_at].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[name mode stt tts sts voice llm video subagent search instructions greeting guardrail skills plugins keyterms knowledge_namespace sandbox tags].freeze,
+          properties: %w[name mode stt tts sts voice llm video subagent search instructions greeting guardrail skills plugins keyterms knowledge_namespace sandbox tags dispatch].freeze,
           required: %w[name].freeze, open: false
+        }.freeze,
+        "AgentDispatch" => {
+          properties: %w[incoming_call text].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "AgentLog" => {
           properties: %w[id cursor config_id agent_id session_id user_id source severity event_type message occurred_at ingested_at details].freeze,
@@ -1230,7 +1234,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[name hash instructions guardrail skills knowledge knowledge_urls mode stt tts sts voice llm video subagent search greeting plugins keyterms sandbox tags].freeze,
+          properties: %w[name hash instructions guardrail skills knowledge knowledge_urls mode stt tts sts voice llm video subagent search greeting plugins keyterms sandbox tags dispatch].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {

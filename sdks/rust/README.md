@@ -117,6 +117,10 @@ let worker = dispatch.clone();
 dispatch.wait_for_message(move |message| {
     let worker = worker.clone();
     async move {
+        if !message.session_id.is_empty() {
+            worker.answer(&message).await?;
+            return Ok(());
+        }
         let session = worker
             .get_or_create_agent(&message, async || Ok(Agent::new("support")))
             .await?;
@@ -128,8 +132,15 @@ dispatch.run().await?;
 ```
 
 `capacity` is a promise about what this process can answer: the router passes over a full
-worker rather than queueing behind it. `get_or_create_agent` keeps one session per channel,
-because the session that answered the last message is the one that knows what was said.
+worker rather than queueing behind it. The worker tells the router which kinds of work it
+handles, and reports each call and message `done` when its handler returns, with the error
+if it failed. `get_or_create_agent` keeps one session per channel, because the session that
+answered the last message is the one that knows what was said.
+
+An agent whose `agent.yaml` says `dispatch: {text: enabled}` hands what end users write to the
+worker with the running session's `session_id` and its `command_id`. `answer` has the model
+answer it on that session, with the worker's own credential acting for the user who wrote it.
+`get_or_create_agent` refuses such a message.
 
 A worker can also host functions for every session opened under an agent id, including ones
 opened from a browser. The router offers them to each session and sends every call here:

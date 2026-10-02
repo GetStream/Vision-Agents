@@ -11,6 +11,7 @@ use Amp\TimeoutCancellation;
 use Amp\CancelledException;
 use Closure;
 use GetStream\VisionAgents\Agent;
+use GetStream\VisionAgents\AgentResponse;
 use GetStream\VisionAgents\Client;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\HostingRefusedException;
@@ -18,6 +19,7 @@ use GetStream\VisionAgents\Generated\SessionTool;
 use GetStream\VisionAgents\Inbound\InboundCall;
 use GetStream\VisionAgents\Inbound\InboundMessage;
 use GetStream\VisionAgents\Json;
+use GetStream\VisionAgents\Responses;
 use GetStream\VisionAgents\Session;
 use GetStream\VisionAgents\Tools;
 use Revolt\EventLoop;
@@ -56,6 +58,8 @@ final class Dispatch
     /** @var array<int, Future<mixed>> */
     private array $running = [];
     private int $nextJob = 0;
+    /** The calls and messages being handled, which the router counts against capacity; hosted tool calls are not. */
+    private int $handling = 0;
     /** @var array<string, Session> which session is answering which channel */
     private array $answering = [];
     private readonly LocalKeyedMutex $channels;
@@ -87,8 +91,8 @@ final class Dispatch
 
     /**
      * Registers what to do with an arriving call. It runs in its own fiber, so one long call
-     * does not stop the next from being answered; what it throws is reported to the router as a
-     * call nobody took.
+     * does not stop the next from being answered; what it throws is reported to the router with
+     * the `done` that frees the room it took.
      *
      * @param callable(InboundCall): mixed $handler
      */
@@ -101,7 +105,8 @@ final class Dispatch
     }
 
     /**
-     * Registers what to do with a message written to an agent that is not running.
+     * Registers what to do with a message written to an agent that is not running, or to a
+     * running session whose agent leaves text to dispatch (see `answer`).
      *
      * @param callable(InboundMessage): mixed $handler
      */
@@ -139,6 +144,9 @@ final class Dispatch
      */
     public function getOrCreateAgent(InboundMessage $message, callable $createAgent): Session
     {
+        if ($message->sessionId !== '') {
+            throw new ConfigurationException('a session is already holding this conversation; answer it there with answer()');
+        }
         // Two messages on one channel arriving together would otherwise start two agents.
         $lock = $this->channels->acquire($message->channelId);
         try {
@@ -155,6 +163,23 @@ final class Dispatch
     }
 
     /**
+     * Has the model answer a message written to a running session whose agent leaves text to
+     * dispatch.
+     *
+     * The response is created with this worker's own credential, acting for whoever wrote the
+     * message, so it goes to the model rather than back to a worker. It carries the message's
+     * command, so the answer lands on it.
+     */
+    public function answer(InboundMessage $message): AgentResponse
+    {
+        if ($message->sessionId === '') {
+            throw new ConfigurationException('no session is holding this message; open one with getOrCreateAgent');
+        }
+        $client = $this->client->withBackend($this->client->backend->onBehalfOf($message->userId));
+        return (new Responses($client, $message->sessionId))->create($message->text, commandId: $message->commandId);
+    }
+
+    /**
      * Waits for calls, messages and hosted tool calls until the router closes the socket or
      * `stop()` is called.
      *
@@ -168,7 +193,7 @@ final class Dispatch
         if ($this->onCall === null && $this->onMessage === null && $this->hosted === []) {
             throw new ConfigurationException('register a handler with waitForCall or waitForMessage, or host tools, before running');
         }
-        $socket = Socket::open($this->client, '/v1/dispatch', ['capacity' => $this->capacity]);
+        $socket = Socket::open($this->client, '/v1/dispatch', $this->waiting());
         $this->socket = $socket;
         $this->hosting = [];
 
@@ -184,8 +209,8 @@ final class Dispatch
                     continue;
                 }
                 match (Json::string($frame, 'type')) {
-                    'call' => $this->answer(InboundCall::fromFrame($frame)),
-                    'message' => $this->write(InboundMessage::fromFrame($frame)),
+                    'call' => $this->pickUp(Json::string($frame, 'work_id'), InboundCall::fromFrame($frame)),
+                    'message' => $this->write(Json::string($frame, 'work_id'), InboundMessage::fromFrame($frame)),
                     'ready' => $this->ready(Json::string($frame, 'worker_id')),
                     'tool_call' => $this->runHosted($frame),
                     'hosting' => $this->hosting[] = Json::string($frame, 'agent_id'),
@@ -218,6 +243,24 @@ final class Dispatch
     public function active(): int
     {
         return count($this->running);
+    }
+
+    /**
+     * What this worker says about itself on the handshake: how much it can hold, how much it is
+     * already holding, and which kinds of work it answers (said even when it is none).
+     *
+     * @return array<string, scalar>
+     */
+    private function waiting(): array
+    {
+        $handles = [];
+        if ($this->onCall !== null) {
+            $handles[] = 'call';
+        }
+        if ($this->onMessage !== null) {
+            $handles[] = 'message';
+        }
+        return ['capacity' => $this->capacity, 'active' => $this->handling, 'handles' => implode(',', $handles)];
     }
 
     /**
@@ -270,36 +313,54 @@ final class Dispatch
         });
     }
 
-    private function answer(InboundCall $call): void
+    private function pickUp(string $workId, InboundCall $call): void
     {
         $handler = $this->onCall;
         if ($handler === null) {
+            $this->done($workId, 'this worker answers no calls');
             return;
         }
-        $this->track(function () use ($handler, $call): void {
+        $this->handle($workId, static fn () => $handler($call));
+    }
+
+    private function write(string $workId, InboundMessage $message): void
+    {
+        $handler = $this->onMessage;
+        if ($handler === null) {
+            $this->done($workId, 'this worker answers no messages');
+            return;
+        }
+        $this->handle($workId, static fn () => $handler($message));
+    }
+
+    /**
+     * Runs one call or message and says `done` when it ends, which is what gives the router this
+     * worker's room back. What it threw goes with it, so a failure shows up there rather than
+     * only in this process's log.
+     *
+     * @param Closure(): void $work
+     */
+    private function handle(string $workId, Closure $work): void
+    {
+        $this->handling++;
+        $this->track(function () use ($workId, $work): void {
             try {
-                $handler($call);
+                $work();
+                $this->done($workId);
             } catch (Throwable $failed) {
-                // The router is told, so a call nobody answered shows up there rather than only
-                // in this process's log.
-                $this->tell(['type' => 'rejected', 'call_id' => $call->callId, 'reason' => $failed->getMessage()]);
-                return;
+                $this->done($workId, $failed->getMessage());
+            } finally {
+                $this->handling--;
             }
-            $this->tell(['type' => 'accepted', 'call_id' => $call->callId]);
         });
     }
 
     /**
-     * Nothing is reported back for a message: accepting and rejecting are about a caller
-     * waiting on a line, and there is no line here.
+     * Said even for work there was no handler for, because the router holds its room until then.
      */
-    private function write(InboundMessage $message): void
+    private function done(string $workId, ?string $error = null): void
     {
-        $handler = $this->onMessage;
-        if ($handler === null) {
-            return;
-        }
-        $this->track(static fn () => $handler($message));
+        $this->tell(['type' => 'done', 'work_id' => $workId, ...($error === null ? [] : ['error' => $error])]);
     }
 
     /**
@@ -312,7 +373,7 @@ final class Dispatch
             try {
                 $work();
             } catch (Throwable) {
-                // Whether it threw was already decided by the handler's wrapper; one failed
+                // What it threw was already reported by the work itself; one failed
                 // conversation must not take the worker down with it.
             } finally {
                 unset($this->running[$job]);

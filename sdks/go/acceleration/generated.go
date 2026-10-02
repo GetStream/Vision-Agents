@@ -335,6 +335,24 @@ func (e DecisionKind) Valid() bool {
 	}
 }
 
+// Defines values for DispatchSetting.
+const (
+	Disabled DispatchSetting = "disabled"
+	Enabled  DispatchSetting = "enabled"
+)
+
+// Valid indicates whether the value is a known member of the DispatchSetting enum.
+func (e DispatchSetting) Valid() bool {
+	switch e {
+	case Disabled:
+		return true
+	case Enabled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Endpointing.
 const (
 	EndpointingSemantic Endpointing = "semantic"
@@ -1268,6 +1286,21 @@ func (e Tier) Valid() bool {
 	}
 }
 
+// Defines values for ToolApprovalCommandType.
+const (
+	ToolApproval ToolApprovalCommandType = "tool_approval"
+)
+
+// Valid indicates whether the value is a known member of the ToolApprovalCommandType enum.
+func (e ToolApprovalCommandType) Valid() bool {
+	switch e {
+	case ToolApproval:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ToolResultCommandType.
 const (
 	ToolResultCommandTypeToolResult ToolResultCommandType = "tool_result"
@@ -1479,8 +1512,11 @@ type ActivityGranularity string
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
 	CreatedAt time.Time `json:"created_at"`
-	Greeting  *string   `json:"greeting,omitempty"`
-	Guardrail *string   `json:"guardrail,omitempty"`
+
+	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+	Dispatch  *AgentDispatch `json:"dispatch,omitempty"`
+	Greeting  *string        `json:"greeting,omitempty"`
+	Guardrail *string        `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 	Harness            *Harness  `json:"harness,omitempty"`
@@ -1518,7 +1554,9 @@ type AgentConfig struct {
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
 type AgentConfigPatch struct {
-	Greeting *string `json:"greeting,omitempty"`
+	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+	Greeting *string        `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -1558,7 +1596,9 @@ type AgentConfigPatch struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
-	Greeting *string `json:"greeting,omitempty"`
+	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+	Greeting *string        `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -1619,6 +1659,15 @@ type AgentConfigRequest struct {
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// AgentDispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+type AgentDispatch struct {
+	// IncomingCall Whether this kind of work is left to the customer's own dispatch worker.
+	IncomingCall *DispatchSetting `json:"incoming_call,omitempty"`
+
+	// Text Whether this kind of work is left to the customer's own dispatch worker.
+	Text *DispatchSetting `json:"text,omitempty"`
 }
 
 // AgentLog defines model for AgentLog.
@@ -2334,6 +2383,9 @@ type DataPolicy struct {
 
 // DecisionKind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
 type DecisionKind string
+
+// DispatchSetting Whether this kind of work is left to the customer's own dispatch worker.
+type DispatchSetting string
 
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 type Endpointing string
@@ -3495,6 +3547,9 @@ type SessionState string
 
 // SessionTool One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
 type SessionTool struct {
+	// Approval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+	Approval *SessionToolApproval `json:"approval,omitempty"`
+
 	// Description What the model is told the tool does, which is the whole of how it decides when to reach for one.
 	Description string `json:"description"`
 
@@ -3511,6 +3566,24 @@ type SessionTool struct {
 
 // SessionToolExecutor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
 type SessionToolExecutor string
+
+// SessionToolApproval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+type SessionToolApproval struct {
+	// AllowTitle The label of the button that allows the call.
+	AllowTitle *string `json:"allow_title,omitempty"`
+
+	// DeclineTitle The label of the button that declines it.
+	DeclineTitle *string `json:"decline_title,omitempty"`
+
+	// Message What allowing it shares or does, such as "Only your city is shared."
+	Message *string `json:"message,omitempty"`
+
+	// ReasonArgument The argument, a string, in which the model says why it wants this call. Its text (at most 160 characters) is shown as the approval's reason, so it is visible to every channel member even for a server tool.
+	ReasonArgument *string `json:"reason_argument,omitempty"`
+
+	// Title The question, such as "Share your location?".
+	Title string `json:"title"`
+}
 
 // SessionVideo defines model for SessionVideo.
 type SessionVideo struct {
@@ -3915,6 +3988,9 @@ type SttOptions struct {
 	// Diarize Label each stretch of speech with who said it.
 	Diarize *bool `json:"diarize,omitempty"`
 
+	// EagerEndOfTurn Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency.
+	EagerEndOfTurn *bool `json:"eager_end_of_turn,omitempty"`
+
 	// Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 	Endpointing *Endpointing `json:"endpointing,omitempty"`
 
@@ -3993,7 +4069,9 @@ type SttOptions struct {
 
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
-	Greeting *string `json:"greeting,omitempty"`
+	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+	Greeting *string        `json:"greeting,omitempty"`
 
 	// Guardrail The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -4169,6 +4247,21 @@ type TimelineEntry struct {
 	TtsTtfbMs *float64 `json:"tts_ttfb_ms,omitempty"`
 	TurnId    string   `json:"turn_id"`
 }
+
+// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result.
+type ToolApprovalCommand struct {
+	Allowed   bool   `json:"allowed"`
+	CommandId string `json:"command_id"`
+
+	// Summary Shown on the declined call, such as "Location not shared".
+	Summary    *string                 `json:"summary,omitempty"`
+	ToolCallId string                  `json:"tool_call_id"`
+	TurnId     string                  `json:"turn_id"`
+	Type       ToolApprovalCommandType `json:"type"`
+}
+
+// ToolApprovalCommandType defines model for ToolApprovalCommand.Type.
+type ToolApprovalCommandType string
 
 // ToolResultCommand defines model for ToolResultCommand.
 type ToolResultCommand struct {

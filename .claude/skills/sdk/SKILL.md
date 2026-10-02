@@ -279,3 +279,31 @@ The harness is agent config, never session config. `createSession` no longer tak
 A knowledge page can be read again on a schedule. `KnowledgeUrlRequest` (`addKnowledgeUrl`), `KnowledgeUrlDeclaration` (in `syncAgent`) and `KnowledgeUrl` gain `refresh_hours`, how many hours between reads; absent means never, which is what it was before. Adding a page again replaces it, so a declaration without it turns the schedule off. In `knowledge/urls.yaml` a page written as a mapping may say `refresh_hours: 24` (at least 1; refuse 0, a non-integer and unknown keys as before). The fingerprint appends `"\nrefresh_hours:" + N` after a page's description only when it has one, so directories without it keep their current hash. Go has moved (`agents.KnowledgeURL.RefreshHours`, sent by `Agent.Sync` and `SubscribeKnowledgeURLs`). Python (`plugins/stream`), JavaScript, .NET, Ruby, Rust and PHP need their generated clients regenerated and their `urls.yaml` loaders, fingerprints and add-url methods extended.
 
 A dispatch worker can host tools for an agent: after every `ready` it sends `host_tools` (`agent_id`, `tools`, `timeout_ms`), runs each `tool_call` off the read loop and answers `tool_result` with `output` or `error`; `hosting_refused` ends the worker. The router offers them to a session whose `agent_id` or config name matches. Go, JavaScript (`dispatch.host`), Python (`stream.Dispatch.host`), Ruby, PHP, .NET (`Dispatch.Host`) and Rust all have it. Python and .NET also reconnect like Go; JavaScript, Ruby, PHP and Rust re-declare on each `ready` but do not reconnect.
+
+The router holds a dispatch worker to the capacity it declared. A worker connects with `capacity`,
+`active` (the calls and messages it is still handling, `0` on a first connection; hosted tool calls never
+count) and `handles` (`call`, `message`, both, or empty for a worker that only hosts tools). Every `call`
+and `message` frame carries a `work_id`, and the worker answers `{"type": "done", "work_id": ..., "error":
+...}` once it is finished, failure and missing handler included, which is what gives it its room back.
+There is no `accepted` or `rejected` any more. Go, Python (`plugins/stream`), JavaScript, .NET, Ruby, Rust
+and PHP all do this.
+
+An agent can leave text to its server. `agent.yaml` may say `dispatch: {incoming_call: enabled, text:
+enabled}` (each `enabled` or `disabled`), sent as `dispatch` (`AgentDispatch`) in `syncAgent`, and readable
+and patchable on the config. With `text` enabled, what an end user writes over the session socket or in
+Chat goes to a dispatch worker as a `message` frame instead of the model, carrying `session_id`, and
+`command_id` when it was a durable command, possibly with no channel. `incoming_call` is stored only, since
+every inbound call is already dispatched. Every server SDK reads `dispatch:`, exposes the session and
+command ids on its inbound message, refuses such a message in its get-or-create helper, and has `answer`
+(`Answer` in Go, `AnswerAsync` in .NET): responses.create on the message's session with its `command_id`,
+as the server acting for the writer. Acting for somebody needs its own backend setting, because a user id
+behind the proxy mints a user token, and the router hands a user's text back to the worker: Go
+`Backend.ActingFor`, Python `Backend.acting_for`, JavaScript `Backend.actingFor`, Ruby `Backend#acting_for`,
+Rust `Client::acting_for`, PHP `Backend::onBehalfOf` (its `actingFor` already meant a user token) and .NET
+`VisionAgentsClient.ActingFor`. They send the server credential plus `X-Stream-User-Id` in every mode.
+
+`SttOptions` gains `eager_end_of_turn` (boolean, live only): the router turns it into Deepgram Flux's
+`eager_eot_threshold` (0.6, never above `eot_threshold`), and every other model ignores it rather than
+refusing it. It is on by default for `en-low-latency` and `multilingual-low-latency`. Go's generated client has it, and Python's `SttOptions` and the JavaScript types have the field
+added by hand. Swift, Kotlin, Dart, .NET, Ruby, Rust and PHP need it when their clients are next
+regenerated.

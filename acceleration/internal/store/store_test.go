@@ -20,7 +20,10 @@ const DSNEnvVar = "ROUTER_POSTGRES_DSN"
 type StoreSuite struct {
 	suite.Suite
 	store *Store
-	ctx   context.Context
+	// dsn is the suite's own database, for a test that needs another pool on it, as a second
+	// router would have.
+	dsn string
+	ctx context.Context
 	// base is the start of a fixed hour, so bucket boundaries are predictable.
 	base time.Time
 }
@@ -37,7 +40,8 @@ func (s *StoreSuite) SetupSuite() {
 
 	// A database of this suite's own: it drops the schema and empties tables between
 	// tests, which is not something to do to a database another package is reading.
-	store, err := Open(testenv.Database(dsn, "store"))
+	s.dsn = testenv.Database(dsn, "store")
+	store, err := Open(s.dsn)
 	s.Require().NoError(err)
 	s.store = store
 	s.ctx = context.Background()
@@ -68,7 +72,7 @@ func (s *StoreSuite) SetupTest() {
 			" turns, turn_stats_hourly, turn_stats_daily, calls, call_events, phone_numbers,"+
 			" voices, agent_sessions, agent_responses, agent_response_items, guest_users,"+
 			" policies, app_organizations, call_resources, organizations, agent_configs,"+
-			" agent_plugin_connections, data_changes, data_change_capture CASCADE",
+			" agent_plugin_connections, data_changes, data_change_capture, connector_definitions CASCADE",
 	)
 	s.Require().NoError(err)
 }

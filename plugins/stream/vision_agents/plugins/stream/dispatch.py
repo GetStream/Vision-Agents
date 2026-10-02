@@ -4,9 +4,10 @@ import logging
 import os
 import time
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional, Union
+from urllib.parse import urlencode
 
 import aiohttp
 from vision_agents.core.agents import Agent
@@ -17,7 +18,7 @@ from vision_agents.core.utils.utils import await_or_run
 
 from ._backend import Backend
 from ._socket import Socket
-from .responses import RouterError
+from .responses import Responses, RouterError
 from .sessions import _tools
 
 logger = logging.getLogger(__name__)
@@ -52,9 +53,10 @@ class Dispatch:
     So this connects out and waits, and the router pushes work down the connection when it
     arrives. Nothing has to be publicly reachable for it to work.
 
-    A message only arrives here when no agent is running on its channel. One written to an
-    agent that is already running is answered by the router from that session, because that
-    agent is the one that knows what has been said so far.
+    A message arrives here when no agent is running on its channel, or when it was written
+    to a running session whose agent leaves text to dispatch. Any other message written to
+    an agent that is already running is answered by the router from that session, because
+    that agent is the one that knows what has been said so far.
 
     Several workers can wait at once, in which case the work is shared between them.
 
@@ -114,6 +116,9 @@ class Dispatch:
         self._first_retry = FIRST_RETRY
         self._socket: Optional[Socket] = None
         self._running: set[asyncio.Task[None]] = set()
+        # The calls and messages alone, which is what the router counts against this
+        # worker's capacity. A hosted tool call is not one of them.
+        self._handling = 0
         # Which agent is answering which channel. A channel is one conversation, so the
         # agent that answered the last message on it is the one that knows what has been
         # said and should answer the next.
@@ -150,7 +155,8 @@ class Dispatch:
         return register
 
     def wait_for_message(self) -> Callable[[MessageHandler], MessageHandler]:
-        """Register what to do with a message written to an agent that is not running.
+        """Register what to do with a message written to an agent that is not running, or
+        to a running session whose agent leaves text to dispatch.
 
         The handler is given the message and runs as its own task, the way a call's does.
 
@@ -158,6 +164,9 @@ class Dispatch:
             ```python
             @dispatch.wait_for_message()
             async def written(message: InboundMessage):
+                if message.session_id:
+                    await dispatch.answer(message)
+                    return
                 agent = await dispatch.get_or_create_agent(
                     message, lambda: Agent(config="support")
                 )
@@ -228,7 +237,16 @@ class Dispatch:
 
         Returns:
             An agent already answering in writing.
+
+        Raises:
+            ValueError: If a session is already holding the message's conversation, which
+                `answer` is for.
         """
+        if message.session_id:
+            raise ValueError(
+                "a session is already holding this conversation; answer it there with "
+                "dispatch.answer(message)"
+            )
         async with self._agents_lock:
             answering = self._agents.get(message.channel_id)
             if answering is not None and not answering.closed:
@@ -239,6 +257,29 @@ class Dispatch:
             self._agents[message.channel_id] = agent
             logger.info("started an agent on %s", message.channel_id)
             return agent
+
+    async def answer(self, message: InboundMessage) -> None:
+        """Have the model answer a message written to a running session.
+
+        The response is created with this worker's own credential, acting for whoever wrote
+        the message, so it goes to the model rather than back to a worker. It carries the
+        message's command, so the answer lands on it.
+
+        Args:
+            message: What arrived, naming the session it was written to.
+
+        Raises:
+            ValueError: If no session is holding the message.
+            RouterError: If the router refuses the response.
+        """
+        if not message.session_id:
+            raise ValueError(
+                "no session is holding this message; open one with get_or_create_agent"
+            )
+        backend = replace(self.backend, acting_for=message.user_id)
+        await Responses(backend, message.session_id).create(
+            message.text, command_id=message.command_id
+        )
 
     async def run(self) -> None:
         """Wait for calls, messages and hosted tool calls until cancelled.
@@ -261,8 +302,7 @@ class Dispatch:
                 "before running"
             )
 
-        address = f"{self.backend.socket(DISPATCH_PATH)}?capacity={self.capacity}"
-        socket = await self._connect(address)
+        socket = await self._connect()
         logger.info("waiting for work on %s", self.backend.url)
 
         reporter = asyncio.create_task(self._report())
@@ -280,7 +320,7 @@ class Dispatch:
                     await asyncio.sleep(retry)
                     retry = min(retry * 2, LAST_RETRY)
                     try:
-                        socket = await self._connect(address)
+                        socket = await self._connect()
                         break
                     except aiohttp.ClientError as exc:
                         logger.warning(
@@ -295,12 +335,13 @@ class Dispatch:
             await self._started.aclose()
             self._agents.clear()
 
-    async def _connect(self, address: str) -> Socket:
+    async def _connect(self) -> Socket:
         """Open one dispatch socket, with headers minted for it.
 
         A token signed when the worker started would have expired by the time a
         long-running one reconnects.
         """
+        address = f"{self.backend.socket(DISPATCH_PATH)}?{urlencode(self._waiting())}"
         socket = Socket(address, self.backend.headers)
         try:
             await socket.connect()
@@ -308,6 +349,25 @@ class Dispatch:
             await socket.close()
             raise
         return socket
+
+    def _waiting(self) -> dict[str, str]:
+        """What this worker says about itself on the way in.
+
+        How much it can hold, how much it is still holding from before a reconnect, and
+        which kinds of work it answers. On the handshake because the router may hand work
+        over before it has read anything.
+        """
+        kinds = []
+        if self._handler is not None:
+            kinds.append("call")
+        if self._message_handler is not None:
+            kinds.append("message")
+        # Always sent, even empty: a worker that only hosts tools answers neither.
+        return {
+            "capacity": str(self.capacity),
+            "active": str(self._handling),
+            "handles": ",".join(kinds),
+        }
 
     async def _serve(self, socket: Socket) -> bool:
         """Wait for work on one connection until it ends.
@@ -333,9 +393,9 @@ class Dispatch:
 
             kind = frame.get("type")
             if kind == "call":
-                self._answer(_call_of(frame))
+                await self._answer(str(frame.get("work_id", "")), _call_of(frame))
             elif kind == "message":
-                self._reply(_message_of(frame))
+                await self._reply(str(frame.get("work_id", "")), _message_of(frame))
             elif kind == "ready":
                 self.worker_id = str(frame.get("worker_id", ""))
                 logger.info("the router calls this worker %s", self.worker_id)
@@ -423,7 +483,7 @@ class Dispatch:
             result["error"] = str(exc)
         await self._tell(result)
 
-    def _answer(self, call: InboundCall) -> None:
+    async def _answer(self, work_id: str, call: InboundCall) -> None:
         """Start handling one call.
 
         The handler runs as a task rather than inline, because reading the socket is also
@@ -431,6 +491,8 @@ class Dispatch:
         listening to a ringing phone.
         """
         if self._handler is None:
+            logger.debug("ignoring a call: no handler is registered for one")
+            await self._finished(work_id, "this worker answers no calls")
             return
 
         logger.info(
@@ -438,17 +500,19 @@ class Dispatch:
             call.caller_number or "?",
             call.called_number,
         )
-        task = asyncio.create_task(self._handle(self._handler, call))
+        self._handling += 1
+        task = asyncio.create_task(self._handle(self._handler, work_id, call))
         self._running.add(task)
         task.add_done_callback(self._running.discard)
 
-    def _reply(self, message: InboundMessage) -> None:
+    async def _reply(self, work_id: str, message: InboundMessage) -> None:
         """Start handling one message, as its own task for the same reason a call is."""
         if self._message_handler is None:
             logger.debug(
                 "ignoring a message on %s: no handler is registered for one",
                 message.channel_id,
             )
+            await self._finished(work_id, "this worker answers no messages")
             return
 
         logger.info(
@@ -456,51 +520,65 @@ class Dispatch:
             message.user_id or "?",
             message.channel_id,
         )
-        task = asyncio.create_task(self._handle_message(self._message_handler, message))
+        self._handling += 1
+        task = asyncio.create_task(
+            self._handle_message(self._message_handler, work_id, message)
+        )
         self._running.add(task)
         task.add_done_callback(self._running.discard)
 
-    async def _handle(self, handler: Handler, call: InboundCall) -> None:
+    async def _handle(self, handler: Handler, work_id: str, call: InboundCall) -> None:
         """Run the handler for one call and tell the router how it went.
 
         Anything the handler raises is caught, because it is somebody else's code and a
         traceback escaping into the task would take the reason with it. The router is told,
         so a call nobody answered shows up there rather than only in this process's log.
         """
+        error = ""
         try:
             await handler(call)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.exception("a call could not be answered")
-            await self._tell(
-                {"type": "rejected", "call_id": call.call_id, "reason": str(exc)}
-            )
-            return
-        await self._tell({"type": "accepted", "call_id": call.call_id})
+            error = str(exc) or type(exc).__name__
+        finally:
+            self._handling -= 1
+        await self._finished(work_id, error)
 
     async def _handle_message(
-        self, handler: MessageHandler, message: InboundMessage
+        self, handler: MessageHandler, work_id: str, message: InboundMessage
     ) -> None:
-        """Run the handler for one message, catching what it raises for the same reason.
-
-        Nothing is reported back to the router. Accepting and rejecting are about a caller
-        waiting on a line, and there is no line here: a message nobody answered is a log
-        line, not a silence somebody is sitting in.
-        """
+        """Run the handler for one message, catching and reporting what it raises."""
+        error = ""
         try:
             await handler(message)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("a message could not be answered")
+            error = str(exc) or type(exc).__name__
+        finally:
+            self._handling -= 1
+        await self._finished(work_id, error)
+
+    async def _finished(self, work_id: str, error: str) -> None:
+        """Tell the router one piece of work is over, which gives this worker its room back.
+
+        Said even for work this worker had no handler for, because the room it took is held
+        until something says it is free.
+        """
+        done: dict[str, object] = {"type": "done", "work_id": work_id}
+        if error:
+            done["error"] = error
+        await self._tell(done)
 
     async def _report(self) -> None:
         """Tell the router how this process is doing, on a timer.
 
-        The router does not use any of it to choose a worker yet. It is sent so that a
-        policy which does has numbers to read, and so that an operator can see which worker
-        is under load without logging into it.
+        None of it decides where work goes: the router counts what this worker holds from
+        what it handed out and what was reported done. This is so an operator can see
+        which worker is under load without logging into it.
         """
         while True:
             await asyncio.sleep(self.report_every)
@@ -591,6 +669,8 @@ def _message_of(frame: dict[str, object]) -> InboundMessage:
         user_id=str(frame.get("user_id", "")),
         user_name=str(frame.get("user_name", "")),
         at=_time_of(at) if isinstance(at, str) else None,
+        session_id=str(frame.get("session_id", "")),
+        command_id=str(frame.get("command_id", "")),
     )
 
 

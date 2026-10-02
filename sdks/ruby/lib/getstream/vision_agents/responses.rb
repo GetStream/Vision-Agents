@@ -85,9 +85,13 @@ module GetStream
       # Asks the agent something and names the turn it answers as.
       #
       # @param images [Array<Hash>] ImageSource hashes, each a url and an optional detail.
-      def create(text, images: nil)
+      # @param command_id [String] the durable command this answers, such as the one a dispatch
+      #   worker was handed with the text. Empty sends none.
+      def create(text, images: nil, command_id: nil)
+        command_id = nil if command_id.to_s.empty?
         created = @client.post("/v1/agents/sessions/{id}/responses",
-                               path: { id: @session_id }, body: { text: text, images: images })
+                               path: { id: @session_id },
+                               body: { text: text, images: images, command_id: command_id })
         AgentResponse.new(@client, created)
       end
 

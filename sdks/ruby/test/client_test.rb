@@ -130,6 +130,12 @@ class TestBackend < Minitest::Test
     assert_equal "ada", JSON.parse(payload.tr("-_", "+/").unpack1("m"))["user_id"]
   end
 
+  def test_acting_for_a_user_keeps_the_customer_header
+    headers = VA::Backend.new(url: "http://router", customer_id: "acme").acting_for("ada").headers
+
+    assert_equal({ "X-Customer-Id" => "acme", "X-Stream-User-Id" => "ada" }, headers)
+  end
+
   def test_a_key_without_a_secret_or_token_is_refused
     assert_raises(VA::ConfigurationError) { VA::Backend.new(url: "http://router", api_key: "key", api_secret: "") }
   end

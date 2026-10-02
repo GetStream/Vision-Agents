@@ -410,6 +410,9 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("dispatch")]
+        public AgentDispatch? Dispatch { get; set; } = default!;
+
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
         [System.Text.Json.Serialization.JsonExtensionData]
@@ -489,6 +492,9 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("dispatch")]
+        public AgentDispatch? Dispatch { get; set; } = default!;
+
         /// <summary>
         /// Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
         /// <br/>
@@ -501,6 +507,39 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("updated_at")]
         public System.DateTimeOffset UpdatedAt { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+    /// <br/>
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentDispatch
+    {
+
+        /// <summary>
+        /// A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("incoming_call")]
+        public string? IncomingCall { get; set; } = default!;
+
+        /// <summary>
+        /// An end user's message is handed to a dispatch worker, with the session it was written to, instead of being answered by the model. The worker answers by creating a response on that session with a server-side credential, passing the message's command_id when it has one; that is the only text the model answers.
+        /// <br/>
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("text")]
+        public string? Text { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -2408,6 +2447,9 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("dispatch")]
+        public AgentDispatch? Dispatch { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

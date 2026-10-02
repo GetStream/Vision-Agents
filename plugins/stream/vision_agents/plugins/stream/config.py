@@ -18,7 +18,9 @@ from ._generated.api.default import (
 from ._generated.models import (
     AgentConfig,
     AgentConfigRequest,
+    AgentDispatch,
     AgentMode,
+    DispatchSetting,
     Error,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
@@ -321,6 +323,14 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.video = SessionVideo(
             source=settings.video_source, max_frames=settings.video_max_frames
         )
+    if settings.dispatch is not None:
+        body.dispatch = AgentDispatch()
+        if "incoming_call" in settings.dispatch:
+            body.dispatch.incoming_call = DispatchSetting(
+                settings.dispatch["incoming_call"]
+            )
+        if "text" in settings.dispatch:
+            body.dispatch.text = DispatchSetting(settings.dispatch["text"])
     if settings.search:
         body.search = settings.search
     if settings.greeting:

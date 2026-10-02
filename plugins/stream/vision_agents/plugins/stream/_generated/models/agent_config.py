@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.agent_config_tags import AgentConfigTags
+    from ..models.agent_dispatch import AgentDispatch
     from ..models.session_video import SessionVideo
 
 
@@ -41,6 +42,8 @@ class AgentConfig:
         subagent (str | Unset):
         search (str | Unset):
         instructions (str | Unset):
+        dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
+            /v1/dispatch. Omitted settings are disabled.
         greeting (str | Unset):
         guardrail (str | Unset):
         skills (list[str] | Unset):
@@ -69,6 +72,7 @@ class AgentConfig:
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
     instructions: str | Unset = UNSET
+    dispatch: AgentDispatch | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
@@ -110,6 +114,10 @@ class AgentConfig:
         search = self.search
 
         instructions = self.instructions
+
+        dispatch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.dispatch, Unset):
+            dispatch = self.dispatch.to_dict()
 
         greeting = self.greeting
 
@@ -168,6 +176,8 @@ class AgentConfig:
             field_dict["search"] = search
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
+        if dispatch is not UNSET:
+            field_dict["dispatch"] = dispatch
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -192,6 +202,7 @@ class AgentConfig:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_config_tags import AgentConfigTags
+        from ..models.agent_dispatch import AgentDispatch
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
@@ -227,6 +238,13 @@ class AgentConfig:
         search = d.pop("search", UNSET)
 
         instructions = d.pop("instructions", UNSET)
+
+        _dispatch = d.pop("dispatch", UNSET)
+        dispatch: AgentDispatch | Unset
+        if isinstance(_dispatch, Unset):
+            dispatch = UNSET
+        else:
+            dispatch = AgentDispatch.from_dict(_dispatch)
 
         greeting = d.pop("greeting", UNSET)
 
@@ -271,6 +289,7 @@ class AgentConfig:
             subagent=subagent,
             search=search,
             instructions=instructions,
+            dispatch=dispatch,
             greeting=greeting,
             guardrail=guardrail,
             skills=skills,

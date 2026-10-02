@@ -165,6 +165,17 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		harness := acceleration.Harness(settings.Harness)
 		body.Harness = &harness
 	}
+	if settings.Dispatch != nil {
+		body.Dispatch = &acceleration.AgentDispatch{}
+		if settings.Dispatch.IncomingCall != "" {
+			setting := acceleration.DispatchSetting(settings.Dispatch.IncomingCall)
+			body.Dispatch.IncomingCall = &setting
+		}
+		if settings.Dispatch.Text != "" {
+			setting := acceleration.DispatchSetting(settings.Dispatch.Text)
+			body.Dispatch.Text = &setting
+		}
+	}
 	setString(&body.Subagent, settings.Subagent)
 	setString(&body.Search, settings.Search)
 	setString(&body.Greeting, settings.Greeting)

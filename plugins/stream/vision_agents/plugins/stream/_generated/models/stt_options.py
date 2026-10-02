@@ -44,6 +44,9 @@ class SttOptions:
                 words and judging the sentence finished.
             silence_ms (int | Unset): How long a pause ends a turn, for silence endpointing. Live only. Example: 300.
             utterance_end_ms (int | Unset): How long after the last word an utterance is declared over. Live only.
+            eager_end_of_turn (bool | Unset): Send a transcript as soon as the model guesses the turn may be over, before it
+                is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal
+                rather than being refused. On by default for en-low-latency and multilingual-low-latency.
             diarize (bool | Unset): Label each stretch of speech with who said it.
             max_speakers (int | Unset): A hard cap on the speakers diarization may find, not a hint. Providers differ in
                 what they allow, so one asked for more than it supports refuses.
@@ -83,6 +86,7 @@ class SttOptions:
     endpointing: Endpointing | Unset = UNSET
     silence_ms: int | Unset = UNSET
     utterance_end_ms: int | Unset = UNSET
+    eager_end_of_turn: bool | Unset = UNSET
     diarize: bool | Unset = UNSET
     max_speakers: int | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
@@ -124,6 +128,8 @@ class SttOptions:
         silence_ms = self.silence_ms
 
         utterance_end_ms = self.utterance_end_ms
+
+        eager_end_of_turn = self.eager_end_of_turn
 
         diarize = self.diarize
 
@@ -186,6 +192,8 @@ class SttOptions:
             field_dict["silence_ms"] = silence_ms
         if utterance_end_ms is not UNSET:
             field_dict["utterance_end_ms"] = utterance_end_ms
+        if eager_end_of_turn is not UNSET:
+            field_dict["eager_end_of_turn"] = eager_end_of_turn
         if diarize is not UNSET:
             field_dict["diarize"] = diarize
         if max_speakers is not UNSET:
@@ -250,6 +258,8 @@ class SttOptions:
 
         utterance_end_ms = d.pop("utterance_end_ms", UNSET)
 
+        eager_end_of_turn = d.pop("eager_end_of_turn", UNSET)
+
         diarize = d.pop("diarize", UNSET)
 
         max_speakers = d.pop("max_speakers", UNSET)
@@ -310,6 +320,7 @@ class SttOptions:
             endpointing=endpointing,
             silence_ms=silence_ms,
             utterance_end_ms=utterance_end_ms,
+            eager_end_of_turn=eager_end_of_turn,
             diarize=diarize,
             max_speakers=max_speakers,
             keyterms=keyterms,

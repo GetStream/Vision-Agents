@@ -104,6 +104,12 @@ public sealed class VisionAgentsClient : IDisposable
         return new VisionAgentsClient(_http, Backend.As(userId, token), owns: false);
     }
 
+    /// <summary>
+    /// This client's own credential, speaking for an end user: their conversations are
+    /// reached, and what is written there is still the server's.
+    /// </summary>
+    internal VisionAgentsClient ActingFor(string userId) => new(_http, Backend.Acting(userId), owns: false);
+
     /// <summary>A client acting for a guest, which is what their conversations belong to.</summary>
     public VisionAgentsClient AsGuest(GuestUser guest) => AsUser(guest.Id, guest.Token);
 

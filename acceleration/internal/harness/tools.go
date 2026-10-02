@@ -37,6 +37,20 @@ type Tool struct {
 	Client bool `yaml:"-"`
 	// DisplayTitle is what a call is doing, in words for the people in the conversation.
 	DisplayTitle string `yaml:"-"`
+	// Approval, when set, is what a person is asked before each call runs. A persistent
+	// conversation shows the call as awaiting their answer.
+	Approval *ToolApproval `yaml:"-"`
+}
+
+// ToolApproval is the question a person answers before a call runs.
+type ToolApproval struct {
+	Title   string
+	Message string
+	// ReasonArgument names the string argument in which the model says why it wants the
+	// call, which is shown as the question's reason.
+	ReasonArgument string
+	AllowTitle     string
+	DeclineTitle   string
 }
 
 // Tools is the set a harness was configured with.

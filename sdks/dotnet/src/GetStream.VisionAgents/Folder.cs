@@ -51,6 +51,13 @@ public sealed record KnowledgePage(string Url, string Title = "", string Descrip
 public sealed record VideoDeclaration(string Source, int MaxFrames);
 
 /// <summary>
+/// What the agent leaves to the application's own dispatch worker, each <c>enabled</c> or
+/// <c>disabled</c>, empty when not written. With <paramref name="Text"/> enabled the model
+/// does not answer what end users write; the worker is handed it.
+/// </summary>
+public sealed record DispatchDeclaration(string IncomingCall, string Text);
+
+/// <summary>
 /// What <c>agent.yaml</c> declares: what the agent is called and what it runs on.
 /// </summary>
 /// <remarks>
@@ -106,6 +113,9 @@ public sealed record Declaration
 
     /// <summary>Which video a skill that captures it sees.</summary>
     public VideoDeclaration? Video { get; init; }
+
+    /// <summary>What is left to dispatch, null when agent.yaml has no <c>dispatch:</c> block.</summary>
+    public DispatchDeclaration? Dispatch { get; init; }
 }
 
 /// <summary>
@@ -397,6 +407,7 @@ public sealed class Folder
             Keyterms = read.Keyterms ?? [],
             Tags = read.Tags ?? [],
             Video = video,
+            Dispatch = read.Dispatch is { } dispatch ? new DispatchDeclaration(dispatch.IncomingCall ?? "", dispatch.Text ?? "") : null,
         };
     }
 
@@ -672,11 +683,18 @@ public sealed class Folder
         [YamlMember(Alias = "keyterms")] public List<string>? Keyterms { get; set; }
         [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
         [YamlMember(Alias = "video")] public WrittenVideo? Video { get; set; }
+        [YamlMember(Alias = "dispatch")] public WrittenDispatch? Dispatch { get; set; }
     }
 
     private sealed class WrittenVideo
     {
         [YamlMember(Alias = "source")] public string? Source { get; set; }
         [YamlMember(Alias = "max_frames")] public int? MaxFrames { get; set; }
+    }
+
+    private sealed class WrittenDispatch
+    {
+        [YamlMember(Alias = "incoming_call")] public string? IncomingCall { get; set; }
+        [YamlMember(Alias = "text")] public string? Text { get; set; }
     }
 }

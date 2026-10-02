@@ -10,7 +10,7 @@ var investigate = Tool{Name: "investigate_sdk", Description: "Read SDK source"}
 
 func TestAHostedToolIsOfferedOnlyForItsAgentAndCustomer(t *testing.T) {
 	pool := NewPool()
-	worker, _ := pool.Register("acme", 1)
+	worker, _ := pool.Register("acme", Registration{Capacity: 1})
 	if err := pool.Host(worker, "support", []Tool{investigate}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestAHostedToolIsOfferedOnlyForItsAgentAndCustomer(t *testing.T) {
 
 func TestAHostedCallIsAnsweredByTheWorkerRunningIt(t *testing.T) {
 	pool := NewPool()
-	worker, _ := pool.Register("acme", 1)
+	worker, _ := pool.Register("acme", Registration{Capacity: 1})
 	if err := pool.Host(worker, "support", []Tool{investigate}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -44,9 +44,43 @@ func TestAHostedCallIsAnsweredByTheWorkerRunningIt(t *testing.T) {
 	}
 }
 
+func TestAHostedCallGoesToWhicheverHostHasTheLeastToAnswer(t *testing.T) {
+	// Taking turns alone would send this to the first host, which is already investigating
+	// four things and would answer this one after all of them.
+	pool := NewPool()
+	busy, _ := pool.Register("acme", Registration{Capacity: 1})
+	if err := pool.Host(busy, "support", []Tool{investigate}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	held, stop := context.WithCancel(context.Background())
+	defer stop()
+	for _, id := range []string{"held-1", "held-2", "held-3", "held-4"} {
+		go pool.RunHosted(held, "acme", "support", ToolCall{ID: id, Name: "investigate_sdk"})
+	}
+	// Reading them off is what proves all four are registered and still unanswered.
+	for range 4 {
+		<-busy.ToolCalls()
+	}
+
+	idle, _ := pool.Register("acme", Registration{Capacity: 1})
+	if err := pool.Host(idle, "support", []Tool{investigate}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		call := <-idle.ToolCalls()
+		idle.Resolve(call.ID, ToolResult{Output: "read android"})
+	}()
+	output, err := pool.RunHosted(context.Background(), "acme", "support",
+		ToolCall{ID: "call-1", Name: "investigate_sdk"})
+
+	if err != nil || output != "read android" {
+		t.Fatalf("answered %q, %v; the idle host should have taken it", output, err)
+	}
+}
+
 func TestAHostedCallFailsWhenItsWorkerGoesAway(t *testing.T) {
 	pool := NewPool()
-	worker, release := pool.Register("acme", 1)
+	worker, release := pool.Register("acme", Registration{Capacity: 1})
 	if err := pool.Host(worker, "support", []Tool{investigate}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +106,7 @@ func TestAHostedCallNobodyRunsIsRefusedAtOnce(t *testing.T) {
 
 func TestAHostedCallIsBoundedByTheWorkersTimeout(t *testing.T) {
 	pool := NewPool()
-	worker, _ := pool.Register("acme", 1)
+	worker, _ := pool.Register("acme", Registration{Capacity: 1})
 	if err := pool.Host(worker, "support", []Tool{investigate}, 20*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}

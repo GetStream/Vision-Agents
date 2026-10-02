@@ -84,7 +84,9 @@ tests/Unit tests/Live tests/Support tests/server/router.php
 - **Tool results repeat `command_id` and `turn_id`** from the `tool_call` when present, or a
   durable command's result is refused. Tools run in their own fiber; a `tool_cancel` drops
   the answer (a PHP callable cannot be interrupted).
-- **Dispatch** answers `accepted`/`rejected` for calls only, reports `load {active_agents,
+- **Dispatch** sends `active` and `handles` on the handshake, answers every call and message
+  with `done` and its `work_id` (an `error` when it failed or had no handler), answers a
+  message with a `session_id` through `answer`, reports `load {active_agents,
   latency_ms}` after a `ping`/`pong` round trip, drains running handlers on exit, and traps
   SIGINT/SIGTERM only when pcntl is loaded (the official image has none).
   `getOrCreateAgent` holds a per-channel `LocalKeyedMutex` so two messages cannot start two

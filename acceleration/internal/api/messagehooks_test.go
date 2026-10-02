@@ -35,7 +35,7 @@ func (s *MessageHooksSuite) SetupTest() {
 func (s *MessageHooksSuite) TestAMessageOnAChannelAConversationAlreadyRanOnReachesItsOwner() {
 	configID := s.holds()
 	s.ran(configID)
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.wrote(""))
@@ -57,7 +57,7 @@ func (s *MessageHooksSuite) TestAChannelThatNamesItsConfigIsAnsweredWithoutEverH
 	// rather than ringing a number, so there is no call row to say whose channel it is.
 	// Without the channel saying, nobody could ever be written to first.
 	configID := s.holds()
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{"%s": "%s"}`, ConfigField, configID)))
@@ -76,7 +76,7 @@ func (s *MessageHooksSuite) TestWhatTheChannelWasCreatedWithIsCarriedToTheWorker
 	// one. It carries what the channel was created with, and the worker, which is where
 	// the agent runs, decides what any of it means.
 	configID := s.holds()
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(
@@ -100,7 +100,7 @@ func (s *MessageHooksSuite) TestAChannelCannotSendItsMessagesToAnotherCustomersW
 	// is answered by that somebody else, and a channel claiming a customer is not answered
 	// on that claim at all.
 	configID := s.holds()
-	somebodyElse, release := s.dispatch.Register(s.utils.uuid(), 1)
+	somebodyElse, release := s.dispatch.Register(s.utils.uuid(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(
@@ -110,7 +110,7 @@ func (s *MessageHooksSuite) TestAChannelCannotSendItsMessagesToAnotherCustomersW
 }
 
 func (s *MessageHooksSuite) TestAChannelNamingAConfigNobodyHoldsIsAcceptedAndDropped() {
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK,
@@ -123,7 +123,7 @@ func (s *MessageHooksSuite) TestAChannelNamingAConfigNobodyHoldsIsAcceptedAndDro
 func (s *MessageHooksSuite) TestAChannelWithNoHistoryAndNoConfigIsAcceptedAndDropped() {
 	// Every message in the app arrives at this hook. One in a channel nothing claims is
 	// not answerable on a retry either.
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.wrote(""))
@@ -134,7 +134,7 @@ func (s *MessageHooksSuite) TestAChannelWithNoHistoryAndNoConfigIsAcceptedAndDro
 func (s *MessageHooksSuite) TestAConfigThatWasDeletedNoLongerClaimsAChannel() {
 	configID := s.holds()
 	s.Require().NoError(s.store.DeleteAgentConfig(context.Background(), s.customerID(), configID))
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{"%s": "%s"}`, ConfigField, configID)))

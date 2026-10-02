@@ -40,6 +40,7 @@ final readonly class AgentConfig
         public ?array $tags = null,
         // Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
         public ?string $syncHash = null,
+        public ?AgentDispatch $dispatch = null,
     ) {
     }
 
@@ -72,6 +73,7 @@ final readonly class AgentConfig
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
             syncHash: array_key_exists('sync_hash', $data) && $data['sync_hash'] !== null ? Json::string($data, 'sync_hash') : null,
+            dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
         );
     }
 
@@ -141,6 +143,9 @@ final readonly class AgentConfig
         }
         if ($this->syncHash !== null) {
             $out['sync_hash'] = $this->syncHash;
+        }
+        if ($this->dispatch !== null) {
+            $out['dispatch'] = $this->dispatch->toArray();
         }
         return $out;
     }

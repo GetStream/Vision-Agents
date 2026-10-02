@@ -11,7 +11,7 @@ import {
   type InboundCall,
   type InboundMessage,
 } from "../src/index.js";
-import { TestRouter, type Connection } from "./router.js";
+import { TestRouter, claimsOf, type Connection } from "./router.js";
 
 describe("Dispatch", () => {
   let router: TestRouter;
@@ -52,7 +52,31 @@ describe("Dispatch", () => {
     await running;
   });
 
-  it("hands an arriving call to the handler and tells the router it was taken", async () => {
+  it("says on the way in how much it already holds and which kinds of work it answers", async () => {
+    const both = new Dispatch({ client: api }).onCall(() => undefined).onMessage(() => undefined);
+    let running = both.run();
+    let connection = await router.socket();
+    assert.equal(connection.query.get("active"), "0");
+    assert.equal(connection.query.get("handles"), "call,message");
+    await settle();
+    both.stop();
+    await running;
+
+    const tools = new Tools().register({ name: "lookup", description: "Look up", run: () => "" });
+    const hosting = new Dispatch({ client: api }).host("stream-support", tools);
+    running = hosting.run();
+    connection = await router.socket();
+    assert.equal(
+      connection.query.get("handles"),
+      "",
+      "a worker that only hosts tools has to say it answers nothing, or it is handed calls",
+    );
+    await settle();
+    hosting.stop();
+    await running;
+  });
+
+  it("hands an arriving call to the handler and tells the router when it is done", async () => {
     const answered: InboundCall[] = [];
     const dispatch = new Dispatch({ client: api }).onCall((call) => {
       answered.push(call);
@@ -62,6 +86,7 @@ describe("Dispatch", () => {
     const connection = await router.socket();
     connection.send({
       type: "call",
+      work_id: "work_1",
       call_id: "call_1",
       call_type: "agent",
       called_number: "+15551234567",
@@ -70,7 +95,7 @@ describe("Dispatch", () => {
       at: "2026-01-01T00:00:00Z",
     });
 
-    assert.deepEqual(await connection.next(), { type: "accepted", call_id: "call_1" });
+    assert.deepEqual(await connection.next(), { type: "done", work_id: "work_1" });
     assert.equal(answered.length, 1);
     assert.equal(answered[0]?.callId, "call_1");
     assert.equal(answered[0]?.calledNumber, "+15551234567");
@@ -107,12 +132,12 @@ describe("Dispatch", () => {
 
     const running = dispatch.run();
     const connection = await router.socket();
-    connection.send({ type: "call", call_id: "call_1" });
+    connection.send({ type: "call", work_id: "work_1", call_id: "call_1" });
 
     assert.deepEqual(await connection.next(), {
-      type: "rejected",
-      call_id: "call_1",
-      reason: "no agent config called john",
+      type: "done",
+      work_id: "work_1",
+      error: "no agent config called john",
     });
 
     dispatch.stop();
@@ -144,7 +169,7 @@ describe("Dispatch", () => {
     await running;
   });
 
-  it("hands a message to its own handler and reports nothing back", async () => {
+  it("hands a message to its own handler, with the session it was written to, and says when it is done", async () => {
     const written: InboundMessage[] = [];
     const dispatch = new Dispatch({ client: api }).onMessage((message) => {
       written.push(message);
@@ -154,27 +179,32 @@ describe("Dispatch", () => {
     const connection = await router.socket();
     connection.send({
       type: "message",
+      work_id: "work_1",
       channel_id: "chan_1",
       channel_type: "messaging",
       agent_id: "john",
       config_id: "cfg_1",
+      session_id: "sess_1",
+      command_id: "cmd_1",
       text: "are you open today",
       message_id: "msg_1",
       user_id: "ana",
       user_name: "Ana",
     });
-    await settle();
 
+    assert.deepEqual(await connection.next(), { type: "done", work_id: "work_1" });
     assert.equal(written.length, 1);
     assert.equal(written[0]?.channelId, "chan_1");
     assert.equal(written[0]?.text, "are you open today");
     assert.equal(written[0]?.agentId, "john");
+    assert.equal(written[0]?.sessionId, "sess_1");
+    assert.equal(written[0]?.commandId, "cmd_1");
 
     dispatch.stop();
     await running;
   });
 
-  it("ignores work it has no handler for rather than ending the connection", async () => {
+  it("frees the room taken by work it has no handler for, rather than ending the connection", async () => {
     const written: InboundMessage[] = [];
     const dispatch = new Dispatch({ client: api }).onMessage((message) => {
       written.push(message);
@@ -182,13 +212,35 @@ describe("Dispatch", () => {
 
     const running = dispatch.run();
     const connection = await router.socket();
-    connection.send({ type: "call", call_id: "call_1" });
+    connection.send({ type: "call", work_id: "work_1", call_id: "call_1" });
     connection.send({ type: "something_new" });
-    connection.send({ type: "message", channel_id: "chan_1", text: "still here" });
-    await settle();
+    connection.send({ type: "message", work_id: "work_2", channel_id: "chan_1", text: "still here" });
 
+    assert.deepEqual(await connection.next(), {
+      type: "done",
+      work_id: "work_1",
+      error: "this worker answers no calls",
+    });
+    assert.deepEqual(await connection.next(), { type: "done", work_id: "work_2" });
     assert.equal(written.length, 1);
     assert.equal(written[0]?.text, "still here");
+
+    dispatch.stop();
+    await running;
+  });
+
+  it("frees the room taken by a message when it answers no messages", async () => {
+    const dispatch = new Dispatch({ client: api }).onCall(() => undefined);
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({ type: "message", work_id: "work_1", channel_id: "chan_1", text: "hello" });
+
+    assert.deepEqual(await connection.next(), {
+      type: "done",
+      work_id: "work_1",
+      error: "this worker answers no messages",
+    });
 
     dispatch.stop();
     await running;
@@ -418,6 +470,8 @@ describe("Dispatch", () => {
       channelType: "messaging",
       agentId: "john",
       configId: "cfg_1",
+      sessionId: "",
+      commandId: "",
       text: "hello",
       messageId: "msg_1",
       userId: "ana",
@@ -449,6 +503,87 @@ describe("Dispatch", () => {
 
     connection.socket.close();
     await session.wait();
+  });
+
+  describe("a message written to a running session", () => {
+    const message: InboundMessage = {
+      channelId: "",
+      channelType: "agent",
+      agentId: "john",
+      configId: "cfg_1",
+      sessionId: "sess_1",
+      commandId: "cmd_1",
+      text: "are you open today",
+      messageId: "",
+      userId: "ana",
+      userName: "Ana",
+    };
+
+    it("is not given a second session, since one is already holding it", async () => {
+      const dispatch = new Dispatch({ client: api });
+      let built = 0;
+
+      await assert.rejects(
+        () =>
+          dispatch.sessionFor(message, () => {
+            built += 1;
+            return new Agent({ name: "John", client: api });
+          }),
+        (error: unknown) => error instanceof ConfigurationError && /answer/.test(error.message),
+      );
+      assert.equal(built, 0);
+      assert.equal(router.received.length, 0);
+    });
+
+    it("is answered on that session as the server acting for whoever wrote it, under its command", async () => {
+      for (const authenticate of [false, true]) {
+        router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+          status: 202,
+          body: {
+            id: "resp_1",
+            session_id: "sess_1",
+            status: "running",
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        });
+        const server = new Client({ url: router.url, apiKey: "key", apiSecret: "secret", authenticate });
+        const dispatch = new Dispatch({ client: server });
+
+        const answered = await dispatch.answer(message);
+
+        assert.equal(answered.id, "resp_1");
+        const request = router.last;
+        assert.equal(request.path, "/v1/agents/sessions/sess_1/responses");
+        assert.deepEqual(request.body, { text: "are you open today", command_id: "cmd_1" });
+        assert.equal(request.headers["x-stream-user-id"], "ana");
+        const token = (request.headers["authorization"] ?? "").replace(/^Bearer /, "");
+        assert.equal(
+          claimsOf(token)["server"],
+          true,
+          "a token minted for the user would hand the text straight back to a worker",
+        );
+        assert.equal(claimsOf(token)["user_id"], undefined);
+      }
+    });
+
+    it("names no command when the message was sent without one", async () => {
+      router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+        status: 202,
+        body: { id: "resp_1", session_id: "sess_1", status: "running", created_at: "2026-01-01T00:00:00Z" },
+      });
+      const dispatch = new Dispatch({ client: api });
+
+      await dispatch.answer({ ...message, commandId: "" });
+
+      assert.deepEqual(router.last.body, { text: "are you open today" });
+    });
+
+    it("refuses to answer one no session is holding", async () => {
+      const dispatch = new Dispatch({ client: api });
+
+      await assert.rejects(() => dispatch.answer({ ...message, sessionId: "" }), ConfigurationError);
+      assert.equal(router.received.length, 0);
+    });
   });
 });
 

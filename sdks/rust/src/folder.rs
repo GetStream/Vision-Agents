@@ -76,6 +76,9 @@ pub struct Settings {
     pub keyterms: Vec<String>,
     pub tags: BTreeMap<String, String>,
     pub video: Option<VideoSettings>,
+    /// What the agent leaves to this application's own dispatch worker. With `text`
+    /// enabled the model does not answer what end users write; a worker is handed it.
+    pub dispatch: Option<types::AgentDispatch>,
 }
 
 /// An agent written down as a directory.
@@ -356,6 +359,7 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "keyterms" => settings.keyterms = strings(&value, &key)?,
             "tags" => settings.tags = mapping(&value, &key)?,
             "video" => settings.video = video(&value)?,
+            "dispatch" => settings.dispatch = dispatch(&value)?,
             _ => return Err(format!("{key:?} is not a setting agent.yaml knows")),
         }
     }
@@ -408,6 +412,32 @@ fn video(value: &Yaml) -> std::result::Result<Option<VideoSettings>, String> {
         return Err("video.max_frames must be an integer from 1 to 8".into());
     }
     Ok(Some(video))
+}
+
+fn dispatch(value: &Yaml) -> std::result::Result<Option<types::AgentDispatch>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("dispatch is a mapping".into())
+        };
+    };
+    let mut dispatch = types::AgentDispatch::default();
+    for (key, value) in fields {
+        let key = scalar(key).unwrap_or_default();
+        let setting = match key.as_str() {
+            "incoming_call" => &mut dispatch.incoming_call,
+            "text" => &mut dispatch.text,
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a dispatch setting; incoming_call and text are"
+                ));
+            }
+        };
+        let text = scalar(value).ok_or(format!("dispatch.{key} is a string"))?;
+        *setting = named(&text, "dispatch setting; enabled or disabled is")?;
+    }
+    Ok(Some(dispatch))
 }
 
 fn strings(value: &Yaml, key: &str) -> std::result::Result<Vec<String>, String> {
