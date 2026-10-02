@@ -780,12 +780,16 @@ func run(settings config.Config, logger *slog.Logger) error {
 		DataRetention:  settings.DataMove.Retention,
 		Stream:         streamClients,
 		StreamTenancy:  settings.Stream.Tenancy,
-		HookSecret:     settings.Stream.APISecret,
-		CORSOrigins:    settings.CORSOrigins,
-		PublicURL:      settings.PublicURL,
-		DashboardURL:   settings.DashboardURL,
-		Auth:           authenticator,
-		Logger:         logger,
+
+		ProxyDeclaresKind: settings.Auth.ProxyDeclaresKind,
+		TrustAPIKeyHeader: settings.Stream.TrustAPIKeyHeader,
+		DenyRegistration:  settings.Stream.DenyRegistration,
+		HookSecret:        settings.Stream.APISecret,
+		CORSOrigins:       settings.CORSOrigins,
+		PublicURL:         settings.PublicURL,
+		DashboardURL:      settings.DashboardURL,
+		Auth:              authenticator,
+		Logger:            logger,
 	}
 	if options.HookSecret == "" {
 		logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+

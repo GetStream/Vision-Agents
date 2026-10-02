@@ -114,8 +114,17 @@ type RouterSuite struct {
 	sealer *auth.Sealer
 	// manager runs the suite's sessions, for a test about what ends them from inside.
 	manager *session.Manager
-	server  *httptest.Server
-	app     testApp
+
+	// appMode runs the suite's Stream through app mode's own source, over the suite's
+	// database and keyring, with the deployment's app as the fallback. A suite sets it, and
+	// the two after it, before SetupSuite runs.
+	appMode bool
+	// trustAPIKeyHeader lets X-Stream-Api-Key choose the minting key.
+	trustAPIKeyHeader bool
+	// denied are the app ids the suite refuses registration to.
+	denied []string
+	server *httptest.Server
+	app    testApp
 
 	// unauthenticatedClient sends no credentials. The rest hold the app's key:
 	// anonymousClient goes by a name nothing proves, guestClient and client are signed-in
@@ -222,6 +231,13 @@ func (s *RouterSuite) SetupSuite() {
 		APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL, App: suiteStreamApp,
 	})}
 	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
+	if s.appMode {
+		stored, err := streamapp.NewStored(streamapp.StoredOptions{
+			Store: pgStore, Sealer: s.sealer, Deployment: s.apps.deployment, FallbackToDeployment: true, Logger: logger,
+		})
+		s.Require().NoError(err)
+		s.stream = streamapp.NewClients(stored, streamapp.ClientsOptions{})
+	}
 	s.store.SetStreamPins(store.StreamPins{Deployment: s.apps.deployment.App, For: s.stream.Pin})
 	limiter := s.quota(liveClient, logger)
 	policies := s.policies(logger)
@@ -258,8 +274,11 @@ func (s *RouterSuite) SetupSuite() {
 		Quota:         limiter,
 		Stream:        s.stream,
 		HookSecret:    suiteStreamSecret,
-		DataRetention: time.Hour,
-		Logger:        logger,
+
+		TrustAPIKeyHeader: s.trustAPIKeyHeader,
+		DenyRegistration:  s.denied,
+		DataRetention:     time.Hour,
+		Logger:            logger,
 	})
 	s.Require().NoError(err)
 	s.server = httptest.NewServer(server.Handler())

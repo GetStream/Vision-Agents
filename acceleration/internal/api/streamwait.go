@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -38,4 +39,20 @@ func streamWaiting() error {
 		headers: http.Header{"Retry-After": {strconv.Itoa(int(streamRetryAfter.Seconds()))}},
 		Message: streamUnknown,
 	}
+}
+
+// mintingKeyHeader names which of the calling app's registered keys a gateway that writes
+// it itself wants the app's tokens minted with.
+const mintingKeyHeader = "X-Stream-Api-Key"
+
+type mintingKeyContextKey struct{}
+
+// minting is the bound identity a token is minted with: the key the gateway named, when the
+// deployment trusts it to and the key is one the app holds; otherwise as it was resolved.
+func (s *Server) minting(ctx context.Context, bound streamapp.Bound) (streamapp.Bound, error) {
+	named, _ := ctx.Value(mintingKeyContextKey{}).(string)
+	if named == "" || s.stream == nil {
+		return bound, nil
+	}
+	return s.stream.WithKey(ctx, bound, named)
 }

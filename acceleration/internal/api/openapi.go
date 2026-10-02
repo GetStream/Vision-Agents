@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -110,6 +111,12 @@ func init() {
 		}
 		details := make([]string, 0, len(errs))
 		for _, err := range errs {
+			// A detail names the value it refused, and the value of a secret is the secret.
+			var detail *huma.ErrorDetail
+			if errors.As(err, &detail) && strings.Contains(strings.ToLower(detail.Location), "secret") {
+				details = append(details, detail.Message+" ("+detail.Location+")")
+				continue
+			}
 			details = append(details, err.Error())
 		}
 		if len(details) > 0 {
@@ -189,6 +196,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerHealth(api)
 	s.registerPolicies(api)
 	s.registerSettings(api)
+	s.registerStreamCredentials(api)
 	s.registerSessionQuery(api)
 	s.registerSessionStop(api)
 	s.registerSessionDelete(api)

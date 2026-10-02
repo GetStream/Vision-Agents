@@ -164,6 +164,9 @@ func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenReq
 	case err != nil:
 		return nil, err
 	}
+	if bound, err = s.minting(ctx, bound); err != nil {
+		return nil, err
+	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
 	token, err := bound.Client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
@@ -224,6 +227,9 @@ func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenReq
 	case errors.Is(err, streamapp.ErrReadOnly):
 		return CreateChatToken400JSONResponse{badRequest("that agent's conversation is kept in the router's shared Stream app, where this app no longer mints tokens")}, nil
 	case err != nil:
+		return nil, err
+	}
+	if bound, err = s.minting(ctx, bound); err != nil {
 		return nil, err
 	}
 	client := bound.Client

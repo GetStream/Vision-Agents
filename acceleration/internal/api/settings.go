@@ -10,6 +10,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
@@ -31,6 +32,36 @@ type StreamSettings struct {
 	ChannelType StreamTypeState  `json:"channel_type" doc:"Whether the Stream app holds the agent channel type conversations are kept in. unsafe is one whose grants let somebody other than the app's backend make, change or join a conversation's channel, or read one they are not in."`
 	CallType    StreamTypeState  `json:"call_type" doc:"Whether the Stream app holds the agent call type calls are made with. Stream reports no grants for it here, so it is present or missing."`
 	CheckedAt   *time.Time       `json:"checked_at,omitempty" doc:"When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute."`
+
+	// What follows is app mode's, and absent in deployment mode.
+	Revision    *int64           `json:"revision,omitempty" doc:"The registration's revision, 0 for an app that registered none. A write names the one it read."`
+	State       *StreamAppState  `json:"state,omitempty" doc:"Whether the router acts in the registered app. Absent for an app that registered none."`
+	StateReason string           `json:"state_reason,omitempty" doc:"Why the router stopped acting in the app, for one that is blocked."`
+	StreamAppID *int64           `json:"stream_app_id,omitempty" doc:"The registered app's own id."`
+	PrimaryKey  string           `json:"primary_key,omitempty" doc:"The key tokens are minted with."`
+	AllowGuests *bool            `json:"allow_guests,omitempty" doc:"Whether guests may be made in the registered app."`
+	Keys        []StreamKeyState `json:"keys,omitempty" doc:"The registered app's keys, oldest first. No secret is ever read back."`
+}
+
+// StreamKeyState is one key the router holds for the calling app, and how it stands.
+type StreamKeyState struct {
+	APIKey        string     `json:"api_key"`
+	SecretLast4   string     `json:"secret_last4,omitempty" doc:"The end of the secret, enough to tell two apart."`
+	CreatedAt     *time.Time `json:"created_at,omitempty" doc:"When Stream made the key."`
+	Status        string     `json:"status" enum:"active,rejected" doc:"rejected is a key Stream stopped accepting, which the router no longer uses."`
+	VerifiedAt    *time.Time `json:"verified_at,omitempty"`
+	LastWebhookAt *time.Time `json:"last_webhook_at,omitempty" doc:"When Stream last signed a hook with this key."`
+	SignsWebhooks string     `json:"signs_webhooks" enum:"yes,no,unknown" doc:"Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with."`
+}
+
+// StreamAppState is whether the router acts in a registered app.
+type StreamAppState string
+
+func (StreamAppState) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "StreamAppState", "Whether the router acts in a registered app. "+
+		"disconnected is one the app took back, and blocked one Stream suspended or that stopped "+
+		"checking tokens. Neither is ever written into the router's own app instead.",
+		string(store.StreamAppConnected), string(store.StreamAppDisconnected), string(store.StreamAppBlocked))
 }
 
 func (*StreamSettings) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -108,6 +139,9 @@ func (s *Server) getAppSettings(ctx context.Context, _ *struct{}) (*appSettingsR
 		ChannelType: StreamTypeState(streamapp.TypeUnknown),
 		CallType:    StreamTypeState(streamapp.TypeUnknown),
 	}
+	if err := s.describeRegistration(ctx, customerID, &settings); err != nil {
+		return nil, err
+	}
 	bound, found, err := s.streamFor(ctx, customerID)
 	if errors.Is(err, streamapp.ErrStreamAppDisconnected) || (err == nil && !found) {
 		return &appSettingsResponse{Body: AppSettings{Stream: settings}}, nil
@@ -141,4 +175,52 @@ func (s *Server) writesInto(customerID string, identity streamapp.Identity) Stre
 		return WritesIntoThisApp
 	}
 	return WritesIntoDeploymentApp
+}
+
+// describeRegistration fills in the Stream app the calling app registered, in app mode.
+func (s *Server) describeRegistration(ctx context.Context, customerID string, settings *StreamSettings) error {
+	if s.stream == nil || !s.stream.PerApp() || s.store == nil {
+		return nil
+	}
+	app, err := s.store.StreamApp(ctx, customerID)
+	if errors.Is(err, store.ErrNoStreamApp) {
+		settings.Revision = new(int64)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	state := StreamAppState(app.State)
+	settings.Revision, settings.State, settings.StateReason = &app.Revision, &state, app.StateReason
+	settings.StreamAppID, settings.PrimaryKey, settings.AllowGuests = &app.StreamAppPK, app.PrimaryKey, &app.AllowGuests
+	oldest := oldestKey(app.Keys)
+	for _, key := range app.Keys {
+		signs := "no"
+		switch {
+		case key.LastWebhookAt != nil:
+			signs = "yes"
+		case key.APIKey == oldest || oldest == "":
+			signs = "unknown"
+		}
+		settings.Keys = append(settings.Keys, StreamKeyState{
+			APIKey: key.APIKey, SecretLast4: key.Last4, CreatedAt: key.KeyCreatedAt, Status: string(key.Status),
+			VerifiedAt: key.VerifiedAt, LastWebhookAt: key.LastWebhookAt, SignsWebhooks: signs,
+		})
+	}
+	return nil
+}
+
+// oldestKey is the key Stream made first, which is the one it signs an app's hooks with,
+// or empty when Stream's dates for the keys are not all known.
+func oldestKey(keys []store.StreamAppKey) string {
+	var oldest store.StreamAppKey
+	for _, key := range keys {
+		if key.KeyCreatedAt == nil {
+			return ""
+		}
+		if oldest.KeyCreatedAt == nil || key.KeyCreatedAt.Before(*oldest.KeyCreatedAt) {
+			oldest = key
+		}
+	}
+	return oldest.APIKey
 }

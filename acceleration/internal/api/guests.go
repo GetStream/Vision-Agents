@@ -52,6 +52,9 @@ func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserReq
 	if !bound.Identity.MintsGuests() {
 		return CreateGuestUser403Response{}, nil
 	}
+	if bound, err = s.minting(ctx, bound); err != nil {
+		return nil, err
+	}
 
 	body := GuestUserRequest{}
 	if request.Body != nil {

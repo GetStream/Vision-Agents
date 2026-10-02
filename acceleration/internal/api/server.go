@@ -108,6 +108,15 @@ type Options struct {
 	// StreamTenancy is whose Stream app the router acts in, as stream.tenancy says. Empty
 	// is deployment.
 	StreamTenancy string
+	// ProxyDeclaresKind is auth.proxy_declares_kind: the proxy in front says which kind of
+	// caller it verified. Registering a Stream app behind a proxy needs it, since without
+	// it every caller passes as a backend.
+	ProxyDeclaresKind bool
+	// TrustAPIKeyHeader lets X-Stream-Api-Key choose which of the calling app's registered
+	// keys mints its tokens.
+	TrustAPIKeyHeader bool
+	// DenyRegistration are Stream app ids that may never be registered.
+	DenyRegistration []string
 	// Campaigns rings lists of people. Absent without telephony or sessions, in which
 	// case a campaign can be written down but not run.
 	Campaigns *campaign.Runner
@@ -186,24 +195,28 @@ type Server struct {
 	streams       *Streams
 	stream        *streamapp.Clients
 	streamTenancy string
-	campaigns     *campaign.Runner
-	simulations   *simulation.Runner
-	knowledge     knowledge.Writer
-	pages         *urls.Service
-	voices        *voices.Service
-	library       *voices.Catalogue
-	dispatch      *dispatch.Pool
-	hookSecret    string
-	corsOrigins   []string
-	publicURL     string
-	dashboardURL  string
-	oauth         *plugins.Auth
-	authenticator auth.Authenticator
-	authMode      auth.Mode
-	dataRetention time.Duration
-	quota         *quota.Limiter
-	policies      *policy.Enforcer
-	trusted       []netip.Prefix
+
+	proxyDeclaresKind bool
+	trustAPIKeyHeader bool
+	denyRegistration  []string
+	campaigns         *campaign.Runner
+	simulations       *simulation.Runner
+	knowledge         knowledge.Writer
+	pages             *urls.Service
+	voices            *voices.Service
+	library           *voices.Catalogue
+	dispatch          *dispatch.Pool
+	hookSecret        string
+	corsOrigins       []string
+	publicURL         string
+	dashboardURL      string
+	oauth             *plugins.Auth
+	authenticator     auth.Authenticator
+	authMode          auth.Mode
+	dataRetention     time.Duration
+	quota             *quota.Limiter
+	policies          *policy.Enforcer
+	trusted           []netip.Prefix
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
@@ -276,24 +289,28 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		streams:       options.Streams,
 		stream:        options.Stream,
 		streamTenancy: cmp.Or(options.StreamTenancy, config.TenancyDeployment),
-		campaigns:     options.Campaigns,
-		simulations:   options.Simulations,
-		knowledge:     options.Knowledge,
-		pages:         options.KnowledgeURLs,
-		voices:        options.Voices,
-		library:       options.VoiceLibrary,
-		dispatch:      options.Dispatch,
-		hookSecret:    options.HookSecret,
-		corsOrigins:   options.CORSOrigins,
-		publicURL:     options.PublicURL,
-		dashboardURL:  options.DashboardURL,
-		authenticator: authenticator,
-		authMode:      authMode,
-		dataRetention: retention,
-		quota:         options.Quota,
-		policies:      options.Policies,
-		trusted:       options.TrustedProxies,
-		upgrader:      newUpgrader(options.CORSOrigins),
+
+		proxyDeclaresKind: options.ProxyDeclaresKind,
+		trustAPIKeyHeader: options.TrustAPIKeyHeader,
+		denyRegistration:  options.DenyRegistration,
+		campaigns:         options.Campaigns,
+		simulations:       options.Simulations,
+		knowledge:         options.Knowledge,
+		pages:             options.KnowledgeURLs,
+		voices:            options.Voices,
+		library:           options.VoiceLibrary,
+		dispatch:          options.Dispatch,
+		hookSecret:        options.HookSecret,
+		corsOrigins:       options.CORSOrigins,
+		publicURL:         options.PublicURL,
+		dashboardURL:      options.DashboardURL,
+		authenticator:     authenticator,
+		authMode:          authMode,
+		dataRetention:     retention,
+		quota:             options.Quota,
+		policies:          options.Policies,
+		trusted:           options.TrustedProxies,
+		upgrader:          newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
 			PublicURL:    options.PublicURL,
 			DashboardURL: options.DashboardURL,
@@ -349,12 +366,25 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
+	return withSentry(withCORS(s.corsOrigins,
+		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))
+}
+
+// withSentry reports what goes wrong serving a request to Sentry, except a request
+// carrying an app's Stream secrets: Sentry copies the body it is handed, and a secret in an
+// error report is a secret leaked.
+func withSentry(handler http.Handler) http.Handler {
 	instrumented := sentryhttp.New(sentryhttp.Options{
 		Repanic:         false,
 		WaitForDelivery: false,
+	}).Handle(handler)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, streamCredentialsPath) {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		instrumented.ServeHTTP(w, r)
 	})
-	return instrumented.Handle(withCORS(s.corsOrigins,
-		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))
 }
 
 // withRequestLog records one line per request served.
@@ -602,6 +632,9 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
+			if s.trustAPIKeyHeader {
+				ctx = context.WithValue(ctx, mintingKeyContextKey{}, strings.TrimSpace(r.Header.Get(mintingKeyHeader)))
+			}
 			ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
 				UserID: principal.UserID,
 				IP:     clientIP(r, s.trusted),

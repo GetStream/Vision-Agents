@@ -13,6 +13,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // ProxyKindSuite runs a proxy-mode router and sends it requests shaped the way the hosted
@@ -83,4 +85,45 @@ func (idleInspector) Config() routing.ModalityConfig                { return rou
 func (idleInspector) Providers(context.Context) []routing.Candidate { return nil }
 func (idleInspector) Resolve(context.Context, string, []string) ([]routing.Candidate, error) {
 	return nil, nil
+}
+
+func (s *ProxyKindSuite) TestStreamCredentialsRefuseACallerWithoutADeclaredKind() {
+	// Behind a proxy that does not declare kinds every caller passes as a backend, so a
+	// page could hand the router somebody's keys. Registering needs the proxy to say.
+	sealer, err := auth.NewSealer("router suite")
+	s.Require().NoError(err)
+	stored, err := streamapp.NewStored(streamapp.StoredOptions{
+		Store: &store.Store{}, Sealer: sealer, Deployment: streamapp.NewDeployment(streamapp.DeploymentOptions{}),
+	})
+	s.Require().NoError(err)
+	for _, declares := range []bool{false, true} {
+		server, err := NewServer(Options{
+			Routers:           map[routing.Modality]routing.Inspector{routing.LLM: idleInspector{}},
+			Auth:              auth.NewProxy(auth.ProxyOptions{DeclaresKind: declares}),
+			AuthMode:          auth.Proxy,
+			ProxyDeclaresKind: declares,
+			Stream:            streamapp.NewClients(stored, streamapp.ClientsOptions{}),
+			Logger:            slog.New(slog.DiscardHandler),
+		})
+		s.Require().NoError(err)
+		running := httptest.NewServer(server.Handler())
+		s.T().Cleanup(running.Close)
+
+		declared := ""
+		if declares {
+			declared = auth.AuthTypeJWT
+		}
+		request, err := http.NewRequest(http.MethodPut, running.URL+"/v1/settings/app/stream/credentials",
+			bytes.NewReader([]byte(`{"keys":[{"api_key":"k","api_secret":"a-long-stream-secret"}],"expected_revision":0}`)))
+		s.Require().NoError(err)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(auth.AppHeader, "42")
+		if declared != "" {
+			request.Header.Set(auth.AuthTypeHeader, declared)
+		}
+		response, err := http.DefaultClient.Do(request)
+		s.Require().NoError(err)
+		s.Require().NoError(response.Body.Close())
+		s.Equal(http.StatusForbidden, response.StatusCode, "declares kinds: %v", declares)
+	}
 }
