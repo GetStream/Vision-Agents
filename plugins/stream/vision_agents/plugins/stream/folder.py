@@ -78,6 +78,9 @@ class Settings:
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
     video_max_frames: int = 0
+    dispatch: dict[str, str] | None = None
+    """What the agent leaves to this application's own dispatch worker: `incoming_call`
+    and `text`, each "enabled" or "disabled". None when the file says nothing about it."""
     app: dict[str, object] = field(default_factory=dict)
     """The application's own section, which this SDK never reads and the backend is never
     sent. It is the one place an unknown key is not refused."""
@@ -296,6 +299,8 @@ def _declare(path: Path) -> Settings:
             settings.tags = _tags(path, value)
         elif field_name == "video":
             settings.video_source, settings.video_max_frames = _video(path, value)
+        elif field_name == "dispatch":
+            settings.dispatch = _dispatch(path, value)
         elif field_name == "app":
             if value is not None and not isinstance(value, dict):
                 raise ValueError(f"{path} should give app as a mapping")
@@ -342,6 +347,15 @@ def _video(path: Path, value: object) -> tuple[str, int]:
     if type(limit) is not int or not 1 <= limit <= 8:
         raise ValueError("video.max_frames must be an integer from 1 to 8")
     return _word(value.get("source")), limit
+
+
+def _dispatch(path: Path, value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give dispatch as a mapping")
+    extra = set(value) - {"incoming_call", "text"}
+    if extra:
+        raise ValueError(f"{path} unknown dispatch setting: {sorted(extra)[0]}")
+    return {str(key): _word(item) for key, item in value.items() if _word(item)}
 
 
 def _looks_like_agent(path: Path) -> bool:

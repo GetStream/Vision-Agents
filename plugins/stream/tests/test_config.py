@@ -484,6 +484,22 @@ class TestSyncAgent:
         assert stored["keyterms"] == ["Vision Agents"]
         assert stored["tags"] == {"team": "support"}
 
+    async def test_a_declaration_says_what_is_left_to_dispatch(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\ndispatch:\n  incoming_call: disabled\n  text: enabled\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["dispatch"] == {
+            "incoming_call": "disabled",
+            "text": "enabled",
+        }
+
     async def test_sts_can_be_selected_and_cleared(self, router: Router, support_dir):
         for target in ("openai/gpt-realtime-2", ""):
             (support_dir / "agent.yaml").write_text(f"name: support\nsts: {target}\n")

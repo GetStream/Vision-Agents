@@ -162,6 +162,9 @@ type Spec struct {
 	// Harness is which harness the session runs, from the agent's config. Empty is the
 	// default, and so is every session today; a caller cannot choose it.
 	Harness string
+	// DispatchText hands what an end user writes to the customer's dispatch worker rather
+	// than the model, from the agent's config. The model answers only the server.
+	DispatchText bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
 	// config's own, or one of the built-in think, recall and explain. Empty means the
@@ -258,6 +261,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Sandbox:            config.Sandbox,
 		Harness:            config.Harness,
+		DispatchText:       config.DispatchText,
 		Tags:               routing.Tags(config.Tags),
 	}
 }

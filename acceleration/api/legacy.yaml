@@ -3693,9 +3693,21 @@ paths:
         here and waits, rather than being called, because the agent runs in the customer's
         own process and this service cannot reach into it.
 
-        The socket opens with a `ready` frame naming the worker, and a `call` frame arrives
-        for each call handed to it. The worker sends `load` so the pool can rank it,
-        `accepted` or `rejected` per call, and `ping` to time the round trip itself.
+        The socket opens with a `ready` frame naming the worker, and a `call` or `message`
+        frame arrives for each piece of work handed to it, each carrying the `work_id` that
+        names it. The worker answers `done` with that `work_id`, and an `error` when it
+        could not be done, which is what frees its room for the next piece. It also sends
+        `load` so an operator can see what each worker is under, and `ping` to time the
+        round trip itself.
+
+        Work goes to whichever of a customer's workers is holding the least of what it said
+        it can hold, so a worker that never reports `done` is one the router cannot tell is
+        busy.
+
+        A `message` written to a running session whose agent sets `dispatch.text` carries
+        that `session_id`, and a `command_id` when it was sent as a durable command. The
+        model has not answered it: the worker does, by creating a response on that session
+        with a server-side credential and the same `command_id` and text.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an
         end user's device. This is the clearest case of why: a worker is offered other
@@ -3705,11 +3717,32 @@ paths:
         - name: capacity
           in: query
           required: false
-          description: How many calls this worker takes at once.
+          description: How much work this worker takes at once, calls and messages together.
           schema:
             type: integer
             minimum: 1
             default: 4
+        - name: active
+          in: query
+          required: false
+          description: >
+            How much work this worker is still running from before it reconnected, which
+            the router counts against its capacity until each piece is reported `done`.
+            Sending this at all, even as 0, is what says the worker reports `done`; one
+            that leaves it out is held only to the depth of its queue.
+          schema:
+            type: integer
+            minimum: 0
+        - name: handles
+          in: query
+          required: false
+          description: >
+            The kinds of work this worker accepts, comma separated. Absent is both. A worker
+            that only answers in writing says `message`, so a caller is never left listening
+            to a phone it would have dropped.
+          schema:
+            type: string
+            example: call,message
       responses:
         "101":
           description: The socket is open
@@ -4180,6 +4213,30 @@ components:
         skills, compacts the conversation and starts the sandbox. Set on the agent, never
         on a session. Omit it for the default, the only one there is.
 
+    DispatchSetting:
+      type: string
+      enum: [enabled, disabled]
+      description: Whether this kind of work is left to the customer's own dispatch worker.
+
+    AgentDispatch:
+      type: object
+      description: >
+        What the agent leaves to the customer's own server, which waits on /v1/dispatch.
+        Omitted settings are disabled.
+      properties:
+        incoming_call:
+          $ref: "#/components/schemas/DispatchSetting"
+          description: >
+            A call to one of the customer's numbers is handed to a dispatch worker. Every
+            inbound call already is, since a number is not tied to an agent config.
+        text:
+          $ref: "#/components/schemas/DispatchSetting"
+          description: >
+            An end user's message is handed to a dispatch worker, with the session it was
+            written to, instead of being answered by the model. The worker answers by
+            creating a response on that session with a server-side credential, passing the
+            message's command_id when it has one; that is the only text the model answers.
+
     AgentConfigRequest:
       type: object
       required: [name]
@@ -4283,6 +4340,8 @@ components:
           $ref: "#/components/schemas/Sandbox"
         harness:
           $ref: "#/components/schemas/Harness"
+        dispatch:
+          $ref: "#/components/schemas/AgentDispatch"
         tags:
           type: object
           additionalProperties:
@@ -4350,6 +4409,8 @@ components:
           $ref: "#/components/schemas/Sandbox"
         harness:
           $ref: "#/components/schemas/Harness"
+        dispatch:
+          $ref: "#/components/schemas/AgentDispatch"
         tags:
           type: object
           additionalProperties:

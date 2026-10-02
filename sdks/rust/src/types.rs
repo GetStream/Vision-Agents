@@ -76,6 +76,8 @@ impl ::std::convert::TryFrom<::std::string::String> for ActivityGranularity {
 pub struct AgentConfig {
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub dispatch: ::std::option::Option<AgentDispatch>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub guardrail: ::std::option::Option<::std::string::String>,
@@ -126,6 +128,8 @@ pub struct AgentConfig {
 ///`AgentConfigRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentConfigRequest {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub dispatch: ::std::option::Option<AgentDispatch>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<::std::string::String>,
     /**A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
@@ -188,6 +192,19 @@ pub struct AgentConfigRequest {
     ///Provider-specific voice id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+/**What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+*/
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct AgentDispatch {
+    /**A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config.
+    */
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub incoming_call: ::std::option::Option<DispatchSetting>,
+    /**An end user's message is handed to a dispatch worker, with the session it was written to, instead of being answered by the model. The worker answers by creating a response on that session with a server-side credential, passing the message's command_id when it has one; that is the only text the model answers.
+    */
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub text: ::std::option::Option<DispatchSetting>,
 }
 ///`AgentLog`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -1655,6 +1672,57 @@ impl ::std::convert::TryFrom<&str> for DecisionKind {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for DecisionKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Whether this kind of work is left to the customer's own dispatch worker.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum DispatchSetting {
+    #[serde(rename = "enabled")]
+    Enabled,
+    #[serde(rename = "disabled")]
+    Disabled,
+}
+impl ::std::fmt::Display for DispatchSetting {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Enabled => f.write_str("enabled"),
+            Self::Disabled => f.write_str("disabled"),
+        }
+    }
+}
+impl ::std::str::FromStr for DispatchSetting {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "enabled" => Ok(Self::Enabled),
+            "disabled" => Ok(Self::Disabled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for DispatchSetting {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for DispatchSetting {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -5176,6 +5244,8 @@ pub struct SttOptions {
 */
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SyncAgentRequest {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub dispatch: ::std::option::Option<AgentDispatch>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<::std::string::String>,
     /**The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.

@@ -599,6 +599,7 @@ impl Agent {
                 max_frames: Some(video.max_frames),
                 source: text(&video.source),
             }),
+            dispatch: settings.dispatch.clone(),
         };
         let synced = client.sync_agent(&body).await?;
         folder::write_stamp(&folder.path, &hash)?;

@@ -72,8 +72,9 @@ module GetStream
 
       SETTING_STRINGS = %w[name description mode stt tts sts voice llm subagent search greeting sandbox].freeze
       SETTING_LISTS = %w[plugins keyterms].freeze
-      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[tags video]).freeze
+      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[tags video dispatch]).freeze
       VIDEO_KEYS = %w[source max_frames].freeze
+      DISPATCH_KEYS = %w[incoming_call text].freeze
 
       attr_reader :path, :name, :declaration, :settings, :instructions, :guardrail, :skills,
                   :knowledge, :knowledge_urls
@@ -200,7 +201,19 @@ module GetStream
 
           value.to_h { |name, label| [name.to_s, label.to_s] }
         when "video" then video(value, file)
+        when "dispatch" then dispatch(value, file)
         end
+      end
+
+      # What the agent leaves to the application's own dispatch worker, each "enabled" or
+      # "disabled". The router checks the values.
+      def self.dispatch(value, file)
+        raise ConfigurationError, "#{file}: dispatch should be a mapping" unless value.is_a?(Hash)
+
+        unknown = value.keys.map(&:to_s) - DISPATCH_KEYS
+        raise ConfigurationError, "#{file}: dispatch has no #{unknown.join(", ")}" unless unknown.empty?
+
+        value.to_h { |key, setting| [key.to_s, setting&.to_s] }.compact
       end
 
       def self.video(value, file)

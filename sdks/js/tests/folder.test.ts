@@ -80,6 +80,8 @@ describe("loadFolder", () => {
           "  team: support",
           "video:",
           "  source: camera",
+          "dispatch:",
+          "  text: enabled",
           "",
         ].join("\n"),
       }),
@@ -95,6 +97,7 @@ describe("loadFolder", () => {
       plugins: ["weather"],
       tags: { team: "support" },
       video: { source: "camera", max_frames: 1 },
+      dispatch: { text: "enabled" },
     });
   });
 
@@ -111,6 +114,7 @@ describe("loadFolder", () => {
       "llm:\n  - one\n  - two\n",
       "video:\n  max_frames: 9\n",
       "video:\n  frames: 2\n",
+      "dispatch:\n  texts: enabled\n",
     ]) {
       await assert.rejects(
         async () => loadFolder(await agentDir({ "agent.yaml": declaration })),

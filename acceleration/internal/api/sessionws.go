@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -236,6 +238,18 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			}
 
 		case "respond":
+			if leftToDispatch(found, owner.Kind) {
+				if len(command.Images) > 0 {
+					found.Report(errors.New("this agent hands what is written to its server, which takes text only"), "dispatch")
+					continue
+				}
+				if _, err := s.dispatchText(context.Background(), found, dispatch.Message{
+					Text: command.Text, CommandID: command.CommandID, UserID: owner.UserID,
+				}, ""); err != nil {
+					found.Report(err, "dispatch")
+				}
+				continue
+			}
 			if command.CommandID != "" {
 				if len(command.Images) > 0 {
 					found.Report(fmt.Errorf("durable commands currently support text only"), "llm")

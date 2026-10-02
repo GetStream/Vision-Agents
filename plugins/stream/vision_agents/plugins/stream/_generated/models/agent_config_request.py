@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.agent_config_request_tags import AgentConfigRequestTags
+    from ..models.agent_dispatch import AgentDispatch
     from ..models.session_video import SessionVideo
 
 
@@ -40,6 +41,8 @@ class AgentConfigRequest:
         search (str | Unset): What the agent finds out today's answers with, as a provider/model or a capability
             shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
         instructions (str | Unset):
+        dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
+            /v1/dispatch. Omitted settings are disabled.
         greeting (str | Unset):
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then
             the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty
@@ -68,6 +71,7 @@ class AgentConfigRequest:
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
     instructions: str | Unset = UNSET
+    dispatch: AgentDispatch | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
@@ -104,6 +108,10 @@ class AgentConfigRequest:
         search = self.search
 
         instructions = self.instructions
+
+        dispatch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.dispatch, Unset):
+            dispatch = self.dispatch.to_dict()
 
         greeting = self.greeting
 
@@ -158,6 +166,8 @@ class AgentConfigRequest:
             field_dict["search"] = search
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
+        if dispatch is not UNSET:
+            field_dict["dispatch"] = dispatch
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -182,6 +192,7 @@ class AgentConfigRequest:
         from ..models.agent_config_request_tags import (
             AgentConfigRequestTags,
         )
+        from ..models.agent_dispatch import AgentDispatch
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
@@ -216,6 +227,13 @@ class AgentConfigRequest:
         search = d.pop("search", UNSET)
 
         instructions = d.pop("instructions", UNSET)
+
+        _dispatch = d.pop("dispatch", UNSET)
+        dispatch: AgentDispatch | Unset
+        if isinstance(_dispatch, Unset):
+            dispatch = UNSET
+        else:
+            dispatch = AgentDispatch.from_dict(_dispatch)
 
         greeting = d.pop("greeting", UNSET)
 
@@ -255,6 +273,7 @@ class AgentConfigRequest:
             subagent=subagent,
             search=search,
             instructions=instructions,
+            dispatch=dispatch,
             greeting=greeting,
             guardrail=guardrail,
             skills=skills,

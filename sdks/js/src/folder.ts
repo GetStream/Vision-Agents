@@ -334,10 +334,12 @@ const LISTS = new Set(["plugins", "keyterms"]);
  * video:
  *   source: camera
  *   max_frames: 2
+ * dispatch:
+ *   text: enabled
  * ```
  *
  * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for two lists
- * and two small mappings, and a YAML library would land in every browser bundle. A key
+ * and three small mappings, and a YAML library would land in every browser bundle. A key
  * nobody knows is refused rather than dropped, since a misspelled `llm` that goes quietly is
  * a config running on a model the file does not name.
  */
@@ -384,6 +386,8 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       declared.tags = mapping(nested, inline, key, where);
     } else if (key === "video") {
       declared.video = video(mapping(nested, inline, key, where), where);
+    } else if (key === "dispatch") {
+      declared.dispatch = dispatch(mapping(nested, inline, key, where), where);
     } else {
       throw new ConfigurationError(
         `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
@@ -456,6 +460,18 @@ function video(declared: Record<string, string>, where: string): Schemas["Sessio
     throw new ConfigurationError(`${where}: video.max_frames must be an integer from 1 to 8`);
   }
   return { ...(declared["source"] ? { source: declared["source"] } : {}), max_frames: frames };
+}
+
+/** Each setting is `enabled` or `disabled`, passed through for the router to check. */
+function dispatch(declared: Record<string, string>, where: string): Schemas["AgentDispatch"] {
+  for (const key of Object.keys(declared)) {
+    if (key !== "incoming_call" && key !== "text") {
+      throw new ConfigurationError(`${where}: unknown dispatch setting ${JSON.stringify(key)}`);
+    }
+  }
+  const incoming = declared["incoming_call"] as Schemas["DispatchSetting"] | "" | undefined;
+  const text = declared["text"] as Schemas["DispatchSetting"] | "" | undefined;
+  return { ...(incoming ? { incoming_call: incoming } : {}), ...(text ? { text } : {}) };
 }
 
 /** `.agent_sync`: the fingerprint a directory was last synced under, and when. */

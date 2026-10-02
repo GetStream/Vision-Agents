@@ -204,6 +204,27 @@ final class AgentTest extends TestCase
         self::assertSame($expected, $this->router->to('POST', '/v1/agents/sync')[0]->json()['hash']);
     }
 
+    public function testSyncSendsOnlyTheDispatchSettingsWritten(): void
+    {
+        $this->folder();
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\ndispatch:\n  text: enabled\n");
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        self::assertSame(['text' => 'enabled'], $this->router->to('POST', '/v1/agents/sync')[0]->json()['dispatch']);
+    }
+
+    public function testSyncLeavesDispatchOutWhenAgentYamlSaysNothing(): void
+    {
+        $this->folder();
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        self::assertArrayNotHasKey('dispatch', $this->router->to('POST', '/v1/agents/sync')[0]->json());
+    }
+
     private function edge(): Edge
     {
         return new Edge('key', str_repeat('s', 32), $this->router->url);

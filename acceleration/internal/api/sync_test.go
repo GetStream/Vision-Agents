@@ -65,6 +65,16 @@ func (s *SyncSuite) TestSyncingAnAgentStoresWhatItsDeclarationRunsItOn() {
 	s.Equal("analyst", value(result.Config.Tags)["project"])
 }
 
+func (s *SyncSuite) TestSyncingAnAgentStoresWhatItLeavesToDispatch() {
+	result := s.sync(map[string]any{
+		"name": "stream-product", "hash": "v1", "mode": "text",
+		"dispatch": map[string]string{"incoming_call": "enabled", "text": "enabled"},
+	})
+
+	s.Equal(Enabled, value(value(result.Config.Dispatch).IncomingCall))
+	s.Equal(Enabled, value(value(result.Config.Dispatch).Text))
+}
+
 func (s *SyncSuite) TestASyncThatNamesNoModelLeavesTheOneStored() {
 	first := s.sync(map[string]any{
 		"name": "switchboard", "hash": "v1", "llm": "llm-flow", "sandbox": "daytona",

@@ -158,14 +158,22 @@ $dispatch->waitForCall(function (InboundCall $call): void {
 });
 
 $dispatch->waitForMessage(function (InboundMessage $message) use ($dispatch): void {
+    if ($message->sessionId !== '') {
+        $dispatch->answer($message); // text written to a running session
+        return;
+    }
     $dispatch->getOrCreateAgent($message, fn () => new Agent(config: 'support'));
 });
 
 $dispatch->run();
 ```
 
-A handler that throws rejects the call. SIGINT and SIGTERM stop it where pcntl is loaded;
-work still running is waited for.
+Each call and message ends with a `done` frame to the router, carrying what the handler threw
+if it threw. SIGINT and SIGTERM stop it where pcntl is loaded; work still running is waited for.
+
+An agent whose `agent.yaml` says `dispatch: {text: enabled}` leaves what end users write to
+the worker: the message arrives with `sessionId` and `commandId`, and `answer()` has the
+model reply on that session, using the worker's server credential acting for the writer.
 
 ### Hosted tools
 
