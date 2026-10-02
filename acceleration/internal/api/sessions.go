@@ -591,6 +591,12 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 			if tool.Executor != nil && *tool.Executor == SessionToolExecutorClient {
 				declared.Client = true
 			}
+			if approval := tool.Approval; approval != nil && approval.Title != "" {
+				declared.Approval = &harness.ToolApproval{
+					Title: approval.Title, Message: value(approval.Message), ReasonArgument: value(approval.ReasonArgument),
+					AllowTitle: value(approval.AllowTitle), DeclineTitle: value(approval.DeclineTitle),
+				}
+			}
 			spec.Tools = append(spec.Tools, declared)
 		}
 	}

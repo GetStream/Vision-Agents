@@ -1286,6 +1286,21 @@ func (e Tier) Valid() bool {
 	}
 }
 
+// Defines values for ToolApprovalCommandType.
+const (
+	ToolApproval ToolApprovalCommandType = "tool_approval"
+)
+
+// Valid indicates whether the value is a known member of the ToolApprovalCommandType enum.
+func (e ToolApprovalCommandType) Valid() bool {
+	switch e {
+	case ToolApproval:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ToolResultCommandType.
 const (
 	ToolResultCommandTypeToolResult ToolResultCommandType = "tool_result"
@@ -3532,6 +3547,9 @@ type SessionState string
 
 // SessionTool One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
 type SessionTool struct {
+	// Approval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+	Approval *SessionToolApproval `json:"approval,omitempty"`
+
 	// Description What the model is told the tool does, which is the whole of how it decides when to reach for one.
 	Description string `json:"description"`
 
@@ -3548,6 +3566,24 @@ type SessionTool struct {
 
 // SessionToolExecutor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
 type SessionToolExecutor string
+
+// SessionToolApproval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+type SessionToolApproval struct {
+	// AllowTitle The label of the button that allows the call.
+	AllowTitle *string `json:"allow_title,omitempty"`
+
+	// DeclineTitle The label of the button that declines it.
+	DeclineTitle *string `json:"decline_title,omitempty"`
+
+	// Message What allowing it shares or does, such as "Only your city is shared."
+	Message *string `json:"message,omitempty"`
+
+	// ReasonArgument The argument, a string, in which the model says why it wants this call. Its text (at most 160 characters) is shown as the approval's reason, so it is visible to every channel member even for a server tool.
+	ReasonArgument *string `json:"reason_argument,omitempty"`
+
+	// Title The question, such as "Share your location?".
+	Title string `json:"title"`
+}
 
 // SessionVideo defines model for SessionVideo.
 type SessionVideo struct {
@@ -4211,6 +4247,21 @@ type TimelineEntry struct {
 	TtsTtfbMs *float64 `json:"tts_ttfb_ms,omitempty"`
 	TurnId    string   `json:"turn_id"`
 }
+
+// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result.
+type ToolApprovalCommand struct {
+	Allowed   bool   `json:"allowed"`
+	CommandId string `json:"command_id"`
+
+	// Summary Shown on the declined call, such as "Location not shared".
+	Summary    *string                 `json:"summary,omitempty"`
+	ToolCallId string                  `json:"tool_call_id"`
+	TurnId     string                  `json:"turn_id"`
+	Type       ToolApprovalCommandType `json:"type"`
+}
+
+// ToolApprovalCommandType defines model for ToolApprovalCommand.Type.
+type ToolApprovalCommandType string
 
 // ToolResultCommand defines model for ToolResultCommand.
 type ToolResultCommand struct {

@@ -773,6 +773,21 @@ func (s *Session) ResolveCommandTool(id, commandID, turnID string, parts []llm.C
 	return s.tools.Resolve(id, turnID, parts, failure)
 }
 
+// DecideCommandTool records a person's answer to a call of a durable command that waited
+// for their approval, reporting whether the call's command and turn match. The call still
+// needs its result.
+func (s *Session) DecideCommandTool(id, commandID, turnID string, allowed bool, summary string) bool {
+	if s.persisted == nil || id == "" || commandID == "" || turnID == "" {
+		return false
+	}
+	expected, bound := s.persisted.CommandForTurn(turnID)
+	if !bound || expected != commandID {
+		return false
+	}
+	s.persisted.Observe(agent.ToolApprovalDecided{ID: id, TurnID: turnID, Allowed: allowed, Summary: summary})
+	return true
+}
+
 // Close leaves the call and releases everything the session opened. It is safe to call
 // more than once.
 func (s *Session) Close() error {

@@ -201,6 +201,10 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			Output json.RawMessage `json:"output"`
 			// Error is what to tell the model instead, when the tool did not work.
 			Error string `json:"error"`
+			// Allowed and Summary carry tool_approval: a person's answer to a call that
+			// waited for them, and what a declined call shows.
+			Allowed *bool  `json:"allowed"`
+			Summary string `json:"summary"`
 			// Text carries say and respond.
 			Text string `json:"text"`
 			// Images attach to a respond command, and become image parts on that turn.
@@ -229,6 +233,16 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			}
 			if !resolveTool(found, command.ToolCallID, command.CommandID, command.TurnID, parts, command.Error) {
 				s.logger.Debug("a tool result answered nothing",
+					"session", found.ID(), "call", command.ToolCallID)
+			}
+
+		case "tool_approval":
+			if command.Allowed == nil {
+				found.Report(fmt.Errorf("tool_approval needs allowed"), "tool")
+				continue
+			}
+			if !found.DecideCommandTool(command.ToolCallID, command.CommandID, command.TurnID, *command.Allowed, command.Summary) {
+				s.logger.Debug("a tool approval answered nothing",
 					"session", found.ID(), "call", command.ToolCallID)
 			}
 

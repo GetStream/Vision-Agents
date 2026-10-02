@@ -3342,6 +3342,11 @@ paths:
         `command_id` and `turn_id`; their result must repeat both values so a result cannot
         be adopted by another command or turn.
 
+        A call to a tool declared with an `approval` waits for a person. The client reports
+        their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`,
+        `allowed`, and optionally a `summary` shown when they declined), before it answers
+        the call with `tool_result`.
+
         `tool_result.output` is a string, or an array of parts `[{type: text|image_url,
         ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of
         `auto`, `low` or `high`. One socket message is at most
@@ -4149,6 +4154,45 @@ components:
           description: >
             What a call is doing, in words for the people in the conversation, such as
             "Checking your location". Shown on the reply's ai_tool_call attachment.
+        approval:
+          $ref: "#/components/schemas/SessionToolApproval"
+
+    SessionToolApproval:
+      type: object
+      required: [title]
+      description: >
+        Says a person must allow each call before it runs. In a persistent conversation the
+        call's ai_tool_call attachment opens as awaiting_approval, addressed to the person
+        whose command it answers (and, for a client tool, their install), and carries this
+        question for their client to ask. The caller collects the answer and reports it over
+        the events socket with tool_approval: allowed, the call goes on as it would have
+        (awaiting_client for a client tool, running otherwise); declined, it is cancelled.
+        The caller still answers the call with tool_result either way. Every channel member
+        can read the question.
+      properties:
+        title:
+          type: string
+          maxLength: 80
+          description: The question, such as "Share your location?".
+        message:
+          type: string
+          maxLength: 240
+          description: What allowing it shares or does, such as "Only your city is shared."
+        reason_argument:
+          type: string
+          maxLength: 64
+          description: >
+            The argument, a string, in which the model says why it wants this call. Its text
+            (at most 160 characters) is shown as the approval's reason, so it is visible to
+            every channel member even for a server tool.
+        allow_title:
+          type: string
+          maxLength: 40
+          description: The label of the button that allows the call.
+        decline_title:
+          type: string
+          maxLength: 40
+          description: The label of the button that declines it.
 
     SessionMemory:
       type: object
@@ -7067,6 +7111,28 @@ components:
           $ref: "#/components/schemas/MessageContent"
         error:
           type: string
+    ToolApprovalCommand:
+      type: object
+      required: [type, tool_call_id, command_id, turn_id, allowed]
+      description: >
+        A person's answer to a call awaiting their approval, from a persistent text
+        command. It changes only how the call is shown; the call still needs a tool_result.
+      properties:
+        type:
+          type: string
+          enum: [tool_approval]
+        tool_call_id:
+          type: string
+        command_id:
+          type: string
+        turn_id:
+          type: string
+        allowed:
+          type: boolean
+        summary:
+          type: string
+          maxLength: 120
+          description: Shown on the declined call, such as "Location not shared".
 
     Session:
       type: object
