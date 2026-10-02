@@ -133,7 +133,8 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		fail("invalid_target") // RFC 8707 §2
 	case s.is(CommaScopes) && slices.ContainsFunc(slices.Concat(scopes, userScopes), func(v string) bool { return strings.Contains(v, " ") }):
 		// A space-separated list sent to a comma-separated provider is one malformed scope.
-		fail("invalid_scope") // RFC 6749 §4.1.2.1
+		// What Slack itself shows for it is unverified; this is RFC 6749 §4.1.2.1.
+		fail("invalid_scope")
 	case s.is(ConsentDenied):
 		fail("access_denied") // RFC 6749 §4.1.2.1
 	default:
@@ -201,6 +202,8 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		if basic {
 			w.Header().Set("WWW-Authenticate", `Basic realm="fakeprovider"`)
 		}
+		// Slack lists invalid_client_id and bad_client_secret; which one a wrong secret
+		// gets is unverified, so both cases answer invalid_client_id.
 		s.tokenError(w, http.StatusUnauthorized, "invalid_client", "invalid_client_id")
 		return
 	}
