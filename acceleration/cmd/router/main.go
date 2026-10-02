@@ -277,8 +277,8 @@ func newAuthenticator(settings config.Config, pgStore *store.Store, logger *slog
 	case auth.Proxy:
 		logger.Warn("authenticating nothing: the caller is whoever the headers in front of "+
 			"this router say, so only a proxy that overwrites them should be able to reach it",
-			"mode", auth.Proxy, "set", "auth.mode")
-		return auth.New(mode, nil)
+			"mode", auth.Proxy, "set", "auth.mode", "proxy_declares_kind", settings.Auth.ProxyDeclaresKind)
+		return auth.NewProxy(auth.ProxyOptions{DeclaresKind: settings.Auth.ProxyDeclaresKind}), nil
 	case auth.Custom:
 		return nil, fmt.Errorf("auth.mode=%s has no authenticator in this binary: a deployment "+
 			"answering for itself embeds the module and passes api.WithAuthenticator", auth.Custom)

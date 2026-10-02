@@ -166,6 +166,17 @@ func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
 	s.True(config.Connectors.Enabled)
 }
 
+func (s *ConfigSuite) TestTheProxyDeclaresNoKindUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.False(config.Auth.ProxyDeclaresKind)
+
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Auth.ProxyDeclaresKind)
+}
+
 func (s *ConfigSuite) TestANegativeLimitIsRefused() {
 	s.T().Setenv("ROUTER_RATE_LIMIT_MESSAGES_PER_DAY", "-1")
 	_, _, err := Load("")

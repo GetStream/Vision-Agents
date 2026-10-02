@@ -95,6 +95,11 @@ type Auth struct {
 	// KEK unseals the stored key secrets. It belongs in the environment rather than in a
 	// file checked in beside the code: it is what makes a leaked backup ciphertext.
 	KEK string `koanf:"kek"`
+	// ProxyDeclaresKind says the proxy in front authenticates every caller and declares
+	// whether it is a backend or an end user. In proxy mode the router then reads only the
+	// app header and takes a caller that declares nothing for an end user. Off, a caller
+	// that declares nothing is a backend, as a proxy that never declares means.
+	ProxyDeclaresKind bool `koanf:"proxy_declares_kind"`
 }
 
 // RateLimit caps what one of a customer's end users may spend in a day. Either at 0 turns
@@ -162,6 +167,7 @@ var variables = map[string]string{
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
 	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
+	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 }
 
@@ -305,6 +311,7 @@ func (c Config) export() error {
 		"redis.password":              c.Redis.Password,
 		"auth.mode":                   c.Auth.Mode,
 		"auth.kek":                    c.Auth.KEK,
+		"auth.proxy_declares_kind":    fmt.Sprint(c.Auth.ProxyDeclaresKind),
 		"stream.api_key":              c.Stream.APIKey,
 		"stream.api_secret":           c.Stream.APISecret,
 		"data_move.retention":         c.DataMove.Retention.String(),
