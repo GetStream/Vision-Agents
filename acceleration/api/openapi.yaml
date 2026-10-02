@@ -3805,9 +3805,114 @@ components:
         - request_count
         - error_count
       type: object
+    StreamAppState:
+      description: Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
+      enum:
+        - connected
+        - disconnected
+        - blocked
+      type: string
+    StreamCheck:
+      properties:
+        reattach:
+          items:
+            type: string
+          nullable: true
+          type: array
+        settings:
+          $ref: '#/components/schemas/AppSettings'
+      required:
+        - settings
+        - reattach
+      type: object
+    StreamCredentials:
+      description: 'The keys the router acts in the calling app''s own Stream app with. Secrets are written and never read back: no answer carries one.'
+      properties:
+        allow_guests:
+          description: Whether guests may be made in the app. Left out keeps what was set, which starts off false.
+          type: boolean
+        expected_revision:
+          description: The revision last read, 0 for an app never registered. A write made against an older one is a 409.
+          format: int64
+          type: integer
+        keys:
+          description: Every key the router may act in the app with, which replaces those it held. Each is checked with Stream. Empty disconnects the app, which needs a proof.
+          items:
+            $ref: '#/components/schemas/StreamKeyInput'
+          maxItems: 8
+          nullable: true
+          type: array
+        primary_key:
+          description: The key tokens are minted with. Left out is the first.
+          type: string
+        proof:
+          $ref: '#/components/schemas/StreamKeyInput'
+          description: A key and secret of the app, which disconnecting needs. It is checked with Stream and kept nowhere.
+      required:
+        - keys
+        - expected_revision
+      type: object
+    StreamKeyInput:
+      properties:
+        api_key:
+          maxLength: 128
+          minLength: 1
+          type: string
+        api_secret:
+          description: The key's secret. It is sealed and never read back.
+          maxLength: 256
+          type: string
+          writeOnly: true
+        created_at:
+          description: When Stream made the key, which says which key is the oldest and so signs the app's webhooks.
+          format: date-time
+          type: string
+      required:
+        - api_key
+        - api_secret
+      type: object
+    StreamKeyState:
+      properties:
+        api_key:
+          type: string
+        created_at:
+          description: When Stream made the key.
+          format: date-time
+          type: string
+        last_webhook_at:
+          description: When Stream last signed a hook with this key.
+          format: date-time
+          type: string
+        secret_last4:
+          description: The end of the secret, enough to tell two apart.
+          type: string
+        signs_webhooks:
+          description: Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
+          enum:
+            - "yes"
+            - "no"
+            - unknown
+          type: string
+        status:
+          description: rejected is a key Stream stopped accepting, which the router no longer uses.
+          enum:
+            - active
+            - rejected
+          type: string
+        verified_at:
+          format: date-time
+          type: string
+      required:
+        - api_key
+        - status
+        - signs_webhooks
+      type: object
     StreamSettings:
       description: Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
       properties:
+        allow_guests:
+          description: Whether guests may be made in the registered app.
+          type: boolean
         call_type:
           $ref: '#/components/schemas/StreamTypeState'
           description: Whether the Stream app holds the agent call type calls are made with. Stream reports no grants for it here, so it is present or missing.
@@ -3818,6 +3923,29 @@ components:
           description: When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
           format: date-time
           type: string
+        keys:
+          description: The registered app's keys, oldest first. No secret is ever read back.
+          items:
+            $ref: '#/components/schemas/StreamKeyState'
+          nullable: true
+          type: array
+        primary_key:
+          description: The key tokens are minted with.
+          type: string
+        revision:
+          description: The registration's revision, 0 for an app that registered none. A write names the one it read.
+          format: int64
+          type: integer
+        state:
+          $ref: '#/components/schemas/StreamAppState'
+          description: Whether the router acts in the registered app. Absent for an app that registered none.
+        state_reason:
+          description: Why the router stopped acting in the app, for one that is blocked.
+          type: string
+        stream_app_id:
+          description: The registered app's own id.
+          format: int64
+          type: integer
         tenancy:
           $ref: '#/components/schemas/StreamTenancy'
         writes_into:
@@ -8457,6 +8585,90 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: Service Unavailable
       summary: What the router does for the calling app
+  /v1/settings/app/stream/check:
+    post:
+      description: |-
+        Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+
+        Server-side only.
+      operationId: checkAppStreamCredentials
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamCheck'
+          description: What the check found
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Service Unavailable
+      summary: Check the calling app's own Stream app
+  /v1/settings/app/stream/credentials:
+    put:
+      description: |-
+        The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+      operationId: updateAppStreamCredentials
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StreamCredentials'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSettings'
+          description: The app's settings as they now are
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Service Unavailable
+      summary: Register the calling app's own Stream app
   /v1/stats/activity:
     get:
       description: |

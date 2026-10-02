@@ -1214,6 +1214,66 @@ func (e SimulationRunState) Valid() bool {
 	}
 }
 
+// Defines values for StreamAppState.
+const (
+	StreamAppStateBlocked      StreamAppState = "blocked"
+	StreamAppStateConnected    StreamAppState = "connected"
+	StreamAppStateDisconnected StreamAppState = "disconnected"
+)
+
+// Valid indicates whether the value is a known member of the StreamAppState enum.
+func (e StreamAppState) Valid() bool {
+	switch e {
+	case StreamAppStateBlocked:
+		return true
+	case StreamAppStateConnected:
+		return true
+	case StreamAppStateDisconnected:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamKeyStateSignsWebhooks.
+const (
+	StreamKeyStateSignsWebhooksNo      StreamKeyStateSignsWebhooks = "no"
+	StreamKeyStateSignsWebhooksUnknown StreamKeyStateSignsWebhooks = "unknown"
+	StreamKeyStateSignsWebhooksYes     StreamKeyStateSignsWebhooks = "yes"
+)
+
+// Valid indicates whether the value is a known member of the StreamKeyStateSignsWebhooks enum.
+func (e StreamKeyStateSignsWebhooks) Valid() bool {
+	switch e {
+	case StreamKeyStateSignsWebhooksNo:
+		return true
+	case StreamKeyStateSignsWebhooksUnknown:
+		return true
+	case StreamKeyStateSignsWebhooksYes:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamKeyStateStatus.
+const (
+	Active   StreamKeyStateStatus = "active"
+	Rejected StreamKeyStateStatus = "rejected"
+)
+
+// Valid indicates whether the value is a known member of the StreamKeyStateStatus enum.
+func (e StreamKeyStateStatus) Valid() bool {
+	switch e {
+	case Active:
+		return true
+	case Rejected:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StreamTenancy.
 const (
 	App        StreamTenancy = "app"
@@ -1234,22 +1294,22 @@ func (e StreamTenancy) Valid() bool {
 
 // Defines values for StreamTypeState.
 const (
-	Missing StreamTypeState = "missing"
-	Present StreamTypeState = "present"
-	Unknown StreamTypeState = "unknown"
-	Unsafe  StreamTypeState = "unsafe"
+	StreamTypeStateMissing StreamTypeState = "missing"
+	StreamTypeStatePresent StreamTypeState = "present"
+	StreamTypeStateUnknown StreamTypeState = "unknown"
+	StreamTypeStateUnsafe  StreamTypeState = "unsafe"
 )
 
 // Valid indicates whether the value is a known member of the StreamTypeState enum.
 func (e StreamTypeState) Valid() bool {
 	switch e {
-	case Missing:
+	case StreamTypeStateMissing:
 		return true
-	case Present:
+	case StreamTypeStatePresent:
 		return true
-	case Unknown:
+	case StreamTypeStateUnknown:
 		return true
-	case Unsafe:
+	case StreamTypeStateUnsafe:
 		return true
 	default:
 		return false
@@ -3907,8 +3967,76 @@ type StatsBucket struct {
 	Uptime *float64 `json:"uptime,omitempty"`
 }
 
+// StreamAppState Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
+type StreamAppState string
+
+// StreamCheck defines model for StreamCheck.
+type StreamCheck struct {
+	Reattach *[]string `json:"reattach"`
+
+	// Settings What the router does for the calling app. It never carries a secret.
+	Settings AppSettings `json:"settings"`
+}
+
+// StreamCredentials The keys the router acts in the calling app's own Stream app with. Secrets are written and never read back: no answer carries one.
+type StreamCredentials struct {
+	// AllowGuests Whether guests may be made in the app. Left out keeps what was set, which starts off false.
+	AllowGuests *bool `json:"allow_guests,omitempty"`
+
+	// ExpectedRevision The revision last read, 0 for an app never registered. A write made against an older one is a 409.
+	ExpectedRevision int64 `json:"expected_revision"`
+
+	// Keys Every key the router may act in the app with, which replaces those it held. Each is checked with Stream. Empty disconnects the app, which needs a proof.
+	Keys *[]StreamKeyInput `json:"keys"`
+
+	// PrimaryKey The key tokens are minted with. Left out is the first.
+	PrimaryKey *string         `json:"primary_key,omitempty"`
+	Proof      *StreamKeyInput `json:"proof,omitempty"`
+}
+
+// StreamKeyInput defines model for StreamKeyInput.
+type StreamKeyInput struct {
+	ApiKey string `json:"api_key"`
+
+	// ApiSecret The key's secret. It is sealed and never read back.
+	ApiSecret *string `json:"api_secret,omitempty"`
+
+	// CreatedAt When Stream made the key, which says which key is the oldest and so signs the app's webhooks.
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+}
+
+// StreamKeyState defines model for StreamKeyState.
+type StreamKeyState struct {
+	ApiKey string `json:"api_key"`
+
+	// CreatedAt When Stream made the key.
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+
+	// LastWebhookAt When Stream last signed a hook with this key.
+	LastWebhookAt *time.Time `json:"last_webhook_at,omitempty"`
+
+	// SecretLast4 The end of the secret, enough to tell two apart.
+	SecretLast4 *string `json:"secret_last4,omitempty"`
+
+	// SignsWebhooks Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
+	SignsWebhooks StreamKeyStateSignsWebhooks `json:"signs_webhooks"`
+
+	// Status rejected is a key Stream stopped accepting, which the router no longer uses.
+	Status     StreamKeyStateStatus `json:"status"`
+	VerifiedAt *time.Time           `json:"verified_at,omitempty"`
+}
+
+// StreamKeyStateSignsWebhooks Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
+type StreamKeyStateSignsWebhooks string
+
+// StreamKeyStateStatus rejected is a key Stream stopped accepting, which the router no longer uses.
+type StreamKeyStateStatus string
+
 // StreamSettings Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
 type StreamSettings struct {
+	// AllowGuests Whether guests may be made in the registered app.
+	AllowGuests *bool `json:"allow_guests,omitempty"`
+
 	// CallType Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
 	CallType StreamTypeState `json:"call_type"`
 
@@ -3917,6 +4045,24 @@ type StreamSettings struct {
 
 	// CheckedAt When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
 	CheckedAt *time.Time `json:"checked_at,omitempty"`
+
+	// Keys The registered app's keys, oldest first. No secret is ever read back.
+	Keys *[]StreamKeyState `json:"keys,omitempty"`
+
+	// PrimaryKey The key tokens are minted with.
+	PrimaryKey *string `json:"primary_key,omitempty"`
+
+	// Revision The registration's revision, 0 for an app that registered none. A write names the one it read.
+	Revision *int64 `json:"revision,omitempty"`
+
+	// State Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
+	State *StreamAppState `json:"state,omitempty"`
+
+	// StateReason Why the router stopped acting in the app, for one that is blocked.
+	StateReason *string `json:"state_reason,omitempty"`
+
+	// StreamAppId The registered app's own id.
+	StreamAppId *int64 `json:"stream_app_id,omitempty"`
 
 	// Tenancy Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
 	Tenancy StreamTenancy `json:"tenancy"`
@@ -5055,6 +5201,9 @@ type UpdateRouterConfigJSONRequestBody = RouterConfigRequest
 
 // SearchJSONRequestBody defines body for Search for application/json ContentType.
 type SearchJSONRequestBody = SearchRequest
+
+// UpdateAppStreamCredentialsJSONRequestBody defines body for UpdateAppStreamCredentials for application/json ContentType.
+type UpdateAppStreamCredentialsJSONRequestBody = StreamCredentials
 
 // RunRollupJSONRequestBody defines body for RunRollup for application/json ContentType.
 type RunRollupJSONRequestBody = RollupRequest
@@ -6712,6 +6861,37 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
 	GetAppSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckAppStreamCredentials Check the calling app's own Stream app
+	//
+	// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+	//
+	// Server-side only.
+	//
+	// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
+	CheckAppStreamCredentials(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAppStreamCredentialsWithBody Register the calling app's own Stream app
+	//
+	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+	UpdateAppStreamCredentialsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAppStreamCredentials Register the calling app's own Stream app
+	//
+	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+	UpdateAppStreamCredentials(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetActivity Who used the calling customer's agents, and how much
 	//
@@ -9805,6 +9985,67 @@ func (c *Client) Search(ctx context.Context, body SearchJSONRequestBody, reqEdit
 // Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
 func (c *Client) GetAppSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAppSettingsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckAppStreamCredentials Check the calling app's own Stream app
+//
+// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+//
+// Server-side only.
+//
+// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
+func (c *Client) CheckAppStreamCredentials(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckAppStreamCredentialsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAppStreamCredentialsWithBody Register the calling app's own Stream app
+//
+// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+func (c *Client) UpdateAppStreamCredentialsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAppStreamCredentialsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAppStreamCredentials Register the calling app's own Stream app
+//
+// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+func (c *Client) UpdateAppStreamCredentials(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAppStreamCredentialsRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15298,6 +15539,73 @@ func NewGetAppSettingsRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewCheckAppStreamCredentialsRequest constructs an http.Request for the CheckAppStreamCredentials method
+func NewCheckAppStreamCredentialsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/settings/app/stream/check")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateAppStreamCredentialsRequest calls the generic UpdateAppStreamCredentials builder with application/json body
+func NewUpdateAppStreamCredentialsRequest(server string, body UpdateAppStreamCredentialsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateAppStreamCredentialsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewUpdateAppStreamCredentialsRequestWithBody constructs an http.Request for the UpdateAppStreamCredentials method, with any body, and a specified content type
+func NewUpdateAppStreamCredentialsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/settings/app/stream/credentials")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetActivityRequest constructs an http.Request for the GetActivity method
 func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Request, error) {
 	var err error
@@ -17695,6 +18003,39 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
 	GetAppSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAppSettingsResponse, error)
+
+	// CheckAppStreamCredentialsWithResponse Check the calling app's own Stream app
+	//
+	// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
+	CheckAppStreamCredentialsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CheckAppStreamCredentialsResponse, error)
+
+	// UpdateAppStreamCredentialsWithBodyWithResponse Register the calling app's own Stream app
+	//
+	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+	UpdateAppStreamCredentialsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error)
+
+	// UpdateAppStreamCredentialsWithResponse Register the calling app's own Stream app
+	//
+	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+	UpdateAppStreamCredentialsWithResponse(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error)
 
 	// GetActivityWithResponse Who used the calling customer's agents, and how much
 	//
@@ -25368,6 +25709,172 @@ func (r GetAppSettingsResponse) ContentType() string {
 	return ""
 }
 
+type CheckAppStreamCredentialsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *StreamCheck
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON200() *StreamCheck {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CheckAppStreamCredentialsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckAppStreamCredentialsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckAppStreamCredentialsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CheckAppStreamCredentialsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateAppStreamCredentialsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppSettings
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON200() *AppSettings {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateAppStreamCredentialsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateAppStreamCredentialsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateAppStreamCredentialsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateAppStreamCredentialsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetActivityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28756,6 +29263,57 @@ func (c *ClientWithResponses) GetAppSettingsWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseGetAppSettingsResponse(rsp)
+}
+
+// CheckAppStreamCredentialsWithResponse Check the calling app's own Stream app
+//
+// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
+func (c *ClientWithResponses) CheckAppStreamCredentialsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CheckAppStreamCredentialsResponse, error) {
+	rsp, err := c.CheckAppStreamCredentials(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckAppStreamCredentialsResponse(rsp)
+}
+
+// UpdateAppStreamCredentialsWithBodyWithResponse Register the calling app's own Stream app
+//
+// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+func (c *ClientWithResponses) UpdateAppStreamCredentialsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error) {
+	rsp, err := c.UpdateAppStreamCredentialsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAppStreamCredentialsResponse(rsp)
+}
+
+// UpdateAppStreamCredentialsWithResponse Register the calling app's own Stream app
+//
+// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+func (c *ClientWithResponses) UpdateAppStreamCredentialsWithResponse(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error) {
+	rsp, err := c.UpdateAppStreamCredentials(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAppStreamCredentialsResponse(rsp)
 }
 
 // GetActivityWithResponse Who used the calling customer's agents, and how much
@@ -34843,6 +35401,142 @@ func ParseGetAppSettingsResponse(rsp *http.Response) (*GetAppSettingsResponse, e
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckAppStreamCredentialsResponse parses an HTTP response from a CheckAppStreamCredentialsWithResponse call
+func ParseCheckAppStreamCredentialsResponse(rsp *http.Response) (*CheckAppStreamCredentialsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckAppStreamCredentialsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest StreamCheck
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateAppStreamCredentialsResponse parses an HTTP response from a UpdateAppStreamCredentialsWithResponse call
+func ParseUpdateAppStreamCredentialsResponse(rsp *http.Response) (*UpdateAppStreamCredentialsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateAppStreamCredentialsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
