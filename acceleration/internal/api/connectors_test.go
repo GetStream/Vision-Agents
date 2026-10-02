@@ -130,6 +130,23 @@ func (s *ConnectorsSuite) TestAnEndpointOnAPrivateNetworkIsRefused() {
 	}
 }
 
+func (s *ConnectorsSuite) TestAnEndpointThatDoesNotResolveIsRefusedLikeAPrivateOne() {
+	answers := map[string]string{}
+	for _, endpoint := range []string{
+		"https://router-probe.invalid/mcp", // .invalid never resolves, RFC 6761 section 6.4
+		"https://10.0.0.7/mcp",             // private-use, RFC 1918
+	} {
+		sent := s.customConnector(s.customID())
+		sent["endpoint"] = endpoint
+
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", sent)
+		s.Equal(http.StatusBadRequest, status, endpoint)
+		answers[endpoint] = failure
+	}
+	s.Equal(answers["https://10.0.0.7/mcp"], answers["https://router-probe.invalid/mcp"],
+		"a caller cannot tell which names the router's resolver knows")
+}
+
 func (s *ConnectorsSuite) TestAnEndpointThatIsNotPlainHTTPSIsRefused() {
 	for _, endpoint := range []string{
 		"http://8.8.8.8/mcp",
@@ -163,6 +180,29 @@ func (s *ConnectorsSuite) TestAnOperatorClientIsRefusedForACustomConnector() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "operator")
+}
+
+func (s *ConnectorsSuite) TestAnOAuthConnectorWithoutAClientPolicyIsRefused() {
+	sent := s.customConnector(s.customID())
+	delete(sent, "client")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", sent)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "client.policy")
+}
+
+func (s *ConnectorsSuite) TestARepeatedScopeOrClientOwnerIsRefused() {
+	for name, change := range map[string]func(map[string]any){
+		"scope": func(sent map[string]any) { sent["scopes"] = []string{"crm.read", "crm.read"} },
+		"owner": func(sent map[string]any) { sent["client"] = map[string]any{"policy": []string{"dcr", "dcr"}} },
+	} {
+		sent := s.customConnector(s.customID())
+		change(sent)
+
+		status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", sent)
+		s.Equal(http.StatusBadRequest, status, name)
+	}
 }
 
 func (s *ConnectorsSuite) TestAFieldTheRequestDoesNotHaveIsRefused() {
@@ -290,6 +330,7 @@ func (s *ConnectorsSuite) TestTheSearchMatchesTheIdNameCategoryOrDescriptionIgno
 		s.Equal([]string{id}, connectorIDs(s.list(q).Items), q)
 	}
 	s.Contains(connectorIDs(s.list("slack").Items), "slack", "a built-in is searched too")
+	s.Empty(s.list("CRM Ticketing").Items, "the end of the name and the start of the category are two fields")
 }
 
 func (s *ConnectorsSuite) TestTheSearchReadsTheNewestRevisionOnly() {
@@ -342,6 +383,7 @@ func (s *ConnectorsSuite) customConnector(id string) map[string]any {
 		"name":     "Our CRM",
 		"endpoint": "https://8.8.8.8/mcp",
 		"schemes":  []string{"oauth2_code"},
+		"client":   map[string]any{"policy": []string{"dcr"}},
 	}
 }
 

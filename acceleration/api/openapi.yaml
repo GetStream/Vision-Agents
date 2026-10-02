@@ -1234,6 +1234,7 @@ components:
             $ref: '#/components/schemas/ConnectorClientOwner'
           nullable: true
           type: array
+          uniqueItems: true
       type: object
     ConnectorClientAuthMethod:
       description: How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
@@ -1600,6 +1601,7 @@ components:
           maxItems: 100
           nullable: true
           type: array
+          uniqueItems: true
       required:
         - id
         - name

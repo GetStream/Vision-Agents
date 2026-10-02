@@ -181,7 +181,8 @@ func (s *Store) ListConnectorDefinitions(ctx context.Context, customerID string,
 	if filter.Text != "" {
 		// Backslash is ILIKE's default escape, so the caller's % and _ match themselves.
 		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(filter.Text)
-		query = query.Where("concat_ws(' ', cd.id, cd.name, cd.category, cd.description) ILIKE ?", "%"+escaped+"%")
+		// Each field on its own, so a query cannot match across the boundary of two.
+		query = query.Where("(cd.id ILIKE ?0 OR cd.name ILIKE ?0 OR cd.category ILIKE ?0 OR cd.description ILIKE ?0)", "%"+escaped+"%")
 	}
 	err := query.
 		OrderExpr("cd.customer_id, cd.id").

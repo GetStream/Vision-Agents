@@ -62,7 +62,7 @@ type ConnectorInput struct {
 // ConnectorClient is who may own the OAuth client a connection uses, and how that client
 // authenticates.
 type ConnectorClient struct {
-	Policy     []ConnectorClientOwner    `json:"policy,omitempty" doc:"Who may own the OAuth client. Empty when the connector needs none."`
+	Policy     []ConnectorClientOwner    `json:"policy,omitempty" uniqueItems:"true" doc:"Who may own the OAuth client. Empty when the connector needs none."`
 	AuthMethod ConnectorClientAuthMethod `json:"auth_method,omitempty"`
 	// The algorithms core.Manifest.Validate accepts (assertionAlgs in
 	// internal/connectors/core/manifest.go).
@@ -122,7 +122,7 @@ type CustomConnectorRequest struct {
 	Description string           `json:"description,omitempty" maxLength:"1000"`
 	Endpoint    string           `json:"endpoint" maxLength:"2048" doc:"The MCP server, over Streamable HTTP: a public https URL without userinfo, query or fragment. An address on a private network, loopback or link-local is refused."`
 	Schemes     []string         `json:"schemes" minItems:"1" doc:"How a connection may authenticate. Each must be a scheme this deployment has."`
-	Scopes      []string         `json:"scopes,omitempty" maxItems:"100" pattern:"^[!#-\\[\\]-~]+$" patternDescription:"an RFC 6749 scope token" doc:"The scopes a consent asks for, each an RFC 6749 scope token."`
+	Scopes      []string         `json:"scopes,omitempty" maxItems:"100" uniqueItems:"true" pattern:"^[!#-\\[\\]-~]+$" patternDescription:"an RFC 6749 scope token" doc:"The scopes a consent asks for, each an RFC 6749 scope token."`
 	Client      *ConnectorClient `json:"client,omitempty"`
 }
 
@@ -306,6 +306,12 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 		client.AuthMethod = core.ClientAuthMethod(sent.Client.AuthMethod)
 		client.Alg = sent.Client.Alg
 	}
+	// oauth2_code tries only the owners the policy names and fails with ErrNoClient when it
+	// names none (pickClient in internal/connectors/schemes/oauth2code/client.go), so such a
+	// definition could be stored and never connected.
+	if slices.Contains(sent.Schemes, "oauth2_code") && len(client.Policy) == 0 {
+		return core.Manifest{}, errors.New("client.policy is required with oauth2_code: name who may own the OAuth client (customer, cimd or dcr)")
+	}
 	manifest := core.Manifest{
 		ID: sent.ID,
 		// Validated at the first revision; the store numbers the one it is stored as.
@@ -323,8 +329,11 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 		return core.Manifest{}, err
 	}
 	// Last, since it resolves the host: the checks above cost nothing.
+	// One answer for every refusal: egress's own errors tell a name that does not resolve from
+	// one that resolves to a private address, which would let a caller probe the names the
+	// router's resolver knows.
 	if err := egress.ValidatePublicHTTPSURL(ctx, sent.Endpoint); err != nil {
-		return core.Manifest{}, fmt.Errorf("endpoint: %w", err)
+		return core.Manifest{}, errors.New("endpoint must be a public https URL without userinfo, query or fragment")
 	}
 	return manifest, nil
 }
