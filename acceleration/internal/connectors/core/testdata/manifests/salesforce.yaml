@@ -68,6 +68,13 @@ capture:
   - name: identity_url
     from: token_response
     path: $.id
+    # The account id, and a URL a later request may fetch, so it stays a Salesforce host.
+    # The prototype required its host to equal the token endpoint's (internal/mcp/oauth.go:
+    # 874-879), login.salesforce.com or test.salesforce.com (connectors.yaml:102-103), both
+    # under .salesforce.com. My Domain hosts are under it too; no Salesforce page confirms
+    # which host issues the id URL. # unverified
+    host_suffixes: [.salesforce.com]
+    keep_path: true
 # The doc's manifest writes identity as salesforce:{org}:{user}, split out of the identity
 # URL. Splitting a URL is more than a JSON path, so the account id is the identity URL
 # whole; it already carries the org and the user (prototype internal/mcp/oauth.go:874-887

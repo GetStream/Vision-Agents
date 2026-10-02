@@ -163,13 +163,55 @@ func (s *ManifestSuite) TestADotSegmentCannotRemoveAPathSegment() {
 		s.ErrorContains(err, `{tenant}: "`+value+`" is a dot segment`)
 	}
 
-	m := s.load("github")
-	p, err := m.Resolve("github_app", nil, nil)
+	// Apply refuses it too, so a caller that stores Captured before the next Resolve never
+	// keeps ".." as metadata or as the account id.
+	p, err := s.load("github").Resolve("github_app", nil, nil)
 	s.Require().NoError(err)
-	captured, err := p.Apply(url.Values{"installation_id": {".."}}, nil)
+	for _, value := range []string{"..", "."} {
+		captured, err := p.Apply(url.Values{"installation_id": {value}}, nil)
+		s.ErrorContains(err, `capture installation_id: "`+value+`" is a dot segment`)
+		s.Empty(captured.AccountID)
+	}
+}
+
+func (s *ManifestSuite) TestSalesforceIdentityURLStaysUnderSalesforce() {
+	p, err := s.load("salesforce").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
-	_, err = m.Resolve("github_app", nil, captured.Metadata)
-	s.ErrorContains(err, `{metadata.installation_id}: ".." is a dot segment`)
+	for _, id := range []string{
+		"https://evil.example/id/00D/005",
+		"https://login.salesforce.com.evil.example/id/00D/005",
+		"https://login.salesforce.com:8443/id/00D/005",
+		"https://user@login.salesforce.com/id/00D/005",
+		"https://login.salesforce.com/id/00D/005?x=1",
+		"https://login.salesforce.com/id/00D/005#x",
+		"http://login.salesforce.com/id/00D/005",
+		"https://login.salesforce.com/id/../00D/005",
+		"https://login.salesforce.com/id/%2e%2e/00D/005",
+		"https://127.0.0.1/id/00D/005",
+	} {
+		token, err := json.Marshal(map[string]string{"instance_url": "https://example-org.my.salesforce.com", "id": id})
+		s.Require().NoError(err)
+		_, err = p.Apply(nil, token)
+		s.ErrorContains(err, "capture identity_url", id)
+	}
+
+	captured, err := p.Apply(nil, []byte(`{"instance_url":"https://example-org.my.salesforce.com","id":"https://Login.Salesforce.com/id/00D000000000001AAA/005000000000001AAA"}`))
+	s.Require().NoError(err)
+	s.Equal("https://login.salesforce.com/id/00D000000000001AAA/005000000000001AAA", captured.AccountID)
+}
+
+func (s *ManifestSuite) TestAKeepPathCaptureIsNeverPartOfATemplate() {
+	capture := "capture:\n  - name: identity_url\n    from: token_response\n    path: $.id\n" +
+		"    host_suffixes: [.example.com]\n    keep_path: true\n"
+	for _, template := range []string{`"{metadata.identity_url}"`, `"{metadata.identity_url}/v1"`, "https://api.example.com/{metadata.identity_url}"} {
+		_, err := ParseManifest(minimal("endpoints:\n  api_base: " + template + "\n" + capture))
+		s.ErrorContains(err, `{metadata.identity_url}: capture "identity_url" keeps its path`, template)
+	}
+}
+
+func (s *ManifestSuite) TestKeepPathNeedsHostSuffixes() {
+	_, err := ParseManifest(minimal("capture:\n  - name: identity_url\n    from: token_response\n    path: $.id\n    keep_path: true\n"))
+	s.ErrorContains(err, "capture[0].keep_path: keep_path needs host_suffixes")
 }
 
 func (s *ManifestSuite) TestGoogleReadsTheAccountFromTheIDTokenSub() {

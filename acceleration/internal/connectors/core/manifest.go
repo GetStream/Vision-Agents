@@ -144,6 +144,11 @@ type CaptureRule struct {
 	// .my.salesforce.com, stored as scheme://host. Only such a value can be the whole origin
 	// a template starts with; DNS is egress's to check, at dial.
 	HostSuffixes []string `yaml:"host_suffixes,omitempty" json:"host_suffixes,omitempty"`
+	// KeepPath makes a host_suffixes value a whole https URL instead of an origin: the
+	// path is kept and the host lowercased, such as Salesforce's identity URL. Such a value
+	// is never written into a template, so it can be an account id, or a URL a later request
+	// fetches, but never an endpoint's origin.
+	KeepPath bool `yaml:"keep_path,omitempty" json:"keep_path,omitempty"`
 }
 
 // ValueSource is where a captured value is read from.
@@ -376,6 +381,9 @@ func (m Manifest) Validate() error {
 				fail(fmt.Sprintf("%s.host_suffixes[%d]", field, j), "%q is not a lowercase .domain suffix of two labels or more", suffix)
 			}
 		}
+		if rule.KeepPath && len(rule.HostSuffixes) == 0 {
+			fail(field+".keep_path", "keep_path needs host_suffixes: a URL that may be fetched stays under known hosts")
+		}
 		switch rule.From {
 		case FromCallbackQuery:
 			if rule.Key == "" || rule.Path != "" {
@@ -605,9 +613,14 @@ func (p Profile) Apply(query url.Values, tokenResponse json.RawMessage) (Capture
 			return Captured{}, fmt.Errorf("capture %s: %s has no %s", rule.Name, rule.From, rule.Key+rule.Path)
 		}
 		if len(rule.HostSuffixes) > 0 {
-			if value, err = httpsOrigin(value, rule.HostSuffixes); err != nil {
+			if value, err = httpsUnder(value, rule.HostSuffixes, rule.KeepPath); err != nil {
 				return Captured{}, fmt.Errorf("capture %s: %w", rule.Name, err)
 			}
+		}
+		// Refused here as well as in render, so a caller that stores Captured before the
+		// next Resolve never keeps a dot segment as metadata or as the account id.
+		if isDotSegment(value) {
+			return Captured{}, fmt.Errorf("capture %s: %q is a dot segment (RFC 3986 section 3.3)", rule.Name, value)
 		}
 		captured.Metadata[rule.Name] = value
 		if rule.Verify {
@@ -617,11 +630,14 @@ func (p Profile) Apply(query url.Values, tokenResponse json.RawMessage) (Capture
 
 	parts := make([]string, 0, len(p.Identity))
 	for _, name := range p.Identity {
-		if input, ok := p.Inputs[name]; ok {
-			parts = append(parts, input)
-		} else {
-			parts = append(parts, captured.Metadata[name])
+		part, ok := p.Inputs[name]
+		if !ok {
+			part = captured.Metadata[name]
 		}
+		if isDotSegment(part) {
+			return Captured{}, fmt.Errorf("identity %s: %q is a dot segment (RFC 3986 section 3.3)", name, part)
+		}
+		parts = append(parts, part)
 	}
 	captured.AccountID = strings.Join(parts, ":")
 	return captured, nil
@@ -669,6 +685,9 @@ func (m Manifest) checkTemplate(template string, inputs map[string]Input, captur
 			rule, declared := captures[captured]
 			if !declared {
 				return fmt.Errorf("{%s}: %q is not a captured name", name, captured)
+			}
+			if rule.KeepPath {
+				return fmt.Errorf("{%s}: capture %q keeps its path, so it is a whole URL and never part of a template", name, captured)
 			}
 			if match[0] < authorityEnd {
 				if rule.From == FromCallbackQuery {
@@ -722,12 +741,12 @@ func (m Manifest) render(template string, inputs, metadata map[string]string) (r
 			if i < 0 {
 				return "", false, fmt.Errorf("{%s}: only a captured value with host_suffixes can be the whole origin", name)
 			}
-			if value, err = httpsOrigin(value, m.Capture[i].HostSuffixes); err != nil {
+			if value, err = httpsUnder(value, m.Capture[i].HostSuffixes, false); err != nil {
 				return "", false, fmt.Errorf("{%s}: %w", name, err)
 			}
 		} else if !unreserved.MatchString(value) {
 			return "", false, fmt.Errorf("{%s}: %q has characters outside RFC 3986 unreserved", name, value)
-		} else if value == "." || value == ".." {
+		} else if isDotSegment(value) {
 			return "", false, fmt.Errorf("{%s}: %q is a dot segment (RFC 3986 section 3.3), which removes part of the path", name, value)
 		}
 		b.WriteString(value)
@@ -744,15 +763,25 @@ func (m Manifest) render(template string, inputs, metadata map[string]string) (r
 	return rendered, true, nil
 }
 
-// httpsOrigin is value as scheme://host when it is an https origin on a DNS name ending in
-// one of suffixes, with no port, path, query or fragment. An IP literal is refused: a
-// provider's API host is a name, and egress checks the address the name resolves to.
-func httpsOrigin(value string, suffixes []string) (string, error) {
+// httpsUnder is value as scheme://host when it is an https origin on a DNS name ending in
+// one of suffixes, with no port, path, query or fragment. With keepPath the value may also
+// carry a path, kept as written but for dot segments, which are refused; it is returned as
+// scheme://host/path. An IP literal is refused: a provider's API host is a name, and egress
+// checks the address the name resolves to.
+func httpsUnder(value string, suffixes []string, keepPath bool) (string, error) {
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme != "https" || parsed.Opaque != "" || parsed.User != nil ||
-		parsed.Host == "" || parsed.Port() != "" || strings.Trim(parsed.Path, "/") != "" ||
-		parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(value, "#") {
+		parsed.Host == "" || parsed.Port() != "" || parsed.RawQuery != "" || parsed.ForceQuery ||
+		strings.Contains(value, "#") {
+		return "", fmt.Errorf("%q is not an https URL without userinfo, port, query or fragment", value)
+	}
+	path := strings.TrimSuffix(parsed.EscapedPath(), "/")
+	if !keepPath && path != "" {
 		return "", fmt.Errorf("%q is not an https origin of a host alone", value)
+	}
+	// Checked on the decoded path, since %2e%2e is a dot segment too (RFC 3986 section 6.2.2.2).
+	if slices.ContainsFunc(strings.Split(parsed.Path, "/"), isDotSegment) {
+		return "", fmt.Errorf("%q has a dot segment in its path (RFC 3986 section 3.3)", value)
 	}
 	host := strings.ToLower(parsed.Hostname())
 	if _, err := netip.ParseAddr(host); err == nil {
@@ -760,10 +789,16 @@ func httpsOrigin(value string, suffixes []string) (string, error) {
 	}
 	for _, suffix := range suffixes {
 		if strings.HasSuffix(host, suffix) && len(host) > len(suffix) {
-			return "https://" + host, nil
+			return "https://" + host + path, nil
 		}
 	}
 	return "", fmt.Errorf("%q is not under %v", value, suffixes)
+}
+
+// isDotSegment is whether a value is a path segment that moves up or stays put when a path
+// is normalized (RFC 3986 section 5.2.4), so it would change which path a request hits.
+func isDotSegment(value string) bool {
+	return value == "." || value == ".."
 }
 
 // aliasLine is the line of the first anchor or alias in a YAML tree, or 0 when there is none.
