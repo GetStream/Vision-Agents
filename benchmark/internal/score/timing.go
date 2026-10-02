@@ -50,6 +50,7 @@ const (
 // Metrics is the per-call scorecard.
 type Metrics struct {
 	V2V                 []Timing       `json:"v2v"`
+	FirstResponse       *Timing        `json:"first_response,omitempty"`
 	Dropped             []DroppedTurn  `json:"dropped_turns,omitempty"`
 	CallDurationMS      int            `json:"call_duration_ms"`
 	ToolCount           int            `json:"tool_count"`
@@ -91,6 +92,28 @@ type Metrics struct {
 	CallerWER           float64        `json:"caller_wer,omitempty"`
 	CallerWERNormalized float64        `json:"caller_wer_normalized,omitempty"`
 	ExtraTools          []string       `json:"extra_tools,omitempty"`
+
+	// Stages is the router's own account of each caller turn, for the targets that run on
+	// it. It is a diagnostic for our own performance work: LiveKit reports nothing like it.
+	Stages []StageTiming `json:"stages,omitempty"`
+	// AgentMetrics are the averages a Python Vision Agents session reports about itself,
+	// keyed as the agent names them, such as stt_latency_ms__avg.
+	AgentMetrics map[string]float64 `json:"agent_metrics,omitempty"`
+}
+
+// StageTiming is one caller turn as the router timed it: consecutive legs from the settled
+// transcript to the first audio published, after the time speech-to-text spent settling.
+type StageTiming struct {
+	TurnID          string `json:"turn_id"`
+	STTMs           int    `json:"stt_ms"`
+	CadenceMs       int    `json:"cadence_ms"`
+	DecisionMs      int    `json:"decision_ms"`
+	ModelToTextMs   int    `json:"model_to_first_text_ms"`
+	TextToTTSMs     int    `json:"text_to_tts_ms"`
+	TTSToAudioMs    int    `json:"tts_to_audio_ms"`
+	RoundtripMs     int    `json:"roundtrip_ms"`
+	SpeechToAudioMs int    `json:"speech_end_to_audio_ms"`
+	Interrupted     bool   `json:"interrupted,omitempty"`
 }
 
 // TimingFromRecording measures V2V from caller-turn end to the next agent onset, and reports
@@ -179,6 +202,24 @@ func MarkToolTurns(m *Metrics, rec caller.Result, tools []world.ToolCall) {
 	}
 }
 
+// FirstResponse is the reply gap of the caller's first utterance, or nil when that turn
+// produced no V2V sample. It never falls back to a later turn: that would mix a steady-state
+// reply into a cold-start metric. Run it after MarkToolTurns so the tool flag carries over.
+func FirstResponse(m Metrics, rec caller.Result) *Timing {
+	for _, ev := range rec.Events {
+		if !ev.Text {
+			continue
+		}
+		for _, t := range m.V2V {
+			if t.TurnID == ev.TurnID {
+				return &t
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
 // SummarizeTiming fills P50/P95/max. Human-band and spikes use non-tool turns.
 func SummarizeTiming(m *Metrics) {
 	vals := make([]int, 0, len(m.V2V))
@@ -248,6 +289,20 @@ func Percentile(sorted []int, p int) int {
 		idx = len(sorted) - 1
 	}
 	return sorted[idx]
+}
+
+// Mean is the arithmetic mean of samples, rounded to the millisecond. Reply time reports it
+// beside the percentiles because a few slow turns move it a long way, which is the point of
+// showing it: a mean well above the P50 says the slow turns are worth looking at.
+func Mean(samples []int) int {
+	if len(samples) == 0 {
+		return 0
+	}
+	sum := 0
+	for _, v := range samples {
+		sum += v
+	}
+	return int(math.Round(float64(sum) / float64(len(samples))))
 }
 
 // BargeInStopMS is time from barge-in start until agent energy drops.

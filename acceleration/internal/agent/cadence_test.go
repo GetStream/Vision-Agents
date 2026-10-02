@@ -260,6 +260,27 @@ func (s *CadenceSuite) TestAClockTimeSplitAcrossUtterancesIsHeardAsOneTurn() {
 	s.Equal(saying, s.ready().Text)
 }
 
+func (s *CadenceSuite) TestWordsCarriedIntoANewUtteranceSurviveItsRevisions() {
+	// Flux finalizes "Last name Alvarez" and starts the callback number as a new
+	// utterance, then revises that utterance on its own. Keeping the name for only the
+	// first revision is how the agent asked for a name it had been given.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 1, Text: "Last name Alvarez, a l v a r e z.",
+	})
+	s.ready()
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "Callback is",
+	})
+
+	_, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "Callback is five one two",
+	})
+
+	s.Equal("Last name Alvarez, a l v a r e z. Callback is five one two", saying)
+	s.Equal(saying, s.ready().Text)
+}
+
 func (s *CadenceSuite) TestASameUtteranceCorrectionReplacesRatherThanConcatenates() {
 	alice := stt.Participant{ID: "alice"}
 	s.cadence.Observe(stt.Transcript{
@@ -293,6 +314,36 @@ func (s *CadenceSuite) TestAFinalCopyDoesNotDriveOrDelayCadence() {
 	})
 
 	s.Equal("book a table", s.ready().Text)
+}
+
+func (s *CadenceSuite) TestAFinalSettlesSoonerThanTheGap() {
+	// A transcriber that finalizes has already heard the caller stop, so the words are put
+	// at once rather than after the gap a revision still waits.
+	patient := newCadence(400*time.Millisecond, 800*time.Millisecond, time.Second, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(patient.Close)
+	alice := stt.Participant{ID: "alice"}
+	patient.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Text: "book a table"})
+	patient.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "Book a table."})
+
+	select {
+	case ready := <-patient.Ready():
+		s.Equal("book a table", ready.Text)
+	case <-time.After(250 * time.Millisecond):
+		s.Fail("a finalized turn should not wait out the whole gap")
+	}
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnDigitsStillWaitsForThemToGrow() {
+	patient := newCadence(400*time.Millisecond, 800*time.Millisecond, time.Second, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(patient.Close)
+	alice := stt.Participant{ID: "alice"}
+	patient.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "my member id is ABC12345"})
+
+	select {
+	case ready := <-patient.Ready():
+		s.Failf("an identifier may still be growing", "got %q", ready.Text)
+	case <-time.After(250 * time.Millisecond):
+	}
 }
 
 func (s *CadenceSuite) TestWaitingRetriesUnchangedWords() {
