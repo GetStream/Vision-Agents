@@ -334,6 +334,21 @@ func (s *FakeProviderSuite) TestCommaScopesAnswersARefreshInTheSameSlackShape() 
 	s.Equal(http.StatusOK, s.call(srv, userRefreshed["access_token"].(string)).StatusCode)
 }
 
+func (s *FakeProviderSuite) TestCommaScopesCodeRedeemedTwiceRevokesTheUserGrantToo() {
+	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
+	authorize, verifier := s.authorizeURL(srv, url.Values{"scope": {"channels:history"}, "user_scope": {"search:read"}})
+	code := s.consent(srv, authorize).Query().Get("code")
+	status, first := s.exchange(srv, code, verifier)
+	s.Require().Equal(http.StatusOK, status, first)
+	user := first["authed_user"].(map[string]any)
+	s.Require().Equal(http.StatusOK, s.call(srv, user["access_token"].(string)).StatusCode)
+
+	_, again := s.exchange(srv, code, verifier)
+	s.Equal(false, again["ok"])
+	s.Equal(http.StatusUnauthorized, s.call(srv, first["access_token"].(string)).StatusCode)
+	s.Equal(http.StatusUnauthorized, s.call(srv, user["access_token"].(string)).StatusCode)
+}
+
 func (s *FakeProviderSuite) TestCommaScopesNamesTokenErrorsAsSlackDoes() {
 	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
 	authorize, verifier := s.authorizeURL(srv, nil)
