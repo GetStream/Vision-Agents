@@ -160,7 +160,7 @@ func (s *StoreSuite) TestTwoRoutersSeedingAChangeAtOnceStoreOneRevision() {
 
 func (s *StoreSuite) TestAnInvalidBuiltInStoresNoneOfTheBuiltIns() {
 	broken := strings.Replace(acmeManifest, "id: acme", "id: broken", 1)
-	broken = strings.Replace(broken, "schemes: [oauth2_code]", "schemes: []", 1)
+	broken = strings.Replace(broken, "schemes: [oauth2_code, test_key, test_mtls]", "schemes: []", 1)
 
 	err := s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{
 		"acme.yaml":   {Data: []byte(acmeManifest)},
