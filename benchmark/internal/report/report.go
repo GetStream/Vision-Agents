@@ -572,11 +572,21 @@ func writeStages(b *strings.Builder, packs []PackSummary) {
 
 // writeAgentMetrics is what a Python agent measured about itself, for the packs it reported.
 func writeAgentMetrics(b *strings.Builder, packs []PackSummary) {
-	reported := false
-	for _, p := range packs {
-		reported = reported || len(p.AgentMetricsP50) > 0
+	reported := func(p PackSummary) bool {
+		for _, metric := range agentMetricNames {
+			if _, ok := p.AgentMetricsP50[metric.key]; ok {
+				return true
+			}
+		}
+		return false
 	}
-	if !reported {
+	measured := false
+	for _, p := range packs {
+		measured = measured || reported(p)
+	}
+	// A target whose pipeline runs elsewhere, such as the router, leaves these unmeasured,
+	// and a table of dashes says nothing.
+	if !measured {
 		return
 	}
 	b.WriteString("\n## What the agent measured\n\n")
@@ -587,7 +597,7 @@ func writeAgentMetrics(b *strings.Builder, packs []PackSummary) {
 	}
 	b.WriteString("\n| --- |" + strings.Repeat(" ---: |", len(agentMetricNames)) + "\n")
 	for _, p := range packs {
-		if len(p.AgentMetricsP50) == 0 {
+		if !reported(p) {
 			continue
 		}
 		fmt.Fprintf(b, "| %s |", p.Pack)

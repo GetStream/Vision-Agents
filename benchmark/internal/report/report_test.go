@@ -322,8 +322,11 @@ func TestSummaryPoolsTheRoutersStagesOverEveryTurn(t *testing.T) {
 }
 
 func TestAReportWithoutStagesLeavesTheirTablesOut(t *testing.T) {
-	md := Markdown(BuildSummary("livekit", "run1", 1, []CallResult{
-		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true},
+	// The accelerated target's Python agent measures none of its own stages, because the
+	// router runs them, and reports only counters such as the time to join.
+	md := Markdown(BuildSummary("accelerated", "run1", 1, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true,
+			Metrics: score.Metrics{AgentMetrics: map[string]float64{"call_join_ms__avg": 2800, "llm_tool_calls__total": 0}}},
 	}))
 	if strings.Contains(md, "Where the router's time goes") || strings.Contains(md, "What the agent measured") {
 		t.Fatalf("a run with nothing to break down should not print an empty breakdown:\n%s", md)
