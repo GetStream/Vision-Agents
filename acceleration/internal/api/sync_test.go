@@ -3,8 +3,11 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"testing"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 )
 
 type SyncSuite struct {
@@ -13,6 +16,13 @@ type SyncSuite struct {
 
 func TestSyncSuite(t *testing.T) {
 	runSuite(t, new(SyncSuite))
+}
+
+// SetupSuite seeds the built-in connectors as a router start does, so a directory can bind
+// one. Seeding is idempotent, so suites running beside this one see the same rows.
+func (s *SyncSuite) SetupSuite() {
+	s.RouterSuite.SetupSuite()
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
 
 // SetupTest gives every test an app of its own, because a sync is named by what the agent
@@ -249,4 +259,64 @@ func (s *SyncSuite) documents(namespace string) []IndexedKnowledgeDocument {
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 		"/v1/agents/knowledge/documents?namespace="+namespace, nil, &listed))
 	return listed
+}
+
+func (s *SyncSuite) TestASyncReplacesTheBindingsStored() {
+	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "connectors": []map[string]any{sessionSlack("crm")}})
+
+	bindings := value(second.Config.Connectors)
+	s.Require().Len(bindings, 1)
+	s.Equal("crm", bindings[0].Name)
+	s.Equal(second.Config.Connectors, s.configsNamed("support")[0].Connectors)
+}
+
+func (s *SyncSuite) TestASyncThatDeclaresNoBindingsLeavesTheOnesStored() {
+	first := s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "instructions": "Be brief."})
+
+	s.Equal(first.Config.Connectors, second.Config.Connectors)
+}
+
+func (s *SyncSuite) TestASyncWithNoBindingsClearsThem() {
+	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "connectors": []map[string]any{}})
+
+	s.Nil(second.Config.Connectors)
+	s.Nil(s.configsNamed("support")[0].Connectors)
+}
+
+func (s *SyncSuite) TestASyncBindingAConnectorThatDoesNotExistIsRefusedAndStoresNothing() {
+	binding := sessionSlack("crm")
+	binding["connector_id"] = "custom_nothing_here"
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "custom_nothing_here")
+	s.Empty(s.configsNamed("support"))
+}
+
+func (s *SyncSuite) TestASyncWithAnAliasHoldingTheToolSeparatorIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("team__inbox")}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "__")
+	s.Empty(s.configsNamed("support"))
+}
+
+func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
+	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("slack")}})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "support", "hash": "v2", "plugins": []string{"slack"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "plugin")
+	s.Equal("v1", value(s.configsNamed("support")[0].SyncHash))
 }

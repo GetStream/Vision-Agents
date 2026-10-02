@@ -341,6 +341,8 @@ type AgentConfig struct {
 	// catalog. A name here without a connected row is a plugin that was attached and then
 	// the login expired or was revoked.
 	Plugins []string `bun:"plugins,type:jsonb"`
+	// Connectors are the connectors this agent may call tools of, each under an alias.
+	Connectors []ConnectorBinding `bun:"connectors,type:jsonb"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
@@ -365,6 +367,41 @@ type AgentConfig struct {
 	CreatedAt time.Time  `bun:"created_at,notnull"`
 	UpdatedAt time.Time  `bun:"updated_at,notnull"`
 	DeletedAt *time.Time `bun:"deleted_at"`
+}
+
+// ConnectorBinding is one connector an agent config may call tools of, as it is stored in
+// agent_configs.connectors.
+//
+// The JSON is the prototype's (ConnectorBinding in internal/store/models.go on
+// codex/connector-support at cf62af0d), and ConnectorConnectionReferenced finds a fixed
+// binding by containment on {"connection": {"type": "fixed", "connection_id": ...}}, so a
+// change to these tags is a change to that query. core.Binding is the same thing for the
+// adapters, flattened and with a time.Duration; it has no JSON of its own, so it is not
+// what is stored.
+type ConnectorBinding struct {
+	// Name is the alias the connector's tools are offered under.
+	Name        string            `json:"name"`
+	ConnectorID string            `json:"connector_id"`
+	Connection  ConnectionBinding `json:"connection"`
+	Tools       []ToolGrant       `json:"tools"`
+	Required    bool              `json:"required"`
+	// TimeoutMs is how long one tool call may take. Zero leaves the session's default.
+	TimeoutMs int `json:"timeout_ms,omitempty"`
+}
+
+// ConnectionBinding selects the connection a binding's tools are called through: "fixed",
+// an app-owned connection named by ConnectionID, or "session", the verified end user's own,
+// picked when a session is created and so with no ConnectionID here.
+type ConnectionBinding struct {
+	Type         string `json:"type"`
+	ConnectionID string `json:"connection_id,omitempty"`
+}
+
+// ToolGrant is one exact tool a binding allows, pinned to the digest of the schema it was
+// granted against.
+type ToolGrant struct {
+	Name         string `json:"name"`
+	SchemaDigest string `json:"schema_digest"`
 }
 
 // RouterConfig is a named set of per-modality routing options, for a caller that routes

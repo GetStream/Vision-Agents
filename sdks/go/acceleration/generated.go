@@ -35,6 +35,24 @@ func (e ActivityGranularity) Valid() bool {
 	}
 }
 
+// Defines values for AgentConnectorSelectionType.
+const (
+	AgentConnectorSelectionTypeFixed   AgentConnectorSelectionType = "fixed"
+	AgentConnectorSelectionTypeSession AgentConnectorSelectionType = "session"
+)
+
+// Valid indicates whether the value is a known member of the AgentConnectorSelectionType enum.
+func (e AgentConnectorSelectionType) Valid() bool {
+	switch e {
+	case AgentConnectorSelectionTypeFixed:
+		return true
+	case AgentConnectorSelectionTypeSession:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentLogSeverity.
 const (
 	AgentLogSeverityError AgentLogSeverity = "error"
@@ -1580,7 +1598,9 @@ type ActivityGranularity string
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
-	CreatedAt time.Time `json:"created_at"`
+	// Connectors The bindings exactly as they were written. Absent when there are none.
+	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
+	CreatedAt  time.Time                `json:"created_at"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch  *AgentDispatch `json:"dispatch,omitempty"`
@@ -1623,6 +1643,9 @@ type AgentConfig struct {
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
 type AgentConfigPatch struct {
+	// Connectors The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
+	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
+
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 	Greeting *string        `json:"greeting,omitempty"`
@@ -1665,6 +1688,9 @@ type AgentConfigPatch struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
+	// Connectors The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
+	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
+
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 	Greeting *string        `json:"greeting,omitempty"`
@@ -1729,6 +1755,39 @@ type AgentConfigRequest struct {
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
 }
+
+// AgentConnectorBinding A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against.
+type AgentConnectorBinding struct {
+	// Connection Which connection a binding's tools are called through.
+	Connection AgentConnectorSelection `json:"connection"`
+
+	// ConnectorId A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_.
+	ConnectorId string `json:"connector_id"`
+
+	// Name The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.
+	Name string `json:"name"`
+
+	// Required Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
+	Required *bool `json:"required,omitempty"`
+
+	// TimeoutMs How long one tool call may take, in milliseconds. Omitted, the session's default applies.
+	TimeoutMs *int `json:"timeout_ms,omitempty"`
+
+	// Tools The exact tools allowed, each named once. There is no wildcard, and an empty list grants none.
+	Tools []ConnectorToolGrant `json:"tools"`
+}
+
+// AgentConnectorSelection Which connection a binding's tools are called through.
+type AgentConnectorSelection struct {
+	// ConnectionId Required for fixed, and refused for session.
+	ConnectionId *string `json:"connection_id,omitempty"`
+
+	// Type fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+	Type AgentConnectorSelectionType `json:"type"`
+}
+
+// AgentConnectorSelectionType fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+type AgentConnectorSelectionType string
 
 // AgentDispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 type AgentDispatch struct {
@@ -2316,6 +2375,15 @@ type ConnectorInput struct {
 
 	// Pattern A regular expression the whole value must match.
 	Pattern *string `json:"pattern,omitempty"`
+}
+
+// ConnectorToolGrant One tool a binding allows.
+type ConnectorToolGrant struct {
+	// Name The tool as the connector names it.
+	Name string `json:"name"`
+
+	// SchemaDigest The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered.
+	SchemaDigest string `json:"schema_digest"`
 }
 
 // Contact defines model for Contact.
@@ -4234,6 +4302,9 @@ type SttOptions struct {
 
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
+	// Connectors The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone.
+	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
+
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 	Greeting *string        `json:"greeting,omitempty"`

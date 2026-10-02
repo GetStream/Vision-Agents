@@ -4354,6 +4354,17 @@ components:
             type: string
           description: >
             Hosted MCP servers this agent may reach, named from the built-in catalog.
+        connectors:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/AgentConnectorBinding"
+          description: >
+            The connectors whose tools this agent may call, each under an alias unique
+            within the config and different from every plugin it names. Omitted or null on an update, the bindings stored stay as they are,
+            so a client that does not know this field cannot clear it by saving; an empty
+            list removes them all. A binding to a connector the app cannot see, or a fixed
+            binding to a connection that is not the app's own or is to another connector, is refused.
         keyterms:
           type: array
           items:
@@ -4439,6 +4450,11 @@ components:
           type: array
           items:
             type: string
+        connectors:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentConnectorBinding"
+          description: The bindings exactly as they were written. Absent when there are none.
         keyterms:
           type: array
           items:
@@ -4470,6 +4486,82 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    AgentConnectorBinding:
+      type: object
+      required: [name, connector_id, connection, tools]
+      description: >
+        A connector whose tools an agent config may call, under an alias. The binding is
+        the grant: only the tools it lists are offered, each pinned to the schema it was
+        reviewed against.
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$"
+          description: >
+            The alias, unique within the config: a lowercase letter, then up to 62
+            lowercase letters, digits, - or _, never __ and not ending in _. The model is
+            offered each tool as <name>__<tool>, split back at the first __, so a __ inside
+            the alias or a _ at its end would split it in the wrong place.
+        connector_id:
+          type: string
+          description: >
+            A connector definition the app can see: a built-in, or one of its own, whose
+            id starts with custom_.
+        connection:
+          $ref: "#/components/schemas/AgentConnectorSelection"
+        tools:
+          type: array
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/ConnectorToolGrant"
+          description: >
+            The exact tools allowed, each named once. There is no wildcard, and an empty
+            list grants none.
+        required:
+          type: boolean
+          default: false
+          description: >
+            Whether a session needs this connector. A required one that cannot be opened
+            fails the session; an optional one is left out of it.
+        timeout_ms:
+          type: integer
+          minimum: 1
+          maximum: 30000
+          description: How long one tool call may take, in milliseconds. Omitted, the session's default applies.
+
+    AgentConnectorSelection:
+      type: object
+      required: [type]
+      description: Which connection a binding's tools are called through.
+      properties:
+        type:
+          type: string
+          enum: [fixed, session]
+          description: >
+            fixed is the app's own connection named by connection_id, the same for every
+            session. session is the connection the session's verified end user picks when
+            the session is created, which has to be their own.
+        connection_id:
+          type: string
+          description: Required for fixed, and refused for session.
+
+    ConnectorToolGrant:
+      type: object
+      required: [name, schema_digest]
+      description: One tool a binding allows.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: The tool as the connector names it.
+        schema_digest:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          description: >
+            The SHA-256 of the tool's name, description and input schema, as 64 lowercase
+            hex characters. A tool whose schema has changed since no longer matches and is
+            not offered.
 
     RouterConfigRequest:
       type: object

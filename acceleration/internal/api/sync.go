@@ -37,6 +37,7 @@ type SyncAgentRequest struct {
 	Search        *string                    `json:"search,omitempty"`
 	Greeting      *string                    `json:"greeting,omitempty"`
 	Plugins       *[]string                  `json:"plugins,omitempty"`
+	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Harness       *Harness                   `json:"harness,omitempty"`
@@ -162,6 +163,17 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if found && existing.SyncHash == hash {
 		return &syncAgentResponse{Body: SyncAgentResult{Unchanged: true, Config: agentConfigOf(existing)}}, nil
 	}
+	// Before anything is written, for the same reason as the simulations in syncComplaint.
+	if message, ok, err := s.unboundConnectors(ctx, customerID, body.Connectors); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	merged := existing
+	applySettings(&merged, body)
+	if message, ok := pluginAliasComplaint(merged); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 
 	documents := documentsOf(body.Knowledge)
 	namespace := ""
@@ -259,6 +271,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 		return fmt.Sprintf("there is no harness called %q", *body.Harness), false
 	}
 	if complaint, ok := dispatchComplaint(body.Dispatch); !ok {
+		return complaint, false
+	}
+	if complaint, ok := connectorBindingsComplaint(body.Connectors); !ok {
 		return complaint, false
 	}
 	// Simulations are checked here, before anything is written, since a config stored under
@@ -379,6 +394,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.Plugins != nil {
 		config.Plugins = *body.Plugins
+	}
+	if body.Connectors != nil {
+		config.Connectors = storedBindings(*body.Connectors)
 	}
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)
