@@ -427,3 +427,32 @@ func (s *StoredSuite) TestARegisteredAppIsUnaffectedByTheRequirement() {
 	s.Require().NoError(err)
 	s.Equal("own-key", identity.APIKey)
 }
+
+func (s *StoredSuite) TestADeploymentWithoutASecretChecksNoHookWithAnEmptyOne() {
+	// An empty secret is one anybody can sign with.
+	s.deployment = NewDeployment(DeploymentOptions{App: 1, Strict: true})
+	clients := NewClients(s.source(false), ClientsOptions{})
+
+	for _, pathApp := range []int64{0, 1} {
+		verifiers, err := clients.Verifiers(s.ctx, "", pathApp)
+		s.Require().NoError(err)
+		s.Empty(verifiers, "app %d", pathApp)
+	}
+}
+
+func (s *StoredSuite) TestTheDeploymentAppsOwnRegistrationChecksItsHooksAsTheDeployments() {
+	// The deployment's customer registered the deployment's app. A hook from that app is
+	// still about everything written there, not that customer's alone.
+	s.app, s.customer = 1, "1"
+	s.register("deploy-app-key")
+	clients := NewClients(s.source(false), ClientsOptions{})
+
+	verifiers, err := clients.Verifiers(s.ctx, "", 1)
+
+	s.Require().NoError(err)
+	s.Require().NotEmpty(verifiers)
+	for _, verifier := range verifiers {
+		s.True(verifier.Deployment, verifier.APIKey)
+		s.Empty(verifier.CustomerID)
+	}
+}

@@ -42,8 +42,10 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 	}
 	deployment := stored.deployment
 	own := deployment.App()
-	ours := func() []Verifier {
-		if apiKey != "" && apiKey != deployment.identity.APIKey {
+	// The deployment's own secret checks only the deployment app's hooks, and only when
+	// there is one: an empty secret is one anybody can sign with.
+	ours := func(named string) []Verifier {
+		if !deployment.Configured() || (named != "" && named != deployment.identity.APIKey) {
 			return nil
 		}
 		return []Verifier{{StreamApp: own, APIKey: deployment.identity.APIKey, Secret: deployment.identity.Secret, Deployment: true}}
@@ -54,16 +56,16 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 		app, err := stored.store.StreamAppByPK(ctx, pathApp)
 		switch {
 		case err == nil:
-			verifiers = stored.keysOf(app, apiKey)
+			verifiers = stored.keysOf(app, apiKey, own)
 		case !errors.Is(err, store.ErrNoStreamApp):
 			return nil, err
 		}
-		if own == 0 && len(verifiers) == 0 {
+		if own == 0 && len(verifiers) == 0 && deployment.Configured() {
 			// The app named may be the deployment's own, which is not known yet.
 			return nil, ErrDeploymentAppUnknown
 		}
-		if pathApp == own {
-			verifiers = append(verifiers, ours()...)
+		if own != 0 && pathApp == own {
+			verifiers = append(verifiers, ours(apiKey)...)
 		}
 		return verifiers, nil
 	}
@@ -72,21 +74,26 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 		app, err := stored.store.StreamAppByAPIKey(ctx, apiKey)
 		switch {
 		case err == nil:
-			return stored.keysOf(app, apiKey), nil
+			return stored.keysOf(app, apiKey, own), nil
 		case !errors.Is(err, store.ErrNoStreamApp):
 			return nil, err
 		}
 		c.rememberUnknownKey(apiKey)
 	}
+	if !deployment.Configured() {
+		return nil, nil
+	}
 	if own == 0 {
 		return nil, ErrDeploymentAppUnknown
 	}
-	return []Verifier{{StreamApp: own, APIKey: deployment.identity.APIKey, Secret: deployment.identity.Secret, Deployment: true}}, nil
+	return ours(""), nil
 }
 
 // keysOf are a connected app's keys Stream still accepts, as verifiers, narrowed to the
-// one named when a key is named.
-func (s *Stored) keysOf(app store.StreamApp, apiKey string) []Verifier {
+// one named when a key is named. The deployment's own app, registered by its own customer,
+// is still the deployment's: its hooks are about everything written there, which is more
+// than that customer's.
+func (s *Stored) keysOf(app store.StreamApp, apiKey string, own int64) []Verifier {
 	if app.State != store.StreamAppConnected {
 		return nil
 	}
@@ -101,9 +108,11 @@ func (s *Stored) keysOf(app store.StreamApp, apiKey string) []Verifier {
 				"api_key", key.APIKey, "error", err)
 			continue
 		}
-		verifiers = append(verifiers, Verifier{
-			CustomerID: app.CustomerID, StreamApp: app.StreamAppPK, APIKey: key.APIKey, Secret: secret,
-		})
+		verifier := Verifier{CustomerID: app.CustomerID, StreamApp: app.StreamAppPK, APIKey: key.APIKey, Secret: secret}
+		if own != 0 && app.StreamAppPK == own {
+			verifier.CustomerID, verifier.Deployment = "", true
+		}
+		verifiers = append(verifiers, verifier)
 	}
 	return verifiers
 }
