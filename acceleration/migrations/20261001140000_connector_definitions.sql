@@ -14,13 +14,6 @@
 -- VARCHAR(n) the same way, and how long a value a customer may send is for the API to refuse.
 -- name, category and description repeat the manifest's, so a catalog can list and search
 -- definitions without reading every manifest.
---
--- A database that once ran the prototype branch (codex/connector-support at cf62af0d) has a
--- connector_definitions of another shape, from its migration 20260929180000, with an endpoint
--- column and one row per id. Nothing on this branch reads it, nothing references it, and its
--- rows were test data, so it is dropped rather than left to stop this migration. Anywhere
--- else the table does not exist yet and this does nothing.
-DROP TABLE IF EXISTS connector_definitions;
 
 CREATE TABLE connector_definitions (
     customer_id TEXT NOT NULL,
