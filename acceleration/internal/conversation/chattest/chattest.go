@@ -33,6 +33,19 @@ type store struct {
 	appReads int
 	// keyed are apps answered for one api key, standing in for several apps at one URL.
 	keyed map[string]App
+	// asked is every request served, with the key it was made with.
+	asked []Request
+}
+
+// Request is one request the server was sent, and the api key it was made with.
+type Request struct {
+	Method, Path, APIKey string
+}
+
+// Writes reports whether a request changes anything in Stream, rather than reading it: a
+// GET, a channel query and a user query read; everything else writes.
+func (r Request) Writes() bool {
+	return r.Method != http.MethodGet && !strings.HasSuffix(r.Path, "/chat/channels")
 }
 
 // App is what an app says of itself when asked: its id, and the channel and call types it
@@ -122,6 +135,19 @@ func (s *Server) SetAppFor(apiKey string, app App) {
 		s.db.keyed = map[string]App{}
 	}
 	s.db.keyed[apiKey] = app
+}
+
+// Requests are the requests made with an api key, oldest first.
+func (s *Server) Requests(apiKey string) []Request {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	var made []Request
+	for _, request := range s.db.asked {
+		if request.APIKey == apiKey {
+			made = append(made, request)
+		}
+	}
+	return made
 }
 
 // AppReads is how many times the app was asked what it is.
@@ -225,6 +251,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	db.asked = append(db.asked, Request{Method: r.Method, Path: r.URL.Path, APIKey: r.URL.Query().Get("api_key")})
 	var body map[string]any
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)

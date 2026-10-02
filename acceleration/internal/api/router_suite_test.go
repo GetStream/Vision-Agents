@@ -119,6 +119,9 @@ type RouterSuite struct {
 	// database and keyring, with the deployment's app as the fallback. A suite sets it, and
 	// the two after it, before SetupSuite runs.
 	appMode bool
+	// appRefuses turns app mode's fallback off, so a customer with no app of its own is
+	// written nowhere.
+	appRefuses bool
 	// trustAPIKeyHeader lets X-Stream-Api-Key choose the minting key.
 	trustAPIKeyHeader bool
 	// denied are the app ids the suite refuses registration to.
@@ -233,7 +236,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
 	if s.appMode {
 		stored, err := streamapp.NewStored(streamapp.StoredOptions{
-			Store: pgStore, Sealer: s.sealer, Deployment: s.apps.deployment, FallbackToDeployment: true, Logger: logger,
+			Store: pgStore, Sealer: s.sealer, Deployment: s.apps.deployment, FallbackToDeployment: !s.appRefuses, Logger: logger,
 		})
 		s.Require().NoError(err)
 		s.stream = streamapp.NewClients(stored, streamapp.ClientsOptions{})
