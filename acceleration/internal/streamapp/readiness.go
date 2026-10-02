@@ -98,15 +98,17 @@ var nonMemberReads = []string{
 	"read-channel", "read-channel-members", "read-channel-any-team", "read-channel-members-any-team",
 }
 
-// forgeable reports whether a channel type's grants let anybody but the app's backend take
-// authority over the router's channels, or read one they are not in. An admin is the app's
-// own operator; every other role is somebody a client can sign in as.
+// clientRoles are the roles a client is in by signing in: as a user, a guest or nobody, and
+// as a member of the channels it is in. Every other role, a moderator or an admin of any
+// kind, is one only the app's backend gives, so authority held by it is the app's own.
+var clientRoles = []string{"user", "channel_member", "guest", "anonymous"}
+
+// forgeable reports whether a channel type's grants let a client take authority over the
+// router's channels, or read one it is not in. These are the checks Athena makes of its
+// own conversations' channel type.
 func forgeable(grants map[string][]string) bool {
-	for role, granted := range grants {
-		if role == "admin" {
-			continue
-		}
-		for _, grant := range granted {
+	for _, role := range clientRoles {
+		for _, grant := range grants[role] {
 			for _, action := range authority {
 				if grant == action || strings.HasPrefix(grant, action+"-") {
 					return true

@@ -72,7 +72,6 @@ func (s *ReadinessSuite) TestAChannelTypeAClientCanForgeIsUnsafe() {
 		"a member may change its data":    {"channel_member": {"update-channel"}},
 		"anybody may join one":            {"user": {"add-own-channel-membership"}},
 		"a guest may read one":            {"guest": {"read-channel"}},
-		"a moderator may change one":      {"channel_moderator": {"update-channel-members"}},
 		"an anonymous caller may make it": {"anonymous": {"create-distinct-channel-for-others"}},
 	} {
 		s.Run(name, func() {
@@ -84,10 +83,16 @@ func (s *ReadinessSuite) TestAChannelTypeAClientCanForgeIsUnsafe() {
 	}
 }
 
-func (s *ReadinessSuite) TestAnAdminMayDoAnything() {
-	s.stream.SetApp(chattest.App{ID: 4242, ChannelTypes: map[string]map[string][]string{
-		AgentChannelType: {"admin": {"create-channel", "update-channel", "add-own-channel-membership"}},
-	}})
+func (s *ReadinessSuite) TestTheAppsOwnStaffMayDoAnything() {
+	// A moderator or an admin is a role only the app's backend gives, which is how Stream's
+	// own default grants have them.
+	s.stream.SetApp(chattest.App{ID: 4242, ChannelTypes: map[string]map[string][]string{AgentChannelType: {
+		"admin":             {"create-channel", "update-channel", "add-own-channel-membership"},
+		"moderator":         {"create-channel", "update-channel", "update-channel-members"},
+		"channel_moderator": {"update-channel", "update-channel-members"},
+		"global_admin":      {"create-channel-any-team", "update-channel-any-team"},
+		"global_moderator":  {"update-channel-any-team"},
+	}}})
 
 	s.Equal(TypePresent, s.read().ChannelType)
 }
