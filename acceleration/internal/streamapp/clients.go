@@ -59,6 +59,9 @@ type Clients struct {
 	refresh map[string]time.Time
 	checks  map[string]checked
 	unknown map[string]time.Time
+	// generation counts each customer's invalidations, so an answer resolved across one is
+	// not kept as though it came after.
+	generation map[string]uint64
 }
 
 // resolution is one question asked of the source: a customer's app for new work, or the
@@ -99,7 +102,7 @@ func NewClients(source Source, options ClientsOptions) *Clients {
 		source: source, http: httpClient, max: maxClients, now: now,
 		clients: map[string]*list.Element{}, order: list.New(),
 		known: map[resolution]resolved{}, refresh: map[string]time.Time{}, checks: map[string]checked{},
-		unknown: map[string]time.Time{},
+		unknown: map[string]time.Time{}, generation: map[string]uint64{},
 	}
 }
 
@@ -213,6 +216,7 @@ func (c *Clients) Invalidate(customer string) {
 }
 
 func (c *Clients) forget(customer string) {
+	c.generation[customer]++
 	for asked := range c.known {
 		if asked.customer == customer {
 			delete(c.known, asked)
@@ -254,13 +258,18 @@ func (c *Clients) resolve(asked resolution, ask func() (Identity, error)) (Ident
 		c.mu.Unlock()
 		return answer.identity, answer.err
 	}
+	before := c.generation[asked.customer]
 	c.mu.Unlock()
 
 	identity, err := ask()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.known[asked] = resolved{identity: identity, err: err, at: c.now()}
+	// An app written while this was being asked may have changed the answer, which is then
+	// asked again next time rather than kept.
+	if c.generation[asked.customer] == before {
+		c.known[asked] = resolved{identity: identity, err: err, at: c.now()}
+	}
 	return identity, err
 }
 

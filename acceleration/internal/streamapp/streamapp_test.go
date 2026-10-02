@@ -269,3 +269,45 @@ func (s *StreamAppSuite) TestAnIdentityNeverPrintsItsSecret() {
 	s.NotContains(logged.String(), "hunter2")
 	s.Equal("hunter2", identity.Secret.Reveal())
 }
+
+// changing answers with whatever identity it holds, and invalidates the cache from inside
+// a resolution, as a registration landing at that moment would.
+type changing struct {
+	mu       sync.Mutex
+	identity Identity
+	during   func()
+}
+
+func (c *changing) For(context.Context, string) (Identity, error) {
+	c.mu.Lock()
+	identity, during := c.identity, c.during
+	c.during = nil
+	c.mu.Unlock()
+	if during != nil {
+		during()
+	}
+	return identity, nil
+}
+
+func (c *changing) ForApp(ctx context.Context, customer string, _ int64) (Identity, error) {
+	return c.For(ctx, customer)
+}
+
+func (s *StreamAppSuite) TestAnAnswerResolvedAcrossAnInvalidationIsNotKept() {
+	source := &changing{identity: Identity{APIKey: "old-key", Secret: NewSecret("old")}}
+	clients := NewClients(source, ClientsOptions{})
+	source.during = func() {
+		source.mu.Lock()
+		source.identity = Identity{APIKey: "new-key", Secret: NewSecret("new")}
+		source.mu.Unlock()
+		clients.Invalidate("acme")
+	}
+
+	first, err := clients.For(context.Background(), "acme")
+	s.Require().NoError(err)
+	s.Equal("old-key", first.Identity.APIKey, "what was asked before the write answers that request")
+
+	second, err := clients.For(context.Background(), "acme")
+	s.Require().NoError(err)
+	s.Equal("new-key", second.Identity.APIKey, "and is not kept past it")
+}
