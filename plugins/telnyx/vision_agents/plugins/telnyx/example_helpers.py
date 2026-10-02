@@ -458,7 +458,8 @@ def telnyx_example_cleanup(
     number stays routed to a dead webhook. Handling SIGTERM here turns that into
     a normal cleanup followed by the conventional ``128 + SIGTERM`` exit status.
     Further SIGTERMs are ignored until that cleanup finishes, so a second
-    ``kill`` cannot cut it short.
+    ``kill`` cannot cut it short. The handler stays installed while the normal
+    exit path cleans up too, so a SIGTERM arriving then also lets cleanup finish.
 
     Pass a :class:`TelnyxExampleResources` tracker rather than a finished
     :class:`TelnyxExampleSetup` to enter this guard *before*
@@ -514,10 +515,14 @@ def telnyx_example_cleanup(
     try:
         yield
     finally:
-        if handler_installed:
-            with contextlib.suppress(ValueError):
-                signal.signal(signal.SIGTERM, previous_handler)
-        cleanup_once()
+        # Restore the previous handler only after cleanup: if it is SIG_DFL, a
+        # SIGTERM during cleanup would otherwise kill the process mid-cleanup.
+        try:
+            cleanup_once()
+        finally:
+            if handler_installed:
+                with contextlib.suppress(ValueError):
+                    signal.signal(signal.SIGTERM, previous_handler)
 
 
 def validate_call_control_app(

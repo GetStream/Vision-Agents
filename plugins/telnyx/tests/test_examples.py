@@ -389,34 +389,57 @@ def test_telnyx_example_cleanup_installs_and_restores_sigterm_handler():
     if threading.current_thread() is not threading.main_thread():
         pytest.skip("signal handlers can only be installed on the main thread")
 
-    client, setup = _routed_setup()
-    original_handler = signal.getsignal(signal.SIGTERM)
+    handlers_during_cleanup: list[object] = []
 
-    with telnyx_example_cleanup(client, setup):
-        assert signal.getsignal(signal.SIGTERM) is not original_handler
+    class HandlerRecordingClient(FakeTelnyxClient):
+        def delete_call_control_app(self, app_id):
+            handlers_during_cleanup.append(signal.getsignal(signal.SIGTERM))
+            super().delete_call_control_app(app_id)
 
-    assert signal.getsignal(signal.SIGTERM) is original_handler
-
-
-def test_prepare_telnyx_example_setup_tracks_resources_while_creating_them():
-    client = FakeTelnyxClient(
+    client = HandlerRecordingClient(
         phone_number={
             "id": "phone-id",
             "phone_number": "+15551234567",
             "connection_id": "original-app-id",
         },
     )
+    resources = TelnyxExampleResources(
+        phone_number_id="phone-id",
+        created_call_control_app_id="created-app-id",
+        original_connection_id="original-app-id",
+    )
+    original_handler = signal.getsignal(signal.SIGTERM)
+
+    with telnyx_example_cleanup(client, resources):
+        assert signal.getsignal(signal.SIGTERM) is not original_handler
+
+    # Still guarded while cleaning up, and restored only afterwards.
+    assert len(handlers_during_cleanup) == 1
+    assert handlers_during_cleanup[0] is not original_handler
+    assert signal.getsignal(signal.SIGTERM) is original_handler
+
+
+def test_prepare_telnyx_example_setup_tracks_resources_while_creating_them():
     resources = TelnyxExampleResources()
     tracked_at_reroute: list[tuple[str | None, str | None]] = []
-    reroute = client.update_phone_number_connection
 
-    def recording_reroute(phone_number_id, connection_id):
-        tracked_at_reroute.append(
-            (resources.created_call_control_app_id, resources.original_connection_id)
-        )
-        reroute(phone_number_id, connection_id)
+    class RecordingClient(FakeTelnyxClient):
+        def update_phone_number_connection(self, phone_number_id, connection_id):
+            tracked_at_reroute.append(
+                (
+                    resources.created_call_control_app_id,
+                    resources.original_connection_id,
+                )
+            )
+            super().update_phone_number_connection(phone_number_id, connection_id)
 
-    client.update_phone_number_connection = recording_reroute  # type: ignore[method-assign]
+    client = RecordingClient(
+        phone_number={
+            "id": "phone-id",
+            "phone_number": "+15551234567",
+            "connection_id": "original-app-id",
+        },
+    )
 
     setup = prepare_telnyx_example_setup(
         client,
@@ -665,6 +688,13 @@ with telnyx_example_cleanup(MarkerClient(), setup):
 '''
 
 
+# SIGTERM is delivered from inside the cleanup that runs on normal exit: the
+# same fake client, but the guarded body returns instead of waiting.
+SIGTERM_DURING_NORMAL_CLEANUP_SCRIPT = SECOND_SIGTERM_SCRIPT.replace(
+    'print("READY", flush=True)', "pass"
+).replace("signal.pause()", "pass")
+
+
 def _run_sigterm_example(tmp_path, source, *, send_sigterm):
     marker = tmp_path / "cleanup_calls.txt"
     script = tmp_path / "sigterm_example.py"
@@ -726,6 +756,19 @@ def test_telnyx_example_cleanup_covers_sigterm_during_setup(tmp_path):
 def test_second_sigterm_does_not_interrupt_cleanup(tmp_path):
     returncode, lines = _run_sigterm_example(
         tmp_path, SECOND_SIGTERM_SCRIPT, send_sigterm=True
+    )
+
+    assert returncode == -signal.SIGTERM
+    assert lines == [
+        "restore-routing:phone-id:original-app-id",
+        "delete-app:created-app-id",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM is POSIX-only")
+def test_sigterm_during_normal_cleanup_does_not_interrupt_it(tmp_path):
+    returncode, lines = _run_sigterm_example(
+        tmp_path, SIGTERM_DURING_NORMAL_CLEANUP_SCRIPT, send_sigterm=False
     )
 
     assert returncode == -signal.SIGTERM

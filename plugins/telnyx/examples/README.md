@@ -93,8 +93,9 @@ examples then exit with the conventional `128 + SIGTERM` (143) status.
 
 The guard is installed before `--setup-telnyx` creates anything, so a signal
 that arrives *while* Telnyx is being set up also cleans up whatever was created
-up to that point. A second SIGTERM is ignored until the cleanup finishes, so
-repeated `kill` commands cannot cut it short.
+up to that point. A SIGTERM that arrives while cleanup is already running,
+whether after an earlier SIGTERM or during a normal shutdown, does not cut it
+short either, so repeated `kill` commands are safe.
 
 `kill -9` (SIGKILL) cannot be caught by any process, so it skips cleanup: the
 temporary Call Control App is left behind and the phone number stays routed to
