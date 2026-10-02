@@ -187,10 +187,10 @@ tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 
 // The GetStream pion forks that implement WARP, as in getstream-go-webrtc's go.mod: replace
 // directives of a dependency do not apply here, so every consumer needs all four.
-replace github.com/pion/webrtc/v4 => github.com/GetStream/pion-webrtc/v4 v4.2.22-warp.3
+replace github.com/pion/webrtc/v4 => github.com/GetStream/pion-webrtc/v4 v4.2.22-warp.4
 
 replace github.com/pion/ice/v4 => github.com/GetStream/pion-ice/v4 v4.4.4-warp.3
 
-replace github.com/pion/dtls/v4 => github.com/GetStream/pion-dtls/v4 v4.0.0-rc.1-warp.1
+replace github.com/pion/dtls/v4 => github.com/GetStream/pion-dtls/v4 v4.0.0-rc.1-warp.2
 
 replace github.com/pion/sctp => github.com/GetStream/pion-sctp v1.11.3-warp.1
