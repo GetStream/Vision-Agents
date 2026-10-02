@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // callerPrefix is what the inbound routing rule names a SIP caller, so the number they are
@@ -122,6 +123,9 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	number, err := s.store.NumberByCallInApp(r.Context(), origin.scope(), callType, callID)
 	if err == nil && !origin.deployment && number.CustomerID != origin.customer {
 		err = store.ErrAmbiguousHook
+	}
+	if err == nil && !s.mayWrite(r.Context(), origin, number.CustomerID) {
+		err = streamapp.ErrReadOnly
 	}
 	if err != nil {
 		s.logger.Debug("no number reaches an arriving call",

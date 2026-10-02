@@ -150,6 +150,11 @@ func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, event 
 	if !found {
 		return
 	}
+	if !s.mayWrite(r.Context(), origin, customerID) {
+		s.logger.Info("not starting work in the deployment's app for a customer no longer writing there",
+			"channel", event.ChannelID, "customer", customerID)
+		return
+	}
 
 	message := dispatch.Message{
 		ChannelType: event.ChannelType,

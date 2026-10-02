@@ -119,3 +119,41 @@ func (s *TenancyGuardSuite) TestACustomerWithNoAppIsWrittenNowhereWhenTheFallbac
 	s.Contains(failure, "register this app's Stream keys")
 	s.Len(s.chat.Requests(suiteStreamKey), before, "nothing was asked of the deployment's app on its behalf")
 }
+
+func (s *TenancyGuardSuite) TestTheDeploymentAppsHooksStartNothingForACustomerOnlyReadThere() {
+	// A customer with no app of its own, under a refusing fallback, can still have rows in
+	// the deployment's app from before. A hook from that app must not start its work.
+	s.chat.SetAppFor(suiteStreamKey, chattest.App{ID: suiteStreamApp})
+	s.useApp(s.numberedApp(streamAppID()))
+	agent := "chat-" + s.utils.uuid()
+	s.Require().NoError(s.store.StartCall(context.Background(), &store.Call{
+		ID: s.utils.uuid(), CustomerID: s.customerID(), CallID: s.utils.callID(), AgentID: agent,
+		StartedAt: time.Now().UTC(),
+	}))
+	worker, release := s.dispatch.Register(s.customerID(), 1)
+	defer release()
+	body := fmt.Sprintf(`{"type": "message.new", "channel_id": %q, "channel_type": "agent", "created_at": %q,
+  "message": {"id": %q, "text": "hello", "user": {"id": "sam"}}}`,
+		agent, time.Now().UTC().Format(time.RFC3339Nano), "message-"+s.utils.uuid())
+
+	s.Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", body))
+
+	select {
+	case <-worker.Messages():
+		s.Fail("a deployment app hook started work for a customer only read there")
+	case <-time.After(dropped):
+	}
+}
+
+func (s *TenancyGuardSuite) TestASessionWithNoStreamAppIsPinnedToNone() {
+	// A call needs no conversation kept, so a customer with no app can still hold one.
+	s.useApp(s.numberedApp(streamAppID()))
+	call := s.utils.callID()
+
+	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call})
+
+	s.Require().Eventually(func() bool {
+		stored, err := s.store.StoredSession(context.Background(), s.customerID(), created.Id)
+		return err == nil && stored.StreamAppPK == store.ForeignStreamApp
+	}, settleFor, 10*time.Millisecond, "the session is not left reading as the deployment app's")
+}

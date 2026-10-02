@@ -225,6 +225,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if err := m.keepable(ctx, spec, stream); err != nil {
 		return nil, err
 	}
+	// In app mode a session with no Stream app at all is pinned to none, rather than left
+	// unpinned, which reads as the deployment's own app and would let that app's hooks and
+	// backfill claim it.
+	if stream.Client == nil && m.options.Stream != nil && m.options.Stream.PerApp() {
+		spec.StreamApp = store.ForeignStreamApp
+	}
 
 	var remembering memory.Store
 	if spec.Memory.UserID != "" {

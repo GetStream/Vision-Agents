@@ -208,3 +208,14 @@ func (s *Server) pinHook(origin hookOrigin, customer, cid string) {
 	}
 	s.sessions.PinHook(customer, cid, origin.app)
 }
+
+// mayWrite reports whether what a hook found for a customer may be acted on: in app mode, a
+// hook from the deployment's own app starts work only for a customer still writing there,
+// never for one whose work there is only to be read.
+func (s *Server) mayWrite(ctx context.Context, origin hookOrigin, customer string) bool {
+	if !origin.deployment || s.stream == nil || !s.stream.PerApp() {
+		return true
+	}
+	_, err := s.stream.ForApp(ctx, customer, origin.app)
+	return err == nil
+}
