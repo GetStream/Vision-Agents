@@ -29,6 +29,25 @@ type store struct {
 	rules    map[string]map[string]any
 	order    []string
 	now      func() time.Time
+	app      App
+	appReads int
+}
+
+// App is what an app says of itself when asked: its id, and the channel and call types it
+// holds.
+type App struct {
+	ID int64
+	// ChannelTypes are the channel types it holds, each with its grants by role.
+	ChannelTypes map[string]map[string][]string
+	// CallTypes are the call types it holds.
+	CallTypes []string
+}
+
+// safeGrants are the agent channel type as an app set up for the router holds it: members
+// read and write, and nobody but the app's backend makes, changes or joins a channel.
+var safeGrants = map[string][]string{
+	"channel_member": {"read-channel", "read-channel-members", "create-message"},
+	"admin":          {"create-channel", "update-channel", "delete-channel"},
 }
 
 // Server is Chat in memory, for a test that needs to steer or look at what is stored.
@@ -47,6 +66,7 @@ func NewServer(t *testing.T) *Server {
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
 		rules: map[string]map[string]any{}, now: time.Now,
+		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
 	t.Cleanup(server.Close)
@@ -77,6 +97,21 @@ func (s *Server) Channel(id string) (map[string]any, bool) {
 	defer s.db.mu.Unlock()
 	data, ok := s.db.channels[id]
 	return data, ok
+}
+
+// SetApp says what the app is from now on. Every server starts as app 1 holding the agent
+// channel type, with safe grants, and the agent call type.
+func (s *Server) SetApp(app App) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.app = app
+}
+
+// AppReads is how many times the app was asked what it is.
+func (s *Server) AppReads() int {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return s.db.appReads
 }
 
 // User returns a user as Chat holds them, and whether Chat has them at all.
@@ -172,6 +207,25 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/api/v2/app"):
+		db.appReads++
+		channels, calls := map[string]any{}, map[string]any{}
+		for name := range db.app.ChannelTypes {
+			channels[name] = map[string]any{"name": name}
+		}
+		for _, name := range db.app.CallTypes {
+			calls[name] = map[string]any{"name": name}
+		}
+		result["app"] = map[string]any{"id": db.app.ID, "channel_configs": channels, "call_types": calls}
+	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/channeltypes/"):
+		name := parts[len(parts)-1]
+		grants, ok := db.app.ChannelTypes[name]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": "channel type " + name + " does not exist", "StatusCode": http.StatusNotFound})
+			return
+		}
+		result["name"], result["grants"] = name, grants
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
 		// Stream's ids are unique across every app, which is what lets a test tell one app's
 		// trunk from another's.

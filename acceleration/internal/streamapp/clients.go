@@ -57,6 +57,7 @@ type Clients struct {
 	order   *list.List
 	known   map[resolution]resolved
 	refresh map[string]time.Time
+	checks  map[string]checked
 }
 
 // resolution is one question asked of the source: a customer's app for new work, or the
@@ -95,7 +96,7 @@ func NewClients(source Source, options ClientsOptions) *Clients {
 	return &Clients{
 		source: source, http: httpClient, max: maxClients, now: now,
 		clients: map[string]*list.Element{}, order: list.New(),
-		known: map[resolution]resolved{}, refresh: map[string]time.Time{},
+		known: map[resolution]resolved{}, refresh: map[string]time.Time{}, checks: map[string]checked{},
 	}
 }
 
