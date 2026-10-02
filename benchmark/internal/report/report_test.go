@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,5 +266,31 @@ func TestSummaryReportsTimeToFirstResponse(t *testing.T) {
 	}))
 	if !strings.Contains(empty, "| telecom | — | — | 0 | 0 |") {
 		t.Fatalf("a pack with no first response must not read as 0 ms:\n%s", empty)
+	}
+}
+
+func TestSummaryReportsReplyTimeOnNonToolTurnsWithToolTurnsApart(t *testing.T) {
+	turns := func(ms ...int) []score.Timing {
+		var out []score.Timing
+		for i, v := range ms {
+			out = append(out, score.Timing{TurnID: fmt.Sprintf("t%d", i), V2VMS: v})
+		}
+		return out
+	}
+	withTool := turns(1000, 2000, 3000, 10000)
+	withTool[3].Tool = true
+	sum := BuildSummary("accelerated", "run1", 1, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true, Metrics: score.Metrics{V2V: withTool}},
+	})
+	pack := sum.Packs[0]
+	if pack.NonToolP50 != 2000 || pack.NonToolP95 != 3000 || pack.NonToolMean != 2000 || pack.NonToolSamples != 3 {
+		t.Fatalf("non-tool reply time %+v", pack)
+	}
+	if pack.ToolP50 != 10000 || pack.ToolSamples != 1 || pack.V2VMean != 4000 {
+		t.Fatalf("a tool turn is reported apart and still counted in all turns: %+v", pack)
+	}
+	md := Markdown(sum)
+	if !strings.Contains(md, "| restaurant | 2000 ms (n=3) | 3000 ms (n=3) | 2000 ms (n=3) | 10000 ms (n=1) | 2000 ms (n=4) | 4000 ms (n=4) |") {
+		t.Fatalf("reply time table missing:\n%s", md)
 	}
 }

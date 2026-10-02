@@ -269,6 +269,20 @@ func Percentile(sorted []int, p int) int {
 	return sorted[idx]
 }
 
+// Mean is the arithmetic mean of samples, rounded to the millisecond. Reply time reports it
+// beside the percentiles because a few slow turns move it a long way, which is the point of
+// showing it: a mean well above the P50 says the slow turns are worth looking at.
+func Mean(samples []int) int {
+	if len(samples) == 0 {
+		return 0
+	}
+	sum := 0
+	for _, v := range samples {
+		sum += v
+	}
+	return int(math.Round(float64(sum) / float64(len(samples))))
+}
+
 // BargeInStopMS is time from barge-in start until agent energy drops.
 func BargeInStopMS(rec caller.Result) int {
 	const alignmentToleranceMS = 120

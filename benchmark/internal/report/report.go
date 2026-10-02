@@ -108,6 +108,14 @@ type PackSummary struct {
 	ToolWaitP50          int     `json:"tool_wait_p50_ms"`
 	CallerTurnsP50       int     `json:"caller_turns_p50"`
 	AgentTurnsP50        int     `json:"agent_turns_p50"`
+
+	// Reply time's headline is non-tool turns: a turn that waited on a tool is slower for a
+	// reason the conversation loop does not own, so tool turns are reported on their own.
+	NonToolP95  int `json:"non_tool_p95_ms"`
+	NonToolMean int `json:"non_tool_mean_ms"`
+	V2VMean     int `json:"v2v_mean_ms"`
+	ToolP50     int `json:"tool_p50_ms"`
+	ToolSamples int `json:"tool_samples"`
 }
 
 // CategoryCell is pass@k / pass^k for one call type.
@@ -179,6 +187,7 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	byScenario := map[string][]CallResult{}
 	var v2v []int
 	var nonTool []int
+	var tool []int
 	var firstResponse []int
 	var durations []int
 	var toolWait []int
@@ -202,7 +211,9 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 				continue
 			}
 			v2v = append(v2v, timing.V2VMS)
-			if !timing.Tool {
+			if timing.Tool {
+				tool = append(tool, timing.V2VMS)
+			} else {
 				nonTool = append(nonTool, timing.V2VMS)
 			}
 		}
@@ -291,7 +302,14 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	if len(nonTool) > 0 {
 		sort.Ints(nonTool)
 		out.NonToolP50 = score.Percentile(nonTool, 50)
+		out.NonToolP95 = score.Percentile(nonTool, 95)
+		out.NonToolMean = score.Mean(nonTool)
 	}
+	if len(tool) > 0 {
+		sort.Ints(tool)
+		out.ToolP50 = score.Percentile(tool, 50)
+	}
+	out.V2VMean = score.Mean(v2v)
 	if len(firstResponse) > 0 {
 		sort.Ints(firstResponse)
 		out.FirstResponseP50 = score.Percentile(firstResponse, 50)
@@ -315,6 +333,7 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	}
 	out.V2VSamples = len(v2v)
 	out.NonToolSamples = len(nonTool)
+	out.ToolSamples = len(tool)
 	out.DroppedTurns = dropped
 	out.FirstResponseSamples = len(firstResponse)
 	out.Spikes = spikes
@@ -420,6 +439,13 @@ func Markdown(s Summary) string {
 	for _, p := range s.Packs {
 		fmt.Fprintf(&b, "| %s | %d ms (n=%d) | %d ms | %d ms (n=%d) | %d | %d | %.2f |\n", p.Pack, p.V2VP50, p.V2VSamples, p.V2VP95, p.NonToolP50, p.NonToolSamples, p.Spikes, p.DroppedTurns, p.Cutoff)
 	}
+	b.WriteString("\n## Reply time\n\n")
+	b.WriteString("| Pack | Non-tool P50 | Non-tool P95 | Non-tool mean | Tool turns P50 | All turns P50 | All turns mean |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+	for _, p := range s.Packs {
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n", p.Pack,
+			msCell(p.NonToolP50, p.NonToolSamples), msCell(p.NonToolP95, p.NonToolSamples), msCell(p.NonToolMean, p.NonToolSamples),
+			msCell(p.ToolP50, p.ToolSamples), msCell(p.V2VP50, p.V2VSamples), msCell(p.V2VMean, p.V2VSamples))
+	}
 	b.WriteString("\n## Time to first response\n\n")
 	b.WriteString("| Pack | P50 | P95 | Calls measured | Tool turns |\n| --- | ---: | ---: | ---: | ---: |\n")
 	for _, p := range s.Packs {
@@ -449,6 +475,14 @@ func Markdown(s Summary) string {
 	b.WriteString("\nP50s are pooled over every measured turn in the pack, not a median of per-call medians; n is that sample count. Turns dropped are scripted turns with no usable reply gap, listed per call in `metrics.json` under `dropped_turns`. Time to first response is the reply gap of each call's first caller utterance, one sample per call; a call whose first turn drew no reply has none.\n")
 	b.WriteString("\nHard gates are end-state AND successful expected tools/arguments AND policy AND entity fidelity AND tool order AND say-do AND filler AND barge-in stop AND hold/selectivity. Required evaluator failures make a trial invalid rather than failed. V2V latency and spikes are reported, not gated. Human-band % uses non-tool turns only.\n")
 	return b.String()
+}
+
+// msCell is a millisecond figure with its sample count, or a dash when nothing was measured.
+func msCell(ms, samples int) string {
+	if samples == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%d ms (n=%d)", ms, samples)
 }
 
 func firstResponseCell(first *score.Timing) string {
