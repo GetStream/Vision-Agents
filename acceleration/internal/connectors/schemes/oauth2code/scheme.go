@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 )
 
 // Name is the registry name manifests list under schemes.
@@ -84,8 +85,8 @@ func (e *AuthorizationError) Error() string {
 	return "oauth2code: authorization refused: " + e.Code + ": " + e.Description
 }
 
-// Config is what the scheme depends on. Nothing here has a default that reaches the
-// network: the caller chooses the client every request leaves through.
+// Config is what the scheme depends on. The caller chooses the client every request leaves
+// through; the one default that resolves names is PublicEndpoint's, egress's own check.
 type Config struct {
 	// HTTP carries every outbound request: discovery, registration and the code exchange.
 	// In the router it is egress.NewClient(timeout, nil), so each one is checked against
@@ -99,6 +100,11 @@ type Config struct {
 	ClientMetadataURL string
 	// Now is the clock attempts expire by; nil is time.Now. Tests move it.
 	Now func() time.Time
+	// PublicEndpoint checks that an authorization server endpoint, with its query removed,
+	// is a public https URL; nil is egress.ValidatePublicHTTPSURL. The authorize URL goes to
+	// the browser and never through the egress client, so this is the only check it gets.
+	// Tests that run against a loopback fake pass one that lets the fake's host through.
+	PublicEndpoint func(ctx context.Context, raw string) error
 }
 
 // Scheme is the oauth2_code scheme. It is safe for concurrent use.
@@ -126,6 +132,9 @@ func New(cfg Config) (*Scheme, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.PublicEndpoint == nil {
+		cfg.PublicEndpoint = egress.ValidatePublicHTTPSURL
 	}
 	return &Scheme{cfg: cfg, spent: map[string]time.Time{}}, nil
 }

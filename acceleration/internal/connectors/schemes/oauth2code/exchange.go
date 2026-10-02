@@ -171,8 +171,12 @@ func readsIDToken(p core.Profile) bool {
 // token response. The signature is not checked: the token came «via direct communication
 // between the Client and the Token Endpoint», so item 6 lets «the TLS server validation»
 // stand in for it, and the egress client verified that server. The claims the rest of the
-// section asks for are: iss equal to the issuer (item 2), aud containing this client's id
-// (item 3), and exp still ahead (item 9).
+// section asks for are: iss equal to the issuer (item 2); aud listing this client and no
+// other (item 3, which in the errata set 2 text rejects a token that «contains additional
+// audiences not trusted by the Client», and this client trusts none); azp, when present,
+// equal to this client's id (items 4 and 5 of the original text, which errata set 2 folds
+// into item 3 as «SHOULD verify that its client_id is the Claim Value»); and exp still
+// ahead (item 9). Item numbers here are the original text's.
 func checkIDToken(t tokenResponse, issuer, clientID string, now time.Time) error {
 	if t.IDToken == "" {
 		return errors.New("oauth2code: the manifest reads the id_token and the token response has none")
@@ -205,6 +209,12 @@ func checkIDToken(t tokenResponse, issuer, clientID string, now time.Time) error
 	}
 	if !slices.Contains(audience, clientID) {
 		return errors.New("oauth2code: id_token is not for this client")
+	}
+	if slices.ContainsFunc(audience, func(a string) bool { return a != clientID }) {
+		return errors.New("oauth2code: id_token names audiences other than this client")
+	}
+	if azp, present := claims["azp"]; present && azp != clientID {
+		return errors.New("oauth2code: id_token azp is not this client")
 	}
 	exp, ok := claims["exp"].(json.Number)
 	if !ok {

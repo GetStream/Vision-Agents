@@ -3,9 +3,11 @@ package oauth2code_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 )
 
 // OAuth2CodeSuite drives the scheme against the fake provider, with the built-in manifests
@@ -362,6 +365,116 @@ func (s *OAuth2CodeSuite) connectsAsRegistered(method core.ClientAuthMethod) {
 	s.Equal(http.StatusOK, s.call(srv, s.accessToken(material)))
 }
 
+func (s *OAuth2CodeSuite) TestADiscoveredEndpointThatIsNotPublicIsRefused() {
+	for name, authorize := range map[string]func(base string) string{
+		"a private address": func(string) string { return "https://10.0.0.1/authorize" },
+		"userinfo": func(base string) string {
+			return strings.Replace(base, "https://", "https://user:pass@", 1) + "/authorize"
+		},
+		"plain http": func(base string) string { return strings.Replace(base, "https://", "http://", 1) + "/authorize" },
+		"a fragment": func(base string) string { return base + "/authorize#x" },
+	} {
+		srv := s.metadataServer(func(base string) map[string]any {
+			return map[string]any{"/.well-known/oauth-authorization-server": asMetadata(base, authorize(base))}
+		})
+		scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
+
+		_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"issuer": srv.URL}), RedirectURI: fakeprovider.RedirectURI})
+		s.Require().Error(err, name)
+		s.Contains(err.Error(), "endpoint", name)
+	}
+}
+
+func (s *OAuth2CodeSuite) TestADiscoveredAuthorizeEndpointKeepsItsQuery() {
+	srv := s.metadataServer(func(base string) map[string]any {
+		return map[string]any{"/.well-known/oauth-authorization-server": asMetadata(base, base+"/authorize?tenant=acme")}
+	})
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"issuer": srv.URL}), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	query := s.query(out.AuthorizeURL)
+	s.Equal("acme", query.Get("tenant"), "RFC 6749 section 3.1: the endpoint's query is retained")
+	s.Equal("operator-client", query.Get("client_id"))
+}
+
+func (s *OAuth2CodeSuite) TestByDefaultEndpointsAreHeldToTheEgressPolicy() {
+	srv := fakeprovider.New(s.T())
+	profile := s.static(srv, s.profile("../../providers/linear.yaml", nil))
+	profile.Client.Policy = []core.ClientOwner{core.ClientOperator}
+	scheme, err := oauth2code.New(oauth2code.Config{HTTP: srv.Client(), Clients: s.operator(srv)})
+	s.Require().NoError(err)
+
+	_, err = scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: profile, RedirectURI: fakeprovider.RedirectURI})
+	s.Require().Error(err, "the fake listens on loopback, which egress refuses")
+	s.Equal(0, srv.Hits(fakeprovider.PathToken))
+}
+
+func (s *OAuth2CodeSuite) TestAMismatchedPathDocumentFallsBackToTheRootDocument() {
+	srv := s.metadataServer(func(base string) map[string]any {
+		return map[string]any{
+			"/.well-known/oauth-protected-resource/mcp": map[string]any{"resource": "https://elsewhere.example/mcp", "authorization_servers": []string{base}},
+			"/.well-known/oauth-protected-resource":     map[string]any{"resource": base, "authorization_servers": []string{base}},
+			"/.well-known/oauth-authorization-server":   asMetadata(base, base+"/authorize"),
+		}
+	})
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"mcp": srv.URL + "/mcp"}), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	s.Equal(srv.URL, s.query(out.AuthorizeURL).Get("resource"), "the root document, after the mismatched one")
+}
+
+func (s *OAuth2CodeSuite) TestARefusedRedirectFallsBackToTheRootDocument() {
+	// Slack's shape: the path-inserted URL redirects to another host, which egress refuses.
+	srv := s.metadataServer(func(base string) map[string]any {
+		return map[string]any{
+			"/.well-known/oauth-protected-resource/mcp": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "https://mcp-9827.example/.well-known/oauth-protected-resource/mcp", http.StatusFound)
+			}),
+			"/.well-known/oauth-protected-resource":   map[string]any{"resource": base, "authorization_servers": []string{base}},
+			"/.well-known/oauth-authorization-server": asMetadata(base, base+"/authorize"),
+		}
+	})
+	client := srv.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }
+	scheme := s.scheme(client, oauth2code.Config{Clients: operatorClient})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"mcp": srv.URL + "/mcp"}), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	s.Equal(srv.URL, s.query(out.AuthorizeURL).Get("resource"))
+}
+
+func (s *OAuth2CodeSuite) TestAMismatchedIssuerDocumentFallsBackToTheNextURL() {
+	srv := s.metadataServer(func(base string) map[string]any {
+		issuer := base + "/tenant"
+		return map[string]any{
+			"/.well-known/oauth-authorization-server/tenant": asMetadata("https://wrong.example/tenant", base+"/wrong/authorize"),
+			"/tenant/.well-known/openid-configuration":       asMetadata(issuer, base+"/oidc/authorize"),
+		}
+	})
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"issuer": srv.URL + "/tenant"}), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	s.True(strings.HasPrefix(out.AuthorizeURL, srv.URL+"/oidc/authorize?"), "the third URL's document, after a mismatch and a 404: %s", out.AuthorizeURL)
+}
+
+func (s *OAuth2CodeSuite) TestDiscoveryWithNoUsableDocumentNamesEachFailure() {
+	srv := s.metadataServer(func(base string) map[string]any {
+		return map[string]any{
+			"/.well-known/oauth-protected-resource/mcp": map[string]any{"resource": "https://elsewhere.example/mcp", "authorization_servers": []string{base}},
+			"/.well-known/oauth-protected-resource":     http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }),
+		}
+	})
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
+
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"mcp": srv.URL + "/mcp"}), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().Error(err)
+	s.Contains(err.Error(), "elsewhere.example")
+	s.Contains(err.Error(), "HTTP 500")
+}
+
 // profile is a manifest file resolved for oauth2_code.
 func (s *OAuth2CodeSuite) profile(path string, inputs map[string]string) core.Profile {
 	raw, err := os.ReadFile(path)
@@ -392,6 +505,9 @@ func (s *OAuth2CodeSuite) operator(srv *fakeprovider.Server) oauth2code.ClientLo
 
 func (s *OAuth2CodeSuite) scheme(client *http.Client, cfg oauth2code.Config) *oauth2code.Scheme {
 	cfg.HTTP = client
+	if cfg.PublicEndpoint == nil {
+		cfg.PublicEndpoint = loopbackOrPublic
+	}
 	scheme, err := oauth2code.New(cfg)
 	s.Require().NoError(err)
 	return scheme
@@ -447,4 +563,61 @@ func (s *OAuth2CodeSuite) query(raw string) url.Values {
 	u, err := url.Parse(raw)
 	s.Require().NoError(err)
 	return u.Query()
+}
+
+// loopbackOrPublic is egress's endpoint check with one hole: a loopback IP literal, which
+// is where every fake and metadata server in this suite listens. Everything else, private
+// addresses and userinfo included, is refused exactly as in the router.
+func loopbackOrPublic(ctx context.Context, raw string) error {
+	if u, err := url.Parse(raw); err == nil {
+		if ip, err := netip.ParseAddr(u.Hostname()); err == nil && ip.IsLoopback() && u.User == nil {
+			return nil
+		}
+	}
+	return egress.ValidatePublicHTTPSURL(ctx, raw)
+}
+
+// metadataServer is a TLS server that answers each path with a JSON document, or with the
+// handler given for it; anything else is a 404. documents is built after the server
+// starts, so a document can name the server's own URL.
+func (s *OAuth2CodeSuite) metadataServer(documents func(base string) map[string]any) *httptest.Server {
+	var routes map[string]any
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch route := routes[r.URL.Path].(type) {
+		case nil:
+			http.NotFound(w, r)
+		case http.HandlerFunc:
+			route(w, r)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(route)
+		}
+	}))
+	s.T().Cleanup(srv.Close)
+	routes = documents(srv.URL)
+	return srv
+}
+
+// operatorClient answers any lookup for the operator with a fixed public client, for
+// profiles whose servers are metadata servers rather than the fake.
+func operatorClient(_ context.Context, _ core.ConnectionRef, _ core.Profile, owner core.ClientOwner) (oauth2code.Client, bool, error) {
+	return oauth2code.Client{ID: "operator-client"}, owner == core.ClientOperator, nil
+}
+
+// asMetadata is RFC 8414 metadata for issuer, with its authorize endpoint given.
+func asMetadata(issuer, authorize string) map[string]any {
+	return map[string]any{
+		"issuer":                           issuer,
+		"authorization_endpoint":           authorize,
+		"token_endpoint":                   issuer + "/token",
+		"code_challenge_methods_supported": []string{"S256"},
+	}
+}
+
+// discovering is the Linear manifest pointed at endpoints, with the operator's client.
+func (s *OAuth2CodeSuite) discovering(endpoints map[string]string) core.Profile {
+	profile := s.profile("../../providers/linear.yaml", nil)
+	profile.Endpoints = endpoints
+	profile.Client.Policy = []core.ClientOwner{core.ClientOperator}
+	return profile
 }

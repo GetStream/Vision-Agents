@@ -28,7 +28,20 @@ func (s *IDTokenSuite) SetupTest() {
 
 func (s *IDTokenSuite) TestAnIDTokenFromTheIssuerForThisClientPassesUnsigned() {
 	s.NoError(checkIDToken(s.token(map[string]any{"iss": "https://issuer.example", "aud": "client", "exp": s.now.Unix() + 60}), "https://issuer.example", "client", s.now))
-	s.NoError(checkIDToken(s.token(map[string]any{"iss": "https://issuer.example", "aud": []string{"other", "client"}, "exp": s.now.Unix() + 60}), "https://issuer.example", "client", s.now))
+	s.NoError(checkIDToken(s.token(map[string]any{"iss": "https://issuer.example", "aud": []string{"client"}, "exp": s.now.Unix() + 60}), "https://issuer.example", "client", s.now))
+	s.NoError(checkIDToken(s.token(map[string]any{"iss": "https://issuer.example", "aud": "client", "azp": "client", "exp": s.now.Unix() + 60}), "https://issuer.example", "client", s.now))
+}
+
+// TestAnIDTokenWithAnotherAudienceTooIsRefused is OpenID Connect Core 1.0 section 3.1.3.7
+// item 3 in errata set 2: a token that «contains additional audiences not trusted by the
+// Client» is rejected, and this client trusts no other audience.
+func (s *IDTokenSuite) TestAnIDTokenWithAnotherAudienceTooIsRefused() {
+	s.Error(checkIDToken(s.token(map[string]any{"iss": "https://issuer.example", "aud": []string{"other", "client"}, "exp": s.now.Unix() + 60}), "https://issuer.example", "client", s.now))
+	s.Error(checkIDToken(s.token(map[string]any{"iss": "https://issuer.example", "aud": []string{"other", "client"}, "azp": "client", "exp": s.now.Unix() + 60}), "https://issuer.example", "client", s.now))
+}
+
+func (s *IDTokenSuite) TestAnIDTokenAuthorizedForAnotherPartyIsRefused() {
+	s.Error(checkIDToken(s.token(map[string]any{"iss": "https://issuer.example", "aud": "client", "azp": "other", "exp": s.now.Unix() + 60}), "https://issuer.example", "client", s.now))
 }
 
 func (s *IDTokenSuite) TestAnIDTokenFromAnotherIssuerIsRefused() {

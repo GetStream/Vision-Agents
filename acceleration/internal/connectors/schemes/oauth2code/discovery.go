@@ -99,12 +99,18 @@ func (s *Scheme) discover(ctx context.Context, p core.Profile) (server, error) {
 	if d.Authorize == "" || d.Token == "" {
 		return server{}, errors.New("oauth2code: no authorize or token endpoint in the manifest or the authorization server metadata")
 	}
-	// RFC 6749 sections 3.1 and 3.2: both endpoints require TLS. A pinned endpoint is
-	// already https (core render); a discovered one is checked here. The registration
-	// endpoint carries the registered secret back, so it is held to the same rule.
+	// Every endpoint, pinned or discovered, is held to the egress policy before it is used.
+	// The authorize URL goes to the browser, so egress never dials it and this is its only
+	// check; the others leave through the caller's client, which is egress in the router,
+	// and are checked here too so a scheme given another client still refuses them. The
+	// prototype did the same (internal/mcp/oauth.go:676 on codex/connector-support at
+	// cf62af0d).
 	for _, endpoint := range []string{d.Authorize, d.Token, d.Registration, d.Revocation} {
-		if endpoint != "" && !strings.HasPrefix(endpoint, "https://") {
-			return server{}, fmt.Errorf("oauth2code: endpoint %q is not https", endpoint)
+		if endpoint == "" {
+			continue
+		}
+		if err := s.checkEndpoint(ctx, endpoint); err != nil {
+			return server{}, err
 		}
 	}
 	if d.Issuer == "" {
@@ -115,6 +121,25 @@ func (s *Scheme) discover(ctx context.Context, p core.Profile) (server, error) {
 		d.Issuer = origin(d.Authorize)
 	}
 	return d, nil
+}
+
+// checkEndpoint refuses an authorization server endpoint that is not https, carries
+// userinfo or a fragment, or does not reach a public address. RFC 6749 sections 3.1 and
+// 3.2: both endpoints require TLS, «MAY include an "application/x-www-form-urlencoded"
+// formatted query component ... which MUST be retained», and «MUST NOT include a fragment
+// component». So the query is kept on the URL and only left out of what PublicEndpoint
+// sees, since egress refuses a query.
+func (s *Scheme) checkEndpoint(ctx context.Context, endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
+		return fmt.Errorf("oauth2code: endpoint %q is not an https URL without userinfo or fragment", endpoint)
+	}
+	bare := *u
+	bare.RawQuery, bare.ForceQuery = "", false
+	if err := s.cfg.PublicEndpoint(ctx, bare.String()); err != nil {
+		return fmt.Errorf("oauth2code: endpoint %q: %w", endpoint, err)
+	}
+	return nil
 }
 
 // checkPKCE refuses a server that cannot do S256.
@@ -156,26 +181,32 @@ func (s *Scheme) protectedResource(ctx context.Context, endpoint string) (protec
 	if path != "" {
 		candidates = slices.Insert(candidates, 0, candidate{root + "/.well-known/oauth-protected-resource" + path, endpoint})
 	}
+	// A candidate that cannot be used, for any reason, sends the search on to the next one:
+	// MCP's order is a list to try, and RFC 9728 section 3.3 says only that a mismatched
+	// document «MUST NOT be used», not that the search ends. A refused redirect is such a
+	// reason too: Slack's path-inserted URL answers 302 to mcp-9827.slack.com, which egress
+	// does not follow, while its root document answers 200 (both GET at 2026-10-02T19:57Z).
+	var failures []error
 	for _, c := range candidates {
 		var metadata protectedResourceMetadata
 		found, err := s.getJSON(ctx, c.url, &metadata)
-		if err != nil {
-			return protectedResourceMetadata{}, err
-		}
-		if !found {
-			continue
-		}
+		switch {
+		case ctx.Err() != nil:
+			return protectedResourceMetadata{}, ctx.Err()
+		case err != nil:
+			failures = append(failures, err)
+		case !found:
 		// RFC 9728 section 3.3: resource «MUST be identical» to the identifier the
 		// well-known suffix was inserted into, or the document «MUST NOT be used».
-		if metadata.Resource != c.identifier {
-			return protectedResourceMetadata{}, fmt.Errorf("oauth2code: protected resource metadata at %s names resource %q, not %q", c.url, metadata.Resource, c.identifier)
+		case metadata.Resource != c.identifier:
+			failures = append(failures, fmt.Errorf("oauth2code: protected resource metadata at %s names resource %q, not %q", c.url, metadata.Resource, c.identifier))
+		case len(metadata.AuthorizationServers) == 0:
+			failures = append(failures, fmt.Errorf("oauth2code: protected resource metadata at %s names no authorization server", c.url))
+		default:
+			return metadata, nil
 		}
-		if len(metadata.AuthorizationServers) == 0 {
-			return protectedResourceMetadata{}, fmt.Errorf("oauth2code: protected resource metadata at %s names no authorization server", c.url)
-		}
-		return metadata, nil
 	}
-	return protectedResourceMetadata{}, fmt.Errorf("oauth2code: no protected resource metadata for %s", endpoint)
+	return protectedResourceMetadata{}, errors.Join(append([]error{fmt.Errorf("oauth2code: no usable protected resource metadata for %s", endpoint)}, failures...)...)
 }
 
 type authorizationServerMetadata struct {
@@ -209,28 +240,31 @@ func (s *Scheme) authorizationServer(ctx context.Context, issuer string) (author
 	if path != "" {
 		candidates = append(candidates, root+path+"/.well-known/openid-configuration")
 	}
+	// As for protected resource metadata, a candidate that cannot be used sends the search on.
+	var failures []error
 	for _, candidate := range candidates {
 		var metadata authorizationServerMetadata
 		found, err := s.getJSON(ctx, candidate, &metadata)
-		if err != nil {
-			return authorizationServerMetadata{}, err
-		}
-		if !found {
-			continue
-		}
+		switch {
+		case ctx.Err() != nil:
+			return authorizationServerMetadata{}, ctx.Err()
+		case err != nil:
+			failures = append(failures, err)
+		case !found:
 		// RFC 8414 section 3.3 and OpenID Connect Discovery 1.0 section 4.3: the issuer
 		// «MUST be identical» to the one the URL was built from, or the metadata is not used.
-		if metadata.Issuer != issuer {
-			return authorizationServerMetadata{}, fmt.Errorf("oauth2code: metadata at %s names issuer %q, not %q", candidate, metadata.Issuer, issuer)
+		case metadata.Issuer != issuer:
+			failures = append(failures, fmt.Errorf("oauth2code: metadata at %s names issuer %q, not %q", candidate, metadata.Issuer, issuer))
+		default:
+			return metadata, nil
 		}
-		return metadata, nil
 	}
-	return authorizationServerMetadata{}, fmt.Errorf("oauth2code: no authorization server metadata for %s", issuer)
+	return authorizationServerMetadata{}, errors.Join(append([]error{fmt.Errorf("oauth2code: no usable authorization server metadata for %s", issuer)}, failures...)...)
 }
 
 // getJSON reads one metadata document. found is false for a 404 or 410, which is how a
-// server says it does not publish that document, so the next well-known URL is tried; any
-// other failure is an error.
+// server says it does not publish that document; any other failure is an error, which the
+// callers record and then try the next well-known URL.
 func (s *Scheme) getJSON(ctx context.Context, target string, into any) (found bool, err error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
