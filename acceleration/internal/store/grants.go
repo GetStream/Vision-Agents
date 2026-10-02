@@ -29,17 +29,23 @@ var ErrConnectorConnectionChanged = errors.New("store: connector connection chan
 // has to differ from any other two-integer lock, of which there is none.
 const grantLockNamespace int32 = 839
 
-// grantReleaseTimeout bounds the unlock after fn returns, which runs on a context of its own
-// because the caller's may already be done. It is the prototype's value
+// grantDetachedTimeout bounds the statements that run on a context of their own because the
+// caller's may already be done: a grant write, so tokens a provider already rotated are not
+// dropped by the caller's deadline, and the unlock. It is the prototype's unlock timeout
 // (withConnectorConnectionLock in internal/store/connectors.go on codex/connector-support at
-// cf62af0d); unverified, not measured. An unlock that misses it closes the connection
-// instead, and the session's end releases the lock.
-const grantReleaseTimeout = 2 * time.Second
+// cf62af0d); unverified, not measured. Each is one statement by primary key or lock key. An
+// unlock that misses it closes the connection instead, and the session's end releases the
+// lock.
+const grantDetachedTimeout = 2 * time.Second
 
-// grantCancelTimeout bounds the pg_cancel_backend that ends a wait the caller gave up on.
-// Unverified, not measured: it is one round trip on a pool connection, and if it misses, the
-// abandoned wait still ends once the holder unlocks, when its connection is closed.
-const grantCancelTimeout = 2 * time.Second
+// grantRetryFirst and grantRetryMost are the pause between two pg_try_advisory_lock attempts:
+// the first pause, doubled after each miss up to the most. A miss means another router holds
+// the lock, usually across a provider round trip, and the most bounds how long a waiter idles
+// after the holder unlocks. Unverified, not measured.
+const (
+	grantRetryFirst = 5 * time.Millisecond
+	grantRetryMost  = 100 * time.Millisecond
+)
 
 // grantColumns are what a grant write sets: the grant itself (core.Grant: status, revision,
 // material, expiry, last error) and what a consent captures beside it (account, scopes,
@@ -51,17 +57,22 @@ var grantColumns = []string{
 	"account_id", "granted_scopes", "metadata", "updated_at",
 }
 
-// SaveConnectorConnectionAtRevision writes the connection's grant columns only if the stored
-// row is live and still at expectedRevision, under the same lock WithLockedConnectorConnection
-// holds, so it never lands in the middle of a refresh. The material must already be sealed
-// for connection.Revision, which is expectedRevision or later: a write never moves the
-// revision back, since that would make a blob sealed for an earlier revision open again.
+// SaveConnectorConnectionAtRevision saves new material, already sealed for
+// expectedRevision + 1, onto a connection that is live and still at expectedRevision, under
+// the same lock WithLockedConnectorConnection holds, so it never lands in the middle of a
+// refresh. It always advances the revision by one. A locked callback can commit a status
+// without advancing it (needs_reauthorization before a refresh), so a save at the same
+// revision from a snapshot read before that would pass the compare-and-swap and put back the
+// grant the callback retired; a save of new material replaces that grant instead.
 func (s *Store) SaveConnectorConnectionAtRevision(ctx context.Context, connection *ConnectorConnection, expectedRevision int) error {
 	if connection.CustomerID == "" || connection.ID == "" {
 		return errors.New("store: a customer and a connection id are required")
 	}
 	if expectedRevision < 1 {
 		return errors.New("store: the expected revision is 1 or more")
+	}
+	if connection.Revision != expectedRevision+1 {
+		return fmt.Errorf("store: a save is new material at revision %d, not %d", expectedRevision+1, connection.Revision)
 	}
 	return s.withGrantLock(ctx, connection.CustomerID, connection.ID, func(conn bun.Conn) error {
 		return s.saveAtRevision(ctx, conn, connection, expectedRevision)
@@ -113,11 +124,17 @@ func (s *Store) WithLockedConnectorConnection(
 
 // saveAtRevision is the compare-and-swap every grant write is: it matches only the live row
 // still at expected, so of two writers that read the same revision one wins and the other
-// gets ErrConnectorConnectionChanged.
+// gets ErrConnectorConnectionChanged. A write never moves the revision back, since that would
+// make a blob sealed for an earlier revision open again. It runs detached from ctx, within
+// grantDetachedTimeout: the driver turns a passed deadline into a passed socket deadline
+// (Conn.deadline in github.com/uptrace/bun/driver/pgdriver v1.2.18), which would drop a
+// rotation the provider already made.
 func (s *Store) saveAtRevision(ctx context.Context, conn bun.IConn, connection *ConnectorConnection, expected int) error {
 	if connection.Revision < expected {
 		return fmt.Errorf("store: revision %d is behind the stored %d", connection.Revision, expected)
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grantDetachedTimeout)
+	defer cancel()
 	connection.UpdatedAt = time.Now().UTC().Truncate(time.Microsecond)
 	if connection.MaterialSealed == nil {
 		connection.MaterialSealed = []byte{}
@@ -159,58 +176,57 @@ func (s *Store) saveAtRevision(ctx context.Context, conn bun.IConn, connection *
 // why it lives on one dedicated connection: a lock taken on a pooled connection and not
 // released would stay with whoever borrows it next.
 func (s *Store) withGrantLock(ctx context.Context, customerID, id string, fn func(bun.Conn) error) error {
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("store: grant lock connection: %w", err)
-	}
-	var pid int
-	if err := conn.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
-		discard(conn)
-		return fmt.Errorf("store: grant lock connection: %w", err)
-	}
 	key := grantLockKey(customerID, id)
-	if err := s.acquireGrantLock(ctx, conn, pid, key); err != nil {
+	conn, err := s.acquireGrantLock(ctx, key)
+	if err != nil {
 		return err
 	}
 	defer releaseGrantLock(conn, key)
 	return fn(conn)
 }
 
-// acquireGrantLock waits for the lock until it is granted or ctx is done. The wait runs
-// without ctx, because the driver turns a deadline into a socket read deadline
-// (Conn.deadline in github.com/uptrace/bun/driver/pgdriver v1.2.18) and ignores a plain
-// cancel: dropping the socket would leave the server still queued for the lock, since it
-// "will detect the loss of the connection only at the next interaction with the socket"
-// (client_connection_check_interval defaults to 0,
-// https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-CLIENT-CONNECTION-CHECK-INTERVAL).
-// So a caller that gives up returns at once, and pg_cancel_backend ("cancels the current
-// query of the session", allowed for a backend of the same role,
-// https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-SIGNAL-TABLE)
-// ends the wait on the server. Whether the cancel or the grant came first, the connection is
-// then closed, which ends the session and with it any lock it got.
-func (s *Store) acquireGrantLock(ctx context.Context, conn bun.Conn, pid int, key int32) error {
-	acquired := make(chan error, 1)
-	go func() {
-		_, err := conn.ExecContext(context.WithoutCancel(ctx),
-			"SELECT pg_advisory_lock(?::integer, ?::integer)", grantLockNamespace, key)
-		acquired <- err
-	}()
-	select {
-	case err := <-acquired:
+// acquireGrantLock tries the lock with pg_try_advisory_lock, which "will either obtain the
+// lock immediately and return true, or return false without waiting"
+// (https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS),
+// and pauses between tries until it gets it or ctx is done. Nothing waits in Postgres, so a
+// caller that gives up leaves no wait queued on the server, and a waiter holds no connection
+// while it pauses. A blocking pg_advisory_lock could not promise that: the driver bounds
+// every read by its ReadTimeout, 10s unless set (newDefaultConfig in
+// github.com/uptrace/bun/driver/pgdriver v1.2.18, which store.Open does not change), or by
+// ctx's deadline, and drops the socket when it passes, while the server "will detect the loss
+// of the connection only at the next interaction with the socket"
+// (https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-CLIENT-CONNECTION-CHECK-INTERVAL),
+// so the wait would stay queued. The cost is that waiters are not served in order.
+func (s *Store) acquireGrantLock(ctx context.Context, key int32) (bun.Conn, error) {
+	pause := grantRetryFirst
+	for {
+		conn, err := s.db.Conn(ctx)
 		if err != nil {
-			discard(conn)
-			return fmt.Errorf("store: acquire grant lock: %w", err)
+			return bun.Conn{}, fmt.Errorf("store: grant lock connection: %w", err)
 		}
-		return nil
-	case <-ctx.Done():
-		go func() {
-			cancelCtx, cancel := context.WithTimeout(context.Background(), grantCancelTimeout)
-			defer cancel()
-			_, _ = s.db.ExecContext(cancelCtx, "SELECT pg_cancel_backend(?)", pid)
-			<-acquired
+		var locked bool
+		err = conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(?::integer, ?::integer)", grantLockNamespace, key).Scan(&locked)
+		if err != nil {
+			// The lock may have been granted with the answer lost; closing the connection
+			// ends the session, which releases it.
 			discard(conn)
-		}()
-		return fmt.Errorf("store: wait for grant lock: %w", context.Cause(ctx))
+			if ctx.Err() != nil {
+				return bun.Conn{}, fmt.Errorf("store: wait for grant lock: %w", context.Cause(ctx))
+			}
+			return bun.Conn{}, fmt.Errorf("store: acquire grant lock: %w", err)
+		}
+		if locked {
+			return conn, nil
+		}
+		_ = conn.Close()
+		timer := time.NewTimer(pause)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return bun.Conn{}, fmt.Errorf("store: wait for grant lock: %w", context.Cause(ctx))
+		case <-timer.C:
+		}
+		pause = min(2*pause, grantRetryMost)
 	}
 }
 
@@ -220,7 +236,7 @@ func (s *Store) acquireGrantLock(ctx context.Context, conn bun.Conn, pid int, ke
 // that, or an unlock that fails, closes the connection rather than return a session in a
 // state nobody knows.
 func releaseGrantLock(conn bun.Conn, key int32) {
-	ctx, cancel := context.WithTimeout(context.Background(), grantReleaseTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), grantDetachedTimeout)
 	defer cancel()
 	var released bool
 	err := conn.QueryRowContext(ctx, "SELECT pg_advisory_unlock(?::integer, ?::integer)", grantLockNamespace, key).Scan(&released)
@@ -243,8 +259,16 @@ func discard(conn bun.Conn) {
 // code zero (sometimes called NUL) cannot be stored",
 // https://www.postgresql.org/docs/current/datatype-character.html), so no two pairs join to
 // the same input. It is computed here rather than by hashtext, so it does not depend on
-// the server's hash function. Two connections that share a key only take turns; the lock
-// guards no row the other one writes.
+// the server's hash function.
+//
+// 32 bits, because the two-integer form is what keeps grant locks apart from every bigint
+// lock (grantLockNamespace), and its other half is the namespace. So two connections can
+// share a key. That costs contention, never correctness: the lock only orders callbacks, and
+// each callback writes its own row under its own compare-and-swap, so a collision makes two
+// connections take turns. With keys spread uniformly over 2^32 values, a lock taken while k
+// others are held shares a key with one of them with probability about (k-1)/2^32, 2.3e-7
+// for k = 1000; a table of a million connections has about 116 colliding pairs
+// (n(n-1)/2 / 2^32), and a pair waits only when both are locked at once.
 func grantLockKey(customerID, id string) int32 {
 	sum := sha256.Sum256([]byte(customerID + "\x00" + id))
 	return int32(binary.BigEndian.Uint32(sum[:4]))

@@ -99,13 +99,105 @@ func (s *StoreSuite) TestASaveAtAStaleRevisionIsRefused() {
 	s.Equal("the first writer", stored.LastError)
 }
 
-func (s *StoreSuite) TestASaveThatMovesTheRevisionBackIsRefused() {
+func (s *StoreSuite) TestASaveIsNewMaterialAtTheNextRevision() {
 	connection := s.connection("acme-app", nil)
-	connection.Revision = 3
-	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1))
 
-	connection.Revision = 2
-	s.ErrorContains(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 3), "behind")
+	connection.Revision = 1
+	s.ErrorContains(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1), "new material at revision 2")
+	connection.Revision = 3
+	s.ErrorContains(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1), "new material at revision 2")
+	s.Equal(1, s.storedConnection(connection.ID).Revision)
+}
+
+func (s *StoreSuite) TestASaveCannotPutBackAGrantACheckpointRetired() {
+	connection := s.connection("acme-app", nil)
+	snapshot := connection
+
+	// A refresh checkpoints needs_reauthorization at the same revision before it spends the
+	// refresh token, and never learns what became of it.
+	err := s.store.WithLockedConnectorConnection(s.ctx, "acme-app", connection.ID,
+		func(locked *ConnectorConnection, checkpoint func() error) (bool, error) {
+			locked.Status = ConnectionNeedsReauthorization
+			locked.LastError = "refresh in flight"
+			return false, checkpoint()
+		})
+	s.Require().NoError(err)
+
+	// A save from a snapshot read before it, putting the old grant back as connected.
+	snapshot.Status = ConnectionConnected
+	s.Error(s.store.SaveConnectorConnectionAtRevision(s.ctx, &snapshot, 1))
+
+	stored := s.storedConnection(connection.ID)
+	s.Equal(ConnectionNeedsReauthorization, stored.Status)
+	s.Equal("refresh in flight", stored.LastError)
+}
+
+func (s *StoreSuite) TestALockedCallbackCannotMoveTheRevisionBack() {
+	connection := s.connection("acme-app", nil)
+
+	err := s.store.WithLockedConnectorConnection(s.ctx, "acme-app", connection.ID,
+		func(locked *ConnectorConnection, _ func() error) (bool, error) {
+			locked.Revision = 0
+			return true, nil
+		})
+	s.ErrorContains(err, "behind")
+	s.Equal(1, s.storedConnection(connection.ID).Revision)
+}
+
+func (s *StoreSuite) TestACommitAfterTheCallersDeadlineStillLands() {
+	connection := s.connection("acme-app", nil)
+
+	// The provider answers after the caller's deadline, with tokens it already rotated.
+	ctx, cancel := context.WithTimeout(s.ctx, 100*time.Millisecond)
+	defer cancel()
+	err := s.store.WithLockedConnectorConnection(ctx, "acme-app", connection.ID,
+		func(locked *ConnectorConnection, _ func() error) (bool, error) {
+			<-ctx.Done()
+			locked.Revision++
+			locked.Status = ConnectionConnected
+			locked.MaterialSealed = []byte("rotated")
+			locked.MaterialKEKVersion = 1
+			return true, nil
+		})
+	s.Require().NoError(err)
+
+	stored := s.storedConnection(connection.ID)
+	s.Equal(2, stored.Revision, "the rotation is kept")
+	s.Equal(ConnectionConnected, stored.Status)
+}
+
+func (s *StoreSuite) TestAWaiterOutlastsTheDriversReadTimeout() {
+	connection := s.connection("acme-app", nil)
+	release := s.holding(connection)
+	waiter := s.router()
+
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	defer cancel()
+	var ran atomic.Bool
+	waited := make(chan error, 1)
+	go func() {
+		waited <- waiter.WithLockedConnectorConnection(ctx, "acme-app", connection.ID,
+			func(*ConnectorConnection, func() error) (bool, error) {
+				ran.Store(true)
+				return false, nil
+			})
+	}()
+	// Past pgdriver's default ReadTimeout of 10s (newDefaultConfig in
+	// github.com/uptrace/bun/driver/pgdriver v1.2.18), which bounds any one blocking read.
+	time.Sleep(12 * time.Second)
+	s.Len(waited, 0, "the waiter is still waiting, not failed")
+	release()
+
+	s.Require().NoError(<-waited, "a waiter waits as long as its own context allows")
+	s.True(ran.Load())
+	s.assertNothingIsHeld(waiter)
+}
+
+// storedConnection is the connection as stored now.
+func (s *StoreSuite) storedConnection(id string) ConnectorConnection {
+	stored, err := s.store.ConnectorConnection(s.ctx, "acme-app", id)
+	s.Require().NoError(err)
+	return stored
 }
 
 func (s *StoreSuite) TestASaveOntoADeletedConnectionIsRefused() {
