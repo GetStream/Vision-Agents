@@ -196,18 +196,32 @@ func logLevel(settings config.Config) slog.Level {
 	return level
 }
 
-// newConnectorSealer builds the keyring connector credentials are sealed under, and nil
-// when connectors are off. It does not depend on auth.mode: a proxy deployment holds
-// connector credentials as much as an api_key one does.
+// newSecretSealer builds the keyring the secrets the router holds for its customers are
+// sealed under, connector credentials and Stream app keys, and nil when nothing that holds
+// one is on. It does not depend on auth.mode: a proxy deployment holds them as much as an
+// api_key one does.
 //
 // The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
 // ROUTER_AUTH_KEK_VERSION naming the one that seals new rows. That variable picks the
 // writer and is never a ceiling: moving it back to an older key must leave the newer ones
 // loaded, or the rows sealed under them stop opening. auth.kek is version 1, so a
 // deployment that already has it needs nothing more.
-func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
-	if !settings.Connectors.Enabled {
+func newSecretSealer(settings config.Config) (*auth.Sealer, error) {
+	var holders []string
+	if settings.Connectors.Enabled {
+		holders = append(holders, "connectors.enabled")
+	}
+	if settings.Stream.Tenancy == config.TenancyApp {
+		holders = append(holders, "stream.tenancy="+config.TenancyApp)
+	}
+	if len(holders) == 0 {
 		return nil, nil
+	}
+	// The setting that needs the keyring is what each refusal names, so whoever reads it
+	// knows which change brought it on.
+	needs := strings.Join(holders, " and ") + " need"
+	if len(holders) == 1 {
+		needs = holders[0] + " needs"
 	}
 	current := auth.KEKVersion
 	if configured := os.Getenv(authKEKVersionEnvVar); configured != "" {
@@ -215,8 +229,7 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 		if err != nil || version < 1 {
 			// The value is left out on purpose: a key pasted into the wrong variable would
 			// otherwise reach the logs and Sentry with this error.
-			return nil, fmt.Errorf("connectors.enabled needs %s to be a positive integer",
-				authKEKVersionEnvVar)
+			return nil, fmt.Errorf("%s %s to be a positive integer", needs, authKEKVersionEnvVar)
 		}
 		current = version
 	}
@@ -241,15 +254,15 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 	}
 	if keys[current] == "" {
 		if os.Getenv(authKEKVersionEnvVar) == "" {
-			return nil, fmt.Errorf("connectors.enabled needs a key encryption keyring to seal "+
-				"connector credentials: set %s_V1 (%s is version 1)", authKEKEnvVar, authKEKEnvVar)
+			return nil, fmt.Errorf("%s a key encryption keyring to seal the secrets it holds: "+
+				"set %s_V1 (%s is version 1)", needs, authKEKEnvVar, authKEKEnvVar)
 		}
 		// The version is not named: an all-digit key pasted into ROUTER_AUTH_KEK_VERSION
 		// parses as one, and naming it would send the key to the logs and Sentry. The
 		// versions that are set come from variable names, never from values.
-		return nil, fmt.Errorf("connectors.enabled needs a key for the version %s names: "+
+		return nil, fmt.Errorf("%s a key for the version %s names: "+
 			"set the matching %s_V<n> (versions set: %v)",
-			authKEKVersionEnvVar, authKEKEnvVar, slices.Sorted(maps.Keys(keys)))
+			needs, authKEKVersionEnvVar, authKEKEnvVar, slices.Sorted(maps.Keys(keys)))
 	}
 	return auth.NewSealerWithKeyring(current, keys)
 }
@@ -334,9 +347,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	// Checked before anything is opened, so a deployment that turned connectors on without
-	// a keyring is refused at startup rather than on its first connection.
-	if _, err := newConnectorSealer(settings); err != nil {
+	// Checked before anything is opened, so a deployment that turned on something holding
+	// secrets without a keyring is refused at startup rather than on its first secret.
+	if _, err := newSecretSealer(settings); err != nil {
 		return err
 	}
 
