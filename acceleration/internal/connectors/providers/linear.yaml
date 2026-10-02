@@ -1,0 +1,48 @@
+# Linear's hosted MCP server, as the prototype ran it live (internal/mcp/connectors.yaml:67-76
+# on codex/connector-support at cf62af0d, «[proto]:N» below; its live OAuth and list_teams
+# call are in docs/connector-handover.md:180 there). Vendor pages, opened October 1, 2026:
+#   [mcp]   https://linear.app/docs/mcp
+#   [oauth] https://linear.app/developers/oauth-2-0-authentication
+# [oauth] is Linear's OAuth for apps registered with Linear. A client the MCP server registers
+# dynamically talks to the authorization server the MCP server advertises, and [mcp] does not
+# say that one behaves the same, so every value taken from [oauth] is # unverified for it.
+# Architecture rows cited are «Axes where providers differ» in
+# acceleration/docs/connectors/architecture.md on connectors/planning.
+id: linear
+# The database numbers revisions; see AGENTS.md.
+revision: 1
+# [proto]:68-70
+name: Linear
+category: Project management
+description: Search issues and projects, read workspace context, and update work.
+endpoints:
+  # [mcp]; [proto]:71. Authorize and token endpoints are not written: they are discovered
+  # from the MCP server (RFC 9728 and 8414), as the prototype did for every DCR entry
+  # (docs/connector-design.md:38 at cf62af0d). A revoke endpoint is left out for the same
+  # reason: [oauth]'s https://api.linear.app/oauth/revoke is for Linear's own apps.
+  mcp: https://mcp.linear.app/mcp
+# Authorization code with PKCE: row 1 («Auth code + PKCE (Slack, Linear)»); [proto]:72.
+schemes: [oauth2_code]
+client:
+  # «OAuth 2.1 with dynamic client registration»: [mcp]; [proto]:73.
+  policy: [dcr]
+scopes:
+  # [proto]:74-76. [mcp] names read as the scope that keeps a connection read-only.
+  list: [read, write]
+  # No separator, so a space (RFC 6749 section 3.3), which is how the prototype joined every
+  # scope list but Slack's (internal/mcp/oauth.go:262-264 at cf62af0d). [oauth] says comma
+  # separated for Linear's own apps. # unverified
+# No identity: the account is Linear's GraphQL viewer query (row 6), a profile request this
+# schema cannot make, so the account stays unverified (architecture doc, «Risks», item 9).
+refresh:
+  # Rotating, a 30-minute grace for a consumed refresh token, an access token valid for
+  # 24 hours: [oauth]; row 15 («Linear 30 min»). # unverified for the MCP server's clients
+  rotating: true
+  grace: 30m
+  access_ttl: 24h
+rate_limit:
+  # Per user: row 16. No vendor page behind it. # unverified
+  per: user
+sources:
+  - kind: mcp
+    endpoint: mcp

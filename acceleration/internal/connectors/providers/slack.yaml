@@ -1,0 +1,104 @@
+# Slack's hosted MCP server, over the user-token flow the prototype ran live
+# (internal/mcp/connectors.yaml:2-44 on codex/connector-support at cf62af0d, «[proto]:N»
+# below; its live OAuth and tool call are in docs/connector-handover.md:181 there). The
+# core's fixture testdata/manifests/slack.yaml is the bot-token flow; this is not.
+# Vendor pages, opened October 1, 2026:
+#   [mcp]     https://docs.slack.dev/ai/slack-mcp-server/
+#   [user]    https://docs.slack.dev/reference/methods/oauth.v2.user.access
+#   [rotate]  https://docs.slack.dev/authentication/using-token-rotation
+#   [revoke]  https://docs.slack.dev/reference/methods/auth.revoke
+# Architecture rows cited are «Stress test: 12 awkward providers», row 5, in
+# acceleration/docs/connectors/architecture.md on connectors/planning.
+id: slack
+# The database numbers revisions; see AGENTS.md.
+revision: 1
+# [proto]:3-5
+name: Slack
+category: Communication
+description: Search the workspace, read and send messages, and look people up.
+endpoints:
+  # [mcp]; [proto]:10-11
+  authorize: https://slack.com/oauth/v2_user/authorize
+  token: https://slack.com/api/oauth.v2.user.access
+  # [revoke] says GET https://slack.com/api/auth.revoke, and does not say whether it takes a
+  # user token. # unverified
+  revoke: https://slack.com/api/auth.revoke
+  # [mcp]; [proto]:6
+  mcp: https://mcp.slack.com/mcp
+# Authorization code: [proto]:7-8 (auth: oauth, oauth_mode: confidential).
+schemes: [oauth2_code]
+client:
+  # Slack MCP needs a registered app with a fixed app id ([mcp]), so the operator owns it.
+  policy: [operator]
+  # [proto]:13. [user] prefers HTTP Basic (client_secret_basic); the post form is what the
+  # prototype ran live.
+  auth_method: client_secret_post
+  # [proto]:14
+  env: SLACK
+scopes:
+  # User-token scopes ([mcp], «OAuth scopes needed on user token»), exactly the prototype's,
+  # [proto]:15-44, so the authorize URL matches the one the prototype built (T9 acceptance).
+  list:
+    - search:read.public
+    - search:read.private
+    - search:read.mpim
+    - search:read.im
+    - search:read.files
+    - search:read.users
+    - files:read
+    - files:write
+    - emoji:read
+    - chat:write
+    - channels:history
+    - groups:history
+    - mpim:history
+    - im:history
+    - channels:write
+    - groups:write
+    - im:write
+    - mpim:write
+    - reactions:write
+    - canvases:read
+    - canvases:write
+    - users:read
+    - users:read.email
+    - channels:read
+    - groups:read
+    - mpim:read
+    - im:read
+    - lists:read
+    - lists:write
+  # Comma-separated: row 5; the prototype joined Slack's scopes with commas
+  # (internal/mcp/oauth.go:265-266 at cf62af0d).
+  separator: ","
+capture:
+  # team.id and authed_user.id are in [user]'s example response. The prototype read the same
+  # two (internal/mcp/oauth.go:106-116,832-837 at cf62af0d), though its handover says the live
+  # connection gave no stable account id (docs/connector-handover.md:190-192 there).
+  - name: team_id
+    from: token_response
+    path: $.team.id
+  - name: user_id
+    from: token_response
+    path: $.authed_user.id
+  # Only an Enterprise Grid org install carries it: row 5 («capture: enterprise_id»). [user]'s
+  # example does not show it. # unverified
+  - name: enterprise_id
+    from: token_response
+    path: $.enterprise.id
+    optional: true
+# Team and user: row 5 («identity: $.team.id + $.authed_user.id»).
+identity: [team_id, user_id]
+refresh:
+  # User tokens rotate too and expire in 43,200 seconds: [rotate]. Its grace is «brief», with
+  # no number, so none is set. [rotate] refreshes at oauth.v2.access; [user] takes a
+  # refresh_token grant at the token endpoint above, which is where the prototype refreshed
+  # ([proto]:12). A live refresh was never run there (docs/connector-design.md:571).
+  rotating: true
+  access_ttl: 12h
+rate_limit:
+  # Per workspace: row 5, which is the tenant here.
+  per: tenant
+sources:
+  - kind: mcp
+    endpoint: mcp
