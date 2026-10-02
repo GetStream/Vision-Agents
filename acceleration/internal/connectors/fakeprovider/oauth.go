@@ -7,6 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -24,7 +27,10 @@ func (s *Server) protectedResource(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) authorizationServer(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	s.mu.Lock()
+	cimd := s.is(ClientMetadataDocuments)
+	s.mu.Unlock()
+	metadata := map[string]any{
 		// RFC 8414 §2: issuer, authorization_endpoint, token_endpoint and
 		// response_types_supported are required; the rest are optional and say what this
 		// server does.
@@ -42,7 +48,12 @@ func (s *Server) authorizationServer(w http.ResponseWriter, _ *http.Request) {
 		"token_endpoint_auth_methods_supported": []string{"none", "client_secret_basic", "client_secret_post"},
 		// RFC 9207 §3.
 		"authorization_response_iss_parameter_supported": true,
-	})
+	}
+	if cimd {
+		// CIMD §6.
+		metadata["client_id_metadata_document_supported"] = true
+	}
+	writeJSON(w, http.StatusOK, metadata)
 }
 
 // register is RFC 7591 dynamic client registration.
@@ -91,9 +102,27 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 // authorize approves at once, as a user who clicks Allow, unless ConsentDenied is on.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	clientID := q.Get("client_id")
+	s.mu.Lock()
+	fetch := s.is(ClientMetadataDocuments) && s.clients[clientID] == nil && strings.HasPrefix(clientID, "https://")
+	metadataClient := s.metadataClient
+	s.mu.Unlock()
+	if fetch {
+		// Fetched without the lock: whatever serves the document may be slow.
+		c, err := fetchClientMetadata(metadataClient, clientID)
+		if err != nil {
+			// CIMD §5.1: a failed fetch aborts the request; RFC 6749 §4.1.2.1: an invalid
+			// client is not redirected back.
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.mu.Lock()
+		s.clients[c.id] = c
+		s.mu.Unlock()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c := s.clients[q.Get("client_id")]
+	c := s.clients[clientID]
 	redirectURI := q.Get("redirect_uri")
 	// RFC 6749 §4.1.2.1: with an unknown client or redirect URI the server «MUST NOT
 	// automatically redirect the user-agent».
@@ -159,6 +188,55 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		}
 		redirect(w, redirectURI, back)
 	}
+}
+
+// maxClientMetadataBytes is CIMD §8.7: «The recommended maximum size to read is 5
+// kilobytes».
+const maxClientMetadataBytes = 5 * 1024
+
+// fetchClientMetadata reads the client metadata document at clientID and turns it into a
+// public client, or says why it cannot.
+func fetchClientMetadata(fetcher *http.Client, clientID string) (*client, error) {
+	if fetcher == nil {
+		return nil, errors.New("fakeprovider: ClientMetadataDocuments needs FetchClientMetadataWith")
+	}
+	response, err := fetcher.Get(clientID)
+	if err != nil {
+		return nil, fmt.Errorf("fakeprovider: client metadata: %w", err)
+	}
+	defer response.Body.Close()
+	// CIMD §5: «MUST be served with a 200 OK»; any other status is an error.
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fakeprovider: client metadata answered %d", response.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxClientMetadataBytes+1))
+	if err != nil || len(raw) > maxClientMetadataBytes {
+		return nil, errors.New("fakeprovider: client metadata unreadable or over 5 KB")
+	}
+	var document struct {
+		ClientID     string   `json:"client_id"`
+		ClientName   string   `json:"client_name"`
+		RedirectURIs []string `json:"redirect_uris"`
+		Method       string   `json:"token_endpoint_auth_method"`
+		Secret       *string  `json:"client_secret"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, fmt.Errorf("fakeprovider: client metadata: %w", err)
+	}
+	switch {
+	case document.ClientID != clientID:
+		// CIMD §4: client_id matches the URL it was fetched from, by simple string comparison.
+		return nil, errors.New("fakeprovider: client metadata names another client_id")
+	case document.Secret != nil || (document.Method != "" && document.Method != "none"):
+		// CIMD §4.1: no client_secret and no method based on a shared secret. The key-based
+		// methods §4.1 still allows, such as private_key_jwt, this server does not offer.
+		return nil, errors.New("fakeprovider: client metadata asks for a shared secret")
+	case document.ClientName == "" || len(document.RedirectURIs) == 0:
+		// What MCP 2025-11-25 («Client ID Metadata Documents») requires beside client_id.
+		return nil, errors.New("fakeprovider: client metadata lacks client_name or redirect_uris")
+	}
+	// CIMD §4.2: the document's redirect_uris are the registered ones.
+	return &client{id: clientID, methods: []string{"none"}, redirects: document.RedirectURIs}, nil
 }
 
 // Sign is SignedCallback's signature, as shopify.dev «Authorization code grant» specifies

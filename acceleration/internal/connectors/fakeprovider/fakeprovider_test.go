@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -128,6 +129,67 @@ func (s *FakeProviderSuite) TestADynamicallyRegisteredPublicClientCanConnect() {
 	}, false)
 	s.Equal(http.StatusOK, status)
 	s.NotEmpty(body["access_token"])
+}
+
+func (s *FakeProviderSuite) TestAClientMetadataDocumentClientConnectsWithItsURLAsClientID() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientMetadataDocuments)
+	s.Equal(true, s.getJSON(srv, fakeprovider.PathAuthorizationServer)["client_id_metadata_document_supported"])
+	clientID, fetches := s.serveClientMetadata(srv, func(clientID string) map[string]any {
+		return map[string]any{"client_id": clientID, "client_name": "Test", "redirect_uris": []string{"https://cimd.example/callback"}, "token_endpoint_auth_method": "none"}
+	})
+
+	verifier := "cimd-verifier-cimd-verifier-cimd-verifier-cimd-verifier"
+	authorize := srv.URL + fakeprovider.PathAuthorize + "?" + url.Values{
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"https://cimd.example/callback"},
+		"code_challenge": {challenge(verifier)}, "code_challenge_method": {"S256"},
+	}.Encode()
+	code := s.consent(srv, authorize).Query().Get("code")
+	s.Equal(1, *fetches, "the server fetched the document at the client_id URL")
+	status, body := s.post(srv, fakeprovider.PathToken, url.Values{
+		"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID},
+		"redirect_uri": {"https://cimd.example/callback"}, "code_verifier": {verifier},
+	}, false)
+	s.Equal(http.StatusOK, status)
+	s.NotEmpty(body["access_token"])
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister), "no dynamic registration")
+}
+
+func (s *FakeProviderSuite) TestAClientMetadataDocumentThatNamesAnotherClientIsRefused() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientMetadataDocuments)
+	clientID, _ := s.serveClientMetadata(srv, func(string) map[string]any {
+		return map[string]any{"client_id": "https://elsewhere.example/client", "client_name": "Test", "redirect_uris": []string{"https://cimd.example/callback"}}
+	})
+	_, err := srv.Consent(srv.URL + fakeprovider.PathAuthorize + "?" + url.Values{
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"https://cimd.example/callback"},
+		"code_challenge": {challenge("v")}, "code_challenge_method": {"S256"},
+	}.Encode())
+	s.Error(err, "no redirect for a client the document does not describe")
+}
+
+func (s *FakeProviderSuite) TestAClientMetadataDocumentWithASecretIsRefused() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientMetadataDocuments)
+	clientID, _ := s.serveClientMetadata(srv, func(clientID string) map[string]any {
+		return map[string]any{"client_id": clientID, "client_name": "Test", "redirect_uris": []string{"https://cimd.example/callback"}, "token_endpoint_auth_method": "client_secret_post"}
+	})
+	_, err := srv.Consent(srv.URL + fakeprovider.PathAuthorize + "?" + url.Values{
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"https://cimd.example/callback"},
+		"code_challenge": {challenge("v")}, "code_challenge_method": {"S256"},
+	}.Encode())
+	s.Error(err)
+}
+
+func (s *FakeProviderSuite) TestWithoutClientMetadataDocumentsAURLClientIsUnknown() {
+	srv := fakeprovider.New(s.T())
+	s.NotContains(s.getJSON(srv, fakeprovider.PathAuthorizationServer), "client_id_metadata_document_supported")
+	clientID, fetches := s.serveClientMetadata(srv, func(clientID string) map[string]any {
+		return map[string]any{"client_id": clientID, "client_name": "Test", "redirect_uris": []string{"https://cimd.example/callback"}}
+	})
+	_, err := srv.Consent(srv.URL + fakeprovider.PathAuthorize + "?" + url.Values{
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"https://cimd.example/callback"},
+		"code_challenge": {challenge("v")}, "code_challenge_method": {"S256"},
+	}.Encode())
+	s.Error(err)
+	s.Equal(0, *fetches)
 }
 
 func (s *FakeProviderSuite) TestStrictRotationRefusesAReplayAndRevokesTheGrant() {
@@ -490,6 +552,22 @@ func (s *FakeProviderSuite) authorizeURL(srv *fakeprovider.Server, extra url.Val
 		query[k] = v
 	}
 	return srv.URL + fakeprovider.PathAuthorize + "?" + query.Encode(), verifier
+}
+
+// serveClientMetadata starts a TLS server that serves the document document returns at
+// /client, points srv's fetches at it, and returns the client_id URL and a count of fetches.
+func (s *FakeProviderSuite) serveClientMetadata(srv *fakeprovider.Server, document func(clientID string) map[string]any) (string, *int) {
+	var clientID string
+	fetches := new(int)
+	host := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*fetches++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(document(clientID))
+	}))
+	s.T().Cleanup(host.Close)
+	clientID = host.URL + "/client"
+	srv.FetchClientMetadataWith(host.Client())
+	return clientID, fetches
 }
 
 func (s *FakeProviderSuite) consent(srv *fakeprovider.Server, authorize string) *url.URL {
