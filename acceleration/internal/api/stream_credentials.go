@@ -200,10 +200,7 @@ func (s *Server) updateAppStreamCredentials(ctx context.Context, request *stream
 	s.stream.Invalidate(customerID)
 	// What was acting with a key that is gone, or in an app that is no longer this one's,
 	// stops rather than going on with a credential the app took back.
-	if len(registered.Dropped) > 0 {
-		s.stopActingIn(customerID, registered.Previous)
-	}
-	if registered.Previous != 0 && registered.Previous != registered.App.StreamAppPK {
+	if len(registered.Dropped) > 0 || registered.Previous != registered.App.StreamAppPK {
 		s.stopActingIn(customerID, registered.Previous)
 	}
 	return s.getAppSettings(ctx, nil)

@@ -153,15 +153,11 @@ func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenReq
 			callType, pin = found.Spec().CallType, found.Spec().StreamApp
 		}
 	}
-	bound, err := s.streamForApp(ctx, customerID, pin)
-	switch {
-	case errors.Is(err, errNoStream):
-		return CreateCallToken400JSONResponse{badRequest(noStreamKeys)}, nil
-	case elsewhere(err):
-		return CreateCallToken400JSONResponse{badRequest(callElsewhere)}, nil
-	case errors.Is(err, streamapp.ErrReadOnly):
-		return CreateCallToken400JSONResponse{badRequest(callReadOnly)}, nil
-	case err != nil:
+	bound, err := s.streamForApp(ctx, customerID, pin, false)
+	if message, refused := refusal(err, callElsewhere, callReadOnly); refused {
+		return CreateCallToken400JSONResponse{badRequest(message)}, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	if bound, err = s.minting(ctx, bound); err != nil {
@@ -219,14 +215,12 @@ func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenReq
 	}
 
 	bound, err := s.agentStream(ctx, customerID, agentID)
-	switch {
-	case errors.Is(err, errNoStream):
-		return CreateChatToken400JSONResponse{badRequest(noStreamKeys)}, nil
-	case elsewhere(err):
-		return CreateChatToken400JSONResponse{badRequest("that agent's conversation is kept in a Stream app this customer no longer acts in")}, nil
-	case errors.Is(err, streamapp.ErrReadOnly):
-		return CreateChatToken400JSONResponse{badRequest("that agent's conversation is kept in the router's shared Stream app, where this app no longer mints tokens")}, nil
-	case err != nil:
+	if message, refused := refusal(err,
+		"that agent's conversation is kept in a Stream app this customer no longer acts in",
+		"that agent's conversation is kept in the router's shared Stream app, where this app no longer mints tokens"); refused {
+		return CreateChatToken400JSONResponse{badRequest(message)}, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	if bound, err = s.minting(ctx, bound); err != nil {
@@ -340,11 +334,17 @@ var errNoStream = errors.New("api: no Stream app is configured for this customer
 // streamForApp is the Stream app work already pinned to one is finished in: the app the
 // call or session was made in, wherever its customer acts now. errNoStream says there is no
 // Stream at all; streamapp's errors say the pinned app is not one this customer can act in.
-func (s *Server) streamForApp(ctx context.Context, customerID string, app int64) (streamapp.Bound, error) {
+func (s *Server) streamForApp(ctx context.Context, customerID string, app int64, reading bool) (streamapp.Bound, error) {
 	if s.stream == nil {
 		return streamapp.Bound{}, errNoStream
 	}
-	bound, err := s.stream.ForApp(ctx, customerID, app)
+	resolve := s.stream.ForApp
+	if reading {
+		// Read back, work kept in the router's shared app is reached even once the customer
+		// may no longer write there.
+		resolve = s.stream.ForAppReading
+	}
+	bound, err := resolve(ctx, customerID, app)
 	if errors.Is(err, streamapp.ErrNoIdentity) {
 		return streamapp.Bound{}, errNoStream
 	}
@@ -357,6 +357,20 @@ func elsewhere(err error) bool {
 	return errors.Is(err, streamapp.ErrStreamAppMoved) || errors.Is(err, streamapp.ErrStreamAppDisconnected)
 }
 
+// refusal is what work pinned to an app answers when nothing is to be minted for it: no
+// Stream app at all, an app the customer left, or one it may only read there.
+func refusal(err error, left, readOnly string) (string, bool) {
+	switch {
+	case errors.Is(err, errNoStream):
+		return noStreamKeys, true
+	case elsewhere(err):
+		return left, true
+	case errors.Is(err, streamapp.ErrReadOnly):
+		return readOnly, true
+	}
+	return "", false
+}
+
 // callElsewhere is what a call made in an app the customer no longer acts in answers.
 const callElsewhere = "that call was made in a Stream app this customer no longer acts in"
 
@@ -364,23 +378,10 @@ const callElsewhere = "that call was made in a Stream app this customer no longe
 // may no longer act there: what was said can be read, and nothing more is minted.
 const callReadOnly = "that call was made in the router's shared Stream app, where this app no longer mints tokens"
 
-// streamForAppReading is the Stream app work pinned to one is read back in, which reaches
-// work kept in the router's shared app even once the customer may no longer write there.
-func (s *Server) streamForAppReading(ctx context.Context, customerID string, app int64) (streamapp.Bound, error) {
-	if s.stream == nil {
-		return streamapp.Bound{}, errNoStream
-	}
-	bound, err := s.stream.ForAppReading(ctx, customerID, app)
-	if errors.Is(err, streamapp.ErrNoIdentity) {
-		return streamapp.Bound{}, errNoStream
-	}
-	return bound, err
-}
-
 // transcriptOf is what was said on a call, read in the app the call was made in. A call
 // made in an app the customer no longer acts in has nothing readable from here.
 func (s *Server) transcriptOf(ctx context.Context, customerID string, call store.Call) ([]chatlog.Spoken, error) {
-	bound, err := s.streamForAppReading(ctx, customerID, call.StreamAppPK)
+	bound, err := s.streamForApp(ctx, customerID, call.StreamAppPK, true)
 	if elsewhere(err) {
 		return []chatlog.Spoken{}, nil
 	}
@@ -399,7 +400,7 @@ func (s *Server) agentStream(ctx context.Context, customerID, agentID string) (s
 			return streamapp.Bound{}, err
 		}
 		if len(latest) == 1 {
-			return s.streamForApp(ctx, customerID, latest[0].StreamAppPK)
+			return s.streamForApp(ctx, customerID, latest[0].StreamAppPK, false)
 		}
 	}
 	bound, ok, err := s.streamFor(ctx, customerID)
