@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -34,6 +36,9 @@ const streamAppsUsage = `usage: router stream-apps <command> [flags]
   forget          delete a customer's app outright, tombstone and all (--customer)
   require         keep every app of an organization out of the deployment's own Stream
                   app (--org), or let them back in (--off)
+  legacy          how much other customers still have in the deployment's own Stream
+                  app, by kind
+    --by-customer list each customer rather than counting them
 
   fallbacks       who app mode still writes into the deployment's own Stream app
     --since       how far back to look, as 14d or 36h (default 14d)
@@ -68,6 +73,8 @@ func runStreamApps(args []string, settings config.Config, logger *slog.Logger) e
 		return runForget(ctx, args[1:], settings, logger, os.Stdout)
 	case "require":
 		return runRequire(ctx, args[1:], settings, os.Stdout)
+	case "legacy":
+		return runLegacy(ctx, args[1:], settings, logger, os.Getenv("CHAT_OUTBOX_DIR"), os.Stdout)
 	case "fallbacks":
 		return runFallbacks(ctx, args[1:], settings, os.Stdout)
 	case "backfill-pins":
@@ -366,4 +373,60 @@ func runRequire(ctx context.Context, args []string, settings config.Config, out 
 		fmt.Fprintf(out, "apps of organization %s may fall back to the deployment's own Stream app again\n", *organization)
 	}
 	return nil
+}
+
+// runLegacy counts what customers other than the deployment's own still have in the
+// deployment's app, which is what turning the fallback off would leave read-only.
+func runLegacy(ctx context.Context, args []string, settings config.Config, logger *slog.Logger, outbox string, out io.Writer) error {
+	flags := flag.NewFlagSet("stream-apps legacy", flag.ContinueOnError)
+	byCustomer := flags.Bool("by-customer", false, "list each customer")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	return withStored(ctx, settings, logger, func(_ *streamapp.Stored, clients *streamapp.Clients, pgStore *store.Store) error {
+		deployment := clients.DeploymentApp()
+		counted, err := pgStore.LegacyStreamPins(ctx, deployment)
+		if err != nil {
+			return err
+		}
+		if outbox != "" {
+			records, err := conversation.LegacyRecords(outbox)
+			if err != nil {
+				return err
+			}
+			own := strconv.FormatInt(deployment, 10)
+			for customer, rows := range records {
+				if customer != own {
+					counted = append(counted, store.LegacyCount{Kind: "conversation", CustomerID: customer, Rows: int64(rows)})
+				}
+			}
+		}
+		return printLegacy(out, counted, *byCustomer)
+	})
+}
+
+// printLegacy says how much of each kind is left, and with byCustomer, whose. Without it no
+// customer is named.
+func printLegacy(out io.Writer, counted []store.LegacyCount, byCustomer bool) error {
+	kinds := map[string][2]int64{}
+	for _, one := range counted {
+		total := kinds[one.Kind]
+		kinds[one.Kind] = [2]int64{total[0] + one.Rows, total[1] + 1}
+	}
+	for _, kind := range []string{"conversation", "session", "call", "number"} {
+		fmt.Fprintf(out, "%s: %d rows of %d customers\n", kind, kinds[kind][0], kinds[kind][1])
+	}
+	if !byCustomer || len(counted) == 0 {
+		return nil
+	}
+	sorted := slices.Clone(counted)
+	slices.SortFunc(sorted, func(a, b store.LegacyCount) int {
+		return cmp.Or(strings.Compare(a.Kind, b.Kind), strings.Compare(a.CustomerID, b.CustomerID))
+	})
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "KIND\tCUSTOMER\tROWS")
+	for _, one := range sorted {
+		fmt.Fprintf(table, "%s\t%s\t%d\n", one.Kind, one.CustomerID, one.Rows)
+	}
+	return table.Flush()
 }

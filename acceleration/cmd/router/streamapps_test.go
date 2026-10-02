@@ -66,3 +66,21 @@ func (s *StreamAppsCommandSuite) TestAnUnknownCommandSaysWhatThereIs() {
 
 	s.ErrorContains(err, "backfill-pins")
 }
+
+func (s *StreamAppsCommandSuite) TestLegacyCountsNameNobodyUnlessAsked() {
+	counted := []store.LegacyCount{
+		{Kind: "session", CustomerID: "first-customer", Rows: 3},
+		{Kind: "session", CustomerID: "second-customer", Rows: 2},
+		{Kind: "conversation", CustomerID: "first-customer", Rows: 1},
+	}
+
+	var totals bytes.Buffer
+	s.Require().NoError(printLegacy(&totals, counted, false))
+	s.Contains(totals.String(), "session: 5 rows of 2 customers")
+	s.Contains(totals.String(), "conversation: 1 rows of 1 customers")
+	s.NotContains(totals.String(), "first-customer")
+
+	var listed bytes.Buffer
+	s.Require().NoError(printLegacy(&listed, counted, true))
+	s.Contains(listed.String(), "second-customer")
+}

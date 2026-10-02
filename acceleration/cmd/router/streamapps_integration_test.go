@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
@@ -136,4 +138,30 @@ func (s *StreamAppsCLISuite) TestListShowsNoSecret() {
 
 	s.Contains(out.String(), s.key)
 	s.NotContains(out.String(), "a-long-stream-secret")
+}
+
+func (s *StreamAppsCLISuite) TestLegacyCountsOtherCustomersWorkInTheDeploymentApp() {
+	other := "someone-" + s.customer
+	s.Require().NoError(s.store.SaveSession(s.ctx, &store.AgentSession{
+		ID: uuid.NewString(), CustomerID: other, AgentID: "agent", UserID: "user",
+	}))
+	s.Require().NoError(s.store.SaveSession(s.ctx, &store.AgentSession{
+		ID: uuid.NewString(), CustomerID: "1", AgentID: "agent", UserID: "user",
+	}))
+	outbox := s.T().TempDir()
+	s.Require().NoError(os.MkdirAll(filepath.Join(outbox, "support-"+uuid.NewString()), 0o700))
+	record := filepath.Join(outbox, "support-"+uuid.NewString())
+	s.Require().NoError(os.MkdirAll(record, 0o700))
+	s.Require().NoError(os.WriteFile(filepath.Join(record, "state.json"),
+		[]byte(`{"outbox_version": 1, "customer": "`+other+`"}`), 0o600))
+
+	var out bytes.Buffer
+	s.Require().NoError(runLegacy(s.ctx, []string{"--by-customer"}, s.settings, slog.New(slog.DiscardHandler), outbox, &out))
+
+	s.Contains(out.String(), other)
+	for _, line := range strings.Split(out.String(), "\n") {
+		fields := strings.Fields(line)
+		// A row of the table is a kind, a customer and a count.
+		s.False(len(fields) == 3 && fields[1] == "1", "the deployment's own customer's work is its own: %q", line)
+	}
 }

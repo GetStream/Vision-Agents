@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync/atomic"
 )
 
@@ -172,4 +173,43 @@ func (s *Store) BackfillStreamPins(ctx context.Context, deployment int64) (map[s
 		}
 	}
 	return pinned, nil
+}
+
+// LegacyCount is how many rows of one kind a customer still has in the deployment's own app.
+type LegacyCount struct {
+	Kind       string
+	CustomerID string
+	Rows       int64
+}
+
+// LegacyStreamPins counts, by kind and customer, the sessions, calls and held numbers that
+// customers other than the deployment's own still have in the deployment's app: unpinned,
+// or pinned to it by id. They are what is left to move before the fallback can go.
+func (s *Store) LegacyStreamPins(ctx context.Context, deployment int64) ([]LegacyCount, error) {
+	own := strconv.FormatInt(deployment, 10)
+	var counted []LegacyCount
+	for kind, table := range map[string]string{"session": "agent_sessions", "call": "calls", "number": "phone_numbers"} {
+		released := ""
+		if table == "phone_numbers" {
+			released = " AND released_at IS NULL"
+		}
+		rows, err := s.db.QueryContext(ctx, fmt.Sprintf(
+			"SELECT customer_id, count(*) FROM %s WHERE (%s IS NULL OR %s = ?) AND customer_id <> ?%s GROUP BY customer_id",
+			table, pinColumn, pinColumn, released), deployment, own)
+		if err != nil {
+			return nil, fmt.Errorf("store: count legacy %s rows: %w", table, err)
+		}
+		for rows.Next() {
+			one := LegacyCount{Kind: kind}
+			if err := rows.Scan(&one.CustomerID, &one.Rows); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			counted = append(counted, one)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return counted, nil
 }

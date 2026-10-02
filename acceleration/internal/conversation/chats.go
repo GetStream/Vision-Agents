@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -198,4 +199,30 @@ func (s *Service) appOf(ctx context.Context, customer, cid string, reading bool)
 // another app may be bound to it.
 func (s *Service) AppOf(ctx context.Context, customer, cid string) (int64, error) {
 	return s.appOf(ctx, customer, cid, true)
+}
+
+// LegacyRecords counts, by customer, the conversations recorded in the outbox at root in
+// the layout every record had before apps had identities: those kept in the deployment's own
+// app. A record that cannot be read is counted under the empty customer.
+func LegacyRecords(root string) (map[string]int, error) {
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]int{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	counted := map[string]int{}
+	for _, entry := range entries {
+		if !entry.IsDir() || !validID.MatchString(entry.Name()) {
+			continue
+		}
+		record, err := loadDisk(filepath.Join(root, entry.Name()))
+		if err != nil {
+			counted[""]++
+			continue
+		}
+		counted[record.Customer]++
+	}
+	return counted, nil
 }
