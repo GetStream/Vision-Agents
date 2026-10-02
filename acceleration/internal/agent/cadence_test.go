@@ -260,6 +260,27 @@ func (s *CadenceSuite) TestAClockTimeSplitAcrossUtterancesIsHeardAsOneTurn() {
 	s.Equal(saying, s.ready().Text)
 }
 
+func (s *CadenceSuite) TestWordsCarriedIntoANewUtteranceSurviveItsRevisions() {
+	// Flux finalizes "Last name Alvarez" and starts the callback number as a new
+	// utterance, then revises that utterance on its own. Keeping the name for only the
+	// first revision is how the agent asked for a name it had been given.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 1, Text: "Last name Alvarez, a l v a r e z.",
+	})
+	s.ready()
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "Callback is",
+	})
+
+	_, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "Callback is five one two",
+	})
+
+	s.Equal("Last name Alvarez, a l v a r e z. Callback is five one two", saying)
+	s.Equal(saying, s.ready().Text)
+}
+
 func (s *CadenceSuite) TestASameUtteranceCorrectionReplacesRatherThanConcatenates() {
 	alice := stt.Participant{ID: "alice"}
 	s.cadence.Observe(stt.Transcript{
