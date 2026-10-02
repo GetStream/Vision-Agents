@@ -1,17 +1,51 @@
 import asyncio
-import time
-from unittest.mock import AsyncMock, Mock
+from typing import AsyncIterator
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import numpy as np
 import pytest
+from getstream import AsyncStream
 from getstream.models import QueryUsersPayload, UserRequest
-from getstream.video.rtc import ConnectionManager
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from vision_agents.core.edge.types import User
-from vision_agents.plugins.getstream.stream_edge_transport import (
-    StreamConnection,
-    StreamEdge,
+from getstream.video import rtc
+from getstream.video.async_call import Call as StreamCall
+from getstream.video.rtc import (
+    AudioFormat,
+    AudioStreamTrack,
+    ConnectionManager,
+    PcmData,
 )
+from vision_agents.core import Agent
+from vision_agents.core.edge.events import (
+    AudioReceivedEvent,
+    CallEndedEvent,
+    ParticipantJoinedEvent,
+    ParticipantLeftEvent,
+    TrackAddedEvent,
+    TrackRemovedEvent,
+)
+from vision_agents.core.edge.types import TrackType, User
+from vision_agents.core.llm import LLM
+from vision_agents.core.tts import TTS
+from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
+
+
+class _SilentLLM(LLM):
+    """LLM that never answers; the edge tests only need a constructible agent."""
+
+    async def simple_response(self, text, participant=None):
+        return
+        yield
+
+
+class _SilentTTS(TTS):
+    """TTS without audio; it satisfies the agent's processing check."""
+
+    async def stream_audio(self, text, *args, **kwargs):
+        return b""
+
+    async def stop_audio(self) -> None:
+        pass
 
 
 @pytest.fixture
@@ -22,84 +56,170 @@ async def stream_edge(monkeypatch):
 
 
 @pytest.fixture
-def connection_manager():
-    return ConnectionManager(user_id=str(uuid4()), call=Mock())
+async def edge() -> AsyncIterator[StreamEdge]:
+    edge = StreamEdge()
+    yield edge
+    await edge.close()
 
 
+@pytest.fixture
+async def agent(edge: StreamEdge) -> Agent:
+    agent = Agent(
+        edge=edge,
+        llm=_SilentLLM(),
+        tts=_SilentTTS(),
+        agent_user=User(id=f"agent-{uuid4()}", name="Agent"),
+    )
+    await edge.authenticate(agent.agent_user)
+    return agent
+
+
+@pytest.fixture
+async def call(edge: StreamEdge, agent: Agent) -> StreamCall:
+    return await edge.create_call(str(uuid4()))
+
+
+@pytest.fixture
+async def admin_client() -> AsyncIterator[AsyncStream]:
+    """A REST client that the agent does not close when the call ends."""
+    client = AsyncStream()
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def peer(edge: StreamEdge, call: StreamCall) -> AsyncIterator[ConnectionManager]:
+    """A second participant that is in the call before the agent joins."""
+    user = User(id=f"peer-{uuid4()}", name="Peer")
+    await edge.create_users([user])
+    connection = await rtc.join(call, user.id)
+    await connection.__aenter__()
+    yield connection
+    await connection.leave()
+
+
+@pytest.fixture
+async def peer_audio(peer: ConnectionManager) -> AsyncIterator[AudioStreamTrack]:
+    """The second participant publishes a 440 Hz tone."""
+    track = AudioStreamTrack(sample_rate=48000, channels=1)
+    await peer.add_tracks(audio=track)
+    tone = (np.sin(2 * np.pi * 440 * np.arange(4800) / 48000) * 10000).astype(np.int16)
+
+    async def write_tone() -> None:
+        while True:
+            await track.write(
+                PcmData(
+                    sample_rate=48000, format=AudioFormat.S16, samples=tone, channels=1
+                )
+            )
+            await asyncio.sleep(0.1)
+
+    task = asyncio.create_task(write_tone())
+    yield track
+    task.cancel()
+
+
+@pytest.fixture
+def track_events(edge: StreamEdge) -> asyncio.Queue:
+    queue: asyncio.Queue[TrackAddedEvent | TrackRemovedEvent] = asyncio.Queue()
+
+    @edge.events.subscribe
+    async def on_track(event: TrackAddedEvent | TrackRemovedEvent) -> None:
+        queue.put_nowait(event)
+
+    return queue
+
+
+@pytest.fixture
+def participant_events(edge: StreamEdge) -> asyncio.Queue:
+    queue: asyncio.Queue[ParticipantJoinedEvent | ParticipantLeftEvent] = (
+        asyncio.Queue()
+    )
+
+    @edge.events.subscribe
+    async def on_participant(
+        event: ParticipantJoinedEvent | ParticipantLeftEvent,
+    ) -> None:
+        queue.put_nowait(event)
+
+    return queue
+
+
+@pytest.fixture
+def audio_events(edge: StreamEdge) -> asyncio.Queue:
+    queue: asyncio.Queue[AudioReceivedEvent] = asyncio.Queue()
+
+    @edge.events.subscribe
+    async def on_audio(event: AudioReceivedEvent) -> None:
+        queue.put_nowait(event)
+
+    return queue
+
+
+@pytest.fixture
+def call_ended_events(edge: StreamEdge) -> asyncio.Queue:
+    queue: asyncio.Queue[CallEndedEvent] = asyncio.Queue()
+
+    @edge.events.subscribe
+    async def on_call_ended(event: CallEndedEvent) -> None:
+        queue.put_nowait(event)
+
+    return queue
+
+
+@pytest.mark.integration
 class TestStreamConnection:
-    def test_idle_for(self, connection_manager):
-        # No participants, connection is idle
-        conn = StreamConnection(connection=connection_manager)
-        time.sleep(0.01)
-        assert conn.idle_since() > 0
+    async def test_not_idle_while_participant_in_call(
+        self, edge: StreamEdge, agent: Agent, call: StreamCall, peer: ConnectionManager
+    ):
+        connection = await edge.join(agent, call)
 
-        # One participant (itself), still idle
-        connection_manager.participants_state._add_participant(
-            Participant(user_id=str(connection_manager.user_id))
-        )
-        time.sleep(0.01)
-        assert conn.idle_since() > 0
+        assert connection.idle_since() == 0.0
 
-        # A participant joined, not idle anymore
-        another_participant = Participant(user_id="another-user-id")
-        connection_manager.participants_state._add_participant(another_participant)
-        time.sleep(0.01)
-        assert not conn.idle_since()
+    async def test_idle_after_participant_leaves(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        participant_events: asyncio.Queue,
+    ):
+        connection = await edge.join(agent, call)
 
-        # A participant left, idle again
-        connection_manager.participants_state._remove_participant(another_participant)
-        time.sleep(0.01)
-        assert conn.idle_since() > 0
+        await peer.leave()
+        while not isinstance(
+            await asyncio.wait_for(participant_events.get(), timeout=10),
+            ParticipantLeftEvent,
+        ):
+            pass
 
-    async def test_wait_for_participant_already_present(self, connection_manager):
-        """Test that wait_for_participant returns immediately if participant already in call"""
+        assert connection.idle_since() > 0
 
-        conn = StreamConnection(connection_manager)
-        # Add a non-agent participant to the call
-        participant = Participant(user_id="user-1", session_id="session-1")
-        connection_manager.participants_state._add_participant(participant)
+    async def test_wait_for_participant_returns_when_participant_in_call(
+        self, edge: StreamEdge, agent: Agent, call: StreamCall, peer: ConnectionManager
+    ):
+        connection = await edge.join(agent, call)
 
-        # This should return immediately without waiting
-        await asyncio.wait_for(conn.wait_for_participant(), timeout=1.0)
+        await connection.wait_for_participant(timeout=10)
 
-    async def test_wait_for_participant_agent_doesnt_count(self, connection_manager):
-        """
-        Test that the agent itself in the call doesn't satisfy wait_for_participant
-        """
-        conn = StreamConnection(connection_manager)
-        # Add only the agent to the call
-        agent_participant = Participant(
-            user_id=connection_manager.user_id, session_id="session-1"
-        )
-        connection_manager.participants_state._add_participant(agent_participant)
+    async def test_wait_for_participant_returns_when_participant_joins(
+        self, edge: StreamEdge, agent: Agent, call: StreamCall
+    ):
+        connection = await edge.join(agent, call)
+        waiting = asyncio.create_task(connection.wait_for_participant(timeout=10))
+        user = User(id=f"peer-{uuid4()}", name="Peer")
+        await edge.create_users([user])
 
-        # This should timeout since only agent is present
+        async with await rtc.join(call, user.id):
+            await waiting
+
+    async def test_agent_alone_does_not_end_wait_for_participant(
+        self, edge: StreamEdge, agent: Agent, call: StreamCall
+    ):
+        connection = await edge.join(agent, call)
+
         with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(conn.wait_for_participant(timeout=2.0), timeout=0.5)
-
-    async def test_wait_for_participant_event_triggered(self, connection_manager):
-        """Test that wait_for_participant completes when a participant joins"""
-        # No participants present initially (participants list is empty by default)
-        conn = StreamConnection(connection_manager)
-
-        # Create a task to wait for participant
-        wait_task = asyncio.create_task(conn.wait_for_participant())
-
-        # Give it a moment to set up the event handler
-        await asyncio.sleep(0.1)
-
-        # Task should be waiting
-        assert not wait_task.done()
-
-        # Add a participant to simulate someone joining
-        participant = Participant(user_id="user-1", session_id="session-1")
-        connection_manager.participants_state._add_participant(participant)
-
-        # Give it a moment to process
-        await asyncio.sleep(0.05)
-
-        # Wait task should complete now
-        await asyncio.wait_for(wait_task, timeout=1.0)
+            await connection.wait_for_participant(timeout=2)
 
 
 class TestStreamEdge:
@@ -224,3 +344,176 @@ class TestStreamEdge:
             assert created[0].custom == {"is_agent": False}
         finally:
             await edge.close()
+
+    @pytest.mark.integration
+    async def test_participant_in_call_before_join_gives_participant_joined(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        participant_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+
+        event = await asyncio.wait_for(participant_events.get(), timeout=10)
+        assert isinstance(event, ParticipantJoinedEvent)
+        assert event.participant.user_id == peer.user_id
+        assert (
+            event.participant.id
+            == f"{peer.user_id}__{event.participant.original.session_id}"
+        )
+
+    @pytest.mark.integration
+    async def test_published_audio_gives_track_added(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        peer_audio: AudioStreamTrack,
+        track_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+
+        event = await asyncio.wait_for(track_events.get(), timeout=10)
+        assert isinstance(event, TrackAddedEvent)
+        assert event.track_type == TrackType.AUDIO
+        assert event.participant is not None
+        assert event.participant.user_id == peer.user_id
+
+    @pytest.mark.integration
+    async def test_participant_audio_gives_audio_received_with_joined_participant_id(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        peer_audio: AudioStreamTrack,
+        audio_events: asyncio.Queue,
+        participant_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+
+        joined = await asyncio.wait_for(participant_events.get(), timeout=10)
+        while True:
+            event = await asyncio.wait_for(audio_events.get(), timeout=10)
+            if np.abs(event.pcm_data.samples).max() > 1000:
+                break
+        assert event.participant.user_id == peer.user_id
+        assert event.participant.id == joined.participant.id
+
+    @pytest.mark.integration
+    async def test_agent_audio_reaches_participant(
+        self, edge: StreamEdge, agent: Agent, call: StreamCall, peer: ConnectionManager
+    ):
+        received: asyncio.Queue[PcmData] = asyncio.Queue()
+        peer.on("audio", received.put_nowait)
+        await edge.join(agent, call)
+        track = edge.create_audio_track()
+        await edge.publish_tracks(track, None)
+        tone = (np.sin(2 * np.pi * 440 * np.arange(48000) / 48000) * 10000).astype(
+            np.int16
+        )
+
+        await track.write(
+            PcmData(sample_rate=48000, format=AudioFormat.S16, samples=tone, channels=1)
+        )
+
+        while True:
+            pcm = await asyncio.wait_for(received.get(), timeout=10)
+            if np.abs(pcm.samples).max() > 1000:
+                break
+        assert pcm.participant.user_id == agent.agent_user.id
+
+    @pytest.mark.integration
+    async def test_republished_track_gives_track_added_again(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        peer_audio: AudioStreamTrack,
+        track_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+        added = await asyncio.wait_for(track_events.get(), timeout=10)
+
+        peer_audio.stop()
+        removed = await asyncio.wait_for(track_events.get(), timeout=10)
+        await peer.add_tracks(audio=AudioStreamTrack(sample_rate=48000, channels=1))
+        added_again = await asyncio.wait_for(track_events.get(), timeout=10)
+
+        assert [type(e) for e in (added, removed, added_again)] == [
+            TrackAddedEvent,
+            TrackRemovedEvent,
+            TrackAddedEvent,
+        ]
+        assert added.track_id == removed.track_id == added_again.track_id
+
+    @pytest.mark.integration
+    async def test_participant_leave_gives_track_removed_and_participant_left(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        peer_audio: AudioStreamTrack,
+        track_events: asyncio.Queue,
+        participant_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+        added = await asyncio.wait_for(track_events.get(), timeout=10)
+        await asyncio.wait_for(participant_events.get(), timeout=10)
+
+        await peer.leave()
+
+        removed = await asyncio.wait_for(track_events.get(), timeout=10)
+        left = await asyncio.wait_for(participant_events.get(), timeout=10)
+        assert isinstance(removed, TrackRemovedEvent)
+        assert removed.track_id == added.track_id
+        assert isinstance(left, ParticipantLeftEvent)
+        assert left.participant.user_id == peer.user_id
+
+    @pytest.mark.integration
+    async def test_leave_after_unpublish_gives_one_track_removed(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        peer_audio: AudioStreamTrack,
+        track_events: asyncio.Queue,
+        participant_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+        await asyncio.wait_for(track_events.get(), timeout=10)
+        await asyncio.wait_for(participant_events.get(), timeout=10)
+        peer_audio.stop()
+        removed = await asyncio.wait_for(track_events.get(), timeout=10)
+
+        await peer.leave()
+
+        left = await asyncio.wait_for(participant_events.get(), timeout=10)
+        assert isinstance(removed, TrackRemovedEvent)
+        assert isinstance(left, ParticipantLeftEvent)
+        assert track_events.empty()
+
+    @pytest.mark.integration
+    async def test_call_end_gives_one_call_ended(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        admin_client: AsyncStream,
+        call_ended_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+
+        # The agent closes the edge client on call end, so another client ends the call.
+        await admin_client.video.call(call.call_type, call.id).end()
+
+        event = await asyncio.wait_for(call_ended_events.get(), timeout=10)
+        assert event.call is call
+        await asyncio.sleep(1)
+        assert call_ended_events.empty()
