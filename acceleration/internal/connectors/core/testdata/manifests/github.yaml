@@ -1,0 +1,44 @@
+# Stress-test row 6 (GitHub App) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning. Vendor sources, all
+# opened October 1, 2026:
+#   [install] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app
+#   [refresh] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens
+#   [setup]   https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url
+id: github
+revision: 1
+name: GitHub
+endpoints:
+  # POST /app/installations/INSTALLATION_ID/access_tokens on https://api.github.com:
+  # [install]. The github_app scheme signs the app JWT and calls it.
+  installation_token: https://api.github.com/app/installations/{metadata.installation_id}/access_tokens
+  # The user-to-server flow. The token URL is [refresh]; the authorize URL is not on the
+  # pages opened. # unverified
+  authorize: https://github.com/login/oauth/authorize
+  token: https://github.com/login/oauth/access_token
+  # prototype internal/mcp/connectors.yaml:81 on codex/connector-support at cf62af0d
+  mcp: https://api.githubcopilot.com/mcp/
+# github_app for installation tokens; the hosted MCP stays oauth2_code: row 6.
+schemes: [github_app, oauth2_code]
+client:
+  policy: [operator]
+  # prototype internal/mcp/connectors.yaml:84
+  env: GITHUB
+capture:
+  # GitHub appends installation_id to the setup URL and says not to rely on it: [setup];
+  # row 6. Verify: confirmed through a user token and the installations API.
+  - name: installation_id
+    from: callback_query
+    key: installation_id
+    verify: true
+# The installation is the account: row 6.
+identity: [installation_id]
+refresh:
+  # For the user-to-server token, rotating, 8 hours, refresh token 6 months: [refresh]
+  # (expires_in 28800, refresh_token_expires_in 15897600 seconds, which is 4416h). The
+  # installation token (1 hour, [install]) has no refresh; github_app re-mints it.
+  rotating: true
+  access_ttl: 8h
+  refresh_ttl: 4416h
+sources:
+  - kind: mcp
+    endpoint: mcp
