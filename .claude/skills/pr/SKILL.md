@@ -16,6 +16,19 @@ description: Create a draft pull request for the Vision-Agents repo using gh CLI
 
 - Always `gh pr create --draft`. Push the branch first.
 - Follow `.github/pull_request_template.md`. Read every commit on the branch, do not summarise from the latest commit alone.
+
+## Title
+
+- Aim for 50 characters, never more than 65. The repo only squash-merges and uses the PR title as the commit subject on `accelerate`/`main` once a PR has two or more commits, and GitHub appends ` (#NNN)`. 65 plus that suffix stays within the 72 GitHub's docs give as the commit title maximum; 50 is what `git help commit` and Pro Git recommend.
+- Say what changes, not how. The ticket id (`AI-833`) counts toward the limit; details go in the body.
+- Bad, 85 characters: `feat(connectors): connector definitions table seeded from built-in manifests (AI-833)`. Good, 44: `AI-833: connector definitions with revisions`.
+
+## Body
+
+- Explain with pictures, not paragraphs. Near the top, a `## How it works` section shows the idea with mermaid diagrams (GitHub renders them): a `flowchart` for the data flow, a decision `flowchart` for branching logic, a `sequenceDiagram` for concurrency or a protocol. Give small tables for "change → result → test that proves it" and for before/after.
+- Keep prose short: one or two sentences per point, and nothing a diagram or table already shows. A reviewer should get the idea in a minute without a wall of text.
+- Cite evidence: `file:line`, test names, commits. Mark anything not checked as unverified.
+- In mermaid, no `;` inside labels or messages (it splits statements). Open the PR after creating it and check that the diagrams render.
 - `## Why` is motivation + context. `## Changes`, if included, is high-level; never per-bullet justifications, those belong in `## Why`.
 - Link public GitHub issues inline within `## Why` (e.g. "users reported X (#478)"), not as a trailing `Fixes #N`.
 - Do not paste CI, lint, or tool output in the body.
