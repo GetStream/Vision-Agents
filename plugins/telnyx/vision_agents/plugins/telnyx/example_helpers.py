@@ -2,14 +2,18 @@
 
 import base64
 import binascii
+import contextlib
 import json
+import logging
 import os
 import signal
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass
+from types import FrameType
 from typing import Any, Mapping
 
 from cryptography.exceptions import InvalidSignature
@@ -20,6 +24,8 @@ from fastapi import HTTPException, Request
 TELNYX_API_BASE_URL = "https://api.telnyx.com/v2"
 TELNYX_MEDIA_PATH = "/telnyx/media"
 TELNYX_EVENTS_PATH = "/telnyx/events"
+
+logger = logging.getLogger(__name__)
 
 
 class TelnyxSetupError(RuntimeError):
@@ -50,6 +56,23 @@ class TelnyxConfig:
 @dataclass(frozen=True)
 class TelnyxExampleSetup:
     config: TelnyxConfig
+    phone_number_id: str | None = None
+    created_call_control_app_id: str | None = None
+    original_connection_id: str | None = None
+
+
+@dataclass
+class TelnyxExampleResources:
+    """Mutable record of the Telnyx resources an example created or changed.
+
+    :class:`TelnyxExampleSetup` is frozen and only exists once
+    :func:`prepare_telnyx_example_setup` has returned, so it cannot describe a
+    setup that was interrupted halfway through. This tracker is filled in as
+    each resource is created, which lets :func:`telnyx_example_cleanup` be
+    entered *before* setup runs and still clean up whatever setup managed to
+    create.
+    """
+
     phone_number_id: str | None = None
     created_call_control_app_id: str | None = None
     original_connection_id: str | None = None
@@ -286,13 +309,22 @@ def prepare_telnyx_example_setup(
     phone_number_id: str | None = None,
     setup_telnyx: bool = False,
     route_phone_number: bool = False,
+    resources: TelnyxExampleResources | None = None,
 ) -> TelnyxExampleSetup:
+    """Resolve the example configuration, creating Telnyx resources if asked.
+
+    Pass ``resources`` to have every resource recorded on that tracker the
+    moment it is created or changed. Callers that enter
+    :func:`telnyx_example_cleanup` with the same tracker before calling this
+    function are then covered against a SIGTERM arriving mid-setup.
+    """
     if not phone_number:
         raise TelnyxSetupError(
             "Missing Telnyx phone number. Set TELNYX_PHONE_NUMBER or pass "
             "`--from`/`--phone-number`."
         )
 
+    tracker = resources if resources is not None else TelnyxExampleResources()
     resolved_ngrok_url = resolve_ngrok_url(ngrok_url)
     resolved_phone_number_id = phone_number_id
     original_connection_id: str | None = None
@@ -302,6 +334,7 @@ def prepare_telnyx_example_setup(
     if setup_telnyx:
         phone_number_data = client.find_phone_number(phone_number)
         resolved_phone_number_id = resolved_phone_number_id or phone_number_data["id"]
+        tracker.phone_number_id = resolved_phone_number_id
 
         try:
             if not resolved_app_id:
@@ -314,16 +347,22 @@ def prepare_telnyx_example_setup(
                 app = response.get("data", response)
                 resolved_app_id = app["id"]
                 created_app_id = resolved_app_id
+                tracker.created_call_control_app_id = created_app_id
 
             if route_phone_number:
                 original_connection_id = phone_number_data.get("connection_id") or ""
+                # Recorded before the call: a re-route can apply server side even
+                # when the client never sees the response.
+                tracker.original_connection_id = original_connection_id
                 client.update_phone_number_connection(
                     resolved_phone_number_id,
                     resolved_app_id,
                 )
         except (TelnyxAPIError, TelnyxSetupError, urllib.error.URLError, TimeoutError):
-            if created_app_id:
-                client.delete_call_control_app(created_app_id)
+            try:
+                _cleanup_telnyx_resources(client, tracker)
+            except TelnyxSetupError:
+                logger.exception("Rolling back partial Telnyx example setup failed")
             raise
     elif not resolved_app_id:
         raise TelnyxSetupError(
@@ -344,10 +383,15 @@ def prepare_telnyx_example_setup(
     )
 
 
-def cleanup_telnyx_example_setup(
+def _cleanup_telnyx_resources(
     client: TelnyxClient,
-    setup: TelnyxExampleSetup,
+    resources: TelnyxExampleResources,
 ) -> None:
+    """Undo whatever ``resources`` records, clearing each entry as it succeeds.
+
+    Clearing as we go keeps this safe to call repeatedly: a retry only redoes
+    the steps that failed, so nothing is deleted or restored twice.
+    """
     previous_sigint_handler = None
     try:
         previous_sigint_handler = signal.getsignal(signal.SIGINT)
@@ -358,26 +402,127 @@ def cleanup_telnyx_example_setup(
     errors: list[str] = []
 
     try:
-        if setup.original_connection_id is not None and setup.phone_number_id:
+        if resources.original_connection_id is not None and resources.phone_number_id:
             try:
                 client.update_phone_number_connection(
-                    setup.phone_number_id,
-                    setup.original_connection_id,
+                    resources.phone_number_id,
+                    resources.original_connection_id,
                 )
             except (TelnyxAPIError, urllib.error.URLError, TimeoutError) as exc:
                 errors.append(f"restore phone number routing failed: {exc}")
+            else:
+                resources.original_connection_id = None
 
-        if setup.created_call_control_app_id:
+        if resources.created_call_control_app_id:
             try:
-                client.delete_call_control_app(setup.created_call_control_app_id)
+                client.delete_call_control_app(resources.created_call_control_app_id)
             except (TelnyxAPIError, urllib.error.URLError, TimeoutError) as exc:
                 errors.append(f"delete temporary Call Control App failed: {exc}")
+            else:
+                resources.created_call_control_app_id = None
 
         if errors:
             raise TelnyxSetupError("; ".join(errors))
     finally:
         if previous_sigint_handler is not None:
             signal.signal(signal.SIGINT, previous_sigint_handler)
+
+
+def cleanup_telnyx_example_setup(
+    client: TelnyxClient,
+    setup: TelnyxExampleSetup,
+) -> None:
+    _cleanup_telnyx_resources(client, _resources_from_setup(setup))
+
+
+def _resources_from_setup(setup: TelnyxExampleSetup) -> TelnyxExampleResources:
+    return TelnyxExampleResources(
+        phone_number_id=setup.phone_number_id,
+        created_call_control_app_id=setup.created_call_control_app_id,
+        original_connection_id=setup.original_connection_id,
+    )
+
+
+@contextlib.contextmanager
+def telnyx_example_cleanup(
+    client: TelnyxClient,
+    setup: TelnyxExampleSetup | TelnyxExampleResources,
+) -> Iterator[None]:
+    """Clean up the example's Telnyx resources exactly once, SIGTERM included.
+
+    Ctrl-C already unwinds into the ``finally`` below, but SIGTERM (``kill
+    <pid>``, and therefore plain ``pkill``) does not: uvicorn handles SIGTERM
+    itself, shuts the server down, and then re-raises the signal against the
+    handler that was installed before it started. With the default handler that
+    kills the process, so the temporary Call Control App is leaked and the phone
+    number stays routed to a dead webhook. Handling SIGTERM here turns that into
+    a normal cleanup followed by the conventional ``128 + SIGTERM`` exit status.
+    Further SIGTERMs are ignored until that cleanup finishes, so a second
+    ``kill`` cannot cut it short. The handler stays installed while the normal
+    exit path cleans up too, so a SIGTERM arriving then also lets cleanup finish.
+
+    Pass a :class:`TelnyxExampleResources` tracker rather than a finished
+    :class:`TelnyxExampleSetup` to enter this guard *before*
+    :func:`prepare_telnyx_example_setup` runs; the tracker is read at cleanup
+    time, so resources created partway through setup are cleaned up too.
+
+    SIGKILL (``kill -9``) cannot be caught, so it still leaks those resources.
+
+    Call this from an example's ``main()``, which runs on the main thread; on any
+    other thread the SIGTERM handler is skipped and only the ``finally`` runs.
+    """
+    resources = (
+        setup
+        if isinstance(setup, TelnyxExampleResources)
+        else _resources_from_setup(setup)
+    )
+    cleanup_done = False
+
+    def cleanup_once() -> None:
+        nonlocal cleanup_done
+        if cleanup_done:
+            return
+        # Only marked done once cleanup actually finished, so a partial cleanup
+        # that raised is retried instead of being treated as complete.
+        _cleanup_telnyx_resources(client, resources)
+        cleanup_done = True
+
+    def handle_sigterm(signal_number: int, _frame: FrameType | None) -> None:
+        logger.info("Received SIGTERM, cleaning up Telnyx example resources")
+        # Ignore further SIGTERMs so a second `kill` cannot re-enter this
+        # handler and kill the process mid-cleanup. Same guard that
+        # _cleanup_telnyx_resources applies to SIGINT.
+        with contextlib.suppress(ValueError):
+            signal.signal(signal_number, signal.SIG_IGN)
+        try:
+            cleanup_once()
+        except Exception:
+            logger.exception("Cleaning up Telnyx example resources failed")
+        finally:
+            # Exit the way an unhandled SIGTERM would, so callers still see 143.
+            with contextlib.suppress(ValueError):
+                signal.signal(signal_number, signal.SIG_DFL)
+            signal.raise_signal(signal_number)
+
+    handler_installed = False
+    previous_handler = None
+    try:
+        previous_handler = signal.signal(signal.SIGTERM, handle_sigterm)
+        handler_installed = True
+    except ValueError:
+        pass
+
+    try:
+        yield
+    finally:
+        # Restore the previous handler only after cleanup: if it is SIG_DFL, a
+        # SIGTERM during cleanup would otherwise kill the process mid-cleanup.
+        try:
+            cleanup_once()
+        finally:
+            if handler_installed:
+                with contextlib.suppress(ValueError):
+                    signal.signal(signal.SIGTERM, previous_handler)
 
 
 def validate_call_control_app(
