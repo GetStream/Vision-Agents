@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // CreateSession joins a call and returns the session running it.
@@ -42,6 +43,9 @@ func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequest
 	created, err := s.sessions.Create(ctx, spec)
 	if errors.Is(err, session.ErrSessionExists) {
 		return CreateSession409JSONResponse{Error: err.Error()}, nil
+	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
 	}
 	if err != nil {
 		// Everything that can go wrong here is the caller's spec or a provider that would

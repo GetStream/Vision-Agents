@@ -211,7 +211,11 @@ func (s *StreamAppsSuite) TestAnInboundCallOnANumberInTheCustomersAppJoinsThere(
 
 // attached is the call a number the customer holds routes callers into, attached in the
 // app given.
-func (s *StreamAppsSuite) attached(app int64) string {
+func (s *StreamAppsSuite) attached(app int64) string { return s.attachedIn(app) }
+
+// attachedIn is the call a number the customer holds routes callers into, attached in the
+// app given.
+func (s *RouterSuite) attachedIn(app int64) string {
 	ctx := context.Background()
 	e164 := s.utils.number()
 	call := "phone-" + e164

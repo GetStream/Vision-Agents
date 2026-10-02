@@ -87,6 +87,9 @@ func NewStored(options StoredOptions) (*Stored, error) {
 // App is the deployment app's id, zero while it is not known.
 func (s *Stored) App() int64 { return s.deployment.App() }
 
+// PerApp says customers act in apps of their own.
+func (s *Stored) PerApp() bool { return true }
+
 func (s *Stored) learn(ctx context.Context, clients *Clients) (int64, error) {
 	return s.deployment.learn(ctx, clients)
 }

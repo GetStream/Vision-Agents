@@ -170,8 +170,8 @@ func (c *Clients) ForAppReading(ctx context.Context, customer string, app int64)
 
 // PerApp reports whether customers act in apps of their own, which is app mode.
 func (c *Clients) PerApp() bool {
-	_, ok := c.source.(*Stored)
-	return ok
+	perApp, ok := c.source.(interface{ PerApp() bool })
+	return ok && perApp.PerApp()
 }
 
 // Invalidate forgets what was resolved for a customer, so the next use asks the source.

@@ -217,6 +217,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, err
 	}
 	spec.StreamApp = stream.Identity.StreamApp
+	if err := m.keepable(ctx, spec, stream); err != nil {
+		return nil, err
+	}
 
 	var remembering memory.Store
 	if spec.Memory.UserID != "" {
@@ -248,6 +251,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		var truncated bool
 		conv, previous, truncated, err = service.OpenInApp(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		if errors.Is(err, streamapp.ErrReadOnly) {
+			return nil, ErrConversationReadOnly
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -256,6 +262,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if kept := conv.StreamApp(); kept != spec.StreamApp && m.options.Stream != nil {
 			if stream, err = m.options.Stream.ForApp(ctx, spec.CustomerID, kept); err != nil {
 				conv.Release()
+				if errors.Is(err, streamapp.ErrReadOnly) {
+					return nil, ErrConversationReadOnly
+				}
 				return nil, fmt.Errorf("session: the app conversation %s is kept in: %w", conv.CID(), err)
 			}
 			spec.StreamApp = kept
@@ -293,6 +302,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		service, err := m.Conversations()
 		if err != nil {
 			return nil, err
+		}
+		// A call on a conversation writes its words into the conversation's channel, which
+		// is only there in the app the conversation is kept in.
+		if !spec.Text {
+			if err := m.sameApp(ctx, service, spec); err != nil {
+				return nil, err
+			}
 		}
 		var truncated bool
 		previous, truncated, err = service.ContextForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
@@ -1091,6 +1107,79 @@ func (m *Manager) stream(ctx context.Context, spec Spec) (streamapp.Bound, error
 		return streamapp.Bound{}, fmt.Errorf("session: which Stream app to act in: %w", err)
 	}
 	return bound, nil
+}
+
+// ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream
+// app to keep it in.
+var ErrNoStreamApp = errors.New("session: this app has no Stream app to keep the conversation in: " +
+	"register this app's Stream keys, or open an incognito session")
+
+// ErrConversationReadOnly is a conversation kept in the router's shared Stream app, which its
+// customer may read and no longer add to.
+var ErrConversationReadOnly = errors.New("session: this conversation is kept in the router's shared " +
+	"Stream app and can only be read there: fork it to carry on")
+
+// ErrConversationElsewhere is a call bound to a conversation kept in another Stream app than
+// the one the call is made in.
+var ErrConversationElsewhere = errors.New("session: this conversation is kept in another Stream app " +
+	"than this call is made in: fork it to carry on")
+
+// keepable refuses a conversation in writing that has nowhere safe to be kept. In app mode
+// an app that registered no Stream app has nowhere at all, which used to mean a
+// conversation quietly not kept; and a registered app whose agent channel type lets a
+// client make, change or join a conversation's channel would keep it where anybody could
+// rewrite whose it is.
+func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Bound) error {
+	if m.options.Stream == nil || !m.options.Stream.PerApp() || !spec.PersistConversation || !spec.Text {
+		return nil
+	}
+	if stream.Client == nil {
+		return ErrNoStreamApp
+	}
+	if !stream.Identity.Registered {
+		return nil
+	}
+	readiness, err := m.options.Stream.Readiness(ctx, stream)
+	if err != nil {
+		// Stream being out of reach is found out by the conversation itself, which says so.
+		m.logger.Warn("could not check the Stream app a conversation is kept in", "customer_id", spec.CustomerID, "error", err)
+		return nil
+	}
+	switch readiness.ChannelType {
+	case streamapp.TypeMissing:
+		return fmt.Errorf("session: this app's Stream app has no %s channel type to keep the conversation in", streamapp.AgentChannelType)
+	case streamapp.TypeUnsafe:
+		return fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
+			"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
+	}
+	return nil
+}
+
+// sameApp refuses a call on a conversation kept in another app than the call is made in:
+// the agent would join the call in one app and look for the conversation's channel in it,
+// where it is not.
+func (m *Manager) sameApp(ctx context.Context, service *persistent.Service, spec Spec) error {
+	if m.options.Stream == nil {
+		return nil
+	}
+	kept, err := service.AppOf(ctx, spec.CustomerID, spec.ConversationID)
+	if err != nil {
+		return err
+	}
+	deployment := m.options.Stream.DeploymentApp()
+	same := func(a, b int64) bool {
+		if a == 0 {
+			a = deployment
+		}
+		if b == 0 {
+			b = deployment
+		}
+		return a == b
+	}
+	if kept != spec.StreamApp && !same(kept, spec.StreamApp) {
+		return ErrConversationElsewhere
+	}
+	return nil
 }
 
 // ownKey is the key a guardrail webhook names when the session acts in its customer's own

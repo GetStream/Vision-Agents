@@ -216,7 +216,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.data = testData{suite: s}
 
 	s.chat = chattest.NewServer(s.T())
-	s.apps = &suiteApps{own: map[string]streamapp.Identity{}, readOnly: map[string]bool{}, waiting: map[string]bool{}, deployment: streamapp.NewDeployment(streamapp.DeploymentOptions{
+	s.apps = &suiteApps{own: map[string]streamapp.Identity{}, readOnly: map[string]bool{}, waiting: map[string]bool{}, nowhere: map[string]bool{}, deployment: streamapp.NewDeployment(streamapp.DeploymentOptions{
 		APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL, App: suiteStreamApp,
 	})}
 	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
@@ -916,16 +916,28 @@ type suiteApps struct {
 	readOnly map[string]bool
 	// waiting are customers whose app cannot be told until the deployment's own is known.
 	waiting map[string]bool
+	// nowhere are customers with no app to act in at all.
+	nowhere map[string]bool
+	// perApp answers as app mode does, where customers act in apps of their own.
+	perApp bool
+}
+
+func (a *suiteApps) PerApp() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.perApp
 }
 
 func (a *suiteApps) For(ctx context.Context, customer string) (streamapp.Identity, error) {
 	a.mu.Lock()
 	identity, ok := a.own[customer]
-	waiting := a.waiting[customer]
+	waiting, nowhere := a.waiting[customer], a.nowhere[customer]
 	a.mu.Unlock()
 	switch {
 	case waiting:
 		return streamapp.Identity{}, streamapp.ErrDeploymentAppUnknown
+	case nowhere:
+		return streamapp.Identity{}, streamapp.ErrNoIdentity
 	case ok:
 		return identity, nil
 	}
