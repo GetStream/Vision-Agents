@@ -121,6 +121,8 @@ func NewStored(options StoredOptions) (*Stored, error) {
 // App is the deployment app's id, zero while it is not known.
 func (s *Stored) App() int64 { return s.deployment.App() }
 
+func (s *Stored) knowable() bool { return s.deployment.knowable() }
+
 // PerApp says customers act in apps of their own.
 func (s *Stored) PerApp() bool { return true }
 

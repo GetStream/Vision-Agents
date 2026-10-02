@@ -129,3 +129,9 @@ func (d *Deployment) settled() (int64, bool, error) {
 	}
 	return 0, false, nil
 }
+
+// knowable reports whether the deployment app's id is known, or can still be learned: the
+// deployment has a key to ask with, and the id it was given has not turned out wrong.
+func (d *Deployment) knowable() bool {
+	return d.Configured() && !d.wrong.Load()
+}

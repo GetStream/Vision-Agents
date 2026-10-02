@@ -484,6 +484,7 @@ func (s *DataMoveSuite) TestARowPinnedWhileThisDeploymentsAppIsUnknownWaits() {
 	encoded, err := json.Marshal(rows[0])
 	s.Require().NoError(err)
 
+	s.destination.SetStreamPins(StreamPins{Knowable: func() bool { return true }})
 	err = s.destination.ImportRow(s.ctx, "acme", "agent_sessions", encoded)
 	s.Require().ErrorIs(err, ErrStreamAppUnknown)
 
@@ -546,4 +547,18 @@ func (s *DataMoveSuite) TestBackfillPinsTheDeploymentAppsRows() {
 	}
 	_, err = s.source.BackfillStreamPins(s.ctx, 0)
 	s.Error(err, "an unknown deployment app pins nothing")
+}
+
+func (s *DataMoveSuite) TestADeploymentThatCanNeverKnowItsAppParksAPinnedRow() {
+	// With no Stream key to ask with, waiting would be waiting for ever.
+	s.source.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	id := s.pinnedSession("acme", 0)
+	rows := s.export("acme").of("agent_sessions")
+	s.Require().Len(rows, 1)
+	encoded, err := json.Marshal(rows[0])
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.destination.ImportRow(s.ctx, "acme", "agent_sessions", encoded))
+
+	s.Equal(ForeignStreamApp, *s.pinOnDestination(id))
 }

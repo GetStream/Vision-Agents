@@ -46,7 +46,7 @@ func newStreamClients(settings config.Config, pgStore *store.Store, sealer *auth
 
 // streamPins tells the store how this deployment's Stream app pins cross to another one.
 func streamPins(clients *streamapp.Clients) store.StreamPins {
-	return store.StreamPins{Deployment: clients.DeploymentApp, For: clients.Pin}
+	return store.StreamPins{Deployment: clients.DeploymentApp, For: clients.Pin, Knowable: clients.DeploymentAppKnowable}
 }
 
 // How long a deployment that could not learn its own app waits to ask again, doubling up

@@ -241,7 +241,7 @@ func (s *RouterSuite) SetupSuite() {
 		s.Require().NoError(err)
 		s.stream = streamapp.NewClients(stored, streamapp.ClientsOptions{})
 	}
-	s.store.SetStreamPins(store.StreamPins{Deployment: s.apps.deployment.App, For: s.stream.Pin})
+	s.store.SetStreamPins(store.StreamPins{Deployment: s.apps.deployment.App, For: s.stream.Pin, Knowable: s.stream.DeploymentAppKnowable})
 	limiter := s.quota(liveClient, logger)
 	policies := s.policies(logger)
 	streams := s.routers(limiter, policies, logger)

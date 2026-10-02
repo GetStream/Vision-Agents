@@ -115,6 +115,13 @@ func (c *Clients) DeploymentApp() int64 {
 	return 0
 }
 
+// DeploymentAppKnowable reports whether the deployment's own app id is known, or can still
+// be learned from Stream. A source with no deployment app of its own never knows it.
+func (c *Clients) DeploymentAppKnowable() bool {
+	knows, ok := c.source.(interface{ knowable() bool })
+	return ok && knows.knowable()
+}
+
 // Pin is the pin new work for a customer is given: the app it acts in, or zero for the
 // deployment's own, or for a customer with no app to act in at all.
 func (c *Clients) Pin(ctx context.Context, customer string) (int64, error) {

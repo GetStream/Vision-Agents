@@ -37,6 +37,9 @@ type StreamPins struct {
 	// For is the pin new work for a customer is given here: the customer's app, or zero
 	// for the deployment's own.
 	For func(ctx context.Context, customerID string) (int64, error)
+	// Knowable reports whether this deployment's own app id, while unknown, can still be
+	// learned. Nil is never.
+	Knowable func() bool
 }
 
 // SetStreamPins says how this deployment's pins cross. Without it NULL stays NULL on the
@@ -101,9 +104,10 @@ func (s *Store) importPin(ctx context.Context, customerID, table string, row jso
 		kept = nil
 	case pin != nil && *pin != 0 && *pin == here:
 		kept = pin
-	case pin != nil && *pin > 0 && here == 0 && deployment == 0:
+	case pin != nil && *pin > 0 && here == 0 && deployment == 0 && pins.Knowable != nil && pins.Knowable():
 		// The row may well be this deployment's own app, and saying it is not would park
-		// it for good. It waits until that app is known instead.
+		// it for good. It waits until that app is known instead. A deployment that can never
+		// know its app, having no key to ask with, parks it as it always did.
 		return nil, fmt.Errorf("store: a %s row is pinned to Stream app %d, and which app is this "+
 			"deployment's own is not known yet: %w", table, *pin, ErrStreamAppUnknown)
 	case pin != nil && here == 0 && *pin == deployment:
