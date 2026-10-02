@@ -55,22 +55,22 @@ func (e AgentLogSeverity) Valid() bool {
 
 // Defines values for AgentLogSource.
 const (
-	AgentLogSourceAgent  AgentLogSource = "agent"
-	AgentLogSourceSystem AgentLogSource = "system"
-	AgentLogSourceTool   AgentLogSource = "tool"
-	AgentLogSourceUser   AgentLogSource = "user"
+	Agent  AgentLogSource = "agent"
+	System AgentLogSource = "system"
+	Tool   AgentLogSource = "tool"
+	User   AgentLogSource = "user"
 )
 
 // Valid indicates whether the value is a known member of the AgentLogSource enum.
 func (e AgentLogSource) Valid() bool {
 	switch e {
-	case AgentLogSourceAgent:
+	case Agent:
 		return true
-	case AgentLogSourceSystem:
+	case System:
 		return true
-	case AgentLogSourceTool:
+	case Tool:
 		return true
-	case AgentLogSourceUser:
+	case User:
 		return true
 	default:
 		return false

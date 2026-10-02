@@ -1346,6 +1346,9 @@ components:
         - app
         - user
       type: string
+      x-enum-varnames:
+        - ConnectorConnectionOwnerTypeApp
+        - ConnectorConnectionOwnerTypeUser
     ConnectorConnectionPage:
       properties:
         has_more:

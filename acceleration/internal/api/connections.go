@@ -68,8 +68,16 @@ func (*ConnectorConnectionOwner) TransformSchema(_ huma.Registry, schema *huma.S
 type ConnectorConnectionOwnerType string
 
 func (ConnectorConnectionOwnerType) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "ConnectorConnectionOwnerType",
+	ref := namedEnum(registry, "ConnectorConnectionOwnerType",
 		"app is the app's own account, user one user's.", store.OwnerApp, store.OwnerUser)
+	// AgentLogSource has user too. When two enums share a constant name oapi-codegen prefixes
+	// both with their type (enumsConflict, pkg/codegen/codegen.go:1553 in v2.8.0), which would
+	// rename the Go SDK's User, Agent, System and Tool. Naming these constants keeps the
+	// others as they were, as PhoneOperation does in api/legacy.yaml.
+	registry.Map()["ConnectorConnectionOwnerType"].Extensions = map[string]any{
+		"x-enum-varnames": []string{"ConnectorConnectionOwnerTypeApp", "ConnectorConnectionOwnerTypeUser"},
+	}
+	return ref
 }
 
 // ConnectorConnectionStatus is where a connection is in its life.
