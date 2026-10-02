@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync/atomic"
 )
@@ -11,6 +12,11 @@ import (
 // the importing customer acts in here. No Stream app has it, so work pinned to it is
 // parked rather than finished anywhere.
 const ForeignStreamApp int64 = -1
+
+// ErrStreamAppUnknown is an imported row pinned to a Stream app while this deployment does
+// not yet know which app is its own, so cannot say whether the row's is. Importing it again
+// once that is known places it.
+var ErrStreamAppUnknown = errors.New("this deployment's own Stream app is not known yet")
 
 // pinColumn is the column a Stream app pin is kept in.
 const pinColumn = "stream_app_pk"
@@ -94,7 +100,12 @@ func (s *Store) importPin(ctx context.Context, customerID, table string, row jso
 		kept = nil
 	case pin != nil && *pin != 0 && *pin == here:
 		kept = pin
-	case pin != nil && here == 0 && deployment != 0 && *pin == deployment:
+	case pin != nil && *pin > 0 && here == 0 && deployment == 0:
+		// The row may well be this deployment's own app, and saying it is not would park
+		// it for good. It waits until that app is known instead.
+		return nil, fmt.Errorf("store: a %s row is pinned to Stream app %d, and which app is this "+
+			"deployment's own is not known yet: %w", table, *pin, ErrStreamAppUnknown)
+	case pin != nil && here == 0 && *pin == deployment:
 		kept = pin
 	default:
 		foreign := ForeignStreamApp

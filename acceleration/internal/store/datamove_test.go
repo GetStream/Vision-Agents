@@ -472,3 +472,23 @@ func (s *DataMoveSuite) TestAMoveBetweenDeploymentsThatNeverPinnedLeavesRowsUnpi
 
 	s.Nil(s.pinOnDestination(id), "every move before pins existed worked this way")
 }
+
+func (s *DataMoveSuite) TestARowPinnedWhileThisDeploymentsAppIsUnknownWaits() {
+	// The source knows its app and says so on every row. Until this side knows its own,
+	// it cannot tell that row's app from somebody else's, and calling it foreign would
+	// park it for good.
+	s.source.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	id := s.pinnedSession("acme", 0)
+	rows := s.export("acme").of("agent_sessions")
+	s.Require().Len(rows, 1)
+	encoded, err := json.Marshal(rows[0])
+	s.Require().NoError(err)
+
+	err = s.destination.ImportRow(s.ctx, "acme", "agent_sessions", encoded)
+	s.Require().ErrorIs(err, ErrStreamAppUnknown)
+
+	s.destination.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	s.Require().NoError(s.destination.ImportRow(s.ctx, "acme", "agent_sessions", encoded))
+	s.Require().NotNil(s.pinOnDestination(id))
+	s.Equal(int64(1), *s.pinOnDestination(id))
+}
