@@ -168,6 +168,27 @@ func (c *Clients) ForAppReading(ctx context.Context, customer string, app int64)
 	return c.bind(identity)
 }
 
+// Stored is app mode's source, for registering and checking customers' apps, and false in
+// deployment mode.
+func (c *Clients) Stored() (*Stored, bool) {
+	stored, ok := c.source.(*Stored)
+	return stored, ok
+}
+
+// WithKey is a bound identity acting with another of its app's keys, when the app holds
+// that key and Stream accepts it; otherwise the bound identity as it was.
+func (c *Clients) WithKey(ctx context.Context, bound Bound, apiKey string) (Bound, error) {
+	stored, ok := c.Stored()
+	if !ok {
+		return bound, nil
+	}
+	identity := stored.ForKey(ctx, bound.Identity, apiKey)
+	if identity.APIKey == bound.Identity.APIKey {
+		return bound, nil
+	}
+	return c.bind(identity)
+}
+
 // PerApp reports whether customers act in apps of their own, which is app mode.
 func (c *Clients) PerApp() bool {
 	perApp, ok := c.source.(interface{ PerApp() bool })
@@ -186,6 +207,13 @@ func (c *Clients) forget(customer string) {
 	for asked := range c.known {
 		if asked.customer == customer {
 			delete(c.known, asked)
+		}
+	}
+	// What the customer's app holds is asked again too, since whatever changed it may
+	// have changed that.
+	for key, answer := range c.checks {
+		if answer.customer == customer {
+			delete(c.checks, key)
 		}
 	}
 }

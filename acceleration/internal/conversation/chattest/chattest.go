@@ -31,6 +31,8 @@ type store struct {
 	now      func() time.Time
 	app      App
 	appReads int
+	// keyed are apps answered for one api key, standing in for several apps at one URL.
+	keyed map[string]App
 }
 
 // App is what an app says of itself when asked: its id, and the channel and call types it
@@ -111,6 +113,17 @@ func (s *Server) SetApp(app App) {
 	s.db.app = app
 }
 
+// SetAppFor says what the app is when asked with one api key, so one server can stand in
+// for the deployment's app and a customer's at once. Every other key gets SetApp's.
+func (s *Server) SetAppFor(apiKey string, app App) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	if s.db.keyed == nil {
+		s.db.keyed = map[string]App{}
+	}
+	s.db.keyed[apiKey] = app
+}
+
 // AppReads is how many times the app was asked what it is.
 func (s *Server) AppReads() int {
 	s.db.mu.Lock()
@@ -189,6 +202,14 @@ func refuse(w http.ResponseWriter, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": message, "StatusCode": http.StatusBadRequest})
 }
 
+// appFor is the app a request's api key is answered as.
+func (db *store) appFor(r *http.Request) App {
+	if app, ok := db.keyed[r.URL.Query().Get("api_key")]; ok {
+		return app
+	}
+	return db.app
+}
+
 // messagesIn returns a channel's messages in the order they were written.
 func (db *store) messagesIn(id string) []map[string]any {
 	messages := []map[string]any{}
@@ -213,25 +234,26 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/api/v2/app"):
 		db.appReads++
-		if db.app.Refuses {
+		app := db.appFor(r)
+		if app.Refuses {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 5, "message": "api key not valid", "StatusCode": http.StatusUnauthorized})
 			return
 		}
 		channels, calls := map[string]any{}, map[string]any{}
-		for name := range db.app.ChannelTypes {
+		for name := range app.ChannelTypes {
 			channels[name] = map[string]any{"name": name}
 		}
-		for _, name := range db.app.CallTypes {
+		for _, name := range app.CallTypes {
 			calls[name] = map[string]any{"name": name}
 		}
 		result["app"] = map[string]any{
-			"id": db.app.ID, "channel_configs": channels, "call_types": calls,
-			"suspended": db.app.Suspended, "disable_auth_checks": db.app.DisableAuthChecks,
+			"id": app.ID, "channel_configs": channels, "call_types": calls,
+			"suspended": app.Suspended, "disable_auth_checks": app.DisableAuthChecks,
 		}
 	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/channeltypes/"):
 		name := parts[len(parts)-1]
-		grants, ok := db.app.ChannelTypes[name]
+		grants, ok := db.appFor(r).ChannelTypes[name]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": "channel type " + name + " does not exist", "StatusCode": http.StatusNotFound})

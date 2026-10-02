@@ -128,6 +128,7 @@ func forgeable(grants map[string][]string) bool {
 
 // checked is one app's readiness, or why it could not be read, as of when it was asked.
 type checked struct {
+	customer  string
 	readiness Readiness
 	err       error
 	at        time.Time
@@ -148,7 +149,7 @@ func (c *Clients) Readiness(ctx context.Context, bound Bound) (Readiness, error)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.checks[key] = checked{readiness: readiness, err: err, at: c.now()}
+	c.checks[key] = checked{customer: bound.Identity.CustomerID, readiness: readiness, err: err, at: c.now()}
 	return readiness, err
 }
 
