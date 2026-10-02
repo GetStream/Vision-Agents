@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -55,6 +56,11 @@ var ErrNoConnectorConnection = errors.New("store: no such connector connection")
 
 // ErrUnregisteredScheme says a connection names a scheme no adapter is registered for.
 var ErrUnregisteredScheme = errors.New("store: no such scheme is registered")
+
+// ErrSchemeNotAllowed says a connection names a registered scheme its connector's manifest
+// does not list. The manifest's schemes are the ones a connection may use
+// (core.Manifest.Schemes), so a registered scheme alone is not enough.
+var ErrSchemeNotAllowed = errors.New("store: the connector does not allow this scheme")
 
 // ErrNoAuthorizationAttempt says the attempt is absent, expired, already consumed, or for a
 // connection that was deleted. One error for all four, so a callback learns nothing about
@@ -152,8 +158,8 @@ func ConnectionLimit(asked int) int {
 }
 
 // CreateConnectorConnection records a new connection, pending until a grant is saved onto
-// it. Its schemes must be in registry and the definition revision it pins must be one the
-// customer can see. The registry is passed in rather than held by the store, so which
+// it. Its schemes must be in registry and listed by the definition revision it pins, which
+// must be one the customer can see. The registry is passed in rather than held by the store, so which
 // schemes exist is decided by whoever built it, and a test can register its own.
 func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Registry, connection *ConnectorConnection) error {
 	if connection.CustomerID == "" || connection.ConnectorID == "" {
@@ -173,8 +179,17 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 		return errors.New("store: material is saved onto a connection after it exists, not with it")
 	}
 	// Definitions are never updated or deleted, so a revision found here stays.
-	if _, err := s.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision); err != nil {
+	definition, err := s.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
+	if err != nil {
 		return err
+	}
+	if !slices.Contains(definition.Manifest.Schemes, connection.AuthScheme) {
+		return fmt.Errorf("%w: %s revision %d does not list auth scheme %q", ErrSchemeNotAllowed,
+			connection.ConnectorID, connection.DefinitionRevision, connection.AuthScheme)
+	}
+	if connection.TLSScheme != "" && !slices.Contains(definition.Manifest.Schemes, connection.TLSScheme) {
+		return fmt.Errorf("%w: %s revision %d does not list tls scheme %q", ErrSchemeNotAllowed,
+			connection.ConnectorID, connection.DefinitionRevision, connection.TLSScheme)
 	}
 
 	// Truncated to what Postgres keeps, so the row handed back is the row a read returns.

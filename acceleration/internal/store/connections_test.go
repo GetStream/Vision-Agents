@@ -122,6 +122,28 @@ func (s *StoreSuite) TestATLSSchemeIsStoredBesideTheAuthScheme() {
 	s.Nil(stored, "no TLS scheme is NULL, not an empty name")
 }
 
+func (s *StoreSuite) TestARegisteredAuthSchemeItsConnectorDoesNotListIsRefused() {
+	s.seed(acmeManifest)
+	connection := appConnection()
+	connection.AuthScheme = "test_unlisted"
+
+	err := s.store.CreateConnectorConnection(s.ctx, testSchemes, connection)
+
+	s.ErrorIs(err, ErrSchemeNotAllowed)
+	s.ErrorContains(err, `acme revision 1 does not list auth scheme "test_unlisted"`)
+}
+
+func (s *StoreSuite) TestARegisteredTLSSchemeItsConnectorDoesNotListIsRefused() {
+	s.seed(acmeManifest)
+	connection := appConnection()
+	connection.TLSScheme = "test_unlisted"
+
+	err := s.store.CreateConnectorConnection(s.ctx, testSchemes, connection)
+
+	s.ErrorIs(err, ErrSchemeNotAllowed)
+	s.ErrorContains(err, `acme revision 1 does not list tls scheme "test_unlisted"`)
+}
+
 func (s *StoreSuite) TestTheDatabaseRefusesAnAppOwnedConnectionNamingAUser() {
 	s.ErrorContains(s.insertRaw(OwnerApp, "alice"), "connector_connections_owner")
 }

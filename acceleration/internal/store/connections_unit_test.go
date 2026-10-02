@@ -35,10 +35,12 @@ func (testScheme) Classify(*http.Response, []byte, error) core.Outcome { return 
 
 func (testScheme) Revoke(context.Context, core.Material, core.Profile) error { return nil }
 
-// testSchemes is the registry the tests create connections against.
+// testSchemes is the registry the tests create connections against. acme lists test_key
+// and test_mtls; test_unlisted is registered but listed by no test manifest.
 var testSchemes = core.Registry{Schemes: map[string]core.Scheme{
-	"test_key":  testScheme("test_key"),
-	"test_mtls": testScheme("test_mtls"),
+	"test_key":      testScheme("test_key"),
+	"test_mtls":     testScheme("test_mtls"),
+	"test_unlisted": testScheme("test_unlisted"),
 }}
 
 // appConnection is an app-owned connection to the acme test built-in at revision 1.

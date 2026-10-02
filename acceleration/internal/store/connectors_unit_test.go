@@ -20,7 +20,7 @@ name: Acme
 category: Testing
 endpoints:
   mcp: https://mcp.acme.example/mcp
-schemes: [oauth2_code]
+schemes: [oauth2_code, test_key, test_mtls]
 scopes:
   list: [read, write]
 sources:
@@ -45,6 +45,8 @@ scopes:
     - write
 schemes:
   - oauth2_code
+  - test_key
+  - test_mtls
 endpoints: {mcp: "https://mcp.acme.example/mcp"}
 `
 
