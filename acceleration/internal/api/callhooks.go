@@ -160,7 +160,13 @@ func (s *Server) releaseEndedCall(r *http.Request, event callEvent) {
 		s.logger.Debug("a call event named no call", "cid", event.CallCid)
 		return
 	}
-	if err := s.phone.ReleaseCall(r.Context(), callType, callID); err != nil {
+	// The hook is signed with the deployment's own secret, so the event is about a call in
+	// the deployment's app, and only what was made there is released.
+	var deployment int64
+	if s.stream != nil {
+		deployment = s.stream.DeploymentApp()
+	}
+	if err := s.phone.ReleaseCall(r.Context(), deployment, true, callType, callID); err != nil {
 		s.logger.Error("could not release an ended call's resources", "call", event.CallCid, "error", err)
 	}
 }

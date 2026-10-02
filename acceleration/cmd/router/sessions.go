@@ -9,6 +9,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -62,4 +63,26 @@ func transcriptFor() session.TranscriptFactory {
 			Logger:       logger,
 		})
 	}
+}
+
+// phoneApps makes a customer's phone lines in the Stream app it acts in, and finishes the
+// lines already made in the app they were made in.
+type phoneApps struct {
+	clients *streamapp.Clients
+}
+
+func (a phoneApps) For(ctx context.Context, customer string) (*phone.Stream, int64, error) {
+	bound, err := a.clients.For(ctx, customer)
+	if err != nil {
+		return nil, 0, err
+	}
+	return phone.NewStreamFromClient(bound.Client), bound.Identity.StreamApp, nil
+}
+
+func (a phoneApps) ForApp(ctx context.Context, customer string, app int64) (*phone.Stream, error) {
+	bound, err := a.clients.ForApp(ctx, customer, app)
+	if err != nil {
+		return nil, err
+	}
+	return phone.NewStreamFromClient(bound.Client), nil
 }

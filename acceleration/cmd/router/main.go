@@ -606,7 +606,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 		streams.Image = imaging
 	}
 
-	telephony, err := buildPhone(settings, pgStore, liveClient, logger)
+	// Every Stream action taken for a customer, a call joined, a line made, a transcript
+	// written, a token minted, is taken in the app this resolves for them.
+	streamClients := newStreamClients(settings)
+	if pgStore != nil {
+		pgStore.SetStreamPins(streamPins(streamClients))
+	}
+
+	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, logger)
 	if err != nil {
 		return err
 	}
@@ -623,13 +630,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	// Every Stream action taken for a customer, a call joined, a transcript written, a
-	// token minted, is taken in the app this resolves for them.
-	streamClients := newStreamClients(settings)
-	if pgStore != nil {
-		pgStore.SetStreamPins(streamPins(streamClients))
-	}
-
 	sessions, err := buildSessions(settings, streams, pgStore, liveClient, telephony, base, finding, judging, streamClients, logger)
 	if err != nil {
 		return err
@@ -1008,18 +1008,15 @@ func buildPhone(
 	settings config.Config,
 	pgStore *store.Store,
 	liveClient *live.Client,
+	stream *streamapp.Clients,
 	logger *slog.Logger,
 ) (*phone.Service, error) {
 	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
 	if err != nil {
 		return nil, err
 	}
-
-	var stream *phone.Stream
-	if streaming, err := phone.NewStream(phone.StreamOptions{}); err == nil {
-		stream = streaming
-	} else {
-		logger.Warn("no stream credentials, numbers cannot be attached to a call", "error", err)
+	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" {
+		logger.Warn("no stream credentials, numbers cannot be attached to a call in the deployment's app")
 	}
 
 	var recorder *routing.Recorder
@@ -1030,7 +1027,7 @@ func buildPhone(
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
 		Store:     pgStore,
-		Stream:    stream,
+		Apps:      phoneApps{clients: stream},
 		Recorder:  recorder,
 		PublicURL: settings.PublicURL,
 		Logger:    logger,

@@ -61,6 +61,9 @@ func NewStream(options StreamOptions) (*Stream, error) {
 	return &Stream{client: client}, nil
 }
 
+// NewStreamFromClient makes lines with a client the caller already holds for an app.
+func NewStreamFromClient(client *getstream.Stream) *Stream { return &Stream{client: client} }
+
 // Trunk describes the trunk to create.
 type Trunk struct {
 	// Name is what the trunk is called in the dashboard.

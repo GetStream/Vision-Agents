@@ -4,10 +4,14 @@
 package chattest
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +25,8 @@ type store struct {
 	channels map[string]map[string]any
 	messages map[string]map[string]any
 	users    map[string]map[string]any
+	trunks   map[string]map[string]any
+	rules    map[string]map[string]any
 	order    []string
 	now      func() time.Time
 }
@@ -39,7 +45,8 @@ func NewServer(t *testing.T) *Server {
 	t.Helper()
 	db := &store{
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
-		users: map[string]map[string]any{}, now: time.Now,
+		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
+		rules: map[string]map[string]any{}, now: time.Now,
 	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
 	t.Cleanup(server.Close)
@@ -104,6 +111,27 @@ func (s *Server) Members(id string) []string {
 	return ids
 }
 
+// Trunks are the ids of the SIP trunks the app holds now.
+func (s *Server) Trunks() []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.db.trunks))
+}
+
+// Rules are the ids of the SIP routing rules the app holds now.
+func (s *Server) Rules() []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.db.rules))
+}
+
+// unique is an id nothing else has.
+func unique() string {
+	raw := make([]byte, 8)
+	_, _ = rand.Read(raw)
+	return hex.EncodeToString(raw)
+}
+
 // refuse answers the way Chat does when it will not do what was asked.
 func refuse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusBadRequest)
@@ -132,6 +160,20 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {
+	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
+		// Stream's ids are unique across every app, which is what lets a test tell one app's
+		// trunk from another's.
+		id := "trunk-" + unique()
+		db.trunks[id] = body
+		result["sip_trunk"] = map[string]any{"id": id, "uri": "sip:" + id + "@sip.example.test", "username": id, "password": "secret"}
+	case strings.HasSuffix(r.URL.Path, "/sip/inbound_routing_rules") && r.Method == http.MethodPost:
+		id := "rule-" + unique()
+		db.rules[id] = body
+		result["id"] = id
+	case strings.Contains(r.URL.Path, "/sip/inbound_trunks/") && r.Method == http.MethodDelete:
+		delete(db.trunks, parts[len(parts)-1])
+	case strings.Contains(r.URL.Path, "/sip/inbound_routing_rules/") && r.Method == http.MethodDelete:
+		delete(db.rules, parts[len(parts)-1])
 	case strings.HasSuffix(r.URL.Path, "/users") && r.Method == http.MethodGet:
 		var payload struct {
 			FilterConditions map[string]any `json:"filter_conditions"`

@@ -253,6 +253,8 @@ type PhoneNumber struct {
 	// StreamTrunkID is the SIP trunk calls to this number arrive on, empty until it has
 	// been attached to one.
 	StreamTrunkID string `bun:"stream_trunk_id,nullzero"`
+	// StreamRouteID is the routing rule made beside the trunk, in the same app.
+	StreamRouteID string `bun:"stream_route_id,nullzero"`
 	// StreamCallID and StreamCallType are the Stream call the routing rule puts callers
 	// in. They are what an arriving call is recognised by, since a webhook names the call
 	// rather than the number.

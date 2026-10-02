@@ -902,18 +902,20 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 //
 // The call is recorded as well as the trunk because an inbound call arrives over a webhook
 // that names the call, so without it there is nothing to attribute the call to.
-func (s *Store) AttachNumber(ctx context.Context, customerID, e164, trunkID, callType, callID string) error {
+func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attached NumberAttachment) error {
 	if customerID == "" || e164 == "" {
 		return errors.New("store: a customer and a number are required")
 	}
-	if trunkID == "" {
+	if attached.TrunkID == "" {
 		return errors.New("store: a trunk id is required")
 	}
 
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
-		Set("stream_trunk_id = ?", trunkID).
-		Set("stream_call_id = ?", callID).
-		Set("stream_call_type = ?", callType).
+		Set("stream_trunk_id = ?", attached.TrunkID).
+		Set("stream_route_id = ?", nullable(attached.RouteID)).
+		Set("stream_app_pk = ?", nullablePin(attached.StreamAppPK)).
+		Set("stream_call_id = ?", attached.CallID).
+		Set("stream_call_type = ?", attached.CallType).
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
@@ -929,6 +931,25 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164, trunkID, cal
 		return fmt.Errorf("store: %s is not a number %s holds", e164, customerID)
 	}
 	return nil
+}
+
+// NumberAttachment is what attaching a number made in Stream, and where its calls go.
+type NumberAttachment struct {
+	TrunkID string
+	RouteID string
+	// StreamAppPK is the app the trunk and route were made in, zero for the deployment's.
+	StreamAppPK int64
+	CallType    string
+	CallID      string
+}
+
+// nullablePin stores the deployment's own app as NULL, as every pin written before apps
+// had identities reads.
+func nullablePin(app int64) any {
+	if app == 0 {
+		return nil
+	}
+	return app
 }
 
 // CustomerNumbers returns the numbers a customer holds, newest first. Released numbers

@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -417,6 +419,11 @@ func (s *Server) TransferPhoneCall(
 	if request.Body.CallType != nil {
 		transfer.CallType = *request.Body.CallType
 	}
+	app, err := s.callApp(ctx, customerID, transfer.CallType, transfer.CallID)
+	if err != nil {
+		return nil, err
+	}
+	transfer.StreamApp = app
 
 	placed, err := s.phone.Transfer(ctx, transfer)
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
@@ -506,4 +513,30 @@ func phoneTags(tags *map[string]string) routing.Tags {
 
 func noTelephony() BadRequestJSONResponse {
 	return badRequest("phone numbers are not available: no telephony configured")
+}
+
+// callApp is the Stream app a live call is in, which a human transferred into it has to be
+// routed in too: the running session's, then the app its lines were made in, then the
+// customer's own.
+func (s *Server) callApp(ctx context.Context, customerID, callType, callID string) (int64, error) {
+	if callType == "" {
+		callType = defaultCallType
+	}
+	if s.sessions != nil {
+		for _, running := range s.sessions.List(session.Owner{CustomerID: customerID, Kind: auth.KindServer}) {
+			if spec := running.Spec(); spec.CallID == callID && spec.CallType == callType {
+				return spec.StreamApp, nil
+			}
+		}
+	}
+	if s.store != nil {
+		pin, found, err := s.store.CallPin(ctx, customerID, callType, callID)
+		if err != nil || found {
+			return pin, err
+		}
+	}
+	if s.stream == nil {
+		return 0, nil
+	}
+	return s.stream.Pin(ctx, customerID)
 }

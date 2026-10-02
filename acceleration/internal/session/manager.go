@@ -1059,6 +1059,21 @@ func (m *Manager) stream(ctx context.Context, spec Spec) (streamapp.Bound, error
 	if m.options.Stream == nil {
 		return nowhere, nil
 	}
+	// A call that already has lines, a number's or a placed call's, is in the app they were
+	// made in, and the agent has to join it there.
+	if m.options.Store != nil && spec.CallID != "" && !spec.Text {
+		pin, found, err := m.options.Store.CallPin(ctx, spec.CustomerID, spec.CallType, spec.CallID)
+		if err != nil {
+			return streamapp.Bound{}, err
+		}
+		if found {
+			bound, err := m.options.Stream.ForApp(ctx, spec.CustomerID, pin)
+			if err != nil {
+				return streamapp.Bound{}, fmt.Errorf("session: the app call %s is in: %w", spec.CallID, err)
+			}
+			return bound, nil
+		}
+	}
 	bound, err := m.options.Stream.For(ctx, spec.CustomerID)
 	if errors.Is(err, streamapp.ErrNoIdentity) {
 		return nowhere, nil
@@ -1094,6 +1109,7 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 		From:         spec.Phone.Number,
 		CallID:       spec.CallID,
 		CallType:     spec.CallType,
+		StreamApp:    spec.StreamApp,
 		Vendor:       spec.Phone.Vendor,
 		VendorCallID: spec.Phone.VendorCallID,
 	}), nil

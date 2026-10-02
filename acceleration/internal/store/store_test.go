@@ -645,7 +645,7 @@ func (s *StoreSuite) TestANumberRemembersWhichTrunkItsCallsArriveOn() {
 	}))
 
 	s.Require().NoError(s.store.AttachNumber(
-		s.ctx, "acme", "+15125551234", "trunk-7", "default", "phone-+15125551234"))
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "default", CallID: "phone-+15125551234"}))
 
 	number, err := s.store.Number(s.ctx, "acme", "+15125551234")
 	s.Require().NoError(err)
@@ -660,7 +660,7 @@ func (s *StoreSuite) TestAnArrivingCallNamesTheCustomerWhoseNumberWasRung() {
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 	s.Require().NoError(s.store.AttachNumber(
-		s.ctx, "acme", "+15125551234", "trunk-7", "support", "the-support-line"))
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "support", CallID: "the-support-line"}))
 
 	number, err := s.store.NumberByCall(s.ctx, "support", "the-support-line")
 
@@ -704,7 +704,7 @@ func (s *StoreSuite) TestAReleasedNumbersCallIsNotAttributedToItsFormerHolder() 
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 	s.Require().NoError(s.store.AttachNumber(
-		s.ctx, "acme", "+15125551234", "trunk-7", "default", "phone-+15125551234"))
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "default", CallID: "phone-+15125551234"}))
 	s.Require().NoError(s.store.ReleaseNumber(s.ctx, "acme", "+15125551234", s.base.Add(time.Hour)))
 
 	_, err := s.store.NumberByCall(s.ctx, "default", "phone-+15125551234")

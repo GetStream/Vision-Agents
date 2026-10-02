@@ -189,3 +189,47 @@ func (s *StreamAppsSuite) TestASessionRecordsTheAppItWasCreatedIn() {
 		return err == nil && row.StreamAppPK == 4242
 	}, settleFor, 10*time.Millisecond, "the call row carries its app")
 }
+
+func (s *StreamAppsSuite) TestAnInboundCallOnALegacyNumberJoinsTheDeploymentAppsCall() {
+	// The number was attached before the customer had an app of its own, so callers still
+	// land in the deployment's app, and that is where the agent has to be.
+	call := s.attached(0)
+
+	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call})
+
+	s.Equal(int64(0), s.pinOf(created.Id))
+}
+
+func (s *StreamAppsSuite) TestAnInboundCallOnANumberInTheCustomersAppJoinsThere() {
+	call := s.attached(4242)
+
+	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call})
+
+	s.Equal(int64(4242), s.pinOf(created.Id))
+}
+
+// attached is the call a number the customer holds routes callers into, attached in the
+// app given.
+func (s *StreamAppsSuite) attached(app int64) string {
+	ctx := context.Background()
+	e164 := s.utils.number()
+	call := "phone-" + e164
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: e164, Vendor: "telnyx", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	s.Require().NoError(s.store.AttachNumber(ctx, s.customerID(), e164, store.NumberAttachment{
+		TrunkID: "trunk-" + s.utils.uuid(), StreamAppPK: app, CallType: "agent", CallID: call,
+	}))
+	return call
+}
+
+// pinOf is the app a session was pinned to, read off its row once it is written.
+func (s *StreamAppsSuite) pinOf(id string) int64 {
+	var stored store.AgentSession
+	s.Require().Eventually(func() bool {
+		var err error
+		stored, err = s.store.StoredSession(context.Background(), s.customerID(), id)
+		return err == nil
+	}, settleFor, 10*time.Millisecond, "the session was never written down")
+	return stored.StreamAppPK
+}
