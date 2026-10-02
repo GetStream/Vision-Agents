@@ -699,6 +699,13 @@ func (m *Manager) Get(id string, owner Owner) (*Session, bool) {
 //
 // The newest wins if that ever happens, which is the one a person writing there is watching.
 func (m *Manager) ByAgent(agentID string) (*Session, bool) {
+	return m.ByAgentWhere(agentID, nil)
+}
+
+// ByAgentWhere is ByAgent among the sessions a test admits, by their customer and the Stream
+// app they act in. An agent id is the caller's to choose, so two customers' sessions may
+// share one, each in its own app.
+func (m *Manager) ByAgentWhere(agentID string, admits func(customer string, app int64) bool) (*Session, bool) {
 	if agentID == "" {
 		return nil, false
 	}
@@ -709,6 +716,9 @@ func (m *Manager) ByAgent(agentID string) (*Session, bool) {
 	var newest *Session
 	for _, found := range m.sessions {
 		if found.spec.AgentID != agentID {
+			continue
+		}
+		if admits != nil && !admits(found.spec.CustomerID, found.spec.StreamApp) {
 			continue
 		}
 		if newest == nil || found.created.After(newest.created) {

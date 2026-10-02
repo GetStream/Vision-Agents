@@ -128,7 +128,7 @@ func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, event 
 	if s.sessions != nil {
 		// A session running on a channel of the same name in another app is somebody
 		// else's conversation.
-		if found, running := s.sessions.ByAgent(event.ChannelID); running && origin.owns(found.Spec().CustomerID, found.Spec().StreamApp) {
+		if found, running := s.sessions.ByAgentWhere(event.ChannelID, origin.owns); running {
 			if found.Spec().PersistConversation {
 				return
 			}
