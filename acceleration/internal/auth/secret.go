@@ -13,6 +13,11 @@ import (
 // re-wrapping rows rather than by reissuing every secret.
 const KEKVersion = 1
 
+// ErrKeyVersionUnavailable says a record names a key version the keyring does not hold. It
+// is the keyring's configuration that is wrong, not the record, so a caller can tell it from
+// a record that does not open.
+var ErrKeyVersionUnavailable = errors.New("auth: key encryption key version is unavailable")
+
 // Sealer wraps and unwraps the secrets held in the database.
 //
 // The received wisdom is to hash an API secret and never hold it back, and it does not
@@ -94,7 +99,7 @@ func (s *Sealer) Open(sealed []byte) (string, error) {
 func (s *Sealer) OpenWithAADVersion(sealed, additional []byte, version int) (string, error) {
 	aead, ok := s.aeads[version]
 	if !ok {
-		return "", fmt.Errorf("auth: key encryption key version %d is unavailable", version)
+		return "", fmt.Errorf("%w: version %d", ErrKeyVersionUnavailable, version)
 	}
 	if len(sealed) < aead.NonceSize() {
 		return "", errors.New("auth: sealed secret is too short")

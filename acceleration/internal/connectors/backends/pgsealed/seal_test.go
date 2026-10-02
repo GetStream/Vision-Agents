@@ -41,8 +41,9 @@ func (s *SealSuite) sealed(ref core.ConnectionRef, revision int) *store.Connecto
 func (s *SealSuite) TestSealedMaterialOpensForItsRowAndRevision() {
 	connection := s.sealed(s.ref, 2)
 
-	opened, ok := s.backend.open(s.ref, connection)
+	opened, ok, err := s.backend.open(s.ref, connection)
 
+	s.Require().NoError(err)
 	s.True(ok)
 	s.Equal(s.m, opened)
 	s.NotContains(string(connection.MaterialSealed), "secret-refresh")
@@ -53,8 +54,17 @@ func (s *SealSuite) TestSealedMaterialDoesNotOpenAtAnotherRevision() {
 	connection := s.sealed(s.ref, 2)
 	connection.Revision = 3
 
-	_, ok := s.backend.open(s.ref, connection)
+	_, ok, err := s.backend.open(s.ref, connection)
+	s.Require().NoError(err, "a blob that does not authenticate is not a missing key")
 	s.False(ok)
+}
+
+func (s *SealSuite) TestAKeyVersionTheKeyringLacksIsAnErrorNotAnUnreadableBlob() {
+	connection := s.sealed(s.ref, 2)
+	connection.MaterialKEKVersion = 2
+
+	_, _, err := s.backend.open(s.ref, connection)
+	s.ErrorIs(err, auth.ErrKeyVersionUnavailable)
 }
 
 func (s *SealSuite) TestNoMaterialIsAnEmptyBlobAtKeyVersionZero() {
@@ -63,7 +73,8 @@ func (s *SealSuite) TestNoMaterialIsAnEmptyBlobAtKeyVersionZero() {
 	s.Empty(blob)
 	s.Zero(version)
 
-	opened, ok := s.backend.open(s.ref, &store.ConnectorConnection{Revision: 2, MaterialSealed: blob})
+	opened, ok, err := s.backend.open(s.ref, &store.ConnectorConnection{Revision: 2, MaterialSealed: blob})
+	s.Require().NoError(err)
 	s.True(ok)
 	s.Equal(core.Material{}, opened)
 }

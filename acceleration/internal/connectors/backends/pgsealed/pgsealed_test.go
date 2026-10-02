@@ -504,15 +504,50 @@ func (s *PGSealedSuite) TestABlobFromAnotherCustomerDoesNotOpen() {
 	s.assertUnreadable(core.ConnectionRef{CustomerID: "acme-app", ConnectionID: theirs.ConnectionID})
 }
 
-func (s *PGSealedSuite) TestMaterialUnderARetiredKeyNeedsReauthorization() {
+func (s *PGSealedSuite) TestAKeyVersionMissingFromTheKeyringWritesNothingAndItsReturnRestoresTheGrant() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
-	retired, err := auth.NewSealerWithKeyring(2, map[int]string{2: "test key two"})
+	before := s.stored(ref)
+	// A deploy that dropped key version 1 before every row was rewrapped.
+	misconfigured, err := auth.NewSealerWithKeyring(2, map[int]string{2: "test key two"})
 	s.Require().NoError(err)
 
-	grant := s.held(s.backend(retired), ref)
+	err = s.backend(misconfigured).WithLocked(s.ctx, ref, func(*core.Grant, func() error) (bool, error) {
+		s.Fail("fn does not run on material no key here can open")
+		return false, nil
+	})
+	s.ErrorIs(err, auth.ErrKeyVersionUnavailable)
+	stored := s.stored(ref)
+	s.Equal(store.ConnectionConnected, stored.Status, "a keyring fault is not the grant's")
+	s.Empty(stored.LastError)
+	s.Equal(before.Revision, stored.Revision)
 
-	s.Equal(store.ConnectionNeedsReauthorization, grant.Status)
-	s.Equal(1, s.stored(ref).MaterialKEKVersion, "the blob is left for the key to come back")
+	restored, err := auth.NewSealerWithKeyring(2, map[int]string{1: "test key one", 2: "test key two"})
+	s.Require().NoError(err)
+	grant := s.held(s.backend(restored), ref)
+	s.Equal(store.ConnectionConnected, grant.Status, "putting the key back restores the connection")
+	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(grant.Material))
+}
+
+func (s *PGSealedSuite) TestARewrapKeepsWhatAnUnchangedUseEditedButDidNotCommit() {
+	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
+	before := s.stored(ref)
+	rotated, err := auth.NewSealerWithKeyring(2, map[int]string{1: "test key one", 2: "test key two"})
+	s.Require().NoError(err)
+
+	err = s.backend(rotated).WithLocked(s.ctx, ref, func(g *core.Grant, _ func() error) (bool, error) {
+		g.Status = store.ConnectionDisconnected
+		g.LastError = "an edit fn did not ask to keep"
+		g.Material = material(tokens{Access: "edited", Refresh: "edited"})
+		return false, nil
+	})
+	s.Require().NoError(err)
+
+	stored := s.stored(ref)
+	s.Equal(2, stored.MaterialKEKVersion, "the rewrap still happens")
+	s.Equal(before.Revision, stored.Revision, "fn's Material was not committed")
+	s.Equal(store.ConnectionConnected, stored.Status)
+	s.Empty(stored.LastError)
+	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(s.held(s.backend(rotated), ref).Material))
 }
 
 // assertUnreadable checks that a connection whose blob does not open is handed over empty and

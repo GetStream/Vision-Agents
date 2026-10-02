@@ -46,15 +46,23 @@ func New(db *store.Store, sealer *auth.Sealer) (*Backend, error) {
 // The backend owns Grant.Revision: a commit whose Material differs from the stored one seals
 // it for the next revision; one that keeps it keeps the revision. Material under an older key
 // is sealed again under the current one by the first use that returns no error, even one
-// that changed nothing. Material that does not open is handed to fn empty, with the grant at
-// needs_reauthorization, committed before fn runs: no use can mint from it, and a reconnect
-// can still replace it. Its blob stays as it is until then.
+// that changed nothing; when fn returned changed false, the rewrap writes what was stored, not
+// fn's edits. Material that does not authenticate for this row and revision is handed to fn
+// empty, with the grant at needs_reauthorization, committed before fn runs: no use can mint
+// from it, and a reconnect can still replace it. Its blob stays as it is until then. Material
+// under a key version the keyring does not hold is a configuration fault, not the grant's:
+// WithLocked returns auth.ErrKeyVersionUnavailable without running fn or writing anything, so
+// restoring the key restores the connection.
 func (b *Backend) WithLocked(ctx context.Context, ref core.ConnectionRef,
 	fn func(g *core.Grant, checkpoint func() error) (changed bool, err error)) error {
 	return b.store.WithLockedConnectorConnection(ctx, ref.CustomerID, ref.ConnectionID,
 		func(connection *store.ConnectorConnection, save func() error) (bool, error) {
 			stored := &locked{connection: connection}
-			stored.material, stored.opened = b.open(ref, connection)
+			var err error
+			stored.material, stored.opened, err = b.open(ref, connection)
+			if err != nil {
+				return false, err
+			}
 			grant := stored.grant()
 			if !stored.opened && connection.Status != store.ConnectionNeedsReauthorization {
 				grant.Status = store.ConnectionNeedsReauthorization
@@ -67,8 +75,12 @@ func (b *Backend) WithLocked(ctx context.Context, ref core.ConnectionRef,
 			if err != nil {
 				return false, err
 			}
-			if changed || b.stale(stored) {
+			if changed {
 				return false, b.commit(ref, stored, &grant, save)
+			}
+			if b.stale(stored) {
+				rewrap := stored.grant()
+				return false, b.commit(ref, stored, &rewrap, save)
 			}
 			return false, nil
 		})
@@ -158,21 +170,24 @@ func (b *Backend) seal(ref core.ConnectionRef, revision int, m core.Material) ([
 }
 
 // open is the connection's Material, and false when there is a blob that does not open for
-// this row at this revision under the key version it names.
-func (b *Backend) open(ref core.ConnectionRef, connection *store.ConnectorConnection) (core.Material, bool) {
+// this row at this revision. A key version the keyring does not hold is an error instead.
+func (b *Backend) open(ref core.ConnectionRef, connection *store.ConnectorConnection) (core.Material, bool, error) {
 	if len(connection.MaterialSealed) == 0 {
-		return core.Material{}, true
+		return core.Material{}, true, nil
 	}
 	plain, err := b.sealer.OpenWithAADVersion(connection.MaterialSealed,
 		materialAAD(ref, connection.Revision), connection.MaterialKEKVersion)
+	if errors.Is(err, auth.ErrKeyVersionUnavailable) {
+		return core.Material{}, false, fmt.Errorf("pgsealed: open material: %w", err)
+	}
 	if err != nil {
-		return core.Material{}, false
+		return core.Material{}, false, nil
 	}
 	var material core.Material
 	if err := json.Unmarshal([]byte(plain), &material); err != nil {
-		return core.Material{}, false
+		return core.Material{}, false, nil
 	}
-	return material, true
+	return material, true, nil
 }
 
 // materialAAD binds a sealed Material to its tenant, connection and revision, so a blob
