@@ -44,11 +44,8 @@ type Config struct {
 	// STT is the model that transcribes.
 	STT string
 	// TTS is the model that speaks.
-	TTS string
-	// Subagent is the model that does the thinking a harness delegates. Overridden by the
-	// harness when it names one.
-	Subagent string
-	Video    *acceleration.SessionVideo
+	TTS   string
+	Video *acceleration.SessionVideo
 	// Voice is a provider-specific voice id.
 	Voice string
 	// Language is a hint, which narrows the candidates in every modality.
@@ -79,7 +76,7 @@ type Config struct {
 // Call is what one conversation is about, as opposed to the agent behind it.
 //
 // The backend joins a call that already exists, so the id here names one somebody has
-// created. The harness, cost and memory fields are rendered from an agent's configuration
+// created. The cost and memory fields are rendered from an agent's configuration
 // before it joins.
 type Call struct {
 	ConversationID string
@@ -100,8 +97,8 @@ type Call struct {
 	// are searched.
 	Title       string
 	Description string
-	// Project groups conversations, and is carried as a cost label too.
-	Project string
+	// ProjectID groups conversations, and is carried as a cost label too.
+	ProjectID string
 	// Custom is the caller's own labels, handed back untouched and queryable.
 	Custom map[string]any
 	// Incognito holds the conversation and keeps nothing: no session row, no turns, no
@@ -116,16 +113,7 @@ type Call struct {
 	// Memory is who the session's memories are about and what narrows recall.
 	Memory *acceleration.SessionMemory
 
-	// Subagent is the model that runs delegated work, from the agent's harness.
-	Subagent string
-	Video    *acceleration.SessionVideo
-	// Tasks is how much delegated work may run at once.
-	Tasks int
-	// Sandbox is where the subagent may run code it writes.
-	Sandbox string
-	// Skills replace the built-in set. Nil leaves them alone, and an empty non-nil slice
-	// turns delegation off: the two mean different things.
-	Skills *[]acceleration.SessionSkill
+	Video *acceleration.SessionVideo
 
 	// Phone is the number the session acts from, which is what turns transferring on.
 	Phone *acceleration.SessionPhone
@@ -334,7 +322,7 @@ func (p *Pipeline) ready() (*acceleration.ClientWithResponses, error) {
 	return backend.Client()
 }
 
-// abandon closes a session nothing here can watch. Whatever went wrong on the way to
+// abandon stops a session nothing here can watch. Whatever went wrong on the way to
 // watching it has already been reported, so a second failure here is nothing to add.
 func (p *Pipeline) abandon(ctx context.Context, id string) {
 	backend, err := p.backend.Resolve()
@@ -345,7 +333,7 @@ func (p *Pipeline) abandon(ctx context.Context, id string) {
 	if err != nil {
 		return
 	}
-	_, _ = client.CloseSessionWithResponse(ctx, id)
+	_, _ = client.StopSessionWithResponse(ctx, id)
 }
 
 // Events yields what the backend did until the call ends, when the channel closes.
@@ -394,7 +382,7 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 		failure = socket.Send(Frame{"type": "close"})
 	} else if backend, err := p.backend.Resolve(); err == nil {
 		if client, err := backend.Client(); err == nil {
-			_, failure = client.CloseSessionWithResponse(ctx, session.Id)
+			_, failure = client.StopSessionWithResponse(ctx, session.Id)
 		}
 	}
 
@@ -431,7 +419,7 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	setString(&request.Instructions, call.Instructions)
 	setString(&request.Title, call.Title)
 	setString(&request.Description, call.Description)
-	setString(&request.Project, call.Project)
+	setString(&request.ProjectId, call.ProjectID)
 	setString(&request.Agent, p.config.Agent)
 	setString(&request.ConfigId, p.config.ConfigID)
 	setString(&request.Llm, p.config.LLM)
@@ -451,28 +439,11 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 		request.ToolTimeoutMs = &milliseconds
 	}
 
-	// The harness names the subagent when it has one, and the pipeline's own is the
-	// fallback for an agent configured without a harness.
-	subagent := call.Subagent
-	if subagent == "" {
-		subagent = p.config.Subagent
-	}
-	setString(&request.Subagent, subagent)
 	request.Video = p.config.Video
 	if call.Video != nil {
 		request.Video = call.Video
 	}
 
-	if call.Tasks > 0 {
-		request.Tasks = &call.Tasks
-	}
-	if call.Sandbox != "" {
-		sandbox := acceleration.Sandbox(call.Sandbox)
-		request.Sandbox = &sandbox
-	}
-	if call.Skills != nil {
-		request.Skills = call.Skills
-	}
 	if len(call.Tags) > 0 {
 		request.Tags = &call.Tags
 	}

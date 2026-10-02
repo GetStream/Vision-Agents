@@ -32,7 +32,9 @@ const judgeInstructions = `You are checking a recorded conversation between a ca
 
 Answer only the question you are given. Do not rule on how polite the agent was, how long it took, or anything else you happened to notice: if the question is about whether an order was placed, an unhelpful agent that placed the order correctly still passes.
 
-Judge what the agent actually did, not what it said it would do. An agent that promised to place an order and never confirmed one has not placed it.
+The question is about the agent. What only the caller said is not something the agent said or did, even if the agent agreed with it.
+
+Judge what the agent actually did, not what it said it would do. An agent that promised to place an order and never confirmed one has not placed it. If you are told the agent had tools, the lines saying what it used them for are the record of what it did: something it only claimed in words, with no tool line doing it, did not happen, and a tool that failed did not do what it was asked.
 
 Score your confidence in the ruling from 1 to 5, where 5 is the conversation plainly settles it and 1 is that you are guessing. Say in one or two sentences what in the conversation decided it, quoting the line that settled it where there is one.
 
@@ -45,12 +47,14 @@ type verdict struct {
 	Score  int    `json:"score"`
 }
 
-// rule asks the judge whether the assertion held.
+// rule asks the judge whether the assertion held. Tools names what the agent could do rather
+// than say, because an agent with none can only act in words and one with them cannot.
 func rule(
 	ctx context.Context,
 	router *llmrouter.Router,
 	request llmrouter.Request,
 	id, assertion string,
+	tools []string,
 	so said,
 ) (verdict, error) {
 	if request.Target == "" {
@@ -66,7 +70,7 @@ func rule(
 	}
 	defer session.Close()
 
-	asked := "The question:\n\n" + assertion + "\n\n" + heard(so)
+	asked := "The question:\n\n" + assertion + "\n\n" + heard(tools, so)
 	stream, err := session.Create(ctx, llm.ResponseParams{
 		ID:              id,
 		Instructions:    judgeInstructions,
@@ -87,10 +91,24 @@ func rule(
 
 // heard is the conversation as the judge reads it, which names the two sides rather than
 // addressing one of them the way the caller's copy does.
-func heard(so said) string {
+func heard(tools []string, so said) string {
 	var written strings.Builder
+	if len(tools) > 0 {
+		written.WriteString("The agent could act through these tools: ")
+		written.WriteString(strings.Join(tools, ", "))
+		written.WriteString(". Lines starting \"Agent used\" are what they actually did.\n\n")
+	}
 	written.WriteString("The conversation, in order:\n\n")
 	for _, line := range so {
+		// The tools ran before the words that report them, so they are read in that order.
+		for _, used := range line.Tools {
+			fmt.Fprintf(&written, "Agent used %s with %s, which ", used.Name, used.Arguments)
+			if used.Error != "" {
+				fmt.Fprintf(&written, "failed: %s\n", used.Error)
+			} else {
+				fmt.Fprintf(&written, "answered: %s\n", used.Result)
+			}
+		}
 		speaker := "Agent"
 		if line.Caller {
 			speaker = "Caller"

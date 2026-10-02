@@ -34,6 +34,10 @@ module GetStream
         @lock.synchronize { @tools.empty? }
       end
 
+      def include?(name)
+        @lock.synchronize { @tools.key?(name.to_s) }
+      end
+
       # The tools as a session request declares them.
       def declarations
         @lock.synchronize do

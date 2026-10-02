@@ -2,6 +2,9 @@ package chatlog
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -178,6 +181,47 @@ func (s *ChatLogSuite) TestAFinishedModelReplyStaysUnspokenUntilTheVoiceFinishes
 	s.Empty(writer.writing, "speech finishing is what stores the reply")
 }
 
+func (s *ChatLogSuite) TestASavedArtifactIsStoredEvenWithoutASpokenReply() {
+	s.log.client = chattest.Client(s.T())
+	s.log.visible = []string{"save_*"}
+	s.log.Record(agent.ToolRan{ID: "tool-one", TurnID: "turn-one", Tool: "save_canvas", Result: `{"schema_version":1,"status":"stored","publication":"pending","attachment":{"type":"canvas","artifact_id":"canvas-one","revision":2,"title":"Lilacs","sha256":"saved"}}`})
+	queued := s.queued()
+	s.Require().Len(queued, 1)
+	writer := newWriter(s.log)
+
+	writer.handle(queued[0])
+	// Repeated delivery has the same stored identity rather than a second card.
+	writer.handle(queued[0])
+
+	id := fmt.Sprintf("voice-artifact-%x", sha256.Sum256([]byte(s.log.channel+"\x00turn-one\x00tool-one")))
+	response, err := s.log.client.Chat().GetMessage(context.Background(), id, &getstream.GetMessageRequest{})
+	s.Require().NoError(err)
+	stored := response.Data.Message
+	s.Equal(SourceAgent, stored.Custom[SourceField])
+	s.Equal(false, stored.Custom[generatingField])
+	s.Require().Len(stored.Attachments, 1)
+	s.Equal("canvas", *stored.Attachments[0].Type)
+	s.Equal("Lilacs", *stored.Attachments[0].Title)
+	s.Equal("canvas-one", stored.Attachments[0].Custom["artifact_id"])
+	s.Equal(float64(2), stored.Attachments[0].Custom["revision"])
+	s.Empty(stored.Text, "the card must not duplicate the speech transcript")
+}
+
+func (s *ChatLogSuite) TestOnlyAShownToolsSuccessfulStoredReceiptMakesACard() {
+	s.log.visible = []string{"save_*"}
+	valid := `{"schema_version":1,"status":"stored","publication":"pending","attachment":{"type":"canvas","artifact_id":"canvas-one","revision":1,"title":"Lilacs"}}`
+	for _, event := range []agent.ToolRan{
+		{ID: "one", TurnID: "turn", Tool: "save_canvas", Result: valid, Err: errors.New("denied")},
+		{ID: "two", TurnID: "turn", Tool: "export_crm", Result: valid},
+		{ID: "three", TurnID: "turn", Tool: "save_canvas", Result: `{"status":"not_stored"}`},
+		{ID: "four", Tool: "save_canvas", Result: valid},
+	} {
+		s.log.Record(event)
+	}
+
+	s.Empty(s.queued())
+}
+
 func (s *ChatLogSuite) TestAnInterruptedReplyIsNotStoredAsFullySpoken() {
 	s.log.client = chattest.Client(s.T())
 	writer := newWriter(s.log)
@@ -313,15 +357,15 @@ func (s *ChatLogSuite) TestSpeechTheAgentIgnoredIsNotLeftInTheChannel() {
 	writer.handle(message{author: User{ID: "alice"}, text: "hang on, the door", kind: hearing, source: SourceSpeech})
 	writer.show()
 
+	s.Require().Len(s.channel(), 1, "watchers saw the words while they were heard")
+
 	writer.handle(message{author: User{ID: "alice"}, kind: ignored, source: SourceSpeech})
 
-	stored := s.channel()
-	s.Require().Len(stored, 1)
-	s.Empty(stored[0].Text)
-	s.Equal(false, stored[0].Custom[generatingField])
+	s.Empty(s.channel(), "an emptied message would read as one somebody sent")
+	s.Empty(writer.listening)
 }
 
-func (s *ChatLogSuite) TestSpeechThatNeverSettledIsClosedWhenTheCallEnds() {
+func (s *ChatLogSuite) TestSpeechThatNeverSettledIsRemovedWhenTheCallEnds() {
 	s.log.client = chattest.Client(s.T())
 	writer := newWriter(s.log)
 	writer.handle(message{author: User{ID: "alice"}, text: "and one more", kind: hearing, source: SourceSpeech})
@@ -329,9 +373,22 @@ func (s *ChatLogSuite) TestSpeechThatNeverSettledIsClosedWhenTheCallEnds() {
 
 	writer.closeOut()
 
+	s.Empty(s.channel(), "otherwise it says it is still being said forever, or is left empty")
+}
+
+func (s *ChatLogSuite) TestRetractingLeavesWhatWasSaidBefore() {
+	s.log.client = chattest.Client(s.T())
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+	writer.handle(message{author: alice, text: "What time is it?", kind: heard, source: SourceSpeech})
+	writer.handle(message{author: alice, text: "hang on", kind: hearing, source: SourceSpeech})
+	writer.show()
+
+	writer.handle(message{author: alice, kind: ignored, source: SourceSpeech})
+
 	stored := s.channel()
 	s.Require().Len(stored, 1)
-	s.Equal(false, stored[0].Custom[generatingField], "otherwise it says it is still being said forever")
+	s.Equal("What time is it?", stored[0].Text)
 }
 
 func (s *ChatLogSuite) TestAnEmptyWrittenReplyIsNotStored() {

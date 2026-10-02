@@ -73,7 +73,7 @@ func (s *Store) SaveKnowledgeURL(ctx context.Context, page *KnowledgeURL) error 
 	page.UpdatedAt = time.Now().UTC()
 
 	result, err := s.db.NewUpdate().Model(page).
-		Column("title", "declared_title", "description",
+		Column("title", "declared_title", "description", "refresh_hours",
 			"state", "error", "passages", "last_indexed_at", "updated_at").
 		Where("id = ?", page.ID).
 		Where("customer_id = ?", page.CustomerID).
@@ -138,6 +138,26 @@ func (s *Store) KnowledgeURL(ctx context.Context, customerID, id string) (Knowle
 		return KnowledgeURL{}, fmt.Errorf("store: knowledge url: %w", err)
 	}
 	return page, nil
+}
+
+// DueKnowledgeURLs returns pages, of every customer, whose refresh interval has passed since
+// they were last read. A read that failed counts, since every read is saved, so a broken
+// page is tried once an interval rather than on every sweep. A page still waiting on its
+// first read is not due: that read is already queued.
+func (s *Store) DueKnowledgeURLs(ctx context.Context, now time.Time, limit int) ([]KnowledgeURL, error) {
+	var pages []KnowledgeURL
+	err := s.db.NewSelect().Model(&pages).
+		Where("deleted_at IS NULL").
+		Where("refresh_hours > 0").
+		Where("state <> ?", KnowledgeURLPending).
+		Where("updated_at + refresh_hours * interval '1 hour' <= ?", now).
+		Order("updated_at ASC").
+		Limit(limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: due knowledge urls: %w", err)
+	}
+	return pages, nil
 }
 
 // CustomerKnowledgeURLs returns the pages a customer subscribes to, newest first. An empty

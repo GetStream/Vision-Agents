@@ -63,6 +63,29 @@ describe("the agent handle", () => {
 
     assert.equal(await api.agent("docs").config(), undefined);
   });
+
+  it("updates a config by sending only what changed, so the rest of it is kept", async () => {
+    router.serve("GET", "/v1/agents/configs", { body: [{ id: "config-1", name: "docs" }] });
+    router.serve("PATCH", "/v1/agents/configs/config-1", {
+      body: { id: "config-1", name: "docs", guardrail: "Only Acme.", instructions: "Be brief." },
+    });
+
+    const updated = await api.agent("docs").updateConfig({ guardrail: "Only Acme." });
+
+    assert.equal(updated.instructions, "Be brief.");
+    assert.deepEqual(router.requestsTo("PATCH", "/v1/agents/configs/config-1")[0]?.body, {
+      guardrail: "Only Acme.",
+    });
+  });
+
+  it("refuses to update an agent nothing is configured under", async () => {
+    router.serve("GET", "/v1/agents/configs", { body: [] });
+
+    await assert.rejects(
+      () => api.agent("docs").updateConfig({ guardrail: "Only Acme." }),
+      ConfigurationError,
+    );
+  });
 });
 
 describe("sessions", () => {
@@ -259,6 +282,118 @@ describe("memories", () => {
   it("refuses to truncate nobody before asking the router", async () => {
     await assert.rejects(api.memories.truncate(""), ConfigurationError);
     assert.equal(router.received.length, 0);
+  });
+});
+
+describe("simulations", () => {
+  let router: TestRouter;
+  let api: Client;
+
+  const request: Schemas["SimulationRequest"] = {
+    name: "capital",
+    config_id: "config-1",
+    scenario: "Ask what the capital of France is.",
+    assertion: "The agent says Paris.",
+  };
+
+  const simulation: Schemas["Simulation"] = {
+    ...request,
+    id: "simulation-1",
+    mode: "text",
+    variations: 1,
+    max_turns: 12,
+    created_at: new Date().toISOString(),
+  };
+
+  function run(over: Partial<Schemas["SimulationRun"]> = {}): Schemas["SimulationRun"] {
+    return {
+      id: "run-1",
+      simulation_id: "simulation-1",
+      state: "running",
+      cases: 1,
+      passed: 0,
+      failed: 0,
+      started_at: new Date().toISOString(),
+      ...over,
+    };
+  }
+
+  beforeEach(async () => {
+    router = await TestRouter.start();
+    api = new Client({ url: router.url, customerId: "local" });
+  });
+
+  afterEach(async () => {
+    await router.stop();
+  });
+
+  it("creates a simulation from the request as written", async () => {
+    router.serve("POST", "/v1/agents/simulations", { status: 201, body: simulation });
+
+    const created = await api.simulations.create(request);
+
+    assert.equal(created.id, "simulation-1");
+    assert.deepEqual(router.last.body, request, "nothing the caller left out is filled in");
+  });
+
+  it("replaces a simulation in place, by its id", async () => {
+    router.serve("PUT", "/v1/agents/simulations/simulation-1", {
+      body: { ...simulation, assertion: "The agent says Paris, France." },
+    });
+
+    const updated = await api.simulations.update("simulation-1", {
+      ...request,
+      assertion: "The agent says Paris, France.",
+    });
+
+    assert.equal(updated.assertion, "The agent says Paris, France.");
+    assert.equal((router.last.body as Record<string, unknown>)["assertion"], "The agent says Paris, France.");
+  });
+
+  it("starts a run and reads it until it settles", async () => {
+    router.serve("POST", "/v1/agents/simulations/simulation-1/run", { status: 202, body: run() });
+    router.serve("GET", "/v1/agents/simulation-runs/run-1", { body: run({ state: "passed", passed: 1 }) });
+
+    const started = await api.simulations.run("simulation-1");
+    const settled = await api.simulations.runs.get(started.id);
+
+    assert.equal(started.state, "running", "a run answers before its conversations are had");
+    assert.equal(settled.state, "passed");
+    assert.equal(settled.passed, 1);
+  });
+
+  it("lists one simulation's runs, and leaves out a filter nobody set", async () => {
+    router.serve("GET", "/v1/agents/simulation-runs", { body: [run()] });
+
+    await api.simulations.runs.list({ simulationId: "simulation-1" });
+    assert.equal(router.last.query.get("simulation_id"), "simulation-1");
+    assert.equal(router.last.query.get("limit"), null);
+
+    await api.simulations.runs.list();
+    assert.equal(router.last.query.get("simulation_id"), null);
+  });
+
+  it("cancels a run and deletes a simulation", async () => {
+    router.serve("POST", "/v1/agents/simulation-runs/run-1/cancel", { body: run({ state: "cancelled" }) });
+    router.serve("DELETE", "/v1/agents/simulations/simulation-1", { status: 204 });
+
+    const cancelled = await api.simulations.runs.cancel("run-1");
+    await api.simulations.delete("simulation-1");
+
+    assert.equal(cancelled.state, "cancelled");
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/simulations/simulation-1").length, 1);
+  });
+
+  it("says why the router would not run a simulation", async () => {
+    router.serve("POST", "/v1/agents/simulations/gone/run", {
+      status: 404,
+      body: { error: "unknown simulation" },
+    });
+
+    await assert.rejects(
+      api.simulations.run("gone"),
+      (error: unknown) => error instanceof RouterError && error.status === 404,
+    );
   });
 });
 

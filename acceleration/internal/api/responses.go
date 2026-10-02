@@ -70,7 +70,7 @@ func (s *Server) CreateResponse(ctx context.Context, request CreateResponseReque
 		if len(parts) > 0 {
 			return CreateResponse400JSONResponse{badRequest("a command ID carries text only")}, nil
 		}
-		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text)
+		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "")
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return CreateResponse409JSONResponse{Error: err.Error()}, nil
 		}
@@ -79,6 +79,9 @@ func (s *Server) CreateResponse(ctx context.Context, request CreateResponseReque
 	}
 	if err != nil {
 		return CreateResponse400JSONResponse{badRequest(err.Error())}, nil
+	}
+	if len(videos) > 0 {
+		found.SawVideo()
 	}
 	if responseID == "" {
 		// The turn is being answered, it just has no name. A session that records nothing

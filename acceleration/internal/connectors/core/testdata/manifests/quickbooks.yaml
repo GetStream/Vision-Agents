@@ -1,0 +1,60 @@
+# Stress-test row 2 (QuickBooks Online) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning. Vendor sources, both
+# opened October 1, 2026:
+#   [jsclient] https://github.com/intuit/oauth-jsclient/blob/master/src/OAuthClient.js
+#   [readme]   https://github.com/intuit/oauth-jsclient/blob/master/README.md
+id: quickbooks
+revision: 1
+name: QuickBooks Online
+inputs:
+  # sandbox and production environments: [jsclient] (OAuthClient.environment).
+  - name: environment
+    enum: [production, sandbox]
+    default: production
+vars:
+  api_host:
+    from: environment
+    values:
+      # [jsclient] OAuthClient.environment; row 2.
+      production: quickbooks.api.intuit.com
+      sandbox: sandbox-quickbooks.api.intuit.com
+endpoints:
+  # [jsclient] OAuthClient.authorizeEndpoint, tokenEndpoint, revokeEndpoint.
+  authorize: https://appcenter.intuit.com/connect/oauth2
+  token: https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer
+  revoke: https://developer.api.intuit.com/v2/oauth2/tokens/revoke
+  # /v3/company/{realm_id}: row 2 (OAuthClient.js:108-109).
+  api_base: https://{api_host}/v3/company/{metadata.realm_id}
+schemes: [oauth2_code]
+client:
+  # Our policy, not a vendor fact.
+  policy: [operator, customer]
+scopes:
+  # [jsclient] OAuthClient.scopes.Accounting.
+  list: [com.intuit.quickbooks.accounting]
+capture:
+  # realmId is a callback parameter, not in the token body: row 2; [jsclient] createToken
+  # reads params.realmId. Verify: the value comes from the browser; the token is bound to
+  # its realm, so a wrong one fails on the first call (doc, «What the stress test adds to
+  # the core», item 13).
+  - name: realm_id
+    from: callback_query
+    key: realmId
+    verify: true
+  # x_refresh_token_expires_in, in seconds: row 2; [readme]. Kept as the provider wrote it;
+  # turning it into a date needs the time the response arrived, which the scheme has.
+  - name: refresh_token_expires_in
+    from: token_response
+    path: $.x_refresh_token_expires_in
+# The company (realm) is the account. Row 2 names no identity; this is our choice.
+identity: [realm_id]
+refresh:
+  # Rotating, old refresh token valid 24 hours: row 2; [readme] «Your previous refresh
+  # tokens expire 24 hours after you receive a new one».
+  rotating: true
+  grace: 24h
+  # [readme] «Access tokens are valid for 3600 seconds (one hour)».
+  access_ttl: 1h
+sources:
+  - kind: http
+    endpoint: api_base

@@ -10,7 +10,6 @@ import (
 	"github.com/openai/openai-go/v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -33,7 +32,7 @@ type Session struct {
 	// admit asks the owner's policies before each response, and screen judges what each
 	// response is asked. Both are nil on a fallback child, which serves a response its
 	// parent already admitted and screened.
-	admit  func(context.Context, string) (options.DataPolicy, error)
+	admit  func(context.Context, string) (routing.Admission, error)
 	screen Screen
 }
 
@@ -99,6 +98,10 @@ func (s *Session) Capabilities() llm.Capabilities { return s.provider.Capabiliti
 // Price is what this session's provider charges, so a caller can report a cost without
 // reaching for the router's config.
 func (s *Session) Price() routing.Price { return s.config.Price }
+
+// ContextWindow is how many tokens of prompt this session's model takes, or zero when
+// its config does not say.
+func (s *Session) ContextWindow() int64 { return s.config.ContextWindow }
 
 // LLM exposes the underlying provider so callers can reach provider-specific features.
 func (s *Session) LLM() llm.LLM { return s.provider }

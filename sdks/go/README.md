@@ -70,9 +70,9 @@ api, _ := client.New(stream.Backend{})
 docs := api.Agent("docs")
 
 session, _ := docs.Sessions.Create(ctx, client.SessionOptions{
-    Title:   "Is Stream better than Sendbird?",
-    Project: "docs",
-    Custom:  map[string]any{"ticket": "4721"},
+    Title:     "Is Stream better than Sendbird?",
+    ProjectID: "docs",
+    Custom:    map[string]any{"ticket": "4721"},
 })
 defer session.Close(ctx)
 
@@ -92,10 +92,11 @@ finished, because a model takes seconds. `Items` is what the backend wrote down,
 the same during the conversation and a week after it ended; `session.Events()` is still the
 live view, and the two answer different questions.
 
-Old conversations are found by filter or by phrase:
+Old conversations are listed most recently updated first, or found by phrase, best match
+first:
 
 ```go
-recent, _ := docs.Sessions.Query(ctx, client.Query{Project: "docs", Limit: 20})
+recent, _ := docs.Sessions.Query(ctx, client.Query{ProjectID: "docs", Limit: 20})
 found, _ := docs.Sessions.Search(ctx, "sendbird comparison", client.Query{})
 ```
 
@@ -245,9 +246,12 @@ Leaving one empty takes the backend's default.
 
 ```go
 llm := stream.Accelerated(stream.Config{
-    TTS: "sonic_36", STT: "parakeet", LLM: "gemma-4-E2B-it", Subagent: "openai/gpt-5.6-sol",
+    Agent: "jean", TTS: "sonic_36", STT: "parakeet", LLM: "gemma-4-E2B-it",
 })
-agent, _ := agents.New(agents.Options{Name: "jean", LLM: llm})
+agent, _ := agents.New(agents.Options{Name: "jean", LLM: llm, Harness: &agents.Harness{
+    Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
+}})
+agent.Sync(ctx) // the harness is stored on the agent's config, which the call runs under
 
 number, _ := agent.PurchaseAnyNumber(ctx, agents.NumberSearch{Vendor: "twilio", Country: "US"})
 
@@ -315,6 +319,7 @@ agents/jean/
   skills/think.md       frontmatter (name, description, deadline) and a body
   knowledge/*.md        what the agent may look things up in
   knowledge/urls.yaml   pages to keep that filled from, as urls or url/title/description
+  simulations/*.yaml    each a list of simulations (name, scenario, assertion, variations, ...)
   .agent_sync           written by Sync: the hash last synced and when
 ```
 
@@ -324,9 +329,12 @@ agent.Sync(ctx)
 ```
 
 `Sync` sends the whole directory in one request: the skills, the files and pages for a
-knowledge base named after the agent, and what `agent.yaml` declares. A key `agent.yaml`
-does not know is refused. The request carries a hash of the directory, the same one the
-Python SDK takes, and `.agent_sync` records it, so running `Sync` again on an unchanged
+knowledge base named after the agent, the simulations, and what `agent.yaml` declares. A key
+`agent.yaml` or a simulation file does not know is refused. The simulations in `simulations/`
+are the whole of the agent's: one taken out is deleted on the next sync, and a directory
+without `simulations/` leaves the stored ones alone. The request carries a hash of the
+directory, the same one the Python SDK takes for a directory without simulations, and
+`.agent_sync` records it, so running `Sync` again on an unchanged
 directory only reads the config back. What is written in code wins over what the directory
 says, so a directory is a starting point rather than an override.
 

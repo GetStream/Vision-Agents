@@ -921,45 +921,6 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /v1/agents/sync:
-    post:
-      operationId: syncAgent
-      summary: Store an agent directory's instructions, skills, knowledge and settings
-      description: >
-        Reads as "this is what the agent is", from a directory of agent.yaml,
-        instructions.md, skills/ and knowledge/. The hash is a fingerprint of that
-        directory: a second call with the same hash does nothing, so a process that syncs
-        on startup is cheap when nothing has changed.
-
-        agent.yaml decides the models, the voice and the rest of a config, so an agent
-        kept in a repository needs nothing written by hand. A setting it leaves out is
-        left alone rather than blanked.
-
-        knowledge/ is the whole of the knowledge base named after the agent: a file taken
-        out of the directory is taken out of the base on the next sync.
-
-        Server-side only: it needs a server-side token, so it cannot be reached from an
-        end user's device.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SyncAgentRequest"
-      responses:
-        "200":
-          description: The config as stored, or as it already was
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SyncAgentResult"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
   /v1/agents/configs:
     get:
       operationId: listAgentConfigs
@@ -2736,46 +2697,6 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   /v1/agents/sessions:
-    get:
-      operationId: listSessions
-      x-client-accessible: true
-      summary: The sessions the calling customer is running
-      description: >
-        Without filters this is what is happening now, which is what it has always been.
-        With any of them it is a query over what has happened as well: the sessions this
-        process is still holding and the rows recorded for the ones that ended, as one list
-        deduplicated by id, because a caller asking for their conversations does not care
-        which of them this instance happens to be holding.
-
-        A backend gets its customer's sessions; an end user gets their own, whatever they
-        ask for. That is not a filter they can widen, and it is why listing is safe to
-        expose to a page: one person's conversations are not a way to find another's. An
-        anonymous caller who named nobody gets nothing at all, since they reach their own
-        session by holding its id.
-      parameters:
-        - $ref: "#/components/parameters/SessionAgent"
-        - $ref: "#/components/parameters/SessionConfigID"
-        - $ref: "#/components/parameters/SessionUserID"
-        - $ref: "#/components/parameters/SessionProject"
-        - $ref: "#/components/parameters/SessionStateFilter"
-        - $ref: "#/components/parameters/SessionCustom"
-        - $ref: "#/components/parameters/SessionCreatedAfter"
-        - $ref: "#/components/parameters/SessionCreatedBefore"
-        - $ref: "#/components/parameters/SessionLimit"
-        - $ref: "#/components/parameters/Cursor"
-      responses:
-        "200":
-          description: >
-            The customer's sessions, newest first. There is no total: counting every
-            conversation a busy customer ever had costs more than the page itself.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SessionPage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
     post:
       operationId: createSession
       x-client-accessible: true
@@ -2894,50 +2815,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/agents/sessions/search:
-    get:
-      operationId: searchSessions
-      x-client-accessible: true
-      summary: Find a conversation by what it was called
-      description: >
-        Full text over the title, description, project and agent name, best match first,
-        with titles weighted above the rest so the conversation called "billing" beats every
-        conversation in the billing project.
-
-        What was said is not searched. Doing so would mean either reading every conversation
-        out of Stream Chat on each query, which is too slow to offer, or keeping a second
-        copy of every message here, which is a transcript that can drift from the real one.
-        Titles and descriptions are what a person names a conversation with, and naming them
-        is the habit worth encouraging.
-
-        The same owner scoping as listing applies, and the same filters narrow it, so a
-        search cannot reach a conversation a list could not. An empty q is the same as no q
-        and falls through to the list, because a search box nobody has typed in yet should
-        show a person their conversations rather than nothing.
-      parameters:
-        - $ref: "#/components/parameters/SessionSearchText"
-        - $ref: "#/components/parameters/SessionAgent"
-        - $ref: "#/components/parameters/SessionConfigID"
-        - $ref: "#/components/parameters/SessionUserID"
-        - $ref: "#/components/parameters/SessionProject"
-        - $ref: "#/components/parameters/SessionStateFilter"
-        - $ref: "#/components/parameters/SessionCustom"
-        - $ref: "#/components/parameters/SessionCreatedAfter"
-        - $ref: "#/components/parameters/SessionCreatedBefore"
-        - $ref: "#/components/parameters/SessionLimit"
-        - $ref: "#/components/parameters/Cursor"
-      responses:
-        "200":
-          description: The matching sessions, best match first
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SessionPage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
   /v1/agents/sessions/{id}:
     get:
       operationId: getSession
@@ -2945,7 +2822,7 @@ paths:
       summary: One session
       description: >
         Reading a session is open to the device holding it, for the same reason listing
-        and closing are: it is the conversation the caller is having. A session belonging
+        and stopping are: it is the conversation the caller is having. A session belonging
         to somebody else is reported as not found rather than refused, so this is not a
         way to find out whose an id is.
       parameters:
@@ -2961,19 +2838,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    delete:
-      operationId: closeSession
-      x-client-accessible: true
-      summary: Leave the call and end the session
-      parameters:
-        - $ref: "#/components/parameters/SessionID"
-      responses:
-        "204":
-          description: The agent has left
-        "401":
-          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
@@ -4114,80 +3978,6 @@ components:
         config. Names are unique per customer, so this answers with at most one.
       schema:
         type: string
-    SessionSearchText:
-      name: q
-      in: query
-      required: false
-      description: >
-        What to search for. Quoted phrases and bare words both work, and punctuation is
-        taken rather than refused: this comes from a search box, so an apostrophe must not
-        become a syntax error.
-      schema:
-        type: string
-    SessionAgent:
-      name: agent
-      in: query
-      required: false
-      description: The agent name the session was opened against.
-      schema:
-        type: string
-    SessionConfigID:
-      name: config_id
-      in: query
-      required: false
-      schema:
-        type: string
-    SessionUserID:
-      name: user_id
-      in: query
-      required: false
-      description: >
-        Whose sessions to list. Only a server-side caller may set it: an end user is
-        narrowed to their own whatever they ask for, because a filter a caller could widen
-        is not a boundary.
-      schema:
-        type: string
-    SessionProject:
-      name: project
-      in: query
-      required: false
-      schema:
-        type: string
-    SessionStateFilter:
-      name: state
-      in: query
-      required: false
-      description: Omitted is both.
-      schema:
-        type: string
-        enum: [running, closed]
-    SessionCustom:
-      name: custom
-      in: query
-      required: false
-      description: >
-        Match sessions whose custom object contains every one of these pairs, as a JSON
-        object. Containment rather than equality, so a session carrying three labels is
-        found by any two of them. A value that will not parse matches nothing rather than
-        failing the request: it arrives off a query string, and one bad label should not
-        break a conversation list.
-      schema:
-        type: string
-      example: '{"tenant":"acme"}'
-    SessionCreatedAfter:
-      name: created_after
-      in: query
-      required: false
-      schema:
-        type: string
-        format: date-time
-    SessionCreatedBefore:
-      name: created_before
-      in: query
-      required: false
-      schema:
-        type: string
-        format: date-time
     SessionLimit:
       name: limit
       in: query
@@ -4308,34 +4098,24 @@ components:
           type: object
           additionalProperties: true
           description: A JSON Schema object describing the arguments.
-
-    SessionSkill:
-      type: object
-      required: [name, description, instructions]
-      description: >
-        A kind of work worth handing to the slower model. There is nothing behind a skill
-        but a better model: what it declares is the instructions that model answers under.
-      properties:
-        name:
+        executor:
           type: string
-        revision:
-          type: integer
-          format: int64
-          minimum: 1
-          description: Immutable skill revision selected by the application's authorized registry.
-        description:
+          enum: [server, client]
+          # Without these the generated constants are named Server and Client, which clash
+          # with the package's own Server.
+          x-enum-varnames: [SessionToolExecutorServer, SessionToolExecutorClient]
+          description: >
+            Who runs it. A client tool runs on a person's device: in a persistent conversation
+            its call is shown as awaiting the device of the person whose command it answers
+            (their user and the command's client_id), with its arguments, which every
+            channel member can read. The caller still answers it over the events socket,
+            once the device has reported. Defaults to server.
+        display_title:
           type: string
-          description: The one line the fast model sees.
-        capture_video:
-          type: boolean
-          description: Capture task-scoped visual evidence before reasoning.
-        instructions:
-          type: string
-          description: The full prompt, which only the subagent sees.
-        deadline_ms:
-          type: integer
-          format: int64
-          description: How long the work may run before it is abandoned. Zero is the default.
+          maxLength: 80
+          description: >
+            What a call is doing, in words for the people in the conversation, such as
+            "Checking your location". Shown on the reply's ai_tool_call attachment.
 
     SessionMemory:
       type: object
@@ -4392,6 +4172,14 @@ components:
         running code takes seconds, and the model holding the conversation has none to
         spare. Omit it and the subagent works everything out in its head.
 
+    Harness:
+      type: string
+      enum: [default]
+      description: >
+        Which harness the agent's sessions run: what hands work to the subagent, loads
+        skills, compacts the conversation and starts the sandbox. Set on the agent, never
+        on a session. Omit it for the default, the only one there is.
+
     AgentConfigRequest:
       type: object
       required: [name]
@@ -4417,6 +4205,15 @@ components:
         voice:
           type: string
           description: Provider-specific voice id.
+        speed:
+          type: number
+          format: double
+          minimum: 0
+          description: >
+            Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A
+            config that names one is only routed to voices that can be sped up, and one
+            outside that voice's own range is refused.
+          example: 0.9
         llm:
           type: string
           description: The model holding the conversation.
@@ -4464,6 +4261,19 @@ components:
             Business-specific words the transcriber would otherwise get wrong, such as
             product or company names. Up to 100 terms, and providers that cannot be told
             about vocabulary ignore them.
+        visible_tools:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            maxLength: 128
+          description: >
+            Tools whose steps end users see on a persistent conversation's replies, as
+            tool names or path.Match patterns such as athena_*. Only a step's name, status
+            and timing are shown, never its arguments or result. A shown tool whose result
+            is exactly {"status":"answered","citations":[{"id","title","url","citation"}]}
+            also adds those citations to the reply's sources. Empty shows search and
+            web_search.
         knowledge_namespace:
           type: string
           description: >
@@ -4471,6 +4281,8 @@ components:
             told.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
+        harness:
+          $ref: "#/components/schemas/Harness"
         tags:
           type: object
           additionalProperties:
@@ -4499,6 +4311,9 @@ components:
             not used. Empty means the cascade.
         voice:
           type: string
+        speed:
+          type: number
+          format: double
         llm:
           type: string
         video:
@@ -4525,10 +4340,16 @@ components:
           type: array
           items:
             type: string
+        visible_tools:
+          type: array
+          items:
+            type: string
         knowledge_namespace:
           type: string
         sandbox:
           $ref: "#/components/schemas/Sandbox"
+        harness:
+          $ref: "#/components/schemas/Harness"
         tags:
           type: object
           additionalProperties:
@@ -5710,94 +5531,6 @@ components:
           type: string
           description: The URL the browser should open to finish the login.
 
-    SyncAgentRequest:
-      type: object
-      required: [name, hash]
-      description: >
-        An agent directory as it is on disk. Everything after the knowledge is what the
-        directory's declaration decides rather than what it holds, and a setting left out
-        leaves whatever is stored, so a model chosen in the dashboard survives a sync that
-        says nothing about it.
-      properties:
-        name:
-          type: string
-          description: What the config is called, which is also the directory's name.
-        hash:
-          type: string
-          description: >
-            A fingerprint of the directory. A second sync with the same hash does
-            nothing.
-        instructions:
-          type: string
-        guardrail:
-          type: string
-          description: >
-            The directory's guardrail.md, whole: frontmatter saying how to screen a turn,
-            then the policy in prose. Empty means every turn is answered.
-        skills:
-          type: array
-          items:
-            $ref: "#/components/schemas/SkillRequest"
-        knowledge:
-          type: array
-          items:
-            $ref: "#/components/schemas/KnowledgeDocument"
-        knowledge_urls:
-          type: array
-          description: >
-            The pages the directory's knowledge/urls.yaml declares. They are subscribed to
-            in the same knowledge base as the files, so one lookup covers both.
-          items:
-            $ref: "#/components/schemas/KnowledgeUrlDeclaration"
-        mode:
-          $ref: "#/components/schemas/AgentMode"
-        stt:
-          type: string
-        tts:
-          type: string
-        sts:
-          type: string
-          description: >
-            A speech-to-speech target: one native audio model that hears the caller and
-            speaks back. Naming one makes the agent native, and stt, tts and llm are then
-            not used. Empty means the cascade.
-        voice:
-          type: string
-        llm:
-          type: string
-        video:
-          $ref: "#/components/schemas/SessionVideo"
-        subagent:
-          type: string
-        search:
-          type: string
-        greeting:
-          type: string
-        plugins:
-          type: array
-          items:
-            type: string
-        keyterms:
-          type: array
-          items:
-            type: string
-        sandbox:
-          $ref: "#/components/schemas/Sandbox"
-        tags:
-          type: object
-          additionalProperties:
-            type: string
-
-    SyncAgentResult:
-      type: object
-      required: [unchanged, config]
-      properties:
-        unchanged:
-          type: boolean
-          description: True when the hash matched and nothing was written.
-        config:
-          $ref: "#/components/schemas/AgentConfig"
-
     VoiceRequest:
       type: object
       required: [name]
@@ -6145,19 +5878,6 @@ components:
         text:
           type: string
 
-    KnowledgeUrlDeclaration:
-      type: object
-      required: [url]
-      description: A page an agent directory declares, in the knowledge base named after it.
-      properties:
-        url:
-          type: string
-          example: https://example.com/pricing
-        title:
-          type: string
-          example: Pricing
-        description:
-          type: string
     KnowledgeUrlRequest:
       type: object
       required: [namespace, url]
@@ -6185,6 +5905,14 @@ components:
             What the page is, for a reader of the subscription. Optional, and kept as
             written: it says why this page is subscribed to, which a crawler cannot know.
           example: What each plan includes and where the limits are.
+        refresh_hours:
+          type: integer
+          minimum: 0
+          description: >
+            How often the page is read again on its own, in hours. Omit it, or send zero,
+            and the page is read when it is added and when it is re-indexed, never on a
+            schedule. Adding the page again replaces it.
+          example: 24
 
     KnowledgeUrlState:
       type: string
@@ -6219,6 +5947,9 @@ components:
         passages:
           type: integer
           description: How many passages the page was last cut into.
+        refresh_hours:
+          type: integer
+          description: How often the page is read again on its own, in hours. Absent means never.
         last_indexed_at:
           type: string
           format: date-time
@@ -7010,7 +6741,7 @@ components:
         description:
           type: string
           description: A longer note about the conversation, searched alongside the title.
-        project:
+        project_id:
           type: string
           description: >
             What the conversation belongs to. Also recorded as the "project" cost tag, so
@@ -7071,11 +6802,6 @@ components:
             A speech-to-speech target. Naming one makes this a native session: the model
             hears and speaks for itself, so no transcriber, conversation model or voice is
             opened. Omit it and the config decides.
-        subagent:
-          type: string
-          description: >
-            The model that does the thinking. Empty means the voice model answers
-            everything itself, and skills mean nothing.
         search:
           type: string
           description: >
@@ -7097,11 +6823,6 @@ components:
             terms, and providers that cannot be told about vocabulary ignore them.
         max_tokens:
           type: integer
-        tasks:
-          type: integer
-          description: How much delegated work may run at once.
-        sandbox:
-          $ref: "#/components/schemas/Sandbox"
         backchannel:
           type: boolean
           default: false
@@ -7112,19 +6833,6 @@ components:
           description: >
             How sure the transcriber must be before the agent answers rather than checks
             what was meant.
-        skills:
-          type: array
-          items:
-            $ref: "#/components/schemas/SessionSkill"
-          description: Omit for the built-in set of think, recall and explain.
-        skill_names:
-          type: array
-          items:
-            type: string
-          description: >
-            Skills to look up rather than spell out: the customer's own, or one of the
-            built-in think, recall and explain. Ignored when skills are given in full,
-            and a name nothing defines is refused rather than dropped.
         tools:
           type: array
           items:
@@ -7169,10 +6877,6 @@ components:
           description: >
             A speech-to-speech target. Naming one here makes the session native even if the
             config did not, which means no transcriber, model or voice is opened.
-        subagent:
-          type: string
-          description: >
-            The model delegated work runs on, in place of the config's.
         search:
           type: string
         thinking:
@@ -7298,11 +7002,13 @@ components:
 
     Session:
       type: object
-      required: [id, call_id, call_type, user_id, agent_id, state, created_at]
+      required: [id, call_id, call_type, user_id, agent_id, state, modality, created_at]
       properties:
         conversation_id:
           type: string
           description: Stream Chat CID to resume; returned for persistent text sessions.
+        modality:
+          $ref: "#/components/schemas/SessionModality"
         context_truncated:
           type: boolean
           description: Older history was omitted from the model context.
@@ -7370,7 +7076,7 @@ components:
           type: string
         description:
           type: string
-        project:
+        project_id:
           type: string
         custom:
           type: object
@@ -7408,7 +7114,7 @@ components:
           type: string
         description:
           type: string
-        project:
+        project_id:
           type: string
         custom:
           type: object
@@ -7627,6 +7333,12 @@ components:
           type: string
           pattern: '^[A-Za-z0-9_-]{1,128}$'
           description: Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+        client_id:
+          type: string
+          pattern: '^[A-Za-z0-9_.:-]{1,128}$'
+          description: >
+            The install the command came from. It is written on the person's message as
+            client_id, and a client tool called while answering is addressed to it.
     CommandReceipt:
       type: object
       required: [command_id, user_message_id, assistant_message_id, state, duplicate]
@@ -7675,8 +7387,6 @@ components:
           description: >
             A speech-to-speech target, which makes the session native. Empty makes it a
             cascade again.
-        subagent:
-          type: string
         voice:
           type: string
           description: >
@@ -7724,8 +7434,6 @@ components:
           description: >
             A speech-to-speech target, which makes the session native. Empty makes it a
             cascade again.
-        subagent:
-          type: string
         voice:
           type: string
           description: >
@@ -7742,6 +7450,14 @@ components:
         verbosity:
           type: string
           enum: [low, medium, high]
+
+    SessionModality:
+      type: string
+      enum: [text, voice, video]
+      description: >
+        How the user took part: text for a conversation held in writing, voice for a call,
+        and video once the agent has seen the user's video. It only moves up, from text or
+        voice to video.
 
     SessionMode:
       type: string

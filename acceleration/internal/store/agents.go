@@ -39,9 +39,9 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // A field added to AgentConfig and forgotten here is stored on create and silently
 // dropped on every update after, which reads as a setting that will not save.
 var configColumns = []string{
-	"name", "mode", "stt", "tts", "sts", "voice", "llm", "subagent",
+	"name", "mode", "stt", "tts", "sts", "voice", "speed", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "guardrail",
-	"skills", "plugins", "keyterms", "knowledge_namespace", "sandbox", "tags",
+	"skills", "plugins", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "harness", "tags",
 	"sync_hash", "updated_at",
 }
 
@@ -355,6 +355,9 @@ func normalizeConfig(config *AgentConfig) {
 	}
 	if config.Keyterms == nil {
 		config.Keyterms = []string{}
+	}
+	if config.VisibleTools == nil {
+		config.VisibleTools = []string{}
 	}
 	if config.Tags == nil {
 		config.Tags = map[string]string{}

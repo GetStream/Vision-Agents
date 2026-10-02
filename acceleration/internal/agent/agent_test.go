@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -160,6 +161,8 @@ type stubLLM struct {
 	// reply is streamed one delta per element for each request, unless the test writes the
 	// response itself.
 	reply []string
+	// thinking is streamed as reasoning before the reply.
+	thinking []string
 	// then replaces reply from the second request onward, so a model that asked for help
 	// on the first turn does not ask for it again once the answer has come back.
 	then []string
@@ -216,6 +219,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	s.scripts[params.ID] = script
 	s.order = append(s.order, params.ID)
 	reply := append([]string(nil), s.reply...)
+	thinking := append([]string(nil), s.thinking...)
 	first := len(s.asked) == 1
 	if !first && s.then != nil {
 		reply = append([]string(nil), s.then...)
@@ -232,6 +236,9 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		return script.Stream(), nil
 	}
 
+	for _, delta := range thinking {
+		script.ReasoningText(delta)
+	}
 	for _, delta := range reply {
 		script.OutputText(delta)
 	}
@@ -449,6 +456,7 @@ func stubConfig() routing.ModalityConfig {
 			Model:     "stub-model",
 			Languages: []string{"en"},
 			Realtime:  true,
+			Terms:     []options.Term{options.Speed},
 		}},
 		Aliases: map[string]routing.Alias{
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
@@ -533,6 +541,10 @@ type AgentSuite struct {
 	records *store.Store
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
+	// speed is the voice's rate of delivery the agent joins with, and voiceAsked is what
+	// the voice was opened with.
+	speed      float64
+	voiceAsked routing.Spec
 
 	agent  *Agent
 	events *collector
@@ -680,7 +692,10 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	}
 
 	speech := ttsrouter.NewRegistry()
-	speech.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speech.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
+		s.voiceAsked = spec
+		return s.voice, nil
+	})
 	speaker, err := ttsrouter.New(ttsrouter.Options{
 		Config: stubConfig(), Registry: speech, Logger: logger,
 	})
@@ -735,6 +750,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		STTTarget:          "en-low-latency",
 		TTS:                speaker,
 		TTSTarget:          "en-low-latency",
+		Speed:              s.speed,
 		Memory:             remembering,
 		Knowledge:          reading,
 		KnowledgeNamespace: s.namespace,
@@ -892,6 +908,20 @@ func (s *AgentSuite) TestJoiningEntersTheCall() {
 
 	s.eventually(func() bool { return countOf[Joined](s.reported()) == 1 }, "the agent never joined")
 	s.True(s.edge.joined)
+}
+
+func (s *AgentSuite) TestTheVoiceIsOpenedAtTheSpeedTheAgentWasGiven() {
+	s.speed = 0.9
+	s.join(true)
+
+	s.Require().NotNil(s.voiceAsked.TTS.Speed)
+	s.Equal(0.9, *s.voiceAsked.TTS.Speed)
+}
+
+func (s *AgentSuite) TestAVoiceWithNoSpeedIsNotAskedForOne() {
+	s.join(true)
+
+	s.Nil(s.voiceAsked.TTS.Speed, "naming a speed narrows the voices that may answer")
 }
 
 func (s *AgentSuite) TestJoiningTwiceIsRejected() {
@@ -2451,4 +2481,25 @@ func (s *AgentSuite) TestAConversationInWritingLooksThingsUpTheSameWay() {
 	looked, _ := firstOf[LookedUp](s.reported())
 	s.Equal("refund window", looked.Query)
 	s.Equal(1, looked.Documents)
+}
+
+// TestThinkingInWritingIsReportedApartFromTheReply keeps a reader's view of the model's
+// reasoning separate from the answer: it is reported as it streams and never joins the
+// reply that is stored or remembered.
+func (s *AgentSuite) TestThinkingInWritingIsReportedApartFromTheReply() {
+	s.joinText()
+	s.model.thinking = []string{"The user greets; ", "greet back."}
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "hello"))
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("Hello there. How are you?", responded.Text)
+	var thought strings.Builder
+	for _, event := range s.reported() {
+		if delta, ok := event.(ReasoningDelta); ok {
+			thought.WriteString(delta.Text)
+		}
+	}
+	s.Equal("The user greets; greet back.", thought.String())
 }

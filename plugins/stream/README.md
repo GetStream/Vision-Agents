@@ -161,6 +161,32 @@ The name is resolved when the agent joins, so the config can be defined somewher
 need not exist yet when the agent is built. Anything else passed to `Accelerated` overrides
 what the config says.
 
+## Tools hosted for an agent
+
+A session's own functions run in the process that opened it. `dispatch.host` is the other
+direction: the router offers these functions to every session under an agent id, wherever it
+was opened, and sends each call to this worker.
+
+```python
+from vision_agents.core.llm import FunctionRegistry
+
+functions = FunctionRegistry()
+
+
+@functions.register(description="Read the SDK's source")
+async def investigate_sdk(sdk: str) -> str:
+    return await read_source(sdk)
+
+
+dispatch = stream.Dispatch()
+dispatch.host("stream-support", functions, timeout=60)
+await dispatch.run()
+```
+
+`timeout` is how long the router gives one call, in seconds; zero takes its default. The
+worker declares its tools again whenever it reconnects, and `run` raises `RouterError` if the
+router refuses them.
+
 ## Calling somebody
 
 `stream.Phone` is the telephony half of the backend, and `Agent(phone=...)` is where a call

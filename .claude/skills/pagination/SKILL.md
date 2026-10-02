@@ -18,17 +18,18 @@ Never use limit/offset. Lists take `limit` + `cursor`.
 - Fetch `limit + 1` to set `has_more`. No counts.
 - Filters are resent with every page; the cursor only holds a position.
 - A bad cursor is a 400.
-- Index the sort keys behind the filter, e.g. `(customer_id, created_at DESC, id DESC)`.
+- Index the sort keys behind the filter, e.g. `(customer_id, updated_at DESC, id DESC)`.
+- A list that filters and sorts takes a body instead of query parameters: see the `query` skill.
 
-## Example: listSessions
+## Example: querySessions
 
-Spec: the shared `Cursor` parameter, and `SessionPage` as the 200.
+Spec: `SessionQuery` carries `limit` and `cursor` in the body, and `SessionPage` is the 200.
 
 Position, in `internal/store/models.go`:
 
 ```go
 type SessionPosition struct {
-	CreatedAt time.Time `json:"t"`
+	UpdatedAt time.Time `json:"u"`
 	ID        string    `json:"id"`
 	Rank      float32   `json:"r,omitempty"`
 }
@@ -38,18 +39,21 @@ Store, in `QuerySessions`:
 
 ```go
 if after := filter.Cursor; after != nil {
-	query = query.Where("(created_at, id) < (?, ?)", after.CreatedAt, after.ID)
+	query = query.Where("(updated_at, id) < (?, ?)", after.UpdatedAt, after.ID)
 }
 query = query.Limit(SessionLimit(filter.Limit) + 1)
 ```
 
 Handler: `decodeCursor` and `encodeCursor` in `internal/api/cursor.go`; `page` trims the
-extra row and says whether it was there.
+extra row and says whether it was there. The session cursor also records which sort it
+came from, so a cursor from one sort is refused by another.
 
-Live sessions get the same cut and sort in `Manager.find`. Their `created` is truncated to
-microseconds, which is what Postgres keeps, or a cursor from one half repeats the other.
+Live sessions that nothing records get the same cut and sort in `Manager.find`, on their
+`created`, which is truncated to microseconds (what Postgres keeps) so that a cursor from
+one half does not repeat the other. A recorded live session is listed through its row.
 
-For `searchSessions`, the cursor adds the rank: `(rank, created_at, id) < (?, ?, ?)`.
+A text search sorts by relevance, and its cursor adds the rank:
+`(rank, updated_at, id) < (?, ?, ?)`.
 
 Go SDK: list methods return the page and take a cursor; `Items.Unwind` follows it.
 

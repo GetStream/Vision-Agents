@@ -101,7 +101,7 @@ func newRouter(t *testing.T) *router {
 		_ = json.NewEncoder(w).Encode(acceleration.AgentResponse{})
 	})
 
-	mux.HandleFunc("DELETE /v1/agents/sessions/{id}", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/stop", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 

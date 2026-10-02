@@ -43,6 +43,8 @@ type manager struct {
 	// retired are subagents a swap replaced, kept open for the tasks still running on them.
 	retired []*opening
 	capture func(context.Context, CaptureRequest) ([]llm.ContentPart, error)
+	// load reads the instructions of a skill that was offered by name alone.
+	load    func(context.Context, string) (string, error)
 	ctx     context.Context
 	cancel  context.CancelFunc
 	warming sync.WaitGroup
@@ -215,6 +217,15 @@ func (m *manager) Attached(skill, turnID string) bool {
 }
 
 func (m *manager) start(created *task) {
+	if created.instructions == "" && m.load != nil {
+		instructions, err := m.load(created.ctx, created.skill)
+		if err != nil {
+			m.report(created, Result{State: Failed, Err: fmt.Errorf("harness: loading skill %s: %w", created.skill, err)})
+			m.drainers.Done()
+			return
+		}
+		created.instructions = instructions
+	}
 	if created.capture && !llm.HasImage(created.messages) {
 		if m.capture == nil {
 			m.report(created, Result{State: Failed, Err: fmt.Errorf("harness: no video source")})

@@ -3,6 +3,7 @@ package agents
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -110,6 +111,7 @@ func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
 - url: https://example.com/plans
   title: Plans
   description: What each plan includes.
+  refresh_hours: 24
 `)
 	// Only the one at the root is the declaration.
 	write(t, root, "knowledge/reference/urls.yaml", "the urls we used to have\n")
@@ -134,8 +136,11 @@ func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
 		t.Errorf("a url on its own read as %+v", bare)
 	}
 	if described.URL != "https://example.com/plans" || described.Title != "Plans" ||
-		described.Description != "What each plan includes." {
+		described.Description != "What each plan includes." || described.RefreshHours != 24 {
 		t.Errorf("a described page read as %+v", described)
+	}
+	if bare.RefreshHours != 0 {
+		t.Errorf("a url on its own is read again every %d hours, rather than only when asked", bare.RefreshHours)
 	}
 }
 
@@ -162,6 +167,8 @@ func TestAPageThatCannotBeFetchedOrDescribedIsRefused(t *testing.T) {
 		"- example.com/pricing\n",
 		"- url: https://example.com/plans\n  heading: Plans\n",
 		"- [https://example.com/plans]\n",
+		"- url: https://example.com/plans\n  refresh_hours: 0\n",
+		"- url: https://example.com/plans\n  refresh_hours: daily\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", "name: jean\n")
@@ -240,6 +247,7 @@ func TestTheDeclarationSaysWhatTheAgentIsCalledAndRunsOn(t *testing.T) {
 llm: openai/gpt-5.6
 sts: ""
 keyterms: [Vision Agents]
+speed: 0.9
 video:
   source: camera
 `)
@@ -252,7 +260,7 @@ video:
 		t.Errorf("the agent is called %q", folder.Name)
 	}
 	settings := folder.Settings
-	if settings.LLM != "openai/gpt-5.6" || settings.Keyterms[0] != "Vision Agents" {
+	if settings.LLM != "openai/gpt-5.6" || settings.Keyterms[0] != "Vision Agents" || settings.Speed != 0.9 {
 		t.Errorf("the declaration read as %+v", settings)
 	}
 	if settings.STS == nil || *settings.STS != "" {
@@ -314,6 +322,96 @@ func TestADirectoryHashesTheWayThePythonSDKHashesIt(t *testing.T) {
 	}
 	if declared.Hash() == folder.Hash() {
 		t.Error("declaring a page did not change the fingerprint")
+	}
+
+	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  refresh_hours: 24\n")
+	refreshed, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Hash() == declared.Hash() {
+		t.Error("reading a page on a schedule did not change the fingerprint, so it would never be synced")
+	}
+}
+
+func TestEachSimulationFileIsAListReadInFileOrder(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "simulations/lunch.yaml", `- name: change of order
+  scenario: Order a club, then swap it for a wrap.
+  assertion: The final order is one wrap.
+  variations: 3
+- name: off the menu
+  scenario: Ask for a milkshake.
+  assertion: The agent says there is no milkshake.
+  mode: audio
+`)
+	write(t, root, "simulations/allergies.yml", `- name: peanut allergy
+  scenario: Ask whether the wrap has nuts.
+  assertion: The agent does not guess.
+`)
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var names []string
+	for _, simulation := range folder.Simulations {
+		names = append(names, simulation.Name)
+	}
+	if strings.Join(names, ", ") != "peanut allergy, change of order, off the menu" {
+		t.Errorf("read %v", names)
+	}
+	if folder.Simulations[1].Variations != 3 || folder.Simulations[2].Mode != "audio" {
+		t.Errorf("the lunch simulations are %+v", folder.Simulations[1:])
+	}
+}
+
+func TestASimulationNameTwoFilesShareIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	simulation := "- name: change of order\n  scenario: Swap the club.\n  assertion: One wrap.\n"
+	write(t, root, "simulations/a.yaml", simulation)
+	write(t, root, "simulations/b.yaml", simulation)
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "also declared in a.yaml") {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+func TestASimulationKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "simulations/lunch.yaml", "- name: order\n  scenario: Order.\n  assertion: Ordered.\n  asertion: typo\n")
+
+	if _, err := Load(root); err == nil {
+		t.Fatal("a misspelt key was accepted")
+	}
+}
+
+func TestAnEmptySimulationsDirectoryIsNotTheSameAsNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	without, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, SimulationsDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if without.Simulations != nil || empty.Simulations == nil {
+		t.Errorf("without is %v and empty is %v", without.Simulations, empty.Simulations)
+	}
+	if without.Hash() == empty.Hash() {
+		t.Error("emptying simulations/ would not sync, so the stored ones would never be deleted")
 	}
 }
 

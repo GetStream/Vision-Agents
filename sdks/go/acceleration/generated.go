@@ -389,6 +389,21 @@ func (e Granularity) Valid() bool {
 	}
 }
 
+// Defines values for Harness.
+const (
+	Default Harness = "default"
+)
+
+// Valid indicates whether the value is a known member of the Harness enum.
+func (e Harness) Valid() bool {
+	switch e {
+	case Default:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatusStatus.
 const (
 	Degraded HealthStatusStatus = "degraded"
@@ -872,6 +887,27 @@ func (e SearchOptionsContents) Valid() bool {
 	}
 }
 
+// Defines values for SessionModality.
+const (
+	SessionModalityText  SessionModality = "text"
+	SessionModalityVideo SessionModality = "video"
+	SessionModalityVoice SessionModality = "voice"
+)
+
+// Valid indicates whether the value is a known member of the SessionModality enum.
+func (e SessionModality) Valid() bool {
+	switch e {
+	case SessionModalityText:
+		return true
+	case SessionModalityVideo:
+		return true
+	case SessionModalityVoice:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionMode.
 const (
 	SessionModeCascade SessionMode = "cascade"
@@ -956,6 +992,39 @@ func (e SessionSettingsRequestVerbosity) Valid() bool {
 	}
 }
 
+// Defines values for SessionSortDirection.
+const (
+	Minus1 SessionSortDirection = -1
+)
+
+// Valid indicates whether the value is a known member of the SessionSortDirection enum.
+func (e SessionSortDirection) Valid() bool {
+	switch e {
+	case Minus1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionSortField.
+const (
+	Relevance SessionSortField = "relevance"
+	UpdatedAt SessionSortField = "updated_at"
+)
+
+// Valid indicates whether the value is a known member of the SessionSortField enum.
+func (e SessionSortField) Valid() bool {
+	switch e {
+	case Relevance:
+		return true
+	case UpdatedAt:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionState.
 const (
 	Ended SessionState = "ended"
@@ -968,6 +1037,24 @@ func (e SessionState) Valid() bool {
 	case Ended:
 		return true
 	case Live:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionToolExecutor.
+const (
+	SessionToolExecutorClient SessionToolExecutor = "client"
+	SessionToolExecutorServer SessionToolExecutor = "server"
+)
+
+// Valid indicates whether the value is a known member of the SessionToolExecutor enum.
+func (e SessionToolExecutor) Valid() bool {
+	switch e {
+	case SessionToolExecutorClient:
+		return true
+	case SessionToolExecutorServer:
 		return true
 	default:
 		return false
@@ -1040,6 +1127,24 @@ func (e SimulationCaseState) Valid() bool {
 	case SimulationCaseStatePending:
 		return true
 	case SimulationCaseStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SimulationDeclarationMode.
+const (
+	SimulationDeclarationModeAudio SimulationDeclarationMode = "audio"
+	SimulationDeclarationModeText  SimulationDeclarationMode = "text"
+)
+
+// Valid indicates whether the value is a known member of the SimulationDeclarationMode enum.
+func (e SimulationDeclarationMode) Valid() bool {
+	switch e {
+	case SimulationDeclarationModeAudio:
+		return true
+	case SimulationDeclarationModeText:
 		return true
 	default:
 		return false
@@ -1286,24 +1391,6 @@ func (e VoiceBindingState) Valid() bool {
 	}
 }
 
-// Defines values for SessionStateFilter.
-const (
-	SessionStateFilterClosed  SessionStateFilter = "closed"
-	SessionStateFilterRunning SessionStateFilter = "running"
-)
-
-// Valid indicates whether the value is a known member of the SessionStateFilter enum.
-func (e SessionStateFilter) Valid() bool {
-	switch e {
-	case SessionStateFilterClosed:
-		return true
-	case SessionStateFilterRunning:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ListAgentLogsParamsSeverity.
 const (
 	ListAgentLogsParamsSeverityError ListAgentLogsParamsSeverity = "error"
@@ -1334,42 +1421,6 @@ func (e StreamAgentLogsParamsSeverity) Valid() bool {
 	case StreamAgentLogsParamsSeverityError:
 		return true
 	case StreamAgentLogsParamsSeverityInfo:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for ListSessionsParamsState.
-const (
-	ListSessionsParamsStateClosed  ListSessionsParamsState = "closed"
-	ListSessionsParamsStateRunning ListSessionsParamsState = "running"
-)
-
-// Valid indicates whether the value is a known member of the ListSessionsParamsState enum.
-func (e ListSessionsParamsState) Valid() bool {
-	switch e {
-	case ListSessionsParamsStateClosed:
-		return true
-	case ListSessionsParamsStateRunning:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for SearchSessionsParamsState.
-const (
-	SearchSessionsParamsStateClosed  SearchSessionsParamsState = "closed"
-	SearchSessionsParamsStateRunning SearchSessionsParamsState = "running"
-)
-
-// Valid indicates whether the value is a known member of the SearchSessionsParamsState enum.
-func (e SearchSessionsParamsState) Valid() bool {
-	switch e {
-	case SearchSessionsParamsStateClosed:
-		return true
-	case SearchSessionsParamsStateRunning:
 		return true
 	default:
 		return false
@@ -1427,9 +1478,12 @@ type ActivityGranularity string
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
-	CreatedAt          time.Time `json:"created_at"`
-	Greeting           *string   `json:"greeting,omitempty"`
-	Guardrail          *string   `json:"guardrail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Greeting  *string   `json:"greeting,omitempty"`
+	Guardrail *string   `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness            *Harness  `json:"harness,omitempty"`
 	Id                 string    `json:"id"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
@@ -1445,6 +1499,7 @@ type AgentConfig struct {
 	Sandbox *Sandbox  `json:"sandbox,omitempty"`
 	Search  *string   `json:"search,omitempty"`
 	Skills  *[]string `json:"skills,omitempty"`
+	Speed   *float64  `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string `json:"sts,omitempty"`
@@ -1452,12 +1507,53 @@ type AgentConfig struct {
 	Subagent *string `json:"subagent,omitempty"`
 
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
-	SyncHash  *string            `json:"sync_hash,omitempty"`
-	Tags      *map[string]string `json:"tags,omitempty"`
-	Tts       *string            `json:"tts,omitempty"`
-	UpdatedAt time.Time          `json:"updated_at"`
-	Video     *SessionVideo      `json:"video,omitempty"`
-	Voice     *string            `json:"voice,omitempty"`
+	SyncHash     *string            `json:"sync_hash,omitempty"`
+	Tags         *map[string]string `json:"tags,omitempty"`
+	Tts          *string            `json:"tts,omitempty"`
+	UpdatedAt    time.Time          `json:"updated_at"`
+	Video        *SessionVideo      `json:"video,omitempty"`
+	VisibleTools *[]string          `json:"visible_tools,omitempty"`
+	Voice        *string            `json:"voice,omitempty"`
+}
+
+// AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
+type AgentConfigPatch struct {
+	Greeting *string `json:"greeting,omitempty"`
+
+	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
+	Guardrail *string `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness            *Harness  `json:"harness,omitempty"`
+	Instructions       *string   `json:"instructions,omitempty"`
+	Keyterms           *[]string `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
+	Llm                *string   `json:"llm,omitempty"`
+
+	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
+	Mode *AgentMode `json:"mode,omitempty"`
+
+	// Name What the config is called, which is unique among the customer's own.
+	Name    *string   `json:"name,omitempty"`
+	Plugins *[]string `json:"plugins,omitempty"`
+
+	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	Sandbox *Sandbox  `json:"sandbox,omitempty"`
+	Search  *string   `json:"search,omitempty"`
+	Skills  *[]string `json:"skills,omitempty"`
+
+	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
+	Speed    *float64           `json:"speed,omitempty"`
+	Sts      *string            `json:"sts,omitempty"`
+	Stt      *string            `json:"stt,omitempty"`
+	Subagent *string            `json:"subagent,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+	Tts      *string            `json:"tts,omitempty"`
+	Video    *SessionVideo      `json:"video,omitempty"`
+
+	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
+	VisibleTools *[]string `json:"visible_tools,omitempty"`
+	Voice        *string   `json:"voice,omitempty"`
 }
 
 // AgentConfigRequest defines model for AgentConfigRequest.
@@ -1465,8 +1561,11 @@ type AgentConfigRequest struct {
 	Greeting *string `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
-	Guardrail    *string `json:"guardrail,omitempty"`
-	Instructions *string `json:"instructions,omitempty"`
+	Guardrail *string `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness      *Harness `json:"harness,omitempty"`
+	Instructions *string  `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
 	Keyterms *[]string `json:"keyterms,omitempty"`
@@ -1495,6 +1594,12 @@ type AgentConfigRequest struct {
 	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
 	Skills *[]string `json:"skills,omitempty"`
 
+	// Speed Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
+	//
+	//
+	// Example: 0.9
+	Speed *float64 `json:"speed,omitempty"`
+
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts *string `json:"sts,omitempty"`
 
@@ -1508,6 +1613,9 @@ type AgentConfigRequest struct {
 	Tags  *map[string]string `json:"tags,omitempty"`
 	Tts   *string            `json:"tts,omitempty"`
 	Video *SessionVideo      `json:"video,omitempty"`
+
+	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
+	VisibleTools *[]string `json:"visible_tools,omitempty"`
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
@@ -2130,20 +2238,11 @@ type CreateSessionRequest struct {
 	// Phone The number the session acts from, which is what turns transferring on.
 	Phone *SessionPhone `json:"phone,omitempty"`
 
-	// Project What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
-	Project *string `json:"project,omitempty"`
-
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox `json:"sandbox,omitempty"`
+	// ProjectId What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+	ProjectId *string `json:"project_id,omitempty"`
 
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
-
-	// SkillNames Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped.
-	SkillNames *[]string `json:"skill_names,omitempty"`
-
-	// Skills Omit for the built-in set of think, recall and explain.
-	Skills *[]SessionSkill `json:"skills,omitempty"`
 
 	// Sts A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
 	Sts *string `json:"sts,omitempty"`
@@ -2151,14 +2250,8 @@ type CreateSessionRequest struct {
 	// Stt Omit it and the config decides, or en-low-latency when there is no config.
 	Stt *string `json:"stt,omitempty"`
 
-	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
-	Subagent *string `json:"subagent,omitempty"`
-
 	// Tags Cost labels, carried onto every request the session makes.
 	Tags *map[string]string `json:"tags,omitempty"`
-
-	// Tasks How much delegated work may run at once.
-	Tasks *int `json:"tasks,omitempty"`
 
 	// Text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
 	Text *bool `json:"text,omitempty"`
@@ -2245,6 +2338,19 @@ type DecisionKind string
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 type Endpointing string
 
+// Equals Matches one value exactly: "value" is short for {"$eq": "value"}.
+type Equals struct {
+	union json.RawMessage
+}
+
+// Equals0 defines model for Equals.0.
+type Equals0 = string
+
+// Equals1 defines model for Equals.1.
+type Equals1 struct {
+	Eq string `json:"$eq"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Error string `json:"error"`
@@ -2270,7 +2376,7 @@ type ForkSessionRequest struct {
 	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
 	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
-	Project         *string          `json:"project,omitempty"`
+	ProjectId       *string          `json:"project_id,omitempty"`
 
 	// ResponseId Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
 	ResponseId *string `json:"response_id,omitempty"`
@@ -2320,6 +2426,9 @@ type GuestUserRequest struct {
 	// Name What to call them, for a transcript a person reads later.
 	Name *string `json:"name,omitempty"`
 }
+
+// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+type Harness string
 
 // HealthStatus defines model for HealthStatus.
 type HealthStatus struct {
@@ -2529,6 +2638,9 @@ type KnowledgeUrl struct {
 	// Passages How many passages the page was last cut into.
 	Passages int `json:"passages"`
 
+	// RefreshHours How often the page is read again on its own, in hours. Absent means never.
+	RefreshHours *int `json:"refresh_hours,omitempty"`
+
 	// State Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 	State KnowledgeUrlState `json:"state"`
 
@@ -2541,6 +2653,11 @@ type KnowledgeUrl struct {
 // KnowledgeUrlDeclaration A page an agent directory declares, in the knowledge base named after it.
 type KnowledgeUrlDeclaration struct {
 	Description *string `json:"description,omitempty"`
+
+	// RefreshHours How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule.
+	//
+	// Example: 24
+	RefreshHours *int64 `json:"refresh_hours,omitempty"`
 
 	// Title Example: Pricing
 	Title *string `json:"title,omitempty"`
@@ -2562,6 +2679,12 @@ type KnowledgeUrlRequest struct {
 	//
 	// Example: docs
 	Namespace string `json:"namespace"`
+
+	// RefreshHours How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it.
+	//
+	//
+	// Example: 24
+	RefreshHours *int `json:"refresh_hours,omitempty"`
 
 	// Title What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
 	//
@@ -2703,9 +2826,6 @@ type ModelOverwrites struct {
 	// Sts A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.
 	Sts *string `json:"sts,omitempty"`
 	Stt *string `json:"stt,omitempty"`
-
-	// Subagent The model delegated work runs on, in place of the config's.
-	Subagent *string `json:"subagent,omitempty"`
 
 	// Temperature How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
 	Temperature *float64 `json:"temperature,omitempty"`
@@ -2850,8 +2970,13 @@ type PluginConnection struct {
 // PluginConnectionStatus defines model for PluginConnection.Status.
 type PluginConnectionStatus string
 
-// Policy What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and a field left out is no opinion rather than off.
+// Policy What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
 type Policy struct {
+	// AllowedModels The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one.
+	//
+	// Example: ["deepseek/DeepSeek-V4-Flash-0731"]
+	AllowedModels *[]string `json:"allowed_models,omitempty"`
+
 	// Budget A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time.
 	Budget *Budget `json:"budget,omitempty"`
 
@@ -2860,6 +2985,11 @@ type Policy struct {
 
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
+
+	// Tags Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
+	//
+	// Example: {"application":"support"}
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // PrepareVoiceRequest defines model for PrepareVoiceRequest.
@@ -2982,6 +3112,9 @@ type RecordingStatus string
 
 // RespondRequest defines model for RespondRequest.
 type RespondRequest struct {
+	// ClientId The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
+	ClientId *string `json:"client_id,omitempty"`
+
 	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
 	CommandId *string `json:"command_id,omitempty"`
 	Text      string  `json:"text"`
@@ -3194,13 +3327,16 @@ type Session struct {
 	// Llm The provider and model answering, once routing has picked one.
 	Llm *string `json:"llm,omitempty"`
 
+	// Modality How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.
+	Modality SessionModality `json:"modality"`
+
 	// Mode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
 	Mode *SessionMode `json:"mode,omitempty"`
 
 	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
 	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
-	Project         *string          `json:"project,omitempty"`
+	ProjectId       *string          `json:"project_id,omitempty"`
 
 	// State Whether the agent is still in the call.
 	State SessionState `json:"state"`
@@ -3227,6 +3363,28 @@ type Session struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
+// SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
+type SessionFilter struct {
+	// Agent Matches one value exactly: "value" is short for {"$eq": "value"}.
+	Agent *Equals `json:"agent,omitempty"`
+
+	// AgentId Matches one value exactly: "value" is short for {"$eq": "value"}.
+	AgentId *Equals `json:"agent_id,omitempty"`
+
+	// Modality Matches one value exactly: "value" is short for {"$eq": "value"}.
+	Modality *Equals `json:"modality,omitempty"`
+
+	// ProjectId Matches one value exactly: "value" is short for {"$eq": "value"}.
+	ProjectId *Equals `json:"project_id,omitempty"`
+
+	// State Matches one value exactly: "value" is short for {"$eq": "value"}.
+	State *Equals    `json:"state,omitempty"`
+	Text  *TextMatch `json:"text,omitempty"`
+
+	// UserId Matches one value exactly: "value" is short for {"$eq": "value"}.
+	UserId *Equals `json:"user_id,omitempty"`
+}
+
 // SessionMemory Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
 type SessionMemory struct {
 	// AppId Separates two deployments sharing one memory account.
@@ -3238,6 +3396,9 @@ type SessionMemory struct {
 	// UserId Who the memories belong to. Empty means the customer.
 	UserId *string `json:"user_id,omitempty"`
 }
+
+// SessionModality How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.
+type SessionModality string
 
 // SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
 type SessionMode string
@@ -3263,6 +3424,21 @@ type SessionPhone struct {
 	VendorCallId *string `json:"vendor_call_id,omitempty"`
 }
 
+// SessionQuery defines model for SessionQuery.
+type SessionQuery struct {
+	// Cursor The next_cursor of the previous page, sent with the same filter and sort. Omitted is the first page.
+	Cursor *string `json:"cursor,omitempty"`
+
+	// Filter Which sessions to list. A field not listed here is refused rather than ignored.
+	Filter *SessionFilter `json:"filter,omitempty"`
+
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Sort Omitted is updated_at, or relevance for a text search.
+	Sort *[]SessionSort `json:"sort,omitempty"`
+}
+
 // SessionRespondCommand defines model for SessionRespondCommand.
 type SessionRespondCommand struct {
 	// CommandId Required for personal persistent text conversations; reuse on retries. Text only when present.
@@ -3284,7 +3460,6 @@ type SessionSettingsRequest struct {
 	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
 	Sts         *string                          `json:"sts,omitempty"`
 	Stt         *string                          `json:"stt,omitempty"`
-	Subagent    *string                          `json:"subagent,omitempty"`
 	Temperature *float64                         `json:"temperature,omitempty"`
 	Thinking    *SessionSettingsRequestThinking  `json:"thinking,omitempty"`
 	Tts         *string                          `json:"tts,omitempty"`
@@ -3300,24 +3475,20 @@ type SessionSettingsRequestThinking string
 // SessionSettingsRequestVerbosity defines model for SessionSettingsRequest.Verbosity.
 type SessionSettingsRequestVerbosity string
 
-// SessionSkill A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under.
-type SessionSkill struct {
-	// CaptureVideo Capture task-scoped visual evidence before reasoning.
-	CaptureVideo *bool `json:"capture_video,omitempty"`
+// SessionSort defines model for SessionSort.
+type SessionSort struct {
+	// Direction -1, descending. Ascending is not offered.
+	Direction *SessionSortDirection `json:"direction,omitempty"`
 
-	// DeadlineMs How long the work may run before it is abandoned. Zero is the default.
-	DeadlineMs *int64 `json:"deadline_ms,omitempty"`
-
-	// Description The one line the fast model sees.
-	Description string `json:"description"`
-
-	// Instructions The full prompt, which only the subagent sees.
-	Instructions string `json:"instructions"`
-	Name         string `json:"name"`
-
-	// Revision Immutable skill revision selected by the application's authorized registry.
-	Revision *int64 `json:"revision,omitempty"`
+	// Field updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+	Field SessionSortField `json:"field"`
 }
+
+// SessionSortDirection -1, descending. Ascending is not offered.
+type SessionSortDirection int64
+
+// SessionSortField updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+type SessionSortField string
 
 // SessionState Whether the agent is still in the call.
 type SessionState string
@@ -3326,11 +3497,20 @@ type SessionState string
 type SessionTool struct {
 	// Description What the model is told the tool does, which is the whole of how it decides when to reach for one.
 	Description string `json:"description"`
-	Name        string `json:"name"`
+
+	// DisplayTitle What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment.
+	DisplayTitle *string `json:"display_title,omitempty"`
+
+	// Executor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+	Executor *SessionToolExecutor `json:"executor,omitempty"`
+	Name     string               `json:"name"`
 
 	// Parameters A JSON Schema object describing the arguments.
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
 }
+
+// SessionToolExecutor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
+type SessionToolExecutor string
 
 // SessionVideo defines model for SessionVideo.
 type SessionVideo struct {
@@ -3402,6 +3582,36 @@ type SimulationCaseEnded string
 
 // SimulationCaseState defines model for SimulationCase.State.
 type SimulationCaseState string
+
+// SimulationDeclaration A simulation an agent directory declares in simulations/*.yaml. It runs against the agent being synced.
+type SimulationDeclaration struct {
+	// Assertion What has to be true at the end for a run to have passed.
+	Assertion    string  `json:"assertion"`
+	CallerStt    *string `json:"caller_stt,omitempty"`
+	CallerTarget *string `json:"caller_target,omitempty"`
+	CallerTts    *string `json:"caller_tts,omitempty"`
+	CallerVoice  *string `json:"caller_voice,omitempty"`
+	JudgeTarget  *string `json:"judge_target,omitempty"`
+
+	// MaxTurns How many times the caller may speak. Twelve when left out.
+	MaxTurns *int64 `json:"max_turns,omitempty"`
+
+	// Mode Text when left out.
+	Mode *SimulationDeclarationMode `json:"mode,omitempty"`
+
+	// Name Unique among the agent's simulations, and what a sync finds it again by.
+	Name string `json:"name"`
+
+	// Scenario What the caller wants, in your own words and over as many turns as it takes.
+	Scenario string             `json:"scenario"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+
+	// Variations How many ways of asking the same thing one run tries.
+	Variations *int64 `json:"variations,omitempty"`
+}
+
+// SimulationDeclarationMode Text when left out.
+type SimulationDeclarationMode string
 
 // SimulationLine defines model for SimulationLine.
 type SimulationLine struct {
@@ -3781,12 +3991,15 @@ type SttOptions struct {
 	Words *bool `json:"words,omitempty"`
 }
 
-// SyncAgentRequest An agent directory as it is on disk. Everything after the knowledge is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
+// SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
 	Greeting *string `json:"greeting,omitempty"`
 
 	// Guardrail The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness *Harness `json:"harness,omitempty"`
 
 	// Hash A fingerprint of the directory. A second sync with the same hash does nothing.
 	Hash         string               `json:"hash"`
@@ -3806,9 +4019,15 @@ type SyncAgentRequest struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox        `json:"sandbox,omitempty"`
-	Search  *string         `json:"search,omitempty"`
-	Skills  *[]SkillRequest `json:"skills,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+	Search  *string  `json:"search,omitempty"`
+
+	// Simulations The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone.
+	Simulations *[]SimulationDeclaration `json:"simulations,omitempty"`
+	Skills      *[]SkillRequest          `json:"skills,omitempty"`
+
+	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
+	Speed *float64 `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string            `json:"sts,omitempty"`
@@ -3891,6 +4110,12 @@ type TextContentPart struct {
 
 // TextContentPartType defines model for TextContentPart.Type.
 type TextContentPartType string
+
+// TextMatch defines model for TextMatch.
+type TextMatch struct {
+	// Q Quoted phrases and bare words both work, and punctuation is taken rather than refused.
+	Q string `json:"$q"`
+}
 
 // Tier What the model optimises for.
 type Tier string
@@ -4174,7 +4399,6 @@ type UpdateSessionRequest struct {
 	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
 	Sts         *string                        `json:"sts,omitempty"`
 	Stt         *string                        `json:"stt,omitempty"`
-	Subagent    *string                        `json:"subagent,omitempty"`
 	Temperature *float64                       `json:"temperature,omitempty"`
 	Thinking    *UpdateSessionRequestThinking  `json:"thinking,omitempty"`
 	Title       *string                        `json:"title,omitempty"`
@@ -4306,38 +4530,11 @@ type ResourceID = string
 // ResponseIDFilter defines model for ResponseIDFilter.
 type ResponseIDFilter = string
 
-// SessionAgent defines model for SessionAgent.
-type SessionAgent = string
-
-// SessionConfigID defines model for SessionConfigID.
-type SessionConfigID = string
-
-// SessionCreatedAfter defines model for SessionCreatedAfter.
-type SessionCreatedAfter = time.Time
-
-// SessionCreatedBefore defines model for SessionCreatedBefore.
-type SessionCreatedBefore = time.Time
-
-// SessionCustom defines model for SessionCustom.
-type SessionCustom = string
-
 // SessionID defines model for SessionID.
 type SessionID = string
 
 // SessionLimit defines model for SessionLimit.
 type SessionLimit = int
-
-// SessionProject defines model for SessionProject.
-type SessionProject = string
-
-// SessionSearchText defines model for SessionSearchText.
-type SessionSearchText = string
-
-// SessionStateFilter defines model for SessionStateFilter.
-type SessionStateFilter string
-
-// SessionUserID defines model for SessionUserID.
-type SessionUserID = string
 
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
@@ -4455,65 +4652,6 @@ type PluginOAuthCallbackParams struct {
 	State *string `form:"state,omitempty" json:"state,omitempty"`
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
-
-// ListSessionsParams defines parameters for ListSessions.
-type ListSessionsParams struct {
-	// Agent The agent name the session was opened against.
-	Agent    *SessionAgent    `form:"agent,omitempty" json:"agent,omitempty"`
-	ConfigId *SessionConfigID `form:"config_id,omitempty" json:"config_id,omitempty"`
-
-	// UserId Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
-	UserId  *SessionUserID  `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Project *SessionProject `form:"project,omitempty" json:"project,omitempty"`
-
-	// State Omitted is both.
-	State *ListSessionsParamsState `form:"state,omitempty" json:"state,omitempty"`
-
-	// Custom Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-	Custom        *SessionCustom        `form:"custom,omitempty" json:"custom,omitempty"`
-	CreatedAfter  *SessionCreatedAfter  `form:"created_after,omitempty" json:"created_after,omitempty"`
-	CreatedBefore *SessionCreatedBefore `form:"created_before,omitempty" json:"created_before,omitempty"`
-
-	// Limit Up to 200. Omitted is 25.
-	Limit *SessionLimit `form:"limit,omitempty" json:"limit,omitempty"`
-
-	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
-	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
-}
-
-// ListSessionsParamsState defines parameters for ListSessions.
-type ListSessionsParamsState string
-
-// SearchSessionsParams defines parameters for SearchSessions.
-type SearchSessionsParams struct {
-	// Q What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error.
-	Q *SessionSearchText `form:"q,omitempty" json:"q,omitempty"`
-
-	// Agent The agent name the session was opened against.
-	Agent    *SessionAgent    `form:"agent,omitempty" json:"agent,omitempty"`
-	ConfigId *SessionConfigID `form:"config_id,omitempty" json:"config_id,omitempty"`
-
-	// UserId Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
-	UserId  *SessionUserID  `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Project *SessionProject `form:"project,omitempty" json:"project,omitempty"`
-
-	// State Omitted is both.
-	State *SearchSessionsParamsState `form:"state,omitempty" json:"state,omitempty"`
-
-	// Custom Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-	Custom        *SessionCustom        `form:"custom,omitempty" json:"custom,omitempty"`
-	CreatedAfter  *SessionCreatedAfter  `form:"created_after,omitempty" json:"created_after,omitempty"`
-	CreatedBefore *SessionCreatedBefore `form:"created_before,omitempty" json:"created_before,omitempty"`
-
-	// Limit Up to 200. Omitted is 25.
-	Limit *SessionLimit `form:"limit,omitempty" json:"limit,omitempty"`
-
-	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
-	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
-}
-
-// SearchSessionsParamsState defines parameters for SearchSessions.
-type SearchSessionsParamsState string
 
 // ListResponsesParams defines parameters for ListResponses.
 type ListResponsesParams struct {
@@ -4701,6 +4839,9 @@ type CreateChatTokenJSONRequestBody = ChatTokenRequest
 // CreateAgentConfigJSONRequestBody defines body for CreateAgentConfig for application/json ContentType.
 type CreateAgentConfigJSONRequestBody = AgentConfigRequest
 
+// PatchAgentConfigJSONRequestBody defines body for PatchAgentConfig for application/json ContentType.
+type PatchAgentConfigJSONRequestBody = AgentConfigPatch
+
 // UpdateAgentConfigJSONRequestBody defines body for UpdateAgentConfig for application/json ContentType.
 type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 
@@ -4721,6 +4862,9 @@ type AddKnowledgeUrlJSONRequestBody = KnowledgeUrlRequest
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
+
+// QuerySessionsJSONRequestBody defines body for QuerySessions for application/json ContentType.
+type QuerySessionsJSONRequestBody = SessionQuery
 
 // UpdateSessionJSONRequestBody defines body for UpdateSession for application/json ContentType.
 type UpdateSessionJSONRequestBody = UpdateSessionRequest
@@ -4883,6 +5027,68 @@ func (t ContentPart) MarshalJSON() ([]byte, error) {
 }
 
 func (t *ContentPart) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsEquals0 returns the union data inside the Equals as a Equals0
+func (t Equals) AsEquals0() (Equals0, error) {
+	var body Equals0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromEquals0 overwrites any union data inside the Equals as the provided Equals0
+func (t *Equals) FromEquals0(v Equals0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeEquals0 performs a merge with any union data inside the Equals, using the provided Equals0
+func (t *Equals) MergeEquals0(v Equals0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsEquals1 returns the union data inside the Equals as a Equals1
+func (t Equals) AsEquals1() (Equals1, error) {
+	var body Equals1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromEquals1 overwrites any union data inside the Equals as the provided Equals1
+func (t *Equals) FromEquals1(v Equals1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeEquals1 performs a merge with any union data inside the Equals, using the provided Equals1
+func (t *Equals) MergeEquals1(v Equals1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t Equals) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *Equals) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -5211,6 +5417,28 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
 	GetAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PatchAgentConfigWithBody Change some of an agent config
+	//
+	// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+	PatchAgentConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchAgentConfig Change some of an agent config
+	//
+	// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+	PatchAgentConfig(ctx context.Context, id string, body PatchAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// UpdateAgentConfigWithBody Replace an agent config
 	//
 	// Every field is written, so the body is what the config now is rather than what changed about it. Sessions already running keep the configuration they started with.
@@ -5459,14 +5687,6 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
 	PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListSessions The sessions the calling customer is running
-	//
-	// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
-	// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
-	//
-	// Corresponds with GET /v1/agents/sessions (the `ListSessions` operationId).
-	ListSessions(ctx context.Context, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// CreateSessionWithBody Join a call as a voice agent
 	//
 	// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -5487,23 +5707,52 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/sessions (the `CreateSession` operationId).
 	CreateSession(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SearchSessions Find a conversation by what it was called
+	// QuerySessionsWithBody List or search the caller's sessions
 	//
-	// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
-	// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
-	// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+	// Three queries are supported, each over the sessions still running and the ones that ended:
 	//
-	// Corresponds with GET /v1/agents/sessions/search (the `SearchSessions` operationId).
-	SearchSessions(ctx context.Context, params *SearchSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// - every session, sorted by `updated_at`
+	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	//
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/query (the `QuerySessions` operationId).
+	QuerySessionsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CloseSession Leave the call and end the session
+	// QuerySessions List or search the caller's sessions
 	//
-	// Corresponds with DELETE /v1/agents/sessions/{id} (the `CloseSession` operationId).
-	CloseSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Three queries are supported, each over the sessions still running and the ones that ended:
+	//
+	// - every session, sorted by `updated_at`
+	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	//
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/query (the `QuerySessions` operationId).
+	QuerySessions(ctx context.Context, body QuerySessionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteSession Delete a session
+	//
+	// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+	//
+	// To end a call and keep the conversation, stop the session instead.
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id} (the `DeleteSession` operationId).
+	DeleteSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSession One session
 	//
-	// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5716,6 +5965,15 @@ type ClientInterface interface {
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionSettings(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// StopSession Stop a running session
+	//
+	// The agent leaves the call and the session stops running. Everything it recorded is kept: it can still be read back, renamed and forked, and what it remembered carries into the next conversation. Deleting a session is what takes those away.
+	//
+	// A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
+	StopSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListSimulationRuns What the simulations have come to, newest first
 	//
 	// Without a simulation named this is the log of everything that has been run lately, which is the same question as what one simulation has come to, asked of all of them.
@@ -5857,11 +6115,14 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
 	UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SyncAgentWithBody Store an agent directory's instructions, skills, knowledge and settings
+	// SyncAgentWithBody Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
-	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	//
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+	//
+	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -5869,11 +6130,14 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SyncAgent Store an agent directory's instructions, skills, knowledge and settings
+	// SyncAgent Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
-	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	//
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+	//
+	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
@@ -6212,9 +6476,9 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/phone/vendors (the `ListPhoneVendors` operationId).
 	ListPhoneVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAppPolicy The calling app's budget, data policy and prompt injection setting
+	// GetAppPolicy The calling app's policy
 	//
-	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 	//
 	// Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
 	GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6900,6 +7164,48 @@ func (c *Client) GetAgentConfig(ctx context.Context, id ResourceID, reqEditors .
 	return c.Client.Do(req)
 }
 
+// PatchAgentConfigWithBody Change some of an agent config
+//
+// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+func (c *Client) PatchAgentConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchAgentConfigRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchAgentConfig Change some of an agent config
+//
+// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+func (c *Client) PatchAgentConfig(ctx context.Context, id string, body PatchAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchAgentConfigRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // UpdateAgentConfigWithBody Replace an agent config
 //
 // Every field is written, so the body is what the config now is rather than what changed about it. Sessions already running keep the configuration they started with.
@@ -7448,24 +7754,6 @@ func (c *Client) PluginOAuthCallback(ctx context.Context, params *PluginOAuthCal
 	return c.Client.Do(req)
 }
 
-// ListSessions The sessions the calling customer is running
-//
-// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
-// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
-//
-// Corresponds with GET /v1/agents/sessions (the `ListSessions` operationId).
-func (c *Client) ListSessions(ctx context.Context, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListSessionsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // CreateSessionWithBody Join a call as a voice agent
 //
 // The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -7506,15 +7794,23 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 	return c.Client.Do(req)
 }
 
-// SearchSessions Find a conversation by what it was called
+// QuerySessionsWithBody List or search the caller's sessions
 //
-// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
-// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
-// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+// Three queries are supported, each over the sessions still running and the ones that ended:
 //
-// Corresponds with GET /v1/agents/sessions/search (the `SearchSessions` operationId).
-func (c *Client) SearchSessions(ctx context.Context, params *SearchSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSearchSessionsRequest(c.Server, params)
+// - every session, sorted by `updated_at`
+// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+//
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sessions/query (the `QuerySessions` operationId).
+func (c *Client) QuerySessionsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQuerySessionsRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7525,11 +7821,42 @@ func (c *Client) SearchSessions(ctx context.Context, params *SearchSessionsParam
 	return c.Client.Do(req)
 }
 
-// CloseSession Leave the call and end the session
+// QuerySessions List or search the caller's sessions
 //
-// Corresponds with DELETE /v1/agents/sessions/{id} (the `CloseSession` operationId).
-func (c *Client) CloseSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCloseSessionRequest(c.Server, id)
+// Three queries are supported, each over the sessions still running and the ones that ended:
+//
+// - every session, sorted by `updated_at`
+// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+//
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/query (the `QuerySessions` operationId).
+func (c *Client) QuerySessions(ctx context.Context, body QuerySessionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQuerySessionsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteSession Delete a session
+//
+// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+//
+// To end a call and keep the conversation, stop the session instead.
+//
+// Corresponds with DELETE /v1/agents/sessions/{id} (the `DeleteSession` operationId).
+func (c *Client) DeleteSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSessionRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -7542,7 +7869,7 @@ func (c *Client) CloseSession(ctx context.Context, id SessionID, reqEditors ...R
 
 // GetSession One session
 //
-// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
 //
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 func (c *Client) GetSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7981,6 +8308,25 @@ func (c *Client) SetSessionSettings(ctx context.Context, id SessionID, body SetS
 	return c.Client.Do(req)
 }
 
+// StopSession Stop a running session
+//
+// The agent leaves the call and the session stops running. Everything it recorded is kept: it can still be read back, renamed and forked, and what it remembered carries into the next conversation. Deleting a session is what takes those away.
+//
+// A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
+func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopSessionRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListSimulationRuns What the simulations have come to, newest first
 //
 // Without a simulation named this is the log of everything that has been run lately, which is the same question as what one simulation has come to, asked of all of them.
@@ -8302,11 +8648,14 @@ func (c *Client) UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkil
 	return c.Client.Do(req)
 }
 
-// SyncAgentWithBody Store an agent directory's instructions, skills, knowledge and settings
+// SyncAgentWithBody Store an agent directory's instructions, skills, knowledge, simulations and settings
 //
-// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+//
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+//
+// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -8324,11 +8673,14 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 	return c.Client.Do(req)
 }
 
-// SyncAgent Store an agent directory's instructions, skills, knowledge and settings
+// SyncAgent Store an agent directory's instructions, skills, knowledge, simulations and settings
 //
-// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+//
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+//
+// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
@@ -9057,9 +9409,9 @@ func (c *Client) ListPhoneVendors(ctx context.Context, reqEditors ...RequestEdit
 	return c.Client.Do(req)
 }
 
-// GetAppPolicy The calling app's budget, data policy and prompt injection setting
+// GetAppPolicy The calling app's policy
 //
-// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 //
 // Corresponds with GET /v1/policies/app (the `GetAppPolicy` operationId).
 func (c *Client) GetAppPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10439,6 +10791,53 @@ func NewGetAgentConfigRequest(server string, id ResourceID) (*http.Request, erro
 	return req, nil
 }
 
+// NewPatchAgentConfigRequest calls the generic PatchAgentConfig builder with application/json body
+func NewPatchAgentConfigRequest(server string, id string, body PatchAgentConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchAgentConfigRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewPatchAgentConfigRequestWithBody constructs an http.Request for the PatchAgentConfig method, with any body, and a specified content type
+func NewPatchAgentConfigRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/configs/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewUpdateAgentConfigRequest calls the generic UpdateAgentConfig builder with application/json body
 func NewUpdateAgentConfigRequest(server string, id ResourceID, body UpdateAgentConfigJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -11747,168 +12146,6 @@ func NewPluginOAuthCallbackRequest(server string, params *PluginOAuthCallbackPar
 	return req, nil
 }
 
-// NewListSessionsRequest constructs an http.Request for the ListSessions method
-func NewListSessionsRequest(server string, params *ListSessionsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/sessions")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Agent != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent", *params.Agent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.ConfigId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "config_id", *params.ConfigId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.UserId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Project != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "project", *params.Project, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.State != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Custom != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "custom", *params.Custom, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.CreatedAfter != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_after", *params.CreatedAfter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.CreatedBefore != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_before", *params.CreatedBefore, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewCreateSessionRequest calls the generic CreateSession builder with application/json body
 func NewCreateSessionRequest(server string, body CreateSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -11949,8 +12186,19 @@ func NewCreateSessionRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
-// NewSearchSessionsRequest constructs an http.Request for the SearchSessions method
-func NewSearchSessionsRequest(server string, params *SearchSessionsParams) (*http.Request, error) {
+// NewQuerySessionsRequest calls the generic QuerySessions builder with application/json body
+func NewQuerySessionsRequest(server string, body QuerySessionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewQuerySessionsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewQuerySessionsRequestWithBody constructs an http.Request for the QuerySessions method, with any body, and a specified content type
+func NewQuerySessionsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -11958,7 +12206,7 @@ func NewSearchSessionsRequest(server string, params *SearchSessionsParams) (*htt
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/agents/sessions/search")
+	operationPath := fmt.Sprintf("/v1/agents/sessions/query")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11968,163 +12216,18 @@ func NewSearchSessionsRequest(server string, params *SearchSessionsParams) (*htt
 		return nil, err
 	}
 
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Q != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Agent != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent", *params.Agent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.ConfigId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "config_id", *params.ConfigId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.UserId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Project != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "project", *params.Project, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.State != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Custom != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "custom", *params.Custom, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.CreatedAfter != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_after", *params.CreatedAfter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.CreatedBefore != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_before", *params.CreatedBefore, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
 
+	req.Header.Add("Content-Type", contentType)
+
 	return req, nil
 }
 
-// NewCloseSessionRequest constructs an http.Request for the CloseSession method
-func NewCloseSessionRequest(server string, id SessionID) (*http.Request, error) {
+// NewDeleteSessionRequest constructs an http.Request for the DeleteSession method
+func NewDeleteSessionRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12871,6 +12974,40 @@ func NewSetSessionSettingsRequestWithBody(server string, id SessionID, contentTy
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewStopSessionRequest constructs an http.Request for the StopSession method
+func NewStopSessionRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/stop", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -16096,6 +16233,28 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
 	GetAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error)
 
+	// PatchAgentConfigWithBodyWithResponse Change some of an agent config
+	//
+	// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+	PatchAgentConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchAgentConfigResponse, error)
+
+	// PatchAgentConfigWithResponse Change some of an agent config
+	//
+	// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+	PatchAgentConfigWithResponse(ctx context.Context, id string, body PatchAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchAgentConfigResponse, error)
+
 	// UpdateAgentConfigWithBodyWithResponse Replace an agent config
 	//
 	// Every field is written, so the body is what the config now is rather than what changed about it. Sessions already running keep the configuration they started with.
@@ -16380,16 +16539,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
 	PluginOAuthCallbackWithResponse(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*PluginOAuthCallbackResponse, error)
 
-	// ListSessionsWithResponse The sessions the calling customer is running
-	//
-	// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
-	// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/agents/sessions (the `ListSessions` operationId).
-	ListSessionsWithResponse(ctx context.Context, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error)
-
 	// CreateSessionWithBodyWithResponse Join a call as a voice agent
 	//
 	// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -16410,27 +16559,54 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/sessions (the `CreateSession` operationId).
 	CreateSessionWithResponse(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error)
 
-	// SearchSessionsWithResponse Find a conversation by what it was called
+	// QuerySessionsWithBodyWithResponse List or search the caller's sessions
 	//
-	// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
-	// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
-	// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+	// Three queries are supported, each over the sessions still running and the ones that ended:
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// - every session, sorted by `updated_at`
+	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// Corresponds with GET /v1/agents/sessions/search (the `SearchSessions` operationId).
-	SearchSessionsWithResponse(ctx context.Context, params *SearchSessionsParams, reqEditors ...RequestEditorFn) (*SearchSessionsResponse, error)
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/query (the `QuerySessions` operationId).
+	QuerySessionsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QuerySessionsResponse, error)
 
-	// CloseSessionWithResponse Leave the call and end the session
+	// QuerySessionsWithResponse List or search the caller's sessions
+	//
+	// Three queries are supported, each over the sessions still running and the ones that ended:
+	//
+	// - every session, sorted by `updated_at`
+	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	//
+	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/query (the `QuerySessions` operationId).
+	QuerySessionsWithResponse(ctx context.Context, body QuerySessionsJSONRequestBody, reqEditors ...RequestEditorFn) (*QuerySessionsResponse, error)
+
+	// DeleteSessionWithResponse Delete a session
+	//
+	// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+	//
+	// To end a call and keep the conversation, stop the session instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with DELETE /v1/agents/sessions/{id} (the `CloseSession` operationId).
-	CloseSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*CloseSessionResponse, error)
+	// Corresponds with DELETE /v1/agents/sessions/{id} (the `DeleteSession` operationId).
+	DeleteSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSessionResponse, error)
 
 	// GetSessionWithResponse One session
 	//
-	// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -16657,6 +16833,17 @@ type ClientWithResponsesInterface interface {
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetSessionSettingsWithResponse(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error)
 
+	// StopSessionWithResponse Stop a running session
+	//
+	// The agent leaves the call and the session stops running. Everything it recorded is kept: it can still be read back, renamed and forked, and what it remembered carries into the next conversation. Deleting a session is what takes those away.
+	//
+	// A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
+	StopSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionResponse, error)
+
 	// ListSimulationRunsWithResponse What the simulations have come to, newest first
 	//
 	// Without a simulation named this is the log of everything that has been run lately, which is the same question as what one simulation has come to, asked of all of them.
@@ -16818,11 +17005,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
 	UpdateSkillWithResponse(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error)
 
-	// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills, knowledge and settings
+	// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
-	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	//
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+	//
+	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -16830,11 +17020,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
 
-	// SyncAgentWithResponse Store an agent directory's instructions, skills, knowledge and settings
+	// SyncAgentWithResponse Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
-	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	//
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+	//
+	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -17199,9 +17392,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/phone/vendors (the `ListPhoneVendors` operationId).
 	ListPhoneVendorsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPhoneVendorsResponse, error)
 
-	// GetAppPolicyWithResponse The calling app's budget, data policy and prompt injection setting
+	// GetAppPolicyWithResponse The calling app's policy
 	//
-	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+	// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18732,6 +18925,82 @@ func (r GetAgentConfigResponse) ContentType() string {
 	return ""
 }
 
+type PatchAgentConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentConfig
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON200() *AgentConfig {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PatchAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchAgentConfigResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchAgentConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchAgentConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchAgentConfigResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type UpdateAgentConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -20255,61 +20524,6 @@ func (r PluginOAuthCallbackResponse) ContentType() string {
 	return ""
 }
 
-type ListSessionsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *SessionPage
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListSessionsResponse) GetJSON200() *SessionPage {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ListSessionsResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ListSessionsResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetBody returns the raw response body bytes
-func (r ListSessionsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListSessionsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListSessionsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListSessionsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type CreateSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -20379,7 +20593,7 @@ func (r CreateSessionResponse) ContentType() string {
 	return ""
 }
 
-type SearchSessionsResponse struct {
+type QuerySessionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
@@ -20388,30 +20602,37 @@ type SearchSessionsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r SearchSessionsResponse) GetJSON200() *SessionPage {
+func (r QuerySessionsResponse) GetJSON200() *SessionPage {
 	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r SearchSessionsResponse) GetJSON400() *BadRequest {
+func (r QuerySessionsResponse) GetJSON400() *BadRequest {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r SearchSessionsResponse) GetJSON401() *Unauthorized {
+func (r QuerySessionsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
 }
 
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r QuerySessionsResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
 // GetBody returns the raw response body bytes
-func (r SearchSessionsResponse) GetBody() []byte {
+func (r QuerySessionsResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r SearchSessionsResponse) Status() string {
+func (r QuerySessionsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -20419,7 +20640,7 @@ func (r SearchSessionsResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r SearchSessionsResponse) StatusCode() int {
+func (r QuerySessionsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -20427,39 +20648,53 @@ func (r SearchSessionsResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r SearchSessionsResponse) ContentType() string {
+func (r QuerySessionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type CloseSessionResponse struct {
+type DeleteSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteSessionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r CloseSessionResponse) GetJSON401() *Unauthorized {
+func (r DeleteSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r CloseSessionResponse) GetJSON404() *NotFound {
+func (r DeleteSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
 }
 
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteSessionResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
 // GetBody returns the raw response body bytes
-func (r CloseSessionResponse) GetBody() []byte {
+func (r DeleteSessionResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r CloseSessionResponse) Status() string {
+func (r DeleteSessionResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -20467,7 +20702,7 @@ func (r CloseSessionResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r CloseSessionResponse) StatusCode() int {
+func (r DeleteSessionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -20475,7 +20710,7 @@ func (r CloseSessionResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CloseSessionResponse) ContentType() string {
+func (r DeleteSessionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21468,6 +21703,68 @@ func (r SetSessionSettingsResponse) ContentType() string {
 	return ""
 }
 
+type StopSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r StopSessionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StopSessionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StopSessionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StopSessionResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StopSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StopSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StopSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StopSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListSimulationRunsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22396,6 +22693,8 @@ type SyncAgentResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -22416,6 +22715,11 @@ func (r SyncAgentResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r SyncAgentResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SyncAgentResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26103,6 +26407,40 @@ func (c *ClientWithResponses) GetAgentConfigWithResponse(ctx context.Context, id
 	return ParseGetAgentConfigResponse(rsp)
 }
 
+// PatchAgentConfigWithBodyWithResponse Change some of an agent config
+//
+// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+func (c *ClientWithResponses) PatchAgentConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchAgentConfigResponse, error) {
+	rsp, err := c.PatchAgentConfigWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchAgentConfigResponse(rsp)
+}
+
+// PatchAgentConfigWithResponse Change some of an agent config
+//
+// Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/configs/{id} (the `PatchAgentConfig` operationId).
+func (c *ClientWithResponses) PatchAgentConfigWithResponse(ctx context.Context, id string, body PatchAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchAgentConfigResponse, error) {
+	rsp, err := c.PatchAgentConfig(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchAgentConfigResponse(rsp)
+}
+
 // UpdateAgentConfigWithBodyWithResponse Replace an agent config
 //
 // Every field is written, so the body is what the config now is rather than what changed about it. Sessions already running keep the configuration they started with.
@@ -26567,22 +26905,6 @@ func (c *ClientWithResponses) PluginOAuthCallbackWithResponse(ctx context.Contex
 	return ParsePluginOAuthCallbackResponse(rsp)
 }
 
-// ListSessionsWithResponse The sessions the calling customer is running
-//
-// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
-// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/agents/sessions (the `ListSessions` operationId).
-func (c *ClientWithResponses) ListSessionsWithResponse(ctx context.Context, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error) {
-	rsp, err := c.ListSessions(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListSessionsResponse(rsp)
-}
-
 // CreateSessionWithBodyWithResponse Join a call as a voice agent
 //
 // The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -26615,39 +26937,72 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 	return ParseCreateSessionResponse(rsp)
 }
 
-// SearchSessionsWithResponse Find a conversation by what it was called
+// QuerySessionsWithBodyWithResponse List or search the caller's sessions
 //
-// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
-// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
-// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+// Three queries are supported, each over the sessions still running and the ones that ended:
 //
-// Returns a wrapper object for the known response body format(s).
+// - every session, sorted by `updated_at`
+// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// Corresponds with GET /v1/agents/sessions/search (the `SearchSessions` operationId).
-func (c *ClientWithResponses) SearchSessionsWithResponse(ctx context.Context, params *SearchSessionsParams, reqEditors ...RequestEditorFn) (*SearchSessionsResponse, error) {
-	rsp, err := c.SearchSessions(ctx, params, reqEditors...)
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/query (the `QuerySessions` operationId).
+func (c *ClientWithResponses) QuerySessionsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QuerySessionsResponse, error) {
+	rsp, err := c.QuerySessionsWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseSearchSessionsResponse(rsp)
+	return ParseQuerySessionsResponse(rsp)
 }
 
-// CloseSessionWithResponse Leave the call and end the session
+// QuerySessionsWithResponse List or search the caller's sessions
 //
-// Returns a wrapper object for the known response body format(s).
+// Three queries are supported, each over the sessions still running and the ones that ended:
 //
-// Corresponds with DELETE /v1/agents/sessions/{id} (the `CloseSession` operationId).
-func (c *ClientWithResponses) CloseSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*CloseSessionResponse, error) {
-	rsp, err := c.CloseSession(ctx, id, reqEditors...)
+// - every session, sorted by `updated_at`
+// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+//
+// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/query (the `QuerySessions` operationId).
+func (c *ClientWithResponses) QuerySessionsWithResponse(ctx context.Context, body QuerySessionsJSONRequestBody, reqEditors ...RequestEditorFn) (*QuerySessionsResponse, error) {
+	rsp, err := c.QuerySessions(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCloseSessionResponse(rsp)
+	return ParseQuerySessionsResponse(rsp)
+}
+
+// DeleteSessionWithResponse Delete a session
+//
+// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+//
+// To end a call and keep the conversation, stop the session instead.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/sessions/{id} (the `DeleteSession` operationId).
+func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSessionResponse, error) {
+	rsp, err := c.DeleteSession(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteSessionResponse(rsp)
 }
 
 // GetSessionWithResponse One session
 //
-// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -27010,6 +27365,23 @@ func (c *ClientWithResponses) SetSessionSettingsWithResponse(ctx context.Context
 	return ParseSetSessionSettingsResponse(rsp)
 }
 
+// StopSessionWithResponse Stop a running session
+//
+// The agent leaves the call and the session stops running. Everything it recorded is kept: it can still be read back, renamed and forked, and what it remembered carries into the next conversation. Deleting a session is what takes those away.
+//
+// A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
+func (c *ClientWithResponses) StopSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionResponse, error) {
+	rsp, err := c.StopSession(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStopSessionResponse(rsp)
+}
+
 // ListSimulationRunsWithResponse What the simulations have come to, newest first
 //
 // Without a simulation named this is the log of everything that has been run lately, which is the same question as what one simulation has come to, asked of all of them.
@@ -27279,11 +27651,14 @@ func (c *ClientWithResponses) UpdateSkillWithResponse(ctx context.Context, id Re
 	return ParseUpdateSkillResponse(rsp)
 }
 
-// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills, knowledge and settings
+// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills, knowledge, simulations and settings
 //
-// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+//
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+//
+// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -27297,11 +27672,14 @@ func (c *ClientWithResponses) SyncAgentWithBodyWithResponse(ctx context.Context,
 	return ParseSyncAgentResponse(rsp)
 }
 
-// SyncAgentWithResponse Store an agent directory's instructions, skills, knowledge and settings
+// SyncAgentWithResponse Store an agent directory's instructions, skills, knowledge, simulations and settings
 //
-// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+//
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
+//
+// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -27900,9 +28278,9 @@ func (c *ClientWithResponses) ListPhoneVendorsWithResponse(ctx context.Context, 
 	return ParseListPhoneVendorsResponse(rsp)
 }
 
-// GetAppPolicyWithResponse The calling app's budget, data policy and prompt injection setting
+// GetAppPolicyWithResponse The calling app's policy
 //
-// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt injection is screened if either turns it on.
+// What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29342,6 +29720,67 @@ func ParseGetAgentConfigResponse(rsp *http.Response) (*GetAgentConfigResponse, e
 	return response, nil
 }
 
+// ParsePatchAgentConfigResponse parses an HTTP response from a PatchAgentConfigWithResponse call
+func ParsePatchAgentConfigResponse(rsp *http.Response) (*PatchAgentConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchAgentConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentConfig
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseUpdateAgentConfigResponse parses an HTTP response from a UpdateAgentConfigWithResponse call
 func ParseUpdateAgentConfigResponse(rsp *http.Response) (*UpdateAgentConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30514,46 +30953,6 @@ func ParsePluginOAuthCallbackResponse(rsp *http.Response) (*PluginOAuthCallbackR
 	return response, nil
 }
 
-// ParseListSessionsResponse parses an HTTP response from a ListSessionsWithResponse call
-func ParseListSessionsResponse(rsp *http.Response) (*ListSessionsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListSessionsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SessionPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseCreateSessionResponse parses an HTTP response from a CreateSessionWithResponse call
 func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30608,15 +31007,15 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 	return response, nil
 }
 
-// ParseSearchSessionsResponse parses an HTTP response from a SearchSessionsWithResponse call
-func ParseSearchSessionsResponse(rsp *http.Response) (*SearchSessionsResponse, error) {
+// ParseQuerySessionsResponse parses an HTTP response from a QuerySessionsWithResponse call
+func ParseQuerySessionsResponse(rsp *http.Response) (*QuerySessionsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &SearchSessionsResponse{
+	response := &QuerySessionsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -30643,20 +31042,27 @@ func ParseSearchSessionsResponse(rsp *http.Response) (*SearchSessionsResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
 }
 
-// ParseCloseSessionResponse parses an HTTP response from a CloseSessionWithResponse call
-func ParseCloseSessionResponse(rsp *http.Response) (*CloseSessionResponse, error) {
+// ParseDeleteSessionResponse parses an HTTP response from a DeleteSessionWithResponse call
+func ParseDeleteSessionResponse(rsp *http.Response) (*DeleteSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &CloseSessionResponse{
+	response := &DeleteSessionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -30664,6 +31070,13 @@ func ParseCloseSessionResponse(rsp *http.Response) (*CloseSessionResponse, error
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
@@ -30678,6 +31091,13 @@ func ParseCloseSessionResponse(rsp *http.Response) (*CloseSessionResponse, error
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -31463,6 +31883,56 @@ func ParseSetSessionSettingsResponse(rsp *http.Response) (*SetSessionSettingsRes
 	return response, nil
 }
 
+// ParseStopSessionResponse parses an HTTP response from a StopSessionWithResponse call
+func ParseStopSessionResponse(rsp *http.Response) (*StopSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StopSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListSimulationRunsResponse parses an HTTP response from a ListSimulationRunsWithResponse call
 func ParseListSimulationRunsResponse(rsp *http.Response) (*ListSimulationRunsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -32217,6 +32687,13 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

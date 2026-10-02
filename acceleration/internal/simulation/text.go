@@ -42,6 +42,8 @@ type written struct {
 	// earn several: the turn that called a tool, the turn that read what it returned, and
 	// whatever a subagent's finding was worth. They are one answer to the caller.
 	answering []string
+	// acting is what the agent's tools did on the current turn.
+	acting []store.SimulationTool
 	// lastAt is when the agent last did anything, which is what the quiet is measured from.
 	lastAt time.Time
 	// failure is the last thing that went wrong, kept so a turn that never arrives can say
@@ -115,7 +117,7 @@ func (w *written) Say(ctx context.Context, text string) (store.SimulationLine, e
 			// rest. Waiting until it has nothing left to do and has been quiet about it is
 			// what keeps the caller from talking over the second half of an answer.
 			case answer != "" && quiet >= settleGap && !w.created.Busy():
-				return store.SimulationLine{Text: answer}, nil
+				return store.SimulationLine{Text: answer, Tools: w.acted()}, nil
 			case time.Since(started) >= w.within:
 				if failure != nil {
 					return store.SimulationLine{}, fmt.Errorf("simulation: the agent did not answer: %w", failure)
@@ -147,6 +149,11 @@ func (w *written) collect(events <-chan session.Event) {
 				w.answering = append(w.answering, said)
 			}
 			w.mu.Unlock()
+		case agent.ToolRan:
+			w.mu.Lock()
+			w.lastAt = time.Now()
+			w.acting = append(w.acting, ran(typed))
+			w.mu.Unlock()
 		case agent.Error:
 			w.mu.Lock()
 			w.lastAt = time.Now()
@@ -170,8 +177,24 @@ func (w *written) begin() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.answering = nil
+	w.acting = nil
 	w.failure = nil
 	w.lastAt = time.Now()
+}
+
+func (w *written) acted() []store.SimulationTool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]store.SimulationTool(nil), w.acting...)
+}
+
+// ran is one tool the agent ran, as the transcript keeps it.
+func ran(event agent.ToolRan) store.SimulationTool {
+	used := store.SimulationTool{Name: event.Tool, Arguments: event.Arguments, Result: event.Result}
+	if event.Err != nil {
+		used.Error = event.Err.Error()
+	}
+	return used
 }
 
 func (w *written) state() (string, time.Duration, error, bool) {

@@ -170,8 +170,8 @@ type SessionOptions struct {
 	// are searched, so the opening question makes a reasonable title.
 	Title       string
 	Description string
-	// Project groups conversations, and is carried as a cost label too.
-	Project string
+	// ProjectID groups conversations, and is carried as a cost label too.
+	ProjectID string
 	// Custom is anything of the caller's own worth remembering about the conversation, which
 	// a later query can match on.
 	Custom map[string]any
@@ -235,7 +235,7 @@ func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.Se
 		remote.ConversationID = chosen.ConversationID
 		remote.Title = chosen.Title
 		remote.Description = chosen.Description
-		remote.Project = chosen.Project
+		remote.ProjectID = chosen.ProjectID
 		remote.Custom = chosen.Custom
 		remote.Incognito = chosen.Incognito
 		remote.ModelOverwrites = chosen.ModelOverwrites
@@ -257,8 +257,6 @@ func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.Se
 			remote.Memory = memoryOf(chosen.MemoryFilter)
 		}
 	}
-	a.options.Harness.apply(&remote)
-
 	backend, err := a.options.LLM.Backend()
 	if err != nil {
 		return nil, err

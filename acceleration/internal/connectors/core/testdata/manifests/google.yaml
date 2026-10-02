@@ -1,0 +1,46 @@
+# Stress-test row 7 (Google Workspace) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning. Vendor sources, both
+# opened October 1, 2026:
+#   [web]  https://developers.google.com/identity/protocols/oauth2/web-server
+#   [oidc] https://developers.google.com/identity/openid-connect/openid-connect
+id: google
+revision: 1
+name: Google Workspace
+endpoints:
+  # [web]
+  authorize: https://accounts.google.com/o/oauth2/v2/auth
+  token: https://oauth2.googleapis.com/token
+  revoke: https://oauth2.googleapis.com/revoke
+  # iss is «Always https://accounts.google.com or accounts.google.com»: [oidc].
+  issuer: https://accounts.google.com
+# oauth2_code, and oauth2_jwt_bearer for domain-wide delegation: row 7.
+schemes: [oauth2_code, oauth2_jwt_bearer]
+authorize_params:
+  # All three: row 7; [web]. offline returns a refresh token; consent because the refresh
+  # token comes only on the first authorization; include_granted_scopes for incremental
+  # authorization.
+  access_type: offline
+  prompt: consent
+  include_granted_scopes: "true"
+scopes:
+  # «The scope parameter must begin with the openid value»: [oidc]. It is what puts an
+  # id_token in the token response. Workspace API scopes are picked by a real manifest.
+  list: [openid]
+capture:
+  # sub is «unique among all Google Accounts and never reused» and the key to use: [oidc];
+  # row 7.
+  - name: sub
+    from: id_token
+    path: $.sub
+  # hd is present only for users of a Google Cloud organization: [oidc].
+  - name: hd
+    from: id_token
+    path: $.hd
+    optional: true
+identity: [sub]
+refresh:
+  # Non-rotating: row 7.
+  rotating: false
+rate_limit:
+  # Quota per Cloud project, that is per OAuth app: row 7.
+  per: app

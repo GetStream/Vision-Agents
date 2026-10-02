@@ -11,6 +11,7 @@ import {
 } from "./guests.js";
 import { AgentHandle } from "./handle.js";
 import { Memories } from "./memories.js";
+import { Simulations } from "./simulations.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -94,28 +95,29 @@ type Arguments<Op> = Record<string, never> extends RequestOptions<Op>
   : [options: RequestOptions<Op>];
 
 /**
- * Every REST operation the router serves, typed from the spec.
- *
- * One method per HTTP method rather than one per endpoint. The spec has 93 operations and
- * the shapes are already generated, so a wrapper per endpoint would be 93 functions that
- * say nothing the types do not — and a new endpoint would need one written before it could
- * be called. This way the spec is the API: regenerating is all a new endpoint takes.
+ * The router's API, as resources: `api.simulations`, `api.memories`, `api.agent(name)`.
  *
  * ```ts
- * const api = new Client({ customerId: "local" });
- * const configs = await api.get("/v1/agents/configs");
- * const session = await api.post("/v1/agents/sessions", { body: { call_id: "demo" } });
- * await api.delete("/v1/agents/sessions/{id}", { path: { id: session.id } });
+ * const api = new Client();
+ * const simulation = await api.simulations.create({ name, config_id, scenario, assertion });
+ * const session = await api.agent("docs").sessions.create();
  * ```
+ *
+ * Underneath, `get`, `post`, `put`, `patch` and `delete` take any path in the spec, typed from
+ * it. They are what the resources are built on, and the way to reach an endpoint no resource
+ * covers yet; code a customer reads uses the resource.
  */
 export class Client {
   readonly backend: Backend;
   /** What the app's agents remember about its users. */
   readonly memories: Memories;
+  /** Conversations to test an agent with, and their runs. */
+  readonly simulations: Simulations;
 
   constructor(backend: Backend | BackendOptions = {}) {
     this.backend = backend instanceof Backend ? backend : new Backend(backend);
     this.memories = new Memories(this);
+    this.simulations = new Simulations(this);
   }
 
   /**

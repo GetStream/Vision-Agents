@@ -1493,25 +1493,6 @@ func (s *SessionSuite) TestSkillsMeanNothingWithoutASubagentToRunThem() {
 	s.Empty(skills.Skills)
 }
 
-func (s *SessionSuite) TestASkillSpelledOutWithoutADeadlineGetsOne() {
-	// A zero deadline would abandon the work the instant it started.
-	s.manages()
-
-	skills, err := s.manager.skills(s.ctx, Spec{
-		CustomerID:     "acme",
-		SubagentTarget: "en-low-latency",
-		Skills: &harness.Skills{Skills: []harness.Skill{{
-			Name:         "refund",
-			Description:  "work out what a caller is owed",
-			Instructions: "read the order and the policy",
-		}}},
-	})
-
-	s.Require().NoError(err)
-	s.Require().Len(skills.Skills, 1)
-	s.Positive(skills.Skills[0].Deadline)
-}
-
 func (s *SessionSuite) TestWhatWasSaidIsKeptSoTheCallCanBeReviewed() {
 	s.manages()
 	created := s.joins(Spec{})

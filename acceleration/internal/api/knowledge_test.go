@@ -1,276 +1,132 @@
+//go:build integration
+
 package api
 
 import (
-	"context"
 	"net/http"
-	"sync"
-
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"testing"
 )
 
-// base is a knowledge base kept in memory, keyed the way a real one is. Passages replace
-// whatever is already stored under their id, which is the property the endpoint depends on
-// for posting a document twice to be an edit rather than a second copy.
-type base struct {
-	mu        sync.Mutex
+type KnowledgeSuite struct {
+	RouterSuite
+
+	// namespace is the knowledge base of the test running, and source is the one file it
+	// posts into it. Both are unique, because the base the suite writes to is shared and
+	// its passages are keyed by source.
 	namespace string
-	passages  map[string]knowledge.Document
+	source    string
 }
 
-func newBase() *base {
-	return &base{passages: map[string]knowledge.Document{}}
+func TestKnowledgeSuite(t *testing.T) {
+	runSuite(t, new(KnowledgeSuite))
 }
 
-func (b *base) Upsert(_ context.Context, namespace string, documents []knowledge.Document) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	b.namespace = namespace
-	for _, document := range documents {
-		b.passages[document.ID] = document
-	}
-	return nil
+func (s *KnowledgeSuite) SetupTest() {
+	s.useFixture("standard")
+	s.namespace = "namespace-" + s.utils.uuid()
+	s.source = s.utils.uuid() + ".md"
 }
 
-func (b *base) Delete(_ context.Context, _ string, ids []string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (s *KnowledgeSuite) TestAPostedDocumentIsListed() {
+	s.post("# Pricing\n\nA penny.\n\n# Support\n\nA day.")
 
-	for _, id := range ids {
-		delete(b.passages, id)
-	}
-	return nil
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+	s.Equal(s.source, listed[0].Source)
+	s.Equal(2, listed[0].Passages)
 }
 
-func (b *base) Fetch(_ context.Context, _ string, ids []string) ([]knowledge.Document, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (s *KnowledgeSuite) TestADocumentReadsBackAsItWasLastPosted() {
+	s.post("# Pricing\n\nA penny.")
+	s.post("# Pricing\n\nTwo pennies.")
 
-	var found []knowledge.Document
-	for _, id := range ids {
-		if document, ok := b.passages[id]; ok {
-			found = append(found, document)
-		}
-	}
-	return found, nil
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+	s.Nil(listed[0].Text, "a listing leaves the text out")
+
+	var read IndexedKnowledgeDocument
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/knowledge/documents/"+listed[0].Id, nil, &read))
+	s.Equal("# Pricing\n\nTwo pennies.", value(read.Text))
 }
 
-func (b *base) stored() (string, map[string]knowledge.Document) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (s *KnowledgeSuite) TestADocumentReadsBackAsThePassagesItWasCutInto() {
+	s.post("# Pricing\n\nA penny.\n\n# Support\n\nA day.")
+	listed := s.documents()
+	s.Require().Len(listed, 1)
 
-	copied := make(map[string]knowledge.Document, len(b.passages))
-	for id, document := range b.passages {
-		copied[id] = document
-	}
-	return b.namespace, copied
+	var passages []KnowledgePassage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/knowledge/documents/"+listed[0].Id+"/passages", nil, &passages))
+	s.Require().Len(passages, 2)
+	s.Contains(passages[0].Text, "A penny.")
+	s.Contains(passages[1].Text, "A day.")
 }
 
-// withKnowledge rebuilds the suite's server with somewhere to write.
-func (s *ServerSuite) withKnowledge() *base {
-	config, err := routing.DefaultConfig()
-	s.Require().NoError(err)
+func (s *KnowledgeSuite) TestADocumentPostedShorterLeavesNoOldTailBehind() {
+	s.post("# Pricing\n\nA penny.\n\n# Support\n\nA day.")
+	s.post("# Pricing\n\nTuppence.")
 
-	speech, err := sttrouter.New(sttrouter.Options{
-		Config:   config[routing.STT],
-		Registry: sttrouter.DefaultRegistry(),
+	listed := s.documents()
+	s.Require().Len(listed, 1, "posting the same source again is an edit")
+	s.Equal(1, listed[0].Passages)
+
+	_, passages := s.knowledge.stored()
+	s.Contains(passages, s.source+"#0")
+	s.NotContains(passages, s.source+"#1")
+}
+
+func (s *KnowledgeSuite) TestADeletedDocumentIsNoLongerListedOrFound() {
+	s.post("# Refunds\n\nThirty days.")
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/knowledge/documents/"+listed[0].Id, nil, nil))
+
+	s.Empty(s.documents())
+	_, passages := s.knowledge.stored()
+	s.NotContains(passages, s.source+"#0")
+
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/knowledge/documents/"+listed[0].Id, nil, nil))
+}
+
+func (s *KnowledgeSuite) TestAnotherAppsDocumentIsNeitherReadNorDeleted() {
+	s.post("# Refunds\n\nThirty days.")
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return as.do(http.MethodGet, "/v1/agents/knowledge/documents/"+listed[0].Id+"/passages", nil, nil)
 	})
-	s.Require().NoError(err)
-	s.T().Cleanup(speech.Close)
-
-	written := newBase()
-	server, err := NewServer(Options{
-		Routers:   map[routing.Modality]routing.Inspector{routing.STT: speech},
-		Knowledge: written,
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return as.do(http.MethodDelete, "/v1/agents/knowledge/documents/"+listed[0].Id, nil, nil)
 	})
-	s.Require().NoError(err)
-	s.handler = server.Handler()
-	return written
 }
 
-func (s *ServerSuite) TestIngestingKnowledgeRequiresTheCustomerHeader() {
-	recorder := s.post("/v1/agents/knowledge", "",
-		`{"namespace":"docs","documents":[{"source":"a.md","text":"# A\n\nsomething"}]}`)
-
-	s.Equal(http.StatusUnauthorized, recorder.Code)
+func (s *KnowledgeSuite) TestOnlyTheAppsOwnBackendMayPostADocument() {
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodPost, "/v1/agents/knowledge", map[string]any{
+			"namespace": s.namespace,
+			"documents": []map[string]string{{"source": s.utils.uuid() + ".md", "text": "# Pricing\n\nA penny."}},
+		}, nil)
+	})
 }
 
-func (s *ServerSuite) TestWithoutAProviderThereIsNowhereToWrite() {
-	recorder := s.post("/v1/agents/knowledge", "acme",
-		`{"namespace":"docs","documents":[{"source":"a.md","text":"# A\n\nsomething"}]}`)
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-
-	var failure Error
-	s.decode(recorder, &failure)
-	s.Contains(failure.Error, "no provider configured")
+// post writes the test's one file into its knowledge base.
+func (s *KnowledgeSuite) post(text string) {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/knowledge",
+		map[string]any{
+			"namespace": s.namespace,
+			"documents": []map[string]string{{"source": s.source, "text": text}},
+		}, nil))
 }
 
-func (s *ServerSuite) TestADocumentIsCutIntoPassagesAndWritten() {
-	written := s.withKnowledge()
-
-	recorder := s.post("/v1/agents/knowledge", "acme", `{
-		"namespace": "docs",
-		"documents": [{"source": "pricing.md", "text": "# Pricing\n\nA call costs a penny.\n\n# Support\n\nWe answer within a day.\n"}]
-	}`)
-
-	s.Equal(http.StatusOK, recorder.Code)
-
-	var result IngestedKnowledge
-	s.decode(recorder, &result)
-	s.Equal("docs", result.Namespace)
-	s.Equal(1, result.Documents)
-	s.Equal(2, result.Passages, "the document is cut at its headings")
-
-	namespace, passages := written.stored()
-	s.Equal("acme__docs", namespace, "a knowledge base belongs to the customer that wrote it")
-	s.Len(passages, 2)
-	s.Contains(passages, "pricing.md#0", "a passage is keyed by where it came from")
-	s.Equal("pricing.md > Pricing", passages["pricing.md#0"].Source)
-}
-
-func (s *ServerSuite) TestPostingADocumentAgainReplacesWhatItWroteBefore() {
-	written := s.withKnowledge()
-
-	first := s.post("/v1/agents/knowledge", "acme",
-		`{"namespace":"docs","documents":[{"source":"pricing.md","text":"# Pricing\n\nA call costs a penny."}]}`)
-	s.Equal(http.StatusOK, first.Code)
-
-	second := s.post("/v1/agents/knowledge", "acme",
-		`{"namespace":"docs","documents":[{"source":"pricing.md","text":"# Pricing\n\nA call costs tuppence."}]}`)
-	s.Equal(http.StatusOK, second.Code)
-
-	_, passages := written.stored()
-	s.Len(passages, 1, "editing a document does not leave two versions of it to be found")
-	s.Contains(passages["pricing.md#0"].Text, "tuppence")
-}
-
-func (s *ServerSuite) TestTwoCustomersNamingTheSameBaseWriteToDifferentOnes() {
-	written := s.withKnowledge()
-	body := `{"namespace":"default","documents":[{"source":"a.md","text":"# A\n\nsomething"}]}`
-
-	s.Require().Equal(http.StatusOK, s.post("/v1/agents/knowledge", "acme", body).Code)
-	first, _ := written.stored()
-	s.Require().Equal(http.StatusOK, s.post("/v1/agents/knowledge", "globex", body).Code)
-	second, _ := written.stored()
-
-	s.NotEqual(first, second)
-}
-
-func (s *ServerSuite) TestKnowledgeIsNeverSharedSoANamespaceIsRequired() {
-	s.withKnowledge()
-
-	recorder := s.post("/v1/agents/knowledge", "acme",
-		`{"namespace":"  ","documents":[{"source":"a.md","text":"# A\n\nsomething"}]}`)
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-
-	var failure Error
-	s.decode(recorder, &failure)
-	s.Contains(failure.Error, "namespace")
-}
-
-func (s *ServerSuite) TestADocumentWithNoSourceCannotBeKeyed() {
-	s.withKnowledge()
-
-	recorder := s.post("/v1/agents/knowledge", "acme",
-		`{"namespace":"docs","documents":[{"source":"","text":"# A\n\nsomething"}]}`)
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-
-	var failure Error
-	s.decode(recorder, &failure)
-	s.Contains(failure.Error, "source")
-}
-
-func (s *ServerSuite) TestDocumentsWithNothingInThemAreRefusedRatherThanWrittenEmpty() {
-	written := s.withKnowledge()
-
-	recorder := s.post("/v1/agents/knowledge", "acme",
-		`{"namespace":"docs","documents":[{"source":"blank.md","text":"   \n"}]}`)
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-
-	_, passages := written.stored()
-	s.Empty(passages)
-}
-
-func (s *ServerSuite) TestTheChunkSizeCanBeMadeSmallerThanTheDefault() {
-	written := s.withKnowledge()
-
-	long := "# Routing\n"
-	for range 20 {
-		long += "\nThe router fails over between providers.\n"
-	}
-
-	recorder := s.post("/v1/agents/knowledge", "acme",
-		`{"namespace":"docs","chunk_size":200,"documents":[{"source":"routing.md","text":`+
-			quote(long)+`}]}`)
-
-	s.Equal(http.StatusOK, recorder.Code)
-
-	var result IngestedKnowledge
-	s.decode(recorder, &result)
-	s.Greater(result.Passages, 1, "a smaller chunk cuts the same document into more of them")
-
-	_, passages := written.stored()
-	s.Len(passages, result.Passages)
-}
-
-func (s *ServerSuite) TestAddingAKnowledgeUrlRequiresTheCustomerHeader() {
-	recorder := s.post("/v1/agents/knowledge/urls", "",
-		`{"namespace":"docs","url":"https://example.com/pricing"}`)
-
-	s.Equal(http.StatusUnauthorized, recorder.Code)
-}
-
-func (s *ServerSuite) TestWithoutACrawlerAUrlWouldBeASubscriptionNothingHonours() {
-	recorder := s.post("/v1/agents/knowledge/urls", "acme",
-		`{"namespace":"docs","url":"https://example.com/pricing"}`)
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-
-	var failure Error
-	s.decode(recorder, &failure)
-	s.Contains(failure.Error, "knowledge urls are not available")
-}
-
-func (s *ServerSuite) TestListingKnowledgeUrlsSaysWhatTheDeploymentIsMissing() {
-	recorder := s.get("/v1/agents/knowledge/urls", "acme")
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-
-	var failure Error
-	s.decode(recorder, &failure)
-	s.Contains(failure.Error, "no database or no way to read a page")
-}
-
-func (s *ServerSuite) TestListingKnowledgeDocumentsSaysWhatTheDeploymentIsMissing() {
-	s.withKnowledge()
-
-	recorder := s.get("/v1/agents/knowledge/documents", "acme")
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-
-	var failure Error
-	s.decode(recorder, &failure)
-	s.Contains(failure.Error, "no database")
-}
-
-// quote renders a string as a JSON one, for building a body by hand.
-func quote(text string) string {
-	quoted := `"`
-	for _, r := range text {
-		switch r {
-		case '"':
-			quoted += `\"`
-		case '\n':
-			quoted += `\n`
-		default:
-			quoted += string(r)
-		}
-	}
-	return quoted + `"`
+// documents lists what the test's knowledge base holds.
+func (s *KnowledgeSuite) documents() []IndexedKnowledgeDocument {
+	var listed []IndexedKnowledgeDocument
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/knowledge/documents?namespace="+s.namespace, nil, &listed))
+	return listed
 }

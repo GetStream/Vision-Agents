@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -32,6 +31,12 @@ func (s *SpecSuite) TestAConfigsKeytermsBecomeTheSessions() {
 	})
 
 	s.Equal([]string{"Vision Agents", "Stream"}, spec.Keyterms)
+}
+
+func (s *SpecSuite) TestAConfigsSpeedBecomesTheSessions() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Speed: 0.9})
+
+	s.Equal(0.9, spec.Speed)
 }
 
 func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
@@ -89,7 +94,6 @@ func (s *SpecSuite) TestTheLargestListAProviderTakesIsAllowed() {
 func (s *SpecSuite) TestNativeSessionsKeepDelegatedWork() {
 	for _, spec := range []Spec{
 		{SkillNames: []string{"think"}},
-		{Skills: &harness.Skills{Skills: []harness.Skill{{Name: "think"}}}},
 		{SubagentTarget: "llm-thinking"},
 	} {
 		spec.STSTarget = "openai/gpt-realtime-2"
@@ -132,16 +136,6 @@ func (s *SpecSuite) TestThinkingBecomesTheReasoningEffort() {
 	// Routing is untouched: how hard to think is a per-request option, not a different model.
 	s.Empty(spec.ModelOverwrites.LLM)
 	s.Equal("high", spec.LLMOverwrites().ReasoningEffort)
-}
-
-func (s *SpecSuite) TestOverwritingTheSubagentBeatsTheConfigs() {
-	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Subagent: "llm-flow"})
-	spec.CallID = "call-1"
-	spec.ModelOverwrites = store.ModelOverwrites{Subagent: "llm-thinking"}
-
-	s.Require().NoError(spec.Normalize())
-
-	s.Equal("llm-thinking", spec.SubagentTarget)
 }
 
 func (s *SpecSuite) TestIncognitoRecordsNothing() {

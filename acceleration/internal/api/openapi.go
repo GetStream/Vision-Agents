@@ -18,7 +18,7 @@ import (
 
 const specDescription = `Routes speech-to-text and text-to-speech traffic across providers and reports what it cost. Every path is scoped by modality, so the same provider serving two modalities is reported on separately. Who the caller is depends on ROUTER_AUTH_MODE: ` + "`api_key`" + `, the default, wants an API key and a token signed with its secret; ` + "`proxy`" + ` believes the X-Stream- headers something in front of the router set; ` + "`noauth`" + ` reads a trusted X-Customer-Id header and takes every caller for that customer's own backend.
 
-Every operation is server-side only unless it is marked ` + "`x-client-accessible`" + `, and six are: ` + "`createSession`, `listSessions`, `getSession`, `closeSession`" + `, the session events socket and ` + "`search`" + `. Those are the whole of holding a conversation and looking something up, which is all an end user's device has any business doing. Everything else is refused with a 403 unless the caller is a process the customer runs, because a device holding a token its own backend minted may hold a conversation and may not rewrite the agent holding it. A server-side caller sends ` + "`Stream-Auth-Type: server`" + ` and a token carrying ` + "`server: true`" + ` and no ` + "`user_id`" + ` claim. Both are required, and the token is what proves it, since nothing signs the header.
+Every operation is server-side only unless it is marked ` + "`x-client-accessible`" + `, and seven are: ` + "`createSession`, `querySessions`, `getSession`, `stopSession`, `deleteSession`" + `, the session events socket and ` + "`search`" + `. Those are the whole of holding a conversation and looking something up, which is all an end user's device has any business doing. Everything else is refused with a 403 unless the caller is a process the customer runs, because a device holding a token its own backend minted may hold a conversation and may not rewrite the agent holding it. A server-side caller sends ` + "`Stream-Auth-Type: server`" + ` and a token carrying ` + "`server: true`" + ` and no ` + "`user_id`" + ` claim. Both are required, and the token is what proves it, since nothing signs the header.
 
 The default is that way round because the cost of forgetting is asymmetric. An operation left unmarked is one nobody decided to open, and refusing it is a bug report; opening it silently is a breach.
 
@@ -141,7 +141,9 @@ func namedEnum(registry huma.Registry, name, description string, values ...strin
 	for _, value := range values {
 		enum = append(enum, value)
 	}
-	registry.Map()[name] = &huma.Schema{Type: huma.TypeString, Description: description, Enum: enum}
+	schema := &huma.Schema{Type: huma.TypeString, Description: description, Enum: enum}
+	schema.PrecomputeMessages()
+	registry.Map()[name] = schema
 	return &huma.Schema{Ref: "#/components/schemas/" + name}
 }
 
@@ -184,7 +186,12 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	api := humachi.New(router, config)
 	s.registerHealth(api)
 	s.registerPolicies(api)
+	s.registerSessionQuery(api)
+	s.registerSessionStop(api)
+	s.registerSessionDelete(api)
 	s.registerMemories(api)
+	s.registerConfigPatch(api)
+	s.registerSync(api)
 	return api
 }
 

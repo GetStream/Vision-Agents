@@ -349,7 +349,7 @@ func (r *Runner) play(
 		AgentID:    owner.AgentID,
 		Tags:       owner.Tags,
 		Target:     simulation.JudgeTarget,
-	}, "judge-"+kase.ID, simulation.Assertion, so)
+	}, "judge-"+kase.ID, simulation.Assertion, over.Session().Tools(), so)
 	if err != nil {
 		return errored(kase, err)
 	}

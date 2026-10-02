@@ -76,6 +76,17 @@ func loadDotEnv() {
 	}
 }
 
+// Database is a database of one suite's own, created if this is the first run against it.
+//
+// A suite that empties tables or drops the schema cannot share the deployment's test
+// database with the suites reading it, since go test runs packages beside one another.
+// Such a suite asks here for a database named after itself, and is free to wipe it.
+func Database(dsn, name string) string {
+	own := strings.Replace(dsn, "_test", "_"+name+"_test", 1)
+	createDatabase(own)
+	return own
+}
+
 // createDatabase creates the database the DSN names, connecting through the server's
 // postgres database to do it. A server that cannot be reached is left to the suites, which
 // skip or fail on it themselves.

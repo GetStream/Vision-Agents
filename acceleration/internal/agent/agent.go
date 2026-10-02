@@ -154,6 +154,9 @@ type Options struct {
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
+	// Speed is the voice's rate of delivery, 1 being its own. Zero leaves it there, and a
+	// voice that cannot be sped up is not routed to when it is set.
+	Speed float64
 	// LanguageHints narrow the candidates in every modality.
 	LanguageHints []string
 	// Keyterms are the business-specific words the transcriber should expect. A provider
@@ -666,6 +669,9 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", nil)
 }
 
+// VideoFramesTool is the caller's tool the agent reads frames of the user's video through.
+const VideoFramesTool = "get_video_frames"
+
 func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest) ([]llm.ContentPart, error) {
 	if a.options.ToolRunner == nil {
 		return nil, errors.New("agent: no video source is connected")
@@ -684,7 +690,7 @@ func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest
 	if err != nil {
 		return nil, err
 	}
-	return a.options.ToolRunner.Run(ctx, llm.ToolCall{ID: request.TaskID + "-capture", Name: "get_video_frames", Arguments: string(arguments)})
+	return a.options.ToolRunner.Run(ctx, llm.ToolCall{ID: request.TaskID + "-capture", Name: VideoFramesTool, Arguments: string(arguments)})
 }
 
 // Ask answers a piece of text in writing and says none of it.
@@ -1785,6 +1791,12 @@ func (a *Agent) handle(event llm.Event) {
 			return
 		}
 		a.say(typed.ResponseID, typed.Delta)
+
+	case llm.ReasoningTextDelta:
+		// Thinking is only ever read, never spoken, so a voice has no use for it.
+		if a.options.Text && typed.Delta != "" && a.speaking(typed.ResponseID) {
+			a.emitter.Send(ReasoningDelta{TurnID: typed.ResponseID, Text: typed.Delta})
+		}
 
 	case llm.ResponseFailed:
 		a.fail(typed.Err, "llm")

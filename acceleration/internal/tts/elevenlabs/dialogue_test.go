@@ -131,6 +131,13 @@ func (s *DialogueSuite) TestOnlyADialogueModelIsServedHere() {
 	}
 }
 
+func (s *DialogueSuite) TestASpeedIsRefusedRatherThanDropped() {
+	// The dialogue socket takes stability and nothing else, so a voice asked to slow down
+	// would speak at its own pace and nobody would hear why.
+	_, err := NewDialogue(Options{APIKey: "k", Speed: 0.9})
+	s.ErrorContains(err, "takes no speed")
+}
+
 func (s *DialogueSuite) TestNewDefaultsToTheConversationalModel() {
 	provider := s.newDialogue(Options{})
 

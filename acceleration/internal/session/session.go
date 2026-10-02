@@ -125,6 +125,7 @@ type Session struct {
 	watchers    map[uint64]*watcher
 	nextWatcher uint64
 	state       State
+	modality    string
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so
@@ -196,6 +197,26 @@ func (s *Session) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state
+}
+
+// Modality is how the user has taken part so far: store.ModalityText, ModalityVoice or
+// ModalityVideo.
+func (s *Session) Modality() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.modality
+}
+
+// SawVideo records that the agent has seen the user's video, which makes the session a video
+// one for good.
+func (s *Session) SawVideo() {
+	s.mu.Lock()
+	seen := s.modality == store.ModalityVideo
+	s.modality = store.ModalityVideo
+	s.mu.Unlock()
+	if !seen && s.records != nil {
+		s.records.SawVideo(s.id)
+	}
 }
 
 // Provider names the model answering and the voice speaking, which are only known once the
@@ -387,8 +408,9 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 
 // RespondCommand accepts one durable text submission. The receipt may be replayed,
 // but only the first successful acceptance is allowed to invoke the model, and only
-// that one returns the id of the response it recorded.
-func (s *Session) RespondCommand(ctx context.Context, id, text string) (persistent.CommandReceipt, string, error) {
+// that one returns the id of the response it recorded. clientID names the install the
+// command came from, which a client tool called while answering is addressed to.
+func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string) (persistent.CommandReceipt, string, error) {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
@@ -397,7 +419,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text string) (persiste
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", err
 	}
-	receipt, err := s.persisted.BeginCommand(id, text)
+	receipt, err := s.persisted.BeginCommand(id, text, clientID)
 	if err != nil {
 		return receipt, "", err
 	}
@@ -567,6 +589,9 @@ func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persist
 // driving a conversation knows a turn is over rather than merely answered once.
 func (s *Session) Busy() bool { return s.voiceAgent.Busy() }
 
+// Tools names what the agent may do rather than say.
+func (s *Session) Tools() []string { return s.voiceAgent.Tools() }
+
 // SetInstructions changes what the agent is told to be from the next turn on.
 func (s *Session) SetInstructions(text string) {
 	s.spec.Instructions = text
@@ -580,7 +605,6 @@ type Settings struct {
 	STT             *string
 	TTS             *string
 	STS             *string
-	Subagent        *string
 	Voice           *string
 	Thinking        *string
 	Temperature     *float64
@@ -605,7 +629,6 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 	set(&next.STTTarget, settings.STT)
 	set(&next.TTSTarget, settings.TTS)
 	set(&next.STSTarget, settings.STS)
-	set(&next.SubagentTarget, settings.Subagent)
 	set(&next.Voice, settings.Voice)
 	set(&next.ModelOverwrites.Thinking, settings.Thinking)
 	set(&next.ModelOverwrites.Verbosity, settings.Verbosity)
@@ -1076,21 +1099,12 @@ func (m *Manager) think(ctx context.Context, spec *Spec) {
 // run them. Loading them is skipped rather than failed when the agent is answering
 // everything itself, the same way cmd/agent does it.
 //
-// A spec may spell its skills out, name them, or say nothing and take the built-in set.
-// Naming them is what an agent config does, so that editing what a skill means changes
-// every agent that uses it rather than every request that mentions it. The built-in set
-// leaves out skills that capture video, since those need a subagent that can see.
+// The skills are the ones the agent config names, or the built-in set when it names none,
+// so editing what a skill means changes every agent that uses it. The built-in set leaves
+// out skills that capture video, since those need a subagent that can see.
 func (m *Manager) skills(ctx context.Context, spec Spec) (harness.Skills, error) {
 	if spec.SubagentTarget == "" {
 		return harness.Skills{}, nil
-	}
-	if spec.Skills != nil {
-		if err := spec.Skills.Validate(); err != nil {
-			return harness.Skills{}, err
-		}
-		declared := *spec.Skills
-		declared.Normalize()
-		return declared, nil
 	}
 	if len(spec.SkillNames) == 0 {
 		builtins, err := harness.DefaultSkills()
@@ -1126,11 +1140,13 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 		if err != nil {
 			return harness.Skills{}, err
 		}
+		// A stored skill is offered by its name and description alone, and its instructions
+		// are read when it is used, so editing one changes the next conversation that uses
+		// it rather than only the next one to start.
 		for _, skill := range stored {
 			defined[skill.Name] = harness.Skill{
 				Name:         skill.Name,
 				Description:  skill.Description,
-				Instructions: skill.Instructions,
 				Deadline:     time.Duration(skill.DeadlineMs) * time.Millisecond,
 				CaptureVideo: skill.CaptureVideo,
 			}
@@ -1138,6 +1154,18 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 	}
 
 	resolved := harness.Skills{Skills: make([]harness.Skill, 0, len(names))}
+	if m.options.Store != nil {
+		resolved.Load = func(ctx context.Context, name string) (string, error) {
+			found, err := m.options.Store.SkillsNamed(ctx, customerID, configID, []string{name})
+			if err != nil {
+				return "", err
+			}
+			if len(found) == 0 {
+				return "", fmt.Errorf("session: the skill %q was deleted", name)
+			}
+			return found[0].Instructions, nil
+		}
+	}
 	for _, name := range names {
 		skill, known := defined[name]
 		if !known {

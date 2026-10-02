@@ -31,10 +31,11 @@ const InstructionsFile = "instructions.md"
 // GuardrailFile is what it calls the policy screening what may be asked of it.
 const GuardrailFile = "guardrail.md"
 
-// SkillsDir and KnowledgeDir are what it calls the rest.
+// SkillsDir, KnowledgeDir and SimulationsDir are what it calls the rest.
 const (
-	SkillsDir    = "skills"
-	KnowledgeDir = "knowledge"
+	SkillsDir      = "skills"
+	KnowledgeDir   = "knowledge"
+	SimulationsDir = "simulations"
 )
 
 // KnowledgeURLsFile is what a knowledge directory calls the pages it is kept filled from,
@@ -64,6 +65,9 @@ type KnowledgeURL struct {
 	// called itself when it was last read.
 	Title       string
 	Description string
+	// RefreshHours is how often the backend reads the page again on its own. Zero is never:
+	// it is read when it is synced, and when somebody asks.
+	RefreshHours int
 }
 
 // UnmarshalYAML reads a page written either way: the url on its own, or a mapping naming it
@@ -74,6 +78,7 @@ type KnowledgeURL struct {
 //	    - url: https://example.com/plans
 //	      title: Plans
 //	      description: What each plan includes.
+//	      refresh_hours: 24
 //
 // Unknown keys are refused, so a misspelt one is reported rather than dropped into a
 // subscription nobody described.
@@ -87,17 +92,49 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 
 	for index := 0; index+1 < len(node.Content); index += 2 {
 		key, value := node.Content[index], node.Content[index+1]
+		if key.Value == "refresh_hours" {
+			if err := value.Decode(&k.RefreshHours); err != nil {
+				return err
+			}
+			if k.RefreshHours < 1 {
+				return errors.New("refresh_hours is how many hours between reads, so it is at least 1; leave it out for never")
+			}
+			continue
+		}
 		field := map[string]*string{
 			"url": &k.URL, "title": &k.Title, "description": &k.Description,
 		}[key.Value]
 		if field == nil {
-			return fmt.Errorf("%q is not something a page says; url, title and description are", key.Value)
+			return fmt.Errorf("%q is not something a page says; url, title, description and refresh_hours are", key.Value)
 		}
 		if err := value.Decode(field); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Simulation is one conversation a simulations/*.yaml file declares, run against the agent
+// the directory is. A file holds a list of them, so related ones can share a file.
+//
+//	simulations/lunch.yaml:
+//	    - name: lunch order with a change
+//	      scenario: Order a turkey club, then swap it for a veggie wrap.
+//	      assertion: The final order is one veggie wrap.
+//	      variations: 3
+type Simulation struct {
+	Name         string            `yaml:"name" json:"name"`
+	Scenario     string            `yaml:"scenario" json:"scenario"`
+	Assertion    string            `yaml:"assertion" json:"assertion"`
+	Mode         string            `yaml:"mode" json:"mode"`
+	Variations   int               `yaml:"variations" json:"variations"`
+	MaxTurns     int               `yaml:"max_turns" json:"max_turns"`
+	CallerTarget string            `yaml:"caller_target" json:"caller_target"`
+	JudgeTarget  string            `yaml:"judge_target" json:"judge_target"`
+	CallerSTT    string            `yaml:"caller_stt" json:"caller_stt"`
+	CallerTTS    string            `yaml:"caller_tts" json:"caller_tts"`
+	CallerVoice  string            `yaml:"caller_voice" json:"caller_voice"`
+	Tags         map[string]string `yaml:"tags" json:"tags"`
 }
 
 // Settings is what agent.yaml declares.
@@ -114,7 +151,9 @@ type Settings struct {
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
 	STS      *string           `yaml:"sts"`
 	Voice    string            `yaml:"voice"`
+	Speed    float64           `yaml:"speed"`
 	LLM      string            `yaml:"llm"`
+	Harness  string            `yaml:"harness"`
 	Subagent string            `yaml:"subagent"`
 	Search   string            `yaml:"search"`
 	Greeting string            `yaml:"greeting"`
@@ -144,6 +183,7 @@ type VideoSettings struct {
 //	  skills/think.md
 //	  knowledge/pricing.md
 //	  knowledge/urls.yaml
+//	  simulations/lunch.yaml
 //
 // A skill is a markdown file with YAML-ish frontmatter naming what the fast model sees; the
 // body is the prompt only the subagent sees.
@@ -167,6 +207,10 @@ type Folder struct {
 	Knowledge []Document
 	// KnowledgeURLs are the pages knowledge/urls.yaml declares, in the order it lists them.
 	KnowledgeURLs []KnowledgeURL
+	// Simulations are what simulations/*.yaml declare, by file name and then as listed. Nil
+	// when there is no simulations/, which leaves the stored ones alone; empty when it has
+	// none, which deletes them.
+	Simulations []Simulation
 }
 
 // Load reads an agent directory.
@@ -225,6 +269,9 @@ func Load(path string) (*Folder, error) {
 	if folder.KnowledgeURLs, err = loadKnowledgeURLs(filepath.Join(path, KnowledgeDir, KnowledgeURLsFile)); err != nil {
 		return nil, err
 	}
+	if folder.Simulations, err = loadSimulations(filepath.Join(path, SimulationsDir)); err != nil {
+		return nil, err
+	}
 	return folder, nil
 }
 
@@ -245,7 +292,7 @@ func (f *Folder) fill(options *Options) {
 		return
 	}
 	if options.Harness == nil {
-		options.Harness = &Harness{UseSkills: true, Skills: f.Skills}
+		options.Harness = &Harness{Skills: f.Skills}
 		return
 	}
 	if len(options.Harness.Skills) == 0 {
@@ -269,7 +316,7 @@ func (f *Folder) KnowledgeNamespace() string {
 // Hash is a fingerprint of the directory. The same files produce the same hash, and the
 // Python SDK takes it the same way, so a stamp either one wrote is understood by both.
 func (f *Folder) Hash() string {
-	return fingerprint(f.Declaration, f.Instructions, f.Guardrail, f.Skills, f.Knowledge, f.KnowledgeURLs)
+	return fingerprint(f.Declaration, f.Instructions, f.Guardrail, f.Skills, f.Knowledge, f.KnowledgeURLs, f.Simulations)
 }
 
 func fingerprint(
@@ -277,6 +324,7 @@ func fingerprint(
 	skills []Skill,
 	knowledge []Document,
 	pages []KnowledgeURL,
+	simulations []Simulation,
 ) string {
 	hasher := md5.New()
 	io.WriteString(hasher, declaration+"\n"+instructions+"\n"+guardrail)
@@ -309,6 +357,20 @@ func fingerprint(
 	}
 	for _, page := range pages {
 		io.WriteString(hasher, "\nurl:"+page.URL+"\n"+page.Title+"\n"+page.Description)
+		// Written only when there is one, so a page without keeps the fingerprint the
+		// Python SDK takes of it.
+		if page.RefreshHours > 0 {
+			io.WriteString(hasher, "\nrefresh_hours:"+strconv.Itoa(page.RefreshHours))
+		}
+	}
+	// Written only when there is a simulations/, so a directory without one keeps the
+	// fingerprint the Python SDK takes of it.
+	if simulations != nil {
+		io.WriteString(hasher, "\nsimulations:")
+		for _, simulation := range simulations {
+			encoded, _ := json.Marshal(simulation)
+			hasher.Write(encoded)
+		}
 	}
 	return hex.EncodeToString(hasher.Sum(nil))
 }
@@ -550,4 +612,57 @@ func loadKnowledgeURLs(path string) ([]KnowledgeURL, error) {
 		}
 	}
 	return pages, nil
+}
+
+// loadSimulations reads every .yaml and .yml file in simulations/, each a list of
+// simulations. A key nobody knows is refused, as in agent.yaml, and so is a name two
+// simulations share, since a sync finds a simulation by its name.
+func loadSimulations(path string) ([]Simulation, error) {
+	entries, err := os.ReadDir(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", path, err)
+	}
+
+	simulations := []Simulation{}
+	named := map[string]string{}
+	for _, entry := range entries {
+		extension := strings.ToLower(filepath.Ext(entry.Name()))
+		if entry.IsDir() || (extension != ".yaml" && extension != ".yml") {
+			continue
+		}
+
+		file := filepath.Join(path, entry.Name())
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("agents: reading %s: %w", file, err)
+		}
+		var listed []Simulation
+		decoder := yaml.NewDecoder(bytes.NewReader(raw))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&listed); err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("agents: %s: %w", file, err)
+		}
+
+		for _, simulation := range listed {
+			switch {
+			case simulation.Name == "":
+				return nil, fmt.Errorf("agents: %s: a simulation needs a name", file)
+			case simulation.Scenario == "":
+				return nil, fmt.Errorf("agents: %s: simulation %q needs a scenario", file, simulation.Name)
+			case simulation.Assertion == "":
+				return nil, fmt.Errorf("agents: %s: simulation %q needs an assertion", file, simulation.Name)
+			case simulation.Mode != "" && simulation.Mode != "text" && simulation.Mode != "audio":
+				return nil, fmt.Errorf("agents: %s: simulation %q is text or audio, not %q", file, simulation.Name, simulation.Mode)
+			}
+			if first, taken := named[simulation.Name]; taken {
+				return nil, fmt.Errorf("agents: %s: simulation %q is also declared in %s", file, simulation.Name, first)
+			}
+			named[simulation.Name] = entry.Name()
+			simulations = append(simulations, simulation)
+		}
+	}
+	return simulations, nil
 }

@@ -1,0 +1,31 @@
+# Stress-test row 10 (an API with request signing, AWS SigV4, here Bedrock) of «Stress test:
+# 12 awkward providers» in acceleration/docs/connectors/architecture.md on
+# connectors/planning. Vendor sources, all opened October 1, 2026 ([bedrock] was opened for
+# this fixture; the other two are in the doc's «Sources and evidence»):
+#   [sigv4]   https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html
+#   [assume]  https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html
+#   [bedrock] https://docs.aws.amazon.com/general/latest/gr/bedrock.html
+id: aws_bedrock
+revision: 1
+name: Amazon Bedrock
+inputs:
+  # A SigV4 key is scoped to one service in one region: [sigv4]. The pattern is the shape
+  # of the region codes [bedrock] lists (us-east-1, eu-west-1, ap-southeast-1); AWS does not
+  # publish it as a rule. # unverified
+  - name: region
+    pattern: "[a-z]{2}(-[a-z]+)+-[0-9]+"
+endpoints:
+  # bedrock-runtime.<region>.amazonaws.com: [bedrock].
+  api_base: https://bedrock-runtime.{region}.amazonaws.com
+  # The AssumeRole sample request goes to https://sts.amazonaws.com/: [assume].
+  sts: https://sts.amazonaws.com
+# No token; aws_sigv4 signs each request and assumes a role when one is set: row 10.
+schemes: [aws_sigv4]
+refresh:
+  # AssumeRole's DurationSeconds defaults to 3600: [assume]. The scheme re-mints before
+  # Expiration minus the margin (row 10); the margin is our choice.
+  access_ttl: 1h
+  margin: 5m
+sources:
+  - kind: http
+    endpoint: api_base

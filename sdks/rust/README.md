@@ -131,6 +131,17 @@ dispatch.run().await?;
 worker rather than queueing behind it. `get_or_create_agent` keeps one session per channel,
 because the session that answered the last message is the one that knows what was said.
 
+A worker can also host functions for every session opened under an agent id, including ones
+opened from a browser. The router offers them to each session and sends every call here:
+
+```rust
+dispatch.host("my-agent", tools, None); // None: the router's default timeout per call
+dispatch.run().await?;
+```
+
+A worker that only hosts tools needs no handler. If the router refuses the tools, `run`
+returns `Error::Failed` naming the agent and the reason.
+
 Placing a call outward:
 
 ```rust

@@ -3,9 +3,10 @@ import json
 from typing import Any, AsyncIterator, Optional
 
 import pytest
-from aiohttp import WSMsgType, web
+from aiohttp import WSCloseCode, WSMsgType, web
 from aiohttp.test_utils import TestServer
 from vision_agents.core import Agent
+from vision_agents.core.llm import FunctionRegistry
 from vision_agents.core.messaging import InboundMessage
 from vision_agents.core.telephony import InboundCall
 from vision_agents.plugins import stream
@@ -28,6 +29,11 @@ class Router:
         # sessions is one entry per session created, which is how many conversations the
         # worker started rather than carried on.
         self.sessions: list[dict[str, Any]] = []
+        # connections is how many dispatch sockets were opened, and drops is how each of
+        # the next ones ends right after saying it is ready: "cut" without a close frame,
+        # the way a router pod being replaced ends it, or "going_away" with one.
+        self.connections = 0
+        self.drops: list[str] = []
         self._socket: Optional[web.WebSocketResponse] = None
         self._connected = asyncio.Event()
         self._closing = False
@@ -118,7 +124,16 @@ class Router:
         socket = web.WebSocketResponse()
         await socket.prepare(request)
         self._socket = socket
+        self.connections += 1
         await socket.send_json({"type": "ready", "worker_id": "worker-7"})
+        if self.drops:
+            drop = self.drops.pop(0)
+            if drop == "cut":
+                assert request.transport is not None
+                request.transport.close()
+            else:
+                await socket.close(code=WSCloseCode.GOING_AWAY)
+            return socket
         self._connected.set()
 
         async for message in socket:
@@ -688,3 +703,172 @@ class TestDispatch:
         release.set()
         await asyncio.wait_for(running, SETTLE)
         assert finished.is_set()
+
+    @pytest.fixture
+    def functions(self) -> FunctionRegistry:
+        registry = FunctionRegistry()
+
+        @registry.register(description="Read SDK source")
+        async def investigate_sdk(sdk: str) -> str:
+            if sdk == "broken":
+                raise RuntimeError("the checkout is missing")
+            return f"read {sdk}"
+
+        return registry
+
+    @pytest.fixture
+    async def hosting(
+        self, router: Router, functions: FunctionRegistry
+    ) -> AsyncIterator[stream.Dispatch]:
+        """A worker that only hosts tools, connected and torn down afterwards."""
+        worker = stream.Dispatch(url=router.url, customer_id="acme", report_every=0.05)
+        worker.host("stream-support", functions, timeout=60)
+        running = asyncio.create_task(worker.run())
+        yield worker
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+
+    async def test_a_hosted_function_is_declared_to_the_router(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        declared = await router.told_of_type("host_tools")
+
+        assert declared["agent_id"] == "stream-support"
+        assert declared["timeout_ms"] == 60000
+        assert [tool["name"] for tool in declared["tools"]] == ["investigate_sdk"]
+        assert declared["tools"][0]["description"] == "Read SDK source"
+        assert "sdk" in declared["tools"][0]["parameters"]["properties"]
+
+    async def test_a_hosted_function_is_answered_over_the_dispatch_socket(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        await router.hand_over(
+            {
+                "type": "tool_call",
+                "id": "call-1",
+                "session_id": "s",
+                "name": "investigate_sdk",
+                "arguments": '{"sdk": "android"}',
+            }
+        )
+
+        answered = await router.told_of_type("tool_result")
+
+        assert answered == {
+            "type": "tool_result",
+            "id": "call-1",
+            "output": "read android",
+        }
+
+    async def test_a_hosted_function_that_failed_says_why(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        await router.hand_over(
+            {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "investigate_sdk",
+                "arguments": '{"sdk": "broken"}',
+            }
+        )
+
+        answered = await router.told_of_type("tool_result")
+
+        assert answered["id"] == "call-1"
+        assert answered["error"] == "the checkout is missing"
+        assert "output" not in answered
+
+    async def test_a_tool_this_worker_does_not_host_is_answered_with_an_error(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        await router.hand_over(
+            {"type": "tool_call", "id": "call-1", "name": "deploy", "arguments": "{}"}
+        )
+
+        answered = await router.told_of_type("tool_result")
+
+        assert answered == {
+            "type": "tool_result",
+            "id": "call-1",
+            "error": "this worker does not run deploy",
+        }
+
+    async def test_a_running_hosted_tool_does_not_hold_up_the_next(
+        self, router: Router
+    ):
+        # The socket a call arrived on is also what delivers the next one.
+        registry = FunctionRegistry()
+        release = asyncio.Event()
+
+        @registry.register(description="Wait until released")
+        async def slow() -> str:
+            await release.wait()
+            return "slow"
+
+        @registry.register(description="Release the slow one")
+        async def fast() -> str:
+            release.set()
+            return "fast"
+
+        worker = stream.Dispatch(url=router.url, customer_id="acme", report_every=0.05)
+        worker.host("stream-support", registry)
+        running = asyncio.create_task(worker.run())
+        try:
+            await router.hand_over({"type": "tool_call", "id": "1", "name": "slow"})
+
+            async def busy() -> dict[str, Any]:
+                while True:
+                    load = await router.told_of_type("load")
+                    if load["active_agents"] > 0:
+                        return load
+
+            load = await asyncio.wait_for(busy(), SETTLE)
+            await router.hand_over({"type": "tool_call", "id": "2", "name": "fast"})
+            first = await router.told_of_type("tool_result")
+            second = await router.told_of_type("tool_result")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert load["active_agents"] == 1
+        assert [first["output"], second["output"]] == ["fast", "slow"]
+
+    async def test_a_worker_the_router_drops_reconnects_and_hosts_again(
+        self, router: Router, functions: FunctionRegistry
+    ):
+        # A worker that stopped at either drop would leave every session naming the agent
+        # without its tools.
+        router.drops = ["cut", "going_away"]
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker._first_retry = 0.01
+        worker.host("stream-support", functions)
+        running = asyncio.create_task(worker.run())
+        try:
+            await asyncio.wait_for(router._connected.wait(), SETTLE)
+            declared = await router.told_of_type("host_tools")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert router.connections == 3
+        assert declared["agent_id"] == "stream-support"
+        assert declared["timeout_ms"] == 0
+
+    async def test_a_worker_whose_tools_are_refused_stops_waiting(
+        self, router: Router, functions: FunctionRegistry
+    ):
+        # A worker nobody will call should say so rather than sit connected looking healthy.
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker.host("stream-support", functions)
+        running = asyncio.create_task(worker.run())
+
+        await router.hand_over(
+            {
+                "type": "hosting_refused",
+                "agent_id": "stream-support",
+                "reason": "hosting no tools is not hosting",
+            }
+        )
+
+        with pytest.raises(stream.RouterError, match="stream-support.*not hosting"):
+            await asyncio.wait_for(running, SETTLE)

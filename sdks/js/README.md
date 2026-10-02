@@ -61,23 +61,20 @@ A secret belongs on a server. A browser holding one could rewrite every agent in
 which is why the browser passes a token instead — and why the operations that configure an
 agent answer a browser with a 403 rather than trusting it.
 
-## Every endpoint, typed from the spec
+## Resources, typed from the spec
 
-`Client` has one method per HTTP method rather than one per endpoint. The paths, the
-parameters, the body and the answer all come from `acceleration/api/openapi.yaml`, so the
-spec is the API surface: all 93 operations are reachable, and a new one needs nothing
-written here to be callable.
+The API is grouped by resource, with the request and response types generated from
+`acceleration/api/openapi.yaml`:
 
 ```ts
-const configs = await api.get("/v1/agents/configs");
-const calls = await api.get("/v1/agents/calls", { query: { limit: 20 } });
-const answer = await api.post("/v1/search", { body: { query: "what changed in v3" } });
-await api.delete("/v1/agents/sessions/{id}", { path: { id: "sess_1" } });
+const simulation = await api.simulations.create({ name, config_id, scenario, assertion });
+let run = await api.simulations.run(simulation.id);
+run = await api.simulations.runs.get(run.id);
+await api.memories.truncate("user-123");
 ```
 
-TypeScript will not let you `get` a path that only answers POST, misname a query
-parameter, or forget a required body. A failure raises `RouterError`, carrying the status,
-the operation and what the router said went wrong.
+A failure raises `RouterError`, carrying the status, the operation and what the router said
+went wrong.
 
 ## A conversation somebody comes back to
 
@@ -171,6 +168,17 @@ A message only arrives here when no agent is running on its channel — one writ
 agent that is already running is answered by the router from that session, because that
 agent is the one that knows what has been said. `sessionFor` keeps one conversation per
 channel for the same reason.
+
+A worker can also host tools for every session opened under an agent id, including one a
+browser opened, where the session's own process cannot reach what the tool needs:
+
+```ts
+dispatch.host("my-agent", agent.tools, { timeoutMs: 60_000 });
+```
+
+The router offers them to each session naming the agent and sends every call here. `run`
+works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
+refuses them.
 
 Server side only. A worker is offered other people's callers, so anything that can open
 that socket could answer for the whole app.

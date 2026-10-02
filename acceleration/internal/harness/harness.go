@@ -30,6 +30,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
+// Default is the harness every agent runs unless its config names another. It is named so
+// that a config can say which it wants once there is more than one to choose from.
+const Default = "default"
+
 // eventBuffer is how many events may queue before a slow consumer applies backpressure.
 const eventBuffer = 32
 
@@ -180,6 +184,7 @@ func New(options Options) (*Harness, error) {
 		h.tasks = newManager(options.Subagent, options.Tasks, options.Sandbox, options.Overwrites, h.logger)
 		h.tasks.onModelCall = options.OnModelCall
 		h.tasks.capture = options.Capture
+		h.tasks.load = options.Skills.Load
 		if options.Subagent == nil {
 			h.tasks.open(options.OpenSubagent)
 		}

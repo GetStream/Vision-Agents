@@ -84,7 +84,7 @@ go run ./cmd/router --config /etc/router.yaml
 Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`, `cors_origins`,
 `trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
 `postgres.dsn`, `redis.{addr,username,password}`, `auth.{mode,kek}`,
-`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention` and
+`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
 `stream.{api_key,api_secret}`. Naming no file loads one of the three embedded in the
 binary, by `ROUTER_ENV`.
 
@@ -104,7 +104,10 @@ the other commands that read them there.
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless a browser app calls this deployment. The same list decides which origins may open a socket. A deployment reached through Stream's proxy needs the proxy to let a preflight through as well, since a browser cannot authenticate one |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
-| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose |
+| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring |
+| `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
+| `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
+| `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
@@ -288,7 +291,7 @@ Anonymous is left out of that, since an anonymous name is a claim nobody checked
 allowing it would make guessing whose a session was enough to read it.
 
 `internal/session` enforces all of this rather than the handlers, so `getSession`,
-`closeSession`, the events socket, the call token and the session actions cannot each be
+`stopSession`, `deleteSession`, the events socket, the call token and the session actions cannot each be
 wrong in their own way.
 
 Not built yet, in the order [.factory/features/auth.md](../.factory/features/auth.md) puts
@@ -724,7 +727,14 @@ flowchart LR
 
 A skill is a name, a line telling the fast model what it is for, and the instructions the
 subagent answers under. `skills.yaml` is embedded, and `HARNESS_SKILLS` or `-skills`
-replaces it, the same way `router.yaml` and `phone.yaml` already work.
+replaces it, the same way `router.yaml` and `phone.yaml` already work. An agent config's own
+skills are offered by name and description only, and their instructions are read from the store
+when one is used, so an edit reaches the next use rather than the next session.
+
+The harness is agent config, never session config: `harness` (only `default` today),
+`subagent`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
+`createSession` does not take them. A client that wants a sandbox of its own declares it as a
+tool instead.
 
 - **The model asks for help mid-sentence.** It writes `<ask skill="think">…</ask>` into its
   reply. A streaming filter takes it back out before the reply reaches the voice, so the
@@ -745,15 +755,16 @@ replaces it, the same way `router.yaml` and `phone.yaml` already work.
 Subagent completions go through `llmrouter` like anything else, so what the thinking costs
 lands in `requests` with the same failover and cost tags as the talking.
 
-A session that asks for a sandbox gives the subagent one tool, `run_code`, and the model
+An agent whose config names a sandbox gives the subagent one tool, `run_code`, and the model
 holding the conversation none: running code takes seconds that a conversation does not
 have, and the subagent has already left the live path. Code the subagent writes runs in
 Daytona, its output comes back as a tool result, and the same task is put again, up to four
 rounds and always inside the skill's own deadline. One sandbox is created the first time
 code actually runs and released when the session ends.
 
-Long histories are compacted privately on the thinking session only when the prompt is large
-and the provider's reported cached-token ratio has fallen below half. The result replaces
+Long histories are compacted privately on the thinking session when the prompt is large and
+either it has filled 80% of the conversation model's `context_window` in `router.yaml`, or the
+provider's reported cached-token ratio has fallen below half. The result replaces
 only the unchanged old prefix; recent turns stay verbatim and a late summary cannot overwrite
 newer conversation.
 
@@ -835,8 +846,6 @@ curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
     "call_id": "demo-1",
     "instructions": "Keep your replies short.",
     "llm": "llm-fast",
-    "subagent": "llm-smart",
-    "sandbox": "daytona",
     "tags": {"project": "support"},
     "memory": {"user_id": "222"}
   }'
@@ -945,7 +954,7 @@ retried three times before the page is marked `failed`.
 ```bash
 curl -X POST localhost:8080/v1/agents/knowledge/urls \
   -H "X-Customer-Id: acme" -H "Content-Type: application/json" \
-  -d '{"namespace":"docs","url":"https://example.com/pricing"}'
+  -d '{"namespace":"docs","url":"https://example.com/pricing","refresh_hours":24}'
 ```
 
 Each row records when the page was last read successfully, what it was called and how many
@@ -955,8 +964,11 @@ re-reading a page that got shorter leaves no orphans behind. A page that could n
 fetched is still stored, in the `failed` state with the reason on it, rather than refused
 and forgotten.
 
-Nothing re-crawls on a schedule. `POST /v1/agents/knowledge/urls/{id}/index` queues one to
-be read again, and `last_indexed_at` is what a caller with its own schedule decides from.
+A page with `refresh_hours` is read again once that many hours have passed since its last
+read, failed or not. Every router looks once a minute for pages that are due and queues them;
+the task id is the page, so two routers queuing one read it once. Without `refresh_hours` a
+page is only read again when asked: `POST /v1/agents/knowledge/urls/{id}/index` queues a
+read, and so does adding the page again.
 
 `cmd/knowledge` fills one from files:
 

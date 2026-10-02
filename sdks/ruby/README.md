@@ -107,6 +107,24 @@ A call handler that returns accepts the call; one that raises rejects it with th
 the reason. A message only arrives when no agent is running on its channel, and
 `get_or_create_agent` keeps one agent per channel for the same reason.
 
+A worker can also run tools for every session under an agent id, whoever opened it, such as
+a conversation started from a browser:
+
+```ruby
+tools = GetStream::VisionAgents::Tools.new
+tools.register("lookup_order", description: "An order by id",
+               parameters: { type: "object", properties: { id: { type: "string" } } }) do |args|
+  orders.find(args["id"])
+end
+
+dispatch.host("support", tools, timeout: 30)
+dispatch.run
+```
+
+The tools are declared each time the router says it is ready, and each call runs on its own
+thread. `timeout` is seconds per call; nil takes the router's default. Hosting alone is enough
+to `run`, and a router that refuses the tools ends `run` with the reason.
+
 Ringing somebody is the other direction:
 
 ```ruby

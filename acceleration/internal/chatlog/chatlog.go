@@ -18,6 +18,7 @@ package chatlog
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -93,6 +95,8 @@ const (
 	heard
 	// ignored is speech the agent decided was not meant for it.
 	ignored
+	// artifact is a card for artifacts a tool stored, apart from anything said.
+	artifact
 )
 
 // Options configures a Log. The credentials fall back to the environment, the same way
@@ -107,6 +111,9 @@ type Options struct {
 	Channel string
 	// Agent is the user the agent's own replies are written as.
 	Agent User
+	// VisibleTools are the agent config's visible_tools. A shown tool's stored artifacts
+	// get a card of their own; empty shows search and web_search.
+	VisibleTools []string
 
 	// APIKey defaults to STREAM_API_KEY.
 	APIKey string
@@ -130,6 +137,7 @@ type Log struct {
 	channel  string
 	existing bool
 	agent    User
+	visible  []string
 	logger   *slog.Logger
 
 	queue chan message
@@ -151,6 +159,9 @@ type message struct {
 	kind   kind
 	// source is what the message is written as, one of the SourceField values.
 	source string
+	// receiptID is the tool call an artifact card is for, which keeps its identity stable.
+	receiptID string
+	artifacts []conversation.ArtifactAttachment
 }
 
 // New validates the options and returns a Log. It writes nothing; Start does that.
@@ -190,6 +201,7 @@ func New(options Options) (*Log, error) {
 		channel:  channel,
 		existing: options.Channel != "",
 		agent:    options.Agent,
+		visible:  options.VisibleTools,
 		logger:   options.Logger.With("agent", options.AgentID, "channel", channel),
 		queue:    make(chan message, queueSize),
 		done:     make(chan struct{}),
@@ -226,6 +238,13 @@ func (l *Log) Start(ctx context.Context) error {
 // said are ignored, so a caller can hand it every event without filtering.
 func (l *Log) Record(event agent.Event) {
 	switch typed := event.(type) {
+	case agent.ToolRan:
+		if typed.Err != nil || typed.ID == "" || typed.TurnID == "" || !conversation.ToolVisible(l.visible, typed.Tool) {
+			return
+		}
+		if artifacts := conversation.StoredArtifacts(typed.Result); len(artifacts) > 0 {
+			l.enqueue(message{author: l.agent, turnID: typed.TurnID, kind: artifact, source: SourceAgent, receiptID: typed.ID, artifacts: artifacts})
+		}
 	case agent.Hearing:
 		if typed.Text == "" {
 			return
@@ -375,6 +394,8 @@ func newWriter(l *Log) *writer {
 // handle takes one queued message.
 func (w *writer) handle(queued message) {
 	switch queued.kind {
+	case artifact:
+		w.storeArtifacts(queued)
 	case piece:
 		writing, started := w.writing[queued.turnID]
 		if !started {
@@ -427,6 +448,22 @@ func (w *writer) handle(queued message) {
 	}
 }
 
+// storeArtifacts stores a card for saved artifacts, which are there even if the reply that
+// follows is interrupted. It is apart from the spoken transcript, and its id comes from the
+// tool call, so a repeated delivery is the same card rather than a second one.
+func (w *writer) storeArtifacts(queued message) {
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	id := fmt.Sprintf("voice-artifact-%x", sha256.Sum256([]byte(w.log.channel+"\x00"+queued.turnID+"\x00"+queued.receiptID)))
+	_, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.channel, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{ID: &id, UserID: &queued.author.ID, Attachments: conversation.ChatAttachments(queued.artifacts),
+			Custom: map[string]any{generatingField: false, SourceField: SourceAgent}},
+	})
+	if err != nil {
+		w.log.logger.Error("could not store a saved artifact card", "turn", queued.turnID, "error", err)
+	}
+}
+
 // show sends what has been written or heard since the last tick to anyone watching. The
 // first revision is stored, so the channel has a message to update and to keep if it never
 // settles; the rest are ephemeral, which reach watchers without a write per token.
@@ -465,12 +502,24 @@ func (w *writer) showOne(writing *reply, source string, key, id string) {
 	writing.shown = writing.text
 }
 
-// retract empties what a participant was heard saying before it settled, so words the
-// agent never took as said are not left in the channel as if they were.
+// retract removes what a participant was heard saying before it settled, so words the
+// agent never took as said are not left in the channel as if they were. Nobody sent it,
+// so it is deleted outright rather than left behind as an empty or deleted message.
 func (w *writer) retract(userID string) {
 	listening, started := w.listening[userID]
 	delete(w.listening, userID)
-	if started && listening.messageID != "" {
+	if !started || listening.messageID == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	hard := true
+	if _, err := w.log.client.Chat().DeleteMessage(ctx, listening.messageID,
+		&getstream.DeleteMessageRequest{Hard: &hard}); err != nil {
+		// Left alone it would still show the words, as if still being said. Emptied, it
+		// at least stops saying so, and clients do not show empty speech.
+		w.log.logger.Error("could not remove speech the agent did not take as said", "user", userID, "error", err)
 		w.patch(listening, "", false, SourceSpeech)
 	}
 }

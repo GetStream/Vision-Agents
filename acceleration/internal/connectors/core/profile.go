@@ -1,0 +1,32 @@
+package core
+
+// Profile is the manifest, resolved for one connection's inputs and captured values. It is
+// what a scheme reads instead of switching on a connector id. Manifest.Resolve builds one.
+type Profile struct {
+	ConnectorID string
+	// Revision is the definition revision the connection pinned, so a manifest change
+	// reaches a connection only through a reconnect.
+	Revision int
+	Scheme   string
+	// Endpoints are resolved URLs by role: authorize, token, refresh, revoke, issuer,
+	// api_base. A role whose template needs a value not captured yet is absent.
+	Endpoints map[string]string
+	// Inputs are what the connection was created with, defaults applied: shop, instance,
+	// region, tenant.
+	Inputs map[string]string
+	// Metadata are values captured at connect time: instance_url, realm_id, team_id.
+	Metadata map[string]string
+	// Hooks maps a hook point to the registered hook name the manifest asked for.
+	Hooks map[string]string
+
+	Client          ClientPolicy
+	AuthorizeParams map[string]string
+	TokenParams     map[string]string
+	Scopes          ScopePolicy
+	// Identity and Capture are the rules Apply reads a consent's callback and token
+	// response with.
+	Identity  []string
+	Capture   []CaptureRule
+	Refresh   RefreshPolicy
+	RateLimit RateLimitRule
+}

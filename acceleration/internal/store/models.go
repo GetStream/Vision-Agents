@@ -329,6 +329,8 @@ type AgentConfig struct {
 	Search         string `bun:"search,notnull"`
 	Instructions   string `bun:"instructions,notnull"`
 	Greeting       string `bun:"greeting,notnull"`
+	// Speed is the voice's rate of delivery, 1 being its own. Zero leaves it there.
+	Speed float64 `bun:"speed,notnull"`
 	// Guardrail is a guardrail.md: frontmatter saying how to screen a turn, then the
 	// policy in prose. Empty, which most configs are, means every turn is answered.
 	Guardrail string `bun:"guardrail,notnull"`
@@ -341,11 +343,16 @@ type AgentConfig struct {
 	Plugins []string `bun:"plugins,type:jsonb"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
+	// VisibleTools names the tools whose steps end users see on a persistent conversation's
+	// replies, as names or path.Match patterns. Empty shows search and web_search.
+	VisibleTools []string `bun:"visible_tools,type:jsonb"`
 	// KnowledgeNamespace is what the agent may look things up in.
 	KnowledgeNamespace string `bun:"knowledge_namespace,notnull"`
 	// Sandbox is where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none.
-	Sandbox string            `bun:"sandbox,notnull"`
+	Sandbox string `bun:"sandbox,notnull"`
+	// Harness is which harness the agent's sessions run, "default" being the one there is.
+	Harness string            `bun:"harness,notnull"`
 	Tags    map[string]string `bun:"tags,type:jsonb"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
@@ -540,9 +547,11 @@ type KnowledgeURL struct {
 	Passages int `bun:"passages,notnull"`
 	// LastIndexedAt is when it was last read successfully. Nil means never.
 	LastIndexedAt *time.Time `bun:"last_indexed_at"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
-	DeletedAt     *time.Time `bun:"deleted_at"`
+	// RefreshHours is how often the page is read again on its own. Zero is never.
+	RefreshHours int        `bun:"refresh_hours,notnull"`
+	CreatedAt    time.Time  `bun:"created_at,notnull"`
+	UpdatedAt    time.Time  `bun:"updated_at,notnull"`
+	DeletedAt    *time.Time `bun:"deleted_at"`
 }
 
 // KnowledgeDocument is a document a knowledge base was filled with, posted or synced
@@ -895,8 +904,19 @@ type SimulationLine struct {
 	// Intended is what the agent meant to say, where that differs from what the caller
 	// heard. Only an audio simulation has both, and the difference is the whole point of
 	// running one.
-	Intended string    `json:"intended,omitempty"`
-	At       time.Time `json:"at"`
+	Intended string `json:"intended,omitempty"`
+	// Tools are what the agent did on this turn rather than said, which is what a question
+	// about whether something was actually done is settled by.
+	Tools []SimulationTool `json:"tools,omitempty"`
+	At    time.Time        `json:"at"`
+}
+
+// SimulationTool is one tool the agent ran during a simulated conversation.
+type SimulationTool struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Result    string `json:"result"`
+	Error     string `json:"error,omitempty"`
 }
 
 // SimulationRunFilter narrows which runs are listed. Every field is optional, and an empty
@@ -1067,6 +1087,14 @@ const (
 	SessionClosed = "closed"
 )
 
+// How the user took part in a session. It only moves up: a session that has seen video
+// stays video.
+const (
+	ModalityText  = "text"
+	ModalityVoice = "voice"
+	ModalityVideo = "video"
+)
+
 // ModelOverwrites is what a caller asked to change about the models for one session.
 //
 // It is one object rather than a dozen top-level fields because it is one idea: everything
@@ -1076,12 +1104,11 @@ const (
 // resolves; Thinking, Temperature and MaxOutputTokens are folded into the LLM options the
 // same way the router's own overrides are.
 type ModelOverwrites struct {
-	LLM      string `json:"llm,omitempty"`
-	STT      string `json:"stt,omitempty"`
-	TTS      string `json:"tts,omitempty"`
-	STS      string `json:"sts,omitempty"`
-	Subagent string `json:"subagent,omitempty"`
-	Search   string `json:"search,omitempty"`
+	LLM    string `json:"llm,omitempty"`
+	STT    string `json:"stt,omitempty"`
+	TTS    string `json:"tts,omitempty"`
+	STS    string `json:"sts,omitempty"`
+	Search string `json:"search,omitempty"`
 	// Thinking is how hard to reason: off, low, medium or high. It becomes the reasoning
 	// effort on the LLM options, which is what the providers that support one are sent.
 	Thinking        string   `json:"thinking,omitempty"`
@@ -1135,10 +1162,12 @@ type AgentSession struct {
 	CallID          string          `bun:"call_id,nullzero"`
 	CallType        string          `bun:"call_type,nullzero"`
 	// ForkedFrom is the session this one continued from, empty for one opened fresh.
-	ForkedFrom string    `bun:"forked_from,nullzero"`
-	State      string    `bun:"state,notnull"`
-	CreatedAt  time.Time `bun:"created_at,notnull"`
-	UpdatedAt  time.Time `bun:"updated_at,notnull"`
+	ForkedFrom string `bun:"forked_from,nullzero"`
+	State      string `bun:"state,notnull"`
+	// Modality is ModalityText, ModalityVoice or ModalityVideo.
+	Modality  string    `bun:"modality,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
 	// ClosedAt is nil while the session is still running.
 	ClosedAt       *time.Time `bun:"closed_at"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
@@ -1148,7 +1177,7 @@ type AgentSession struct {
 
 // SessionPosition is the last session of a page, by every key the list is sorted on.
 type SessionPosition struct {
-	CreatedAt time.Time `json:"t"`
+	UpdatedAt time.Time `json:"u"`
 	ID        string    `json:"id"`
 	Rank      float32   `json:"r,omitempty"`
 }
@@ -1173,18 +1202,13 @@ type ItemPosition struct {
 // filter at all.
 type SessionFilter struct {
 	UserID    string
-	ConfigID  string
 	AgentName string
+	AgentID   string
 	Project   string
-	// State is running or closed. Empty is both.
+	Modality  string
+	// State is SessionRunning or SessionClosed.
 	State string
-	// Custom matches sessions whose custom object contains every one of these pairs, which
-	// is what makes custom worth writing: a caller that labelled a session can find it
-	// again by the label.
-	Custom map[string]string
-	Before time.Time
-	After  time.Time
-	Limit  int
+	Limit int
 	// Cursor starts the page after this session. Nil is the first page.
 	Cursor *SessionPosition
 }

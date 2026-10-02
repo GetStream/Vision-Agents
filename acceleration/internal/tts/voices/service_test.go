@@ -17,7 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // dsnEnvVar is where the tests look for a Postgres to run against.
@@ -49,7 +49,8 @@ func (s *ServiceSuite) SetupSuite() {
 
 	s.ctx = context.Background()
 
-	opened, err := store.Open(dsn)
+	// A database of this suite's own, since it empties the voices between tests.
+	opened, err := store.Open(testenv.Database(dsn, "voices"))
 	s.Require().NoError(err)
 	s.store = opened
 	s.Require().NoError(opened.Migrate(s.ctx))

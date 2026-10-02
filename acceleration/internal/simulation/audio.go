@@ -60,6 +60,7 @@ type spoken struct {
 	// intended is what the agent meant to say, kept alongside so a failure caused by the
 	// voice rather than the answer can be told apart from one caused by the answer.
 	intended []string
+	acting   []store.SimulationTool
 	lastAt   time.Time
 	failure  error
 	gone     bool
@@ -169,7 +170,7 @@ func (s *spoken) Say(ctx context.Context, text string) (store.SimulationLine, er
 			// Out loud there is a third thing to wait for: the agent may have written the
 			// whole reply and still be several seconds from the end of saying it.
 			case answer != "" && quiet >= spokenSettle && !s.created.Busy() && !s.edge.Talking():
-				return store.SimulationLine{Text: answer, Intended: meant}, nil
+				return store.SimulationLine{Text: answer, Intended: meant, Tools: s.acted()}, nil
 			case time.Since(started) >= s.within:
 				if failure != nil {
 					return store.SimulationLine{}, fmt.Errorf("simulation: the agent did not answer: %w", failure)
@@ -289,6 +290,8 @@ func (s *spoken) collect(events <-chan session.Event) {
 			if said := strings.TrimSpace(typed.Text); said != "" {
 				s.intended = append(s.intended, said)
 			}
+		case agent.ToolRan:
+			s.acting = append(s.acting, ran(typed))
 		case agent.Error:
 			s.failure = typed.Err
 		}
@@ -305,8 +308,15 @@ func (s *spoken) begin() {
 	defer s.mu.Unlock()
 	s.heard = nil
 	s.intended = nil
+	s.acting = nil
 	s.failure = nil
 	s.lastAt = time.Now()
+}
+
+func (s *spoken) acted() []store.SimulationTool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]store.SimulationTool(nil), s.acting...)
 }
 
 func (s *spoken) state() (string, string, time.Duration, error, bool) {

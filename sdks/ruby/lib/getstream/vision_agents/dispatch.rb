@@ -12,9 +12,10 @@ module GetStream
     #     dispatch.get_or_create_agent(message) { GetStream::VisionAgents::Agent.new(config: "support") }
     #             .reply(message)
     #   end
+    #   dispatch.host("support", tools)
     #   dispatch.run
     #
-    # Each call and message runs its handler on its own thread. A call handler that returns
+    # Each call, message and hosted tool call runs on its own thread. A call handler that returns
     # accepts the call; one that raises rejects it, so the router offers it to another worker.
     # A message is not accepted or rejected: nothing waits on it the way a ringing caller does.
     #
@@ -37,8 +38,23 @@ module GetStream
         @lock = Mutex.new
         @handlers = {}
         @agents = {}
+        @hosted = []
         @threads = []
         @latency = nil
+      end
+
+      # Runs these tools for every session opened under an agent id, whoever opened it.
+      #
+      # A session's own tools run in the process that opened it. Hosting is the other
+      # direction: the router offers these to each session naming the agent and sends every
+      # call to this worker. timeout is how many seconds the router gives one call; nil takes
+      # its default. Call before #run.
+      def host(agent_id, tools, timeout: nil)
+        raise ConfigurationError, "hosting needs an agent id" if agent_id.to_s.empty?
+        raise ConfigurationError, "#{agent_id} needs at least one tool to host" if tools.empty?
+
+        @lock.synchronize { @hosted << { agent_id: agent_id.to_s, tools: tools, timeout: timeout } }
+        self
       end
 
       # Handles every call the router hands this worker.
@@ -72,8 +88,12 @@ module GetStream
 
       # Connects and hands out work until the socket closes or #stop is called, then waits for
       # every handler to finish and closes the agents it made.
+      #
+      # @raise [Error] when the router refuses the tools this worker hosts.
       def run
-        raise ConfigurationError, "register wait_for_call or wait_for_message before running" if @handlers.empty?
+        if @handlers.empty? && @hosted.empty?
+          raise ConfigurationError, "register wait_for_call or wait_for_message, or host tools, before running"
+        end
 
         @socket = @client.socket("/v1/dispatch", query: { capacity: @capacity })
         reporter = Thread.new { report }
@@ -99,11 +119,52 @@ module GetStream
 
       def received(frame)
         case frame["type"]
-        when "ready" then @worker_id = frame["worker_id"]
+        when "ready"
+          @worker_id = frame["worker_id"]
+          offer_hosted
         when "call" then handle("call", InboundCall.from(frame))
         when "message" then handle("message", InboundMessage.from(frame))
+        when "tool_call" then run_hosted(frame)
+        when "hosting_refused"
+          # A worker whose tools were refused is one nobody will call; saying so beats sitting
+          # connected looking healthy.
+          raise Error, "the router refused to host tools for agent #{frame['agent_id']}: #{frame['reason']}"
         when "pong" then pong(frame)
         end
+      end
+
+      def offer_hosted
+        @lock.synchronize { @hosted.dup }.each do |offer|
+          timeout_ms = offer[:timeout] ? (offer[:timeout] * 1000).round : 0
+          @socket.send_frame(type: "host_tools", agent_id: offer[:agent_id],
+                             tools: offer[:tools].declarations, timeout_ms: timeout_ms)
+        end
+      end
+
+      # On its own thread: the socket a tool call arrived on is also what delivers the next.
+      def run_hosted(frame)
+        id = frame["id"].to_s
+        name = frame["name"].to_s
+        tools = @lock.synchronize { @hosted.map { |offer| offer[:tools] }.find { |set| set.include?(name) } }
+        return answer_hosted(type: "tool_result", id: id, error: "this worker does not run #{name}") unless tools
+
+        thread = Thread.new do
+          result = begin
+            { output: tools.call(name, frame["arguments"]) }
+          rescue StandardError => e
+            { error: e.message }
+          end
+          answer_hosted({ type: "tool_result", id: id }.merge(result))
+        ensure
+          @lock.synchronize { @threads.delete(Thread.current) }
+        end
+        @lock.synchronize { @threads << thread }
+      end
+
+      def answer_hosted(frame)
+        @socket.send_frame(frame)
+      rescue SocketClosedError
+        nil
       end
 
       def handle(kind, work)

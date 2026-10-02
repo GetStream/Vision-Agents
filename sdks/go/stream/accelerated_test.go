@@ -217,7 +217,7 @@ func TestAConversationCarriesTheLabelsAPersonFindsItBy(t *testing.T) {
 	if _, err := pipeline.Join(t.Context(), Call{
 		Title:           "Is Stream better?",
 		Description:     "The comparison question, again",
-		Project:         "docs",
+		ProjectID:       "docs",
 		Custom:          map[string]any{"ticket": "4721"},
 		ModelOverwrites: &acceleration.ModelOverwrites{Llm: pointerTo("openai/gpt-5")},
 	}); err != nil {
@@ -229,8 +229,8 @@ func TestAConversationCarriesTheLabelsAPersonFindsItBy(t *testing.T) {
 	if request.Title == nil || *request.Title != "Is Stream better?" {
 		t.Errorf("the title went over as %v", request.Title)
 	}
-	if request.Project == nil || *request.Project != "docs" {
-		t.Errorf("the project went over as %v", request.Project)
+	if request.ProjectId == nil || *request.ProjectId != "docs" {
+		t.Errorf("the project went over as %v", request.ProjectId)
 	}
 	if request.Custom == nil || (*request.Custom)["ticket"] != "4721" {
 		t.Errorf("the labels went over as %v", request.Custom)
