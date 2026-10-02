@@ -216,7 +216,9 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		return screened(stream, verdict), err
 	}
 	var apiError *openai.Error
-	if errors.As(err, &apiError) && apiError.StatusCode < 500 && apiError.StatusCode != 401 && apiError.StatusCode != 403 && apiError.StatusCode != 404 && apiError.StatusCode != 408 && apiError.StatusCode != 429 {
+	// 402 is the provider's billing, not the request: Gemini answers it for every request
+	// once prepaid credit runs out, and a call pinned to it would never be answered again.
+	if errors.As(err, &apiError) && apiError.StatusCode < 500 && apiError.StatusCode != 401 && apiError.StatusCode != 402 && apiError.StatusCode != 403 && apiError.StatusCode != 404 && apiError.StatusCode != 408 && apiError.StatusCode != 429 {
 		return nil, err
 	}
 	alternate, fallbackErr := s.fallback(ctx, params)
