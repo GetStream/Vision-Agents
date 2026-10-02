@@ -26,96 +26,96 @@ class LlmOptions:
     agent asking, not to the config that decides where the asking goes.
 
         Attributes:
-            target (str | Unset): A provider/model or a capability shortcut. Example: llm-fast.
+            format_ (LlmOptionsFormat | Unset): Whether the answer is prose or a JSON object.
+            max_output_tokens (int | Unset):
+            metadata (LlmOptionsMetadata | Unset): Passed to the provider untouched, for the providers that store it.
+            prompt_cache_key (str | Unset): What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are
+                read from the cache rather than charged in full.
             providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target when
                 it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it
                 stands. A response that fails is answered by the next entry that will have it.
                  Example: ['openai/gpt-5-mini', 'llm-fast'].
-            max_output_tokens (int | Unset):
-            temperature (float | Unset):
             reasoning_effort (LlmOptionsReasoningEffort | Unset): How long the model may think before answering, on the
                 models that think.
-            format_ (LlmOptionsFormat | Unset): Whether the answer is prose or a JSON object.
-            verbosity (LlmOptionsVerbosity | Unset):
+            store (bool | Unset): Keep the response on the provider so a later one can continue from it.
+            target (str | Unset): A provider/model or a capability shortcut. Example: llm-fast.
+            temperature (float | Unset):
             tool_choice (str | Unset): auto, none, required, or the name of a tool the model must call. Which tools exist is
                 per-request, since they change with the turn.
-            store (bool | Unset): Keep the response on the provider so a later one can continue from it.
-            prompt_cache_key (str | Unset): What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are
-                read from the cache rather than charged in full.
-            metadata (LlmOptionsMetadata | Unset): Passed to the provider untouched, for the providers that store it.
+            verbosity (LlmOptionsVerbosity | Unset):
     """
 
-    target: str | Unset = UNSET
-    providers: list[str] | Unset = UNSET
-    max_output_tokens: int | Unset = UNSET
-    temperature: float | Unset = UNSET
-    reasoning_effort: LlmOptionsReasoningEffort | Unset = UNSET
     format_: LlmOptionsFormat | Unset = UNSET
-    verbosity: LlmOptionsVerbosity | Unset = UNSET
-    tool_choice: str | Unset = UNSET
-    store: bool | Unset = UNSET
-    prompt_cache_key: str | Unset = UNSET
+    max_output_tokens: int | Unset = UNSET
     metadata: LlmOptionsMetadata | Unset = UNSET
+    prompt_cache_key: str | Unset = UNSET
+    providers: list[str] | Unset = UNSET
+    reasoning_effort: LlmOptionsReasoningEffort | Unset = UNSET
+    store: bool | Unset = UNSET
+    target: str | Unset = UNSET
+    temperature: float | Unset = UNSET
+    tool_choice: str | Unset = UNSET
+    verbosity: LlmOptionsVerbosity | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        target = self.target
-
-        providers: list[str] | Unset = UNSET
-        if not isinstance(self.providers, Unset):
-            providers = self.providers
-
-        max_output_tokens = self.max_output_tokens
-
-        temperature = self.temperature
-
-        reasoning_effort: str | Unset = UNSET
-        if not isinstance(self.reasoning_effort, Unset):
-            reasoning_effort = self.reasoning_effort.value
-
         format_: str | Unset = UNSET
         if not isinstance(self.format_, Unset):
             format_ = self.format_.value
 
-        verbosity: str | Unset = UNSET
-        if not isinstance(self.verbosity, Unset):
-            verbosity = self.verbosity.value
-
-        tool_choice = self.tool_choice
-
-        store = self.store
-
-        prompt_cache_key = self.prompt_cache_key
+        max_output_tokens = self.max_output_tokens
 
         metadata: dict[str, Any] | Unset = UNSET
         if not isinstance(self.metadata, Unset):
             metadata = self.metadata.to_dict()
 
+        prompt_cache_key = self.prompt_cache_key
+
+        providers: list[str] | Unset = UNSET
+        if not isinstance(self.providers, Unset):
+            providers = self.providers
+
+        reasoning_effort: str | Unset = UNSET
+        if not isinstance(self.reasoning_effort, Unset):
+            reasoning_effort = self.reasoning_effort.value
+
+        store = self.store
+
+        target = self.target
+
+        temperature = self.temperature
+
+        tool_choice = self.tool_choice
+
+        verbosity: str | Unset = UNSET
+        if not isinstance(self.verbosity, Unset):
+            verbosity = self.verbosity.value
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if target is not UNSET:
-            field_dict["target"] = target
-        if providers is not UNSET:
-            field_dict["providers"] = providers
-        if max_output_tokens is not UNSET:
-            field_dict["max_output_tokens"] = max_output_tokens
-        if temperature is not UNSET:
-            field_dict["temperature"] = temperature
-        if reasoning_effort is not UNSET:
-            field_dict["reasoning_effort"] = reasoning_effort
         if format_ is not UNSET:
             field_dict["format"] = format_
-        if verbosity is not UNSET:
-            field_dict["verbosity"] = verbosity
-        if tool_choice is not UNSET:
-            field_dict["tool_choice"] = tool_choice
-        if store is not UNSET:
-            field_dict["store"] = store
-        if prompt_cache_key is not UNSET:
-            field_dict["prompt_cache_key"] = prompt_cache_key
+        if max_output_tokens is not UNSET:
+            field_dict["max_output_tokens"] = max_output_tokens
         if metadata is not UNSET:
             field_dict["metadata"] = metadata
+        if prompt_cache_key is not UNSET:
+            field_dict["prompt_cache_key"] = prompt_cache_key
+        if providers is not UNSET:
+            field_dict["providers"] = providers
+        if reasoning_effort is not UNSET:
+            field_dict["reasoning_effort"] = reasoning_effort
+        if store is not UNSET:
+            field_dict["store"] = store
+        if target is not UNSET:
+            field_dict["target"] = target
+        if temperature is not UNSET:
+            field_dict["temperature"] = temperature
+        if tool_choice is not UNSET:
+            field_dict["tool_choice"] = tool_choice
+        if verbosity is not UNSET:
+            field_dict["verbosity"] = verbosity
 
         return field_dict
 
@@ -124,21 +124,6 @@ class LlmOptions:
         from ..models.llm_options_metadata import LlmOptionsMetadata
 
         d = dict(src_dict)
-        target = d.pop("target", UNSET)
-
-        providers = cast(list[str], d.pop("providers", UNSET))
-
-        max_output_tokens = d.pop("max_output_tokens", UNSET)
-
-        temperature = d.pop("temperature", UNSET)
-
-        _reasoning_effort = d.pop("reasoning_effort", UNSET)
-        reasoning_effort: LlmOptionsReasoningEffort | Unset
-        if isinstance(_reasoning_effort, Unset):
-            reasoning_effort = UNSET
-        else:
-            reasoning_effort = LlmOptionsReasoningEffort(_reasoning_effort)
-
         _format_ = d.pop("format", UNSET)
         format_: LlmOptionsFormat | Unset
         if isinstance(_format_, Unset):
@@ -146,18 +131,7 @@ class LlmOptions:
         else:
             format_ = LlmOptionsFormat(_format_)
 
-        _verbosity = d.pop("verbosity", UNSET)
-        verbosity: LlmOptionsVerbosity | Unset
-        if isinstance(_verbosity, Unset):
-            verbosity = UNSET
-        else:
-            verbosity = LlmOptionsVerbosity(_verbosity)
-
-        tool_choice = d.pop("tool_choice", UNSET)
-
-        store = d.pop("store", UNSET)
-
-        prompt_cache_key = d.pop("prompt_cache_key", UNSET)
+        max_output_tokens = d.pop("max_output_tokens", UNSET)
 
         _metadata = d.pop("metadata", UNSET)
         metadata: LlmOptionsMetadata | Unset
@@ -166,18 +140,44 @@ class LlmOptions:
         else:
             metadata = LlmOptionsMetadata.from_dict(_metadata)
 
+        prompt_cache_key = d.pop("prompt_cache_key", UNSET)
+
+        providers = cast(list[str], d.pop("providers", UNSET))
+
+        _reasoning_effort = d.pop("reasoning_effort", UNSET)
+        reasoning_effort: LlmOptionsReasoningEffort | Unset
+        if isinstance(_reasoning_effort, Unset):
+            reasoning_effort = UNSET
+        else:
+            reasoning_effort = LlmOptionsReasoningEffort(_reasoning_effort)
+
+        store = d.pop("store", UNSET)
+
+        target = d.pop("target", UNSET)
+
+        temperature = d.pop("temperature", UNSET)
+
+        tool_choice = d.pop("tool_choice", UNSET)
+
+        _verbosity = d.pop("verbosity", UNSET)
+        verbosity: LlmOptionsVerbosity | Unset
+        if isinstance(_verbosity, Unset):
+            verbosity = UNSET
+        else:
+            verbosity = LlmOptionsVerbosity(_verbosity)
+
         llm_options = cls(
-            target=target,
-            providers=providers,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-            reasoning_effort=reasoning_effort,
             format_=format_,
-            verbosity=verbosity,
-            tool_choice=tool_choice,
-            store=store,
-            prompt_cache_key=prompt_cache_key,
+            max_output_tokens=max_output_tokens,
             metadata=metadata,
+            prompt_cache_key=prompt_cache_key,
+            providers=providers,
+            reasoning_effort=reasoning_effort,
+            store=store,
+            target=target,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            verbosity=verbosity,
         )
 
         llm_options.additional_properties = d

@@ -7,7 +7,6 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -16,7 +15,6 @@ if TYPE_CHECKING:
     from ..models.model_overwrites import ModelOverwrites
     from ..models.session_memory import SessionMemory
     from ..models.session_phone import SessionPhone
-    from ..models.session_skill import SessionSkill
     from ..models.session_tool import SessionTool
     from ..models.session_video import SessionVideo
 
@@ -28,213 +26,190 @@ T = TypeVar("T", bound="CreateSessionRequest")
 class CreateSessionRequest:
     """
     Attributes:
-        conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
-        context_truncated (bool | Unset): Older history was omitted from the model context.
-        call_id (str | Unset): The call to join. Required unless the session is text.
-        text (bool | Unset): Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing
-            is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is
-            unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive
-            as response_delta and responded events on the session's socket.
-             Default: False.
-        config_id (str | Unset): An agent config to start from. Everything else in this request overrides what the
-            config says, so a caller can reuse a configuration and still change one thing about this call.
         agent (str | Unset): The name of an agent config to start from, as an alternative to config_id. It is what a
             caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is
             refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too,
             since there is no sensible answer when they disagree.
+        agent_id (str | Unset): Keys transcripts and statistics. Empty means the call id.
+        backchannel (bool | Unset): Murmur while a participant is still talking, the way a person does. Default: False.
+        call_id (str | Unset): The call to join. Required unless the session is text.
+        call_type (str | Unset):  Default: 'default'.
+        config_id (str | Unset): An agent config to start from. Everything else in this request overrides what the
+            config says, so a caller can reuse a configuration and still change one thing about this call.
+        context_truncated (bool | Unset): Older history was omitted from the model context.
+        conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
+        custom (CreateSessionRequestCustom | Unset): Anything the caller wants to remember about the session, handed
+            back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth
+            writing.
+        description (str | Unset): A longer note about the conversation, searched alongside the title.
+        greeting (str | Unset): Said on joining without going through the model. Empty means the agent waits to be
+            spoken to.
+        id (str | Unset): The id to hold the session by, so a caller can know it before the session exists. It must be a
+            UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
         incognito (bool | Unset): Hold the conversation and record nothing about it: no session row, no turns, no
             transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it
             simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork
             from.
              Default: False.
-        title (str | Unset): What to call the conversation, for a list a person reads. Never shown to the model: what a
-            conversation is called is a label on it rather than part of it.
-        description (str | Unset): A longer note about the conversation, searched alongside the title.
-        project (str | Unset): What the conversation belongs to. Also recorded as the "project" cost tag, so spend
-            breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
-        custom (CreateSessionRequestCustom | Unset): Anything the caller wants to remember about the session, handed
-            back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth
-            writing.
+        instructions (str | Unset):
+        keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong. Up to 100
+            terms, and providers that cannot be told about vocabulary ignore them.
+        languages (list[str] | Unset): Language hints, which narrow the candidates in every modality.
+        llm (str | Unset): A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when
+            there is no config. These carry no schema default on purpose: a generated client that filled one in would send
+            it, and a caller naming a config would silently lose the model it configured.
+        max_tokens (int | Unset):
+        memory (SessionMemory | Unset): Who the session's memories are about. Without a user id nothing is recalled or
+            stored, which is the case for a call with nobody identified on it.
+        min_confidence (float | Unset): How sure the transcriber must be before the agent answers rather than checks
+            what was meant.
         model_overwrites (ModelOverwrites | Unset): What to change about the models for one session, over whatever its
             agent config decided.
             It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides
             the config, and a caller reading a session back wants to see what they changed in one place rather than diffed
             against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because
             a caller able to rewrite those could make a session impersonate a different agent.
-        call_type (str | Unset):  Default: 'default'.
-        user_id (str | Unset): Who the agent joins the call as. Default: 'vision-agent'.
-        user_name (str | Unset):  Default: 'Vision Agent'.
-        agent_id (str | Unset): Keys transcripts and statistics. Empty means the call id.
-        instructions (str | Unset):
-        greeting (str | Unset): Said on joining without going through the model. Empty means the agent waits to be
-            spoken to.
         navigating (bool | Unset): The agent placed this call, so let recordings finish and answer their menus.
              Default: False.
-        llm (str | Unset): A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when
-            there is no config. These carry no schema default on purpose: a generated client that filled one in would send
-            it, and a caller naming a config would silently lose the model it configured.
-        stt (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
-        tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
+        phone (SessionPhone | Unset): The number the session acts from, which is what turns transferring on.
+        project_id (str | Unset): What the conversation belongs to. Also recorded as the "project" cost tag, so spend
+            breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+        search (str | Unset): Omit it and the config decides, or search-fast when there is no config.
         sts (str | Unset): A speech-to-speech target. Naming one makes this a native session: the model hears and speaks
             for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
-        subagent (str | Unset): The model that does the thinking. Empty means the voice model answers everything itself,
-            and skills mean nothing.
-        search (str | Unset): Omit it and the config decides, or search-fast when there is no config.
-        voice (str | Unset): Provider-specific voice id.
-        languages (list[str] | Unset): Language hints, which narrow the candidates in every modality.
-        keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong. Up to 100
-            terms, and providers that cannot be told about vocabulary ignore them.
-        max_tokens (int | Unset):
-        tasks (int | Unset): How much delegated work may run at once.
-        sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
-            code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
-            everything out in its head.
-        backchannel (bool | Unset): Murmur while a participant is still talking, the way a person does. Default: False.
-        min_confidence (float | Unset): How sure the transcriber must be before the agent answers rather than checks
-            what was meant.
-        skills (list[SessionSkill] | Unset): Omit for the built-in set of think, recall and explain.
-        skill_names (list[str] | Unset): Skills to look up rather than spell out: the customer's own, or one of the
-            built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused
-            rather than dropped.
-        tools (list[SessionTool] | Unset):
-        tool_timeout_ms (int | Unset): How long the model waits for a tool result. Zero is the default.
+        stt (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
         tags (CreateSessionRequestTags | Unset): Cost labels, carried onto every request the session makes.
-        memory (SessionMemory | Unset): Who the session's memories are about. Without a user id nothing is recalled or
-            stored, which is the case for a call with nobody identified on it.
-        phone (SessionPhone | Unset): The number the session acts from, which is what turns transferring on.
+        text (bool | Unset): Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing
+            is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is
+            unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive
+            as response_delta and responded events on the session's socket.
+             Default: False.
+        title (str | Unset): What to call the conversation, for a list a person reads. Never shown to the model: what a
+            conversation is called is a label on it rather than part of it.
+        tool_timeout_ms (int | Unset): How long the model waits for a tool result. Zero is the default.
+        tools (list[SessionTool] | Unset):
+        tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
+        user_id (str | Unset): Who the agent joins the call as. Default: 'vision-agent'.
+        user_name (str | Unset):  Default: 'Vision Agent'.
         video (SessionVideo | Unset):
+        voice (str | Unset): Provider-specific voice id.
     """
 
-    conversation_id: str | Unset = UNSET
-    context_truncated: bool | Unset = UNSET
-    call_id: str | Unset = UNSET
-    text: bool | Unset = False
-    config_id: str | Unset = UNSET
     agent: str | Unset = UNSET
-    incognito: bool | Unset = False
-    title: str | Unset = UNSET
-    description: str | Unset = UNSET
-    project: str | Unset = UNSET
-    custom: CreateSessionRequestCustom | Unset = UNSET
-    model_overwrites: ModelOverwrites | Unset = UNSET
+    agent_id: str | Unset = UNSET
+    backchannel: bool | Unset = False
+    call_id: str | Unset = UNSET
     call_type: str | Unset = "default"
+    config_id: str | Unset = UNSET
+    context_truncated: bool | Unset = UNSET
+    conversation_id: str | Unset = UNSET
+    custom: CreateSessionRequestCustom | Unset = UNSET
+    description: str | Unset = UNSET
+    greeting: str | Unset = UNSET
+    id: str | Unset = UNSET
+    incognito: bool | Unset = False
+    instructions: str | Unset = UNSET
+    keyterms: list[str] | Unset = UNSET
+    languages: list[str] | Unset = UNSET
+    llm: str | Unset = UNSET
+    max_tokens: int | Unset = UNSET
+    memory: SessionMemory | Unset = UNSET
+    min_confidence: float | Unset = UNSET
+    model_overwrites: ModelOverwrites | Unset = UNSET
+    navigating: bool | Unset = False
+    phone: SessionPhone | Unset = UNSET
+    project_id: str | Unset = UNSET
+    search: str | Unset = UNSET
+    sts: str | Unset = UNSET
+    stt: str | Unset = UNSET
+    tags: CreateSessionRequestTags | Unset = UNSET
+    text: bool | Unset = False
+    title: str | Unset = UNSET
+    tool_timeout_ms: int | Unset = UNSET
+    tools: list[SessionTool] | Unset = UNSET
+    tts: str | Unset = UNSET
     user_id: str | Unset = "vision-agent"
     user_name: str | Unset = "Vision Agent"
-    agent_id: str | Unset = UNSET
-    instructions: str | Unset = UNSET
-    greeting: str | Unset = UNSET
-    navigating: bool | Unset = False
-    llm: str | Unset = UNSET
-    stt: str | Unset = UNSET
-    tts: str | Unset = UNSET
-    sts: str | Unset = UNSET
-    subagent: str | Unset = UNSET
-    search: str | Unset = UNSET
-    voice: str | Unset = UNSET
-    languages: list[str] | Unset = UNSET
-    keyterms: list[str] | Unset = UNSET
-    max_tokens: int | Unset = UNSET
-    tasks: int | Unset = UNSET
-    sandbox: Sandbox | Unset = UNSET
-    backchannel: bool | Unset = False
-    min_confidence: float | Unset = UNSET
-    skills: list[SessionSkill] | Unset = UNSET
-    skill_names: list[str] | Unset = UNSET
-    tools: list[SessionTool] | Unset = UNSET
-    tool_timeout_ms: int | Unset = UNSET
-    tags: CreateSessionRequestTags | Unset = UNSET
-    memory: SessionMemory | Unset = UNSET
-    phone: SessionPhone | Unset = UNSET
     video: SessionVideo | Unset = UNSET
+    voice: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        conversation_id = self.conversation_id
+        agent = self.agent
 
-        context_truncated = self.context_truncated
+        agent_id = self.agent_id
+
+        backchannel = self.backchannel
 
         call_id = self.call_id
 
-        text = self.text
+        call_type = self.call_type
 
         config_id = self.config_id
 
-        agent = self.agent
+        context_truncated = self.context_truncated
 
-        incognito = self.incognito
-
-        title = self.title
-
-        description = self.description
-
-        project = self.project
+        conversation_id = self.conversation_id
 
         custom: dict[str, Any] | Unset = UNSET
         if not isinstance(self.custom, Unset):
             custom = self.custom.to_dict()
 
-        model_overwrites: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.model_overwrites, Unset):
-            model_overwrites = self.model_overwrites.to_dict()
-
-        call_type = self.call_type
-
-        user_id = self.user_id
-
-        user_name = self.user_name
-
-        agent_id = self.agent_id
-
-        instructions = self.instructions
+        description = self.description
 
         greeting = self.greeting
 
-        navigating = self.navigating
+        id = self.id
 
-        llm = self.llm
+        incognito = self.incognito
 
-        stt = self.stt
-
-        tts = self.tts
-
-        sts = self.sts
-
-        subagent = self.subagent
-
-        search = self.search
-
-        voice = self.voice
-
-        languages: list[str] | Unset = UNSET
-        if not isinstance(self.languages, Unset):
-            languages = self.languages
+        instructions = self.instructions
 
         keyterms: list[str] | Unset = UNSET
         if not isinstance(self.keyterms, Unset):
             keyterms = self.keyterms
 
+        languages: list[str] | Unset = UNSET
+        if not isinstance(self.languages, Unset):
+            languages = self.languages
+
+        llm = self.llm
+
         max_tokens = self.max_tokens
 
-        tasks = self.tasks
-
-        sandbox: str | Unset = UNSET
-        if not isinstance(self.sandbox, Unset):
-            sandbox = self.sandbox.value
-
-        backchannel = self.backchannel
+        memory: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.memory, Unset):
+            memory = self.memory.to_dict()
 
         min_confidence = self.min_confidence
 
-        skills: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.skills, Unset):
-            skills = []
-            for skills_item_data in self.skills:
-                skills_item = skills_item_data.to_dict()
-                skills.append(skills_item)
+        model_overwrites: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.model_overwrites, Unset):
+            model_overwrites = self.model_overwrites.to_dict()
 
-        skill_names: list[str] | Unset = UNSET
-        if not isinstance(self.skill_names, Unset):
-            skill_names = self.skill_names
+        navigating = self.navigating
+
+        phone: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.phone, Unset):
+            phone = self.phone.to_dict()
+
+        project_id = self.project_id
+
+        search = self.search
+
+        sts = self.sts
+
+        stt = self.stt
+
+        tags: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tags, Unset):
+            tags = self.tags.to_dict()
+
+        text = self.text
+
+        title = self.title
+
+        tool_timeout_ms = self.tool_timeout_ms
 
         tools: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.tools, Unset):
@@ -243,109 +218,95 @@ class CreateSessionRequest:
                 tools_item = tools_item_data.to_dict()
                 tools.append(tools_item)
 
-        tool_timeout_ms = self.tool_timeout_ms
+        tts = self.tts
 
-        tags: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.tags, Unset):
-            tags = self.tags.to_dict()
+        user_id = self.user_id
 
-        memory: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.memory, Unset):
-            memory = self.memory.to_dict()
-
-        phone: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.phone, Unset):
-            phone = self.phone.to_dict()
+        user_name = self.user_name
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
             video = self.video.to_dict()
 
+        voice = self.voice
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if conversation_id is not UNSET:
-            field_dict["conversation_id"] = conversation_id
-        if context_truncated is not UNSET:
-            field_dict["context_truncated"] = context_truncated
-        if call_id is not UNSET:
-            field_dict["call_id"] = call_id
-        if text is not UNSET:
-            field_dict["text"] = text
-        if config_id is not UNSET:
-            field_dict["config_id"] = config_id
         if agent is not UNSET:
             field_dict["agent"] = agent
-        if incognito is not UNSET:
-            field_dict["incognito"] = incognito
-        if title is not UNSET:
-            field_dict["title"] = title
-        if description is not UNSET:
-            field_dict["description"] = description
-        if project is not UNSET:
-            field_dict["project"] = project
-        if custom is not UNSET:
-            field_dict["custom"] = custom
-        if model_overwrites is not UNSET:
-            field_dict["model_overwrites"] = model_overwrites
+        if agent_id is not UNSET:
+            field_dict["agent_id"] = agent_id
+        if backchannel is not UNSET:
+            field_dict["backchannel"] = backchannel
+        if call_id is not UNSET:
+            field_dict["call_id"] = call_id
         if call_type is not UNSET:
             field_dict["call_type"] = call_type
+        if config_id is not UNSET:
+            field_dict["config_id"] = config_id
+        if context_truncated is not UNSET:
+            field_dict["context_truncated"] = context_truncated
+        if conversation_id is not UNSET:
+            field_dict["conversation_id"] = conversation_id
+        if custom is not UNSET:
+            field_dict["custom"] = custom
+        if description is not UNSET:
+            field_dict["description"] = description
+        if greeting is not UNSET:
+            field_dict["greeting"] = greeting
+        if id is not UNSET:
+            field_dict["id"] = id
+        if incognito is not UNSET:
+            field_dict["incognito"] = incognito
+        if instructions is not UNSET:
+            field_dict["instructions"] = instructions
+        if keyterms is not UNSET:
+            field_dict["keyterms"] = keyterms
+        if languages is not UNSET:
+            field_dict["languages"] = languages
+        if llm is not UNSET:
+            field_dict["llm"] = llm
+        if max_tokens is not UNSET:
+            field_dict["max_tokens"] = max_tokens
+        if memory is not UNSET:
+            field_dict["memory"] = memory
+        if min_confidence is not UNSET:
+            field_dict["min_confidence"] = min_confidence
+        if model_overwrites is not UNSET:
+            field_dict["model_overwrites"] = model_overwrites
+        if navigating is not UNSET:
+            field_dict["navigating"] = navigating
+        if phone is not UNSET:
+            field_dict["phone"] = phone
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
+        if search is not UNSET:
+            field_dict["search"] = search
+        if sts is not UNSET:
+            field_dict["sts"] = sts
+        if stt is not UNSET:
+            field_dict["stt"] = stt
+        if tags is not UNSET:
+            field_dict["tags"] = tags
+        if text is not UNSET:
+            field_dict["text"] = text
+        if title is not UNSET:
+            field_dict["title"] = title
+        if tool_timeout_ms is not UNSET:
+            field_dict["tool_timeout_ms"] = tool_timeout_ms
+        if tools is not UNSET:
+            field_dict["tools"] = tools
+        if tts is not UNSET:
+            field_dict["tts"] = tts
         if user_id is not UNSET:
             field_dict["user_id"] = user_id
         if user_name is not UNSET:
             field_dict["user_name"] = user_name
-        if agent_id is not UNSET:
-            field_dict["agent_id"] = agent_id
-        if instructions is not UNSET:
-            field_dict["instructions"] = instructions
-        if greeting is not UNSET:
-            field_dict["greeting"] = greeting
-        if navigating is not UNSET:
-            field_dict["navigating"] = navigating
-        if llm is not UNSET:
-            field_dict["llm"] = llm
-        if stt is not UNSET:
-            field_dict["stt"] = stt
-        if tts is not UNSET:
-            field_dict["tts"] = tts
-        if sts is not UNSET:
-            field_dict["sts"] = sts
-        if subagent is not UNSET:
-            field_dict["subagent"] = subagent
-        if search is not UNSET:
-            field_dict["search"] = search
-        if voice is not UNSET:
-            field_dict["voice"] = voice
-        if languages is not UNSET:
-            field_dict["languages"] = languages
-        if keyterms is not UNSET:
-            field_dict["keyterms"] = keyterms
-        if max_tokens is not UNSET:
-            field_dict["max_tokens"] = max_tokens
-        if tasks is not UNSET:
-            field_dict["tasks"] = tasks
-        if sandbox is not UNSET:
-            field_dict["sandbox"] = sandbox
-        if backchannel is not UNSET:
-            field_dict["backchannel"] = backchannel
-        if min_confidence is not UNSET:
-            field_dict["min_confidence"] = min_confidence
-        if skills is not UNSET:
-            field_dict["skills"] = skills
-        if skill_names is not UNSET:
-            field_dict["skill_names"] = skill_names
-        if tools is not UNSET:
-            field_dict["tools"] = tools
-        if tool_timeout_ms is not UNSET:
-            field_dict["tool_timeout_ms"] = tool_timeout_ms
-        if tags is not UNSET:
-            field_dict["tags"] = tags
-        if memory is not UNSET:
-            field_dict["memory"] = memory
-        if phone is not UNSET:
-            field_dict["phone"] = phone
         if video is not UNSET:
             field_dict["video"] = video
+        if voice is not UNSET:
+            field_dict["voice"] = voice
 
         return field_dict
 
@@ -360,30 +321,25 @@ class CreateSessionRequest:
         from ..models.model_overwrites import ModelOverwrites
         from ..models.session_memory import SessionMemory
         from ..models.session_phone import SessionPhone
-        from ..models.session_skill import SessionSkill
         from ..models.session_tool import SessionTool
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
-        conversation_id = d.pop("conversation_id", UNSET)
+        agent = d.pop("agent", UNSET)
 
-        context_truncated = d.pop("context_truncated", UNSET)
+        agent_id = d.pop("agent_id", UNSET)
+
+        backchannel = d.pop("backchannel", UNSET)
 
         call_id = d.pop("call_id", UNSET)
 
-        text = d.pop("text", UNSET)
+        call_type = d.pop("call_type", UNSET)
 
         config_id = d.pop("config_id", UNSET)
 
-        agent = d.pop("agent", UNSET)
+        context_truncated = d.pop("context_truncated", UNSET)
 
-        incognito = d.pop("incognito", UNSET)
-
-        title = d.pop("title", UNSET)
-
-        description = d.pop("description", UNSET)
-
-        project = d.pop("project", UNSET)
+        conversation_id = d.pop("conversation_id", UNSET)
 
         _custom = d.pop("custom", UNSET)
         custom: CreateSessionRequestCustom | Unset
@@ -392,6 +348,33 @@ class CreateSessionRequest:
         else:
             custom = CreateSessionRequestCustom.from_dict(_custom)
 
+        description = d.pop("description", UNSET)
+
+        greeting = d.pop("greeting", UNSET)
+
+        id = d.pop("id", UNSET)
+
+        incognito = d.pop("incognito", UNSET)
+
+        instructions = d.pop("instructions", UNSET)
+
+        keyterms = cast(list[str], d.pop("keyterms", UNSET))
+
+        languages = cast(list[str], d.pop("languages", UNSET))
+
+        llm = d.pop("llm", UNSET)
+
+        max_tokens = d.pop("max_tokens", UNSET)
+
+        _memory = d.pop("memory", UNSET)
+        memory: SessionMemory | Unset
+        if isinstance(_memory, Unset):
+            memory = UNSET
+        else:
+            memory = SessionMemory.from_dict(_memory)
+
+        min_confidence = d.pop("min_confidence", UNSET)
+
         _model_overwrites = d.pop("model_overwrites", UNSET)
         model_overwrites: ModelOverwrites | Unset
         if isinstance(_model_overwrites, Unset):
@@ -399,63 +382,35 @@ class CreateSessionRequest:
         else:
             model_overwrites = ModelOverwrites.from_dict(_model_overwrites)
 
-        call_type = d.pop("call_type", UNSET)
-
-        user_id = d.pop("user_id", UNSET)
-
-        user_name = d.pop("user_name", UNSET)
-
-        agent_id = d.pop("agent_id", UNSET)
-
-        instructions = d.pop("instructions", UNSET)
-
-        greeting = d.pop("greeting", UNSET)
-
         navigating = d.pop("navigating", UNSET)
 
-        llm = d.pop("llm", UNSET)
+        _phone = d.pop("phone", UNSET)
+        phone: SessionPhone | Unset
+        if isinstance(_phone, Unset):
+            phone = UNSET
+        else:
+            phone = SessionPhone.from_dict(_phone)
 
-        stt = d.pop("stt", UNSET)
-
-        tts = d.pop("tts", UNSET)
-
-        sts = d.pop("sts", UNSET)
-
-        subagent = d.pop("subagent", UNSET)
+        project_id = d.pop("project_id", UNSET)
 
         search = d.pop("search", UNSET)
 
-        voice = d.pop("voice", UNSET)
+        sts = d.pop("sts", UNSET)
 
-        languages = cast(list[str], d.pop("languages", UNSET))
+        stt = d.pop("stt", UNSET)
 
-        keyterms = cast(list[str], d.pop("keyterms", UNSET))
-
-        max_tokens = d.pop("max_tokens", UNSET)
-
-        tasks = d.pop("tasks", UNSET)
-
-        _sandbox = d.pop("sandbox", UNSET)
-        sandbox: Sandbox | Unset
-        if isinstance(_sandbox, Unset):
-            sandbox = UNSET
+        _tags = d.pop("tags", UNSET)
+        tags: CreateSessionRequestTags | Unset
+        if isinstance(_tags, Unset):
+            tags = UNSET
         else:
-            sandbox = Sandbox(_sandbox)
+            tags = CreateSessionRequestTags.from_dict(_tags)
 
-        backchannel = d.pop("backchannel", UNSET)
+        text = d.pop("text", UNSET)
 
-        min_confidence = d.pop("min_confidence", UNSET)
+        title = d.pop("title", UNSET)
 
-        _skills = d.pop("skills", UNSET)
-        skills: list[SessionSkill] | Unset = UNSET
-        if _skills is not UNSET:
-            skills = []
-            for skills_item_data in _skills:
-                skills_item = SessionSkill.from_dict(skills_item_data)
-
-                skills.append(skills_item)
-
-        skill_names = cast(list[str], d.pop("skill_names", UNSET))
+        tool_timeout_ms = d.pop("tool_timeout_ms", UNSET)
 
         _tools = d.pop("tools", UNSET)
         tools: list[SessionTool] | Unset = UNSET
@@ -466,28 +421,11 @@ class CreateSessionRequest:
 
                 tools.append(tools_item)
 
-        tool_timeout_ms = d.pop("tool_timeout_ms", UNSET)
+        tts = d.pop("tts", UNSET)
 
-        _tags = d.pop("tags", UNSET)
-        tags: CreateSessionRequestTags | Unset
-        if isinstance(_tags, Unset):
-            tags = UNSET
-        else:
-            tags = CreateSessionRequestTags.from_dict(_tags)
+        user_id = d.pop("user_id", UNSET)
 
-        _memory = d.pop("memory", UNSET)
-        memory: SessionMemory | Unset
-        if isinstance(_memory, Unset):
-            memory = UNSET
-        else:
-            memory = SessionMemory.from_dict(_memory)
-
-        _phone = d.pop("phone", UNSET)
-        phone: SessionPhone | Unset
-        if isinstance(_phone, Unset):
-            phone = UNSET
-        else:
-            phone = SessionPhone.from_dict(_phone)
+        user_name = d.pop("user_name", UNSET)
 
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
@@ -496,48 +434,46 @@ class CreateSessionRequest:
         else:
             video = SessionVideo.from_dict(_video)
 
+        voice = d.pop("voice", UNSET)
+
         create_session_request = cls(
-            conversation_id=conversation_id,
-            context_truncated=context_truncated,
-            call_id=call_id,
-            text=text,
-            config_id=config_id,
             agent=agent,
-            incognito=incognito,
-            title=title,
-            description=description,
-            project=project,
-            custom=custom,
-            model_overwrites=model_overwrites,
+            agent_id=agent_id,
+            backchannel=backchannel,
+            call_id=call_id,
             call_type=call_type,
+            config_id=config_id,
+            context_truncated=context_truncated,
+            conversation_id=conversation_id,
+            custom=custom,
+            description=description,
+            greeting=greeting,
+            id=id,
+            incognito=incognito,
+            instructions=instructions,
+            keyterms=keyterms,
+            languages=languages,
+            llm=llm,
+            max_tokens=max_tokens,
+            memory=memory,
+            min_confidence=min_confidence,
+            model_overwrites=model_overwrites,
+            navigating=navigating,
+            phone=phone,
+            project_id=project_id,
+            search=search,
+            sts=sts,
+            stt=stt,
+            tags=tags,
+            text=text,
+            title=title,
+            tool_timeout_ms=tool_timeout_ms,
+            tools=tools,
+            tts=tts,
             user_id=user_id,
             user_name=user_name,
-            agent_id=agent_id,
-            instructions=instructions,
-            greeting=greeting,
-            navigating=navigating,
-            llm=llm,
-            stt=stt,
-            tts=tts,
-            sts=sts,
-            subagent=subagent,
-            search=search,
-            voice=voice,
-            languages=languages,
-            keyterms=keyterms,
-            max_tokens=max_tokens,
-            tasks=tasks,
-            sandbox=sandbox,
-            backchannel=backchannel,
-            min_confidence=min_confidence,
-            skills=skills,
-            skill_names=skill_names,
-            tools=tools,
-            tool_timeout_ms=tool_timeout_ms,
-            tags=tags,
-            memory=memory,
-            phone=phone,
             video=video,
+            voice=voice,
         )
 
         create_session_request.additional_properties = d

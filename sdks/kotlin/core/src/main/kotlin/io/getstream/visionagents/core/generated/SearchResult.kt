@@ -37,9 +37,9 @@ import kotlinx.serialization.encoding.Encoder
  * 
  *
  * @param url 
- * @param title 
- * @param text The relevant extract, which is what a model reads.
  * @param score How relevant the provider judged it.
+ * @param text The relevant extract, which is what a model reads.
+ * @param title 
  */
 @Serializable
 
@@ -48,16 +48,16 @@ internal data class SearchResult (
     @SerialName(value = "url")
     val url: kotlin.String,
 
-    @SerialName(value = "title")
-    val title: kotlin.String? = null,
+    /* How relevant the provider judged it. */
+    @SerialName(value = "score")
+    val score: kotlin.Float? = null,
 
     /* The relevant extract, which is what a model reads. */
     @SerialName(value = "text")
     val text: kotlin.String? = null,
 
-    /* How relevant the provider judged it. */
-    @SerialName(value = "score")
-    val score: kotlin.Float? = null
+    @SerialName(value = "title")
+    val title: kotlin.String? = null
 
 ) {
 

@@ -4641,7 +4641,7 @@ type TurnStatsBucket struct {
 	TurnCount       int64    `json:"turn_count"`
 }
 
-// UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended; everything else needs it running.
+// UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
 type UpdateSessionRequest struct {
 	// Custom Replaces the caller's labels whole. An empty object clears them.
 	Custom      *map[string]interface{} `json:"custom,omitempty"`
@@ -6073,24 +6073,32 @@ type ClientInterface interface {
 	// UpdateSessionWithBody Change a session
 	//
 	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	//
+	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
 	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-	UpdateSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSession Change a session
 	//
 	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	//
+	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
 	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-	UpdateSession(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateSession(ctx context.Context, id string, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSessionCommand What is known about one durable command
 	//
@@ -8280,13 +8288,17 @@ func (c *Client) GetSession(ctx context.Context, id SessionID, reqEditors ...Req
 // UpdateSessionWithBody Change a session
 //
 // Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+//
+// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
 // Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-func (c *Client) UpdateSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSessionRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -8301,13 +8313,17 @@ func (c *Client) UpdateSessionWithBody(ctx context.Context, id SessionID, conten
 // UpdateSession Change a session
 //
 // Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+//
+// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
 // Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-func (c *Client) UpdateSession(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateSession(ctx context.Context, id string, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSessionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -12840,7 +12856,7 @@ func NewGetSessionRequest(server string, id SessionID) (*http.Request, error) {
 }
 
 // NewUpdateSessionRequest calls the generic UpdateSession builder with application/json body
-func NewUpdateSessionRequest(server string, id SessionID, body UpdateSessionJSONRequestBody) (*http.Request, error) {
+func NewUpdateSessionRequest(server string, id string, body UpdateSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -12851,7 +12867,7 @@ func NewUpdateSessionRequest(server string, id SessionID, body UpdateSessionJSON
 }
 
 // NewUpdateSessionRequestWithBody constructs an http.Request for the UpdateSession method, with any body, and a specified content type
-func NewUpdateSessionRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpdateSessionRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -17205,24 +17221,32 @@ type ClientWithResponsesInterface interface {
 	// UpdateSessionWithBodyWithResponse Change a session
 	//
 	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	//
+	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
 	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-	UpdateSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
+	UpdateSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
 
 	// UpdateSessionWithResponse Change a session
 	//
 	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	//
+	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
 	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-	UpdateSessionWithResponse(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
+	UpdateSessionWithResponse(ctx context.Context, id string, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
 
 	// GetSessionCommandWithResponse What is known about one durable command
 	//
@@ -21595,6 +21619,8 @@ type UpdateSessionResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21620,6 +21646,11 @@ func (r UpdateSessionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdateSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateSessionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27889,13 +27920,17 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id Ses
 // UpdateSessionWithBodyWithResponse Change a session
 //
 // Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+//
+// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
 // Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
+func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
 	rsp, err := c.UpdateSessionWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27906,13 +27941,17 @@ func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Cont
 // UpdateSessionWithResponse Change a session
 //
 // Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+//
+// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
 // Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-func (c *ClientWithResponses) UpdateSessionWithResponse(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
+func (c *ClientWithResponses) UpdateSessionWithResponse(ctx context.Context, id string, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
 	rsp, err := c.UpdateSession(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -32239,6 +32278,13 @@ func ParseUpdateSessionResponse(rsp *http.Response) (*UpdateSessionResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

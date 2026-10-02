@@ -192,9 +192,3 @@ Reject it if it:
 - uses the `StreamVideo` singleton factory;
 - adds a theme object, a route push or a `Scaffold` to `ui`;
 - mocks, or asserts that a method was called.
-
-## Pending: cursor pagination
-
-Go has moved; this SDK still needs to. `listSessions`, `searchSessions`, `listResponses` and
-`listResponseItems` take `cursor` instead of `offset` and return `{items, has_more,
-next_cursor}` instead of an array. See the `pagination` skill and `sdks/go/client`.

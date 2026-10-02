@@ -898,7 +898,11 @@ export type paths = {
         /**
          * Change a session
          * @description Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-         *     A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+         *
+         *     An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+         *
+         *     A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+         *
          *     Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
          */
         readonly patch: operations["updateSession"];
@@ -2918,25 +2922,16 @@ export type components = {
             readonly phone?: components["schemas"]["SessionPhone"];
             /** @description What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins. */
             readonly project_id?: string;
-            readonly sandbox?: components["schemas"]["Sandbox"];
             /** @description Omit it and the config decides, or search-fast when there is no config. */
             readonly search?: string;
-            /** @description Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped. */
-            readonly skill_names?: readonly string[];
-            /** @description Omit for the built-in set of think, recall and explain. */
-            readonly skills?: readonly components["schemas"]["SessionSkill"][];
             /** @description A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides. */
             readonly sts?: string;
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             readonly stt?: string;
-            /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
-            readonly subagent?: string;
             /** @description Cost labels, carried onto every request the session makes. */
             readonly tags?: {
                 readonly [key: string]: string;
             };
-            /** @description How much delegated work may run at once. */
-            readonly tasks?: number;
             /**
              * @description Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
              * @default false
@@ -3468,8 +3463,6 @@ export type components = {
             /** @description A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened. */
             readonly sts?: string;
             readonly stt?: string;
-            /** @description The model delegated work runs on, in place of the config's. */
-            readonly subagent?: string;
             /**
              * Format: double
              * @description How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
@@ -4011,7 +4004,6 @@ export type components = {
             /** @description A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
             readonly sts?: string;
             readonly stt?: string;
-            readonly subagent?: string;
             /** Format: double */
             readonly temperature?: number;
             /** @enum {string} */
@@ -4021,26 +4013,6 @@ export type components = {
             readonly verbosity?: "low" | "medium" | "high";
             /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
             readonly voice?: string;
-        };
-        /** @description A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under. */
-        readonly SessionSkill: {
-            /** @description Capture task-scoped visual evidence before reasoning. */
-            readonly capture_video?: boolean;
-            /**
-             * Format: int64
-             * @description How long the work may run before it is abandoned. Zero is the default.
-             */
-            readonly deadline_ms?: number;
-            /** @description The one line the fast model sees. */
-            readonly description: string;
-            /** @description The full prompt, which only the subagent sees. */
-            readonly instructions: string;
-            readonly name: string;
-            /**
-             * Format: int64
-             * @description Immutable skill revision selected by the application's authorized registry.
-             */
-            readonly revision?: number;
         };
         readonly SessionSort: {
             /**
@@ -4944,7 +4916,7 @@ export type components = {
             /** Format: int64 */
             readonly turn_count: number;
         };
-        /** @description What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended; everything else needs it running. */
+        /** @description What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller. */
         readonly UpdateSessionRequest: {
             /** @description Replaces the caller's labels whole. An empty object clears them. */
             readonly custom?: {
@@ -4959,7 +4931,6 @@ export type components = {
             /** @description A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
             readonly sts?: string;
             readonly stt?: string;
-            readonly subagent?: string;
             /** Format: double */
             readonly temperature?: number;
             /** @enum {string} */
@@ -6687,7 +6658,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6710,6 +6681,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly getSessionCommand: {

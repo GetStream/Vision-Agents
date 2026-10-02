@@ -38,21 +38,23 @@ PACKAGE = "io.getstream.visionagents.core.generated"
 GENERATED = KOTLIN / "core" / "src" / "main" / "kotlin" / Path(*PACKAGE.split("."))
 IMAGE = "openapitools/openapi-generator-cli:v7.25.0"
 
-# What a client is allowed to reach: opening a conversation, finding, reading and ending one,
-# going back in it or branching off it, becoming a guest, and looking something up.
+# What a client is allowed to reach: opening a conversation, finding, reading, renaming,
+# stopping and deleting one, going back in it or branching off it, becoming a guest, and looking
+# something up.
 OPERATIONS = [
-    "closeSession",
     "createGuestUser",
     "createResponse",
     "createSession",
+    "deleteSession",
     "forkSession",
     "getSession",
     "listResponseItems",
     "listResponses",
-    "listSessions",
+    "querySessions",
     "rewindSession",
     "search",
-    "searchSessions",
+    "stopSession",
+    "updateSession",
 ]
 
 # Hand-written, because OpenAPI stops at the upgrade. Audited all the same.

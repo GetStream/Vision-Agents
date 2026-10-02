@@ -14,9 +14,9 @@ final readonly class SimulationLine
         // True when the simulated caller said it rather than the agent.
         public bool $caller,
         public string $text,
+        public ?\DateTimeImmutable $at = null,
         // What the agent meant to say, where that differs from what the caller heard. Only an audio simulation has bo...
         public ?string $intended = null,
-        public ?\DateTimeImmutable $at = null,
     ) {
     }
 
@@ -28,8 +28,8 @@ final readonly class SimulationLine
         return new self(
             caller: Json::bool($data, 'caller'),
             text: Json::string($data, 'text'),
-            intended: array_key_exists('intended', $data) && $data['intended'] !== null ? Json::string($data, 'intended') : null,
             at: array_key_exists('at', $data) && $data['at'] !== null ? Json::date($data, 'at') : null,
+            intended: array_key_exists('intended', $data) && $data['intended'] !== null ? Json::string($data, 'intended') : null,
         );
     }
 
@@ -43,11 +43,11 @@ final readonly class SimulationLine
         $out = [];
         $out['caller'] = $this->caller;
         $out['text'] = $this->text;
-        if ($this->intended !== null) {
-            $out['intended'] = $this->intended;
-        }
         if ($this->at !== null) {
             $out['at'] = Json::dateValue($this->at);
+        }
+        if ($this->intended !== null) {
+            $out['intended'] = $this->intended;
         }
         return $out;
     }

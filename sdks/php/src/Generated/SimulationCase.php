@@ -12,28 +12,28 @@ final readonly class SimulationCase
 {
     public function __construct(
         public string $id,
-        // Which way of asking this was, and the order they are listed in.
-        public int $variation,
         // The wording this conversation used.
         public string $scenario,
+        public \DateTimeImmutable $startedAt,
         public string $state,
         // How many times the caller spoke.
         public int $turns,
-        public \DateTimeImmutable $startedAt,
+        // Which way of asking this was, and the order they are listed in.
+        public int $variation,
         // The session that held it, which is what the call and transcript paths take. It is written as soon as it exi...
         public ?string $callId = null,
-        /** @var list<SimulationLine>|null */
-        public ?array $transcript = null,
-        // The judge's ruling. Absent when it never got as far as ruling, which is not the same as having ruled against.
-        public ?bool $passed = null,
-        // What in the conversation decided it.
-        public ?string $verdict = null,
-        // How sure the judge was, from 1 to 5.
-        public ?int $score = null,
         // Why the conversation stopped.
         public ?string $ended = null,
         public ?string $error = null,
         public ?\DateTimeImmutable $finishedAt = null,
+        // The judge's ruling. Absent when it never got as far as ruling, which is not the same as having ruled against.
+        public ?bool $passed = null,
+        // How sure the judge was, from 1 to 5.
+        public ?int $score = null,
+        /** @var list<SimulationLine>|null */
+        public ?array $transcript = null,
+        // What in the conversation decided it.
+        public ?string $verdict = null,
     ) {
     }
 
@@ -44,19 +44,19 @@ final readonly class SimulationCase
     {
         return new self(
             id: Json::string($data, 'id'),
-            variation: Json::int($data, 'variation'),
             scenario: Json::string($data, 'scenario'),
+            startedAt: Json::date($data, 'started_at'),
             state: Json::string($data, 'state'),
             turns: Json::int($data, 'turns'),
-            startedAt: Json::date($data, 'started_at'),
+            variation: Json::int($data, 'variation'),
             callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
-            transcript: array_key_exists('transcript', $data) && $data['transcript'] !== null ? array_map(SimulationLine::fromArray(...), Json::objects($data, 'transcript')) : null,
-            passed: array_key_exists('passed', $data) && $data['passed'] !== null ? Json::bool($data, 'passed') : null,
-            verdict: array_key_exists('verdict', $data) && $data['verdict'] !== null ? Json::string($data, 'verdict') : null,
-            score: array_key_exists('score', $data) && $data['score'] !== null ? Json::int($data, 'score') : null,
             ended: array_key_exists('ended', $data) && $data['ended'] !== null ? Json::string($data, 'ended') : null,
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
             finishedAt: array_key_exists('finished_at', $data) && $data['finished_at'] !== null ? Json::date($data, 'finished_at') : null,
+            passed: array_key_exists('passed', $data) && $data['passed'] !== null ? Json::bool($data, 'passed') : null,
+            score: array_key_exists('score', $data) && $data['score'] !== null ? Json::int($data, 'score') : null,
+            transcript: array_key_exists('transcript', $data) && $data['transcript'] !== null ? array_map(SimulationLine::fromArray(...), Json::objects($data, 'transcript')) : null,
+            verdict: array_key_exists('verdict', $data) && $data['verdict'] !== null ? Json::string($data, 'verdict') : null,
         );
     }
 
@@ -69,25 +69,13 @@ final readonly class SimulationCase
     {
         $out = [];
         $out['id'] = $this->id;
-        $out['variation'] = $this->variation;
         $out['scenario'] = $this->scenario;
+        $out['started_at'] = Json::dateValue($this->startedAt);
         $out['state'] = $this->state;
         $out['turns'] = $this->turns;
-        $out['started_at'] = Json::dateValue($this->startedAt);
+        $out['variation'] = $this->variation;
         if ($this->callId !== null) {
             $out['call_id'] = $this->callId;
-        }
-        if ($this->transcript !== null) {
-            $out['transcript'] = array_map(static fn (SimulationLine $each): array => $each->toArray(), $this->transcript);
-        }
-        if ($this->passed !== null) {
-            $out['passed'] = $this->passed;
-        }
-        if ($this->verdict !== null) {
-            $out['verdict'] = $this->verdict;
-        }
-        if ($this->score !== null) {
-            $out['score'] = $this->score;
         }
         if ($this->ended !== null) {
             $out['ended'] = $this->ended;
@@ -97,6 +85,18 @@ final readonly class SimulationCase
         }
         if ($this->finishedAt !== null) {
             $out['finished_at'] = Json::dateValue($this->finishedAt);
+        }
+        if ($this->passed !== null) {
+            $out['passed'] = $this->passed;
+        }
+        if ($this->score !== null) {
+            $out['score'] = $this->score;
+        }
+        if ($this->transcript !== null) {
+            $out['transcript'] = array_map(static fn (SimulationLine $each): array => $each->toArray(), $this->transcript);
+        }
+        if ($this->verdict !== null) {
+            $out['verdict'] = $this->verdict;
         }
         return $out;
     }

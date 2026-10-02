@@ -42,6 +42,7 @@ final class TestRouter {
 
   final HttpServer _server;
   final Map<String, Answer> _answers = {};
+  final Map<String, List<Answer>> _inTurn = {};
   final List<Arrived> arrived = [];
 
   /// The socket upgrades that arrived, oldest first.
@@ -52,6 +53,10 @@ final class TestRouter {
 
   /// Answers `METHOD /path` with this, until told otherwise.
   void answer(String route, Answer answer) => _answers[route] = answer;
+
+  /// Answers `METHOD /path` with each of these in turn, before whatever [answer] set.
+  void answerInTurn(String route, List<Answer> answers) =>
+      _inTurn.putIfAbsent(route, () => []).addAll(answers);
 
   /// Answers every socket upgrade with a 404, the way a router that lost the session would.
   bool refuseSockets = false;
@@ -89,9 +94,11 @@ final class TestRouter {
     }
 
     arrived.add(seen);
-    final answer =
-        _answers['${request.method} ${request.uri.path}'] ??
-        const Answer(404, {'error': 'no route'});
+    final route = '${request.method} ${request.uri.path}';
+    final queued = _inTurn[route];
+    final answer = queued != null && queued.isNotEmpty
+        ? queued.removeAt(0)
+        : _answers[route] ?? const Answer(404, {'error': 'no route'});
     request.response.statusCode = answer.status;
     if (answer.body != null) {
       request.response.headers.contentType = ContentType.json;

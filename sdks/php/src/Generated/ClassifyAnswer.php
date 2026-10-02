@@ -17,20 +17,20 @@ final readonly class ClassifyAnswer
 {
     public function __construct(
         public ClassifyQuestionType|string $type,
-        // The probability a noul is true, from 0 to 1.
-        public ?float $yes = null,
         // The likeliest option of a choice.
         public ?string $chosen = null,
-        // Where a score landed, which may be between two of its levels.
-        public ?float $level = null,
+        // How peaked the distribution is, not whether acting on it is safe.
+        public ?float $confidence = null,
         // A score's levels by index, as decimal strings.
         /** @var array<string, string>|null */
         public ?array $legend = null,
+        // Where a score landed, which may be between two of its levels.
+        public ?float $level = null,
         // The distribution the answer came from: options for a choice, level indices for a score. They sum to one.
         /** @var array<string, mixed>|null */
         public ?array $probabilities = null,
-        // How peaked the distribution is, not whether acting on it is safe.
-        public ?float $confidence = null,
+        // The probability a noul is true, from 0 to 1.
+        public ?float $yes = null,
     ) {
     }
 
@@ -41,12 +41,12 @@ final readonly class ClassifyAnswer
     {
         return new self(
             type: Json::enum($data, 'type', ClassifyQuestionType::class),
-            yes: array_key_exists('yes', $data) && $data['yes'] !== null ? Json::float($data, 'yes') : null,
             chosen: array_key_exists('chosen', $data) && $data['chosen'] !== null ? Json::string($data, 'chosen') : null,
-            level: array_key_exists('level', $data) && $data['level'] !== null ? Json::float($data, 'level') : null,
-            legend: array_key_exists('legend', $data) && $data['legend'] !== null ? Json::stringMap($data, 'legend') : null,
-            probabilities: array_key_exists('probabilities', $data) && $data['probabilities'] !== null ? Json::object($data, 'probabilities') : null,
             confidence: array_key_exists('confidence', $data) && $data['confidence'] !== null ? Json::float($data, 'confidence') : null,
+            legend: array_key_exists('legend', $data) && $data['legend'] !== null ? Json::stringMap($data, 'legend') : null,
+            level: array_key_exists('level', $data) && $data['level'] !== null ? Json::float($data, 'level') : null,
+            probabilities: array_key_exists('probabilities', $data) && $data['probabilities'] !== null ? Json::object($data, 'probabilities') : null,
+            yes: array_key_exists('yes', $data) && $data['yes'] !== null ? Json::float($data, 'yes') : null,
         );
     }
 
@@ -59,23 +59,23 @@ final readonly class ClassifyAnswer
     {
         $out = [];
         $out['type'] = Json::enumValue($this->type);
-        if ($this->yes !== null) {
-            $out['yes'] = $this->yes;
-        }
         if ($this->chosen !== null) {
             $out['chosen'] = $this->chosen;
         }
-        if ($this->level !== null) {
-            $out['level'] = $this->level;
+        if ($this->confidence !== null) {
+            $out['confidence'] = $this->confidence;
         }
         if ($this->legend !== null) {
             $out['legend'] = $this->legend;
         }
+        if ($this->level !== null) {
+            $out['level'] = $this->level;
+        }
         if ($this->probabilities !== null) {
             $out['probabilities'] = Json::objectValue($this->probabilities);
         }
-        if ($this->confidence !== null) {
-            $out['confidence'] = $this->confidence;
+        if ($this->yes !== null) {
+            $out['yes'] = $this->yes;
         }
         return $out;
     }

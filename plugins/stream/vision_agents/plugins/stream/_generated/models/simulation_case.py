@@ -24,66 +24,53 @@ class SimulationCase:
     """
     Attributes:
         id (str):
-        variation (int): Which way of asking this was, and the order they are listed in.
         scenario (str): The wording this conversation used.
+        started_at (datetime.datetime):
         state (SimulationCaseState):
         turns (int): How many times the caller spoke.
-        started_at (datetime.datetime):
+        variation (int): Which way of asking this was, and the order they are listed in.
         call_id (str | Unset): The session that held it, which is what the call and transcript paths take. It is written
             as soon as it exists, so a conversation still going can be watched.
-        transcript (list[SimulationLine] | Unset):
-        passed (bool | Unset): The judge's ruling. Absent when it never got as far as ruling, which is not the same as
-            having ruled against.
-        verdict (str | Unset): What in the conversation decided it.
-        score (int | Unset): How sure the judge was, from 1 to 5.
         ended (SimulationCaseEnded | Unset): Why the conversation stopped.
         error (str | Unset):
         finished_at (datetime.datetime | Unset):
+        passed (bool | Unset): The judge's ruling. Absent when it never got as far as ruling, which is not the same as
+            having ruled against.
+        score (int | Unset): How sure the judge was, from 1 to 5.
+        transcript (list[SimulationLine] | Unset):
+        verdict (str | Unset): What in the conversation decided it.
     """
 
     id: str
-    variation: int
     scenario: str
+    started_at: datetime.datetime
     state: SimulationCaseState
     turns: int
-    started_at: datetime.datetime
+    variation: int
     call_id: str | Unset = UNSET
-    transcript: list[SimulationLine] | Unset = UNSET
-    passed: bool | Unset = UNSET
-    verdict: str | Unset = UNSET
-    score: int | Unset = UNSET
     ended: SimulationCaseEnded | Unset = UNSET
     error: str | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
+    passed: bool | Unset = UNSET
+    score: int | Unset = UNSET
+    transcript: list[SimulationLine] | Unset = UNSET
+    verdict: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
 
-        variation = self.variation
-
         scenario = self.scenario
+
+        started_at = self.started_at.isoformat()
 
         state = self.state.value
 
         turns = self.turns
 
-        started_at = self.started_at.isoformat()
+        variation = self.variation
 
         call_id = self.call_id
-
-        transcript: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.transcript, Unset):
-            transcript = []
-            for transcript_item_data in self.transcript:
-                transcript_item = transcript_item_data.to_dict()
-                transcript.append(transcript_item)
-
-        passed = self.passed
-
-        verdict = self.verdict
-
-        score = self.score
 
         ended: str | Unset = UNSET
         if not isinstance(self.ended, Unset):
@@ -95,34 +82,47 @@ class SimulationCase:
         if not isinstance(self.finished_at, Unset):
             finished_at = self.finished_at.isoformat()
 
+        passed = self.passed
+
+        score = self.score
+
+        transcript: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.transcript, Unset):
+            transcript = []
+            for transcript_item_data in self.transcript:
+                transcript_item = transcript_item_data.to_dict()
+                transcript.append(transcript_item)
+
+        verdict = self.verdict
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "id": id,
-                "variation": variation,
                 "scenario": scenario,
+                "started_at": started_at,
                 "state": state,
                 "turns": turns,
-                "started_at": started_at,
+                "variation": variation,
             }
         )
         if call_id is not UNSET:
             field_dict["call_id"] = call_id
-        if transcript is not UNSET:
-            field_dict["transcript"] = transcript
-        if passed is not UNSET:
-            field_dict["passed"] = passed
-        if verdict is not UNSET:
-            field_dict["verdict"] = verdict
-        if score is not UNSET:
-            field_dict["score"] = score
         if ended is not UNSET:
             field_dict["ended"] = ended
         if error is not UNSET:
             field_dict["error"] = error
         if finished_at is not UNSET:
             field_dict["finished_at"] = finished_at
+        if passed is not UNSET:
+            field_dict["passed"] = passed
+        if score is not UNSET:
+            field_dict["score"] = score
+        if transcript is not UNSET:
+            field_dict["transcript"] = transcript
+        if verdict is not UNSET:
+            field_dict["verdict"] = verdict
 
         return field_dict
 
@@ -133,32 +133,17 @@ class SimulationCase:
         d = dict(src_dict)
         id = d.pop("id")
 
-        variation = d.pop("variation")
-
         scenario = d.pop("scenario")
+
+        started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
 
         state = SimulationCaseState(d.pop("state"))
 
         turns = d.pop("turns")
 
-        started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
+        variation = d.pop("variation")
 
         call_id = d.pop("call_id", UNSET)
-
-        _transcript = d.pop("transcript", UNSET)
-        transcript: list[SimulationLine] | Unset = UNSET
-        if _transcript is not UNSET:
-            transcript = []
-            for transcript_item_data in _transcript:
-                transcript_item = SimulationLine.from_dict(transcript_item_data)
-
-                transcript.append(transcript_item)
-
-        passed = d.pop("passed", UNSET)
-
-        verdict = d.pop("verdict", UNSET)
-
-        score = d.pop("score", UNSET)
 
         _ended = d.pop("ended", UNSET)
         ended: SimulationCaseEnded | Unset
@@ -176,21 +161,36 @@ class SimulationCase:
         else:
             finished_at = datetime.datetime.fromisoformat(_finished_at)
 
+        passed = d.pop("passed", UNSET)
+
+        score = d.pop("score", UNSET)
+
+        _transcript = d.pop("transcript", UNSET)
+        transcript: list[SimulationLine] | Unset = UNSET
+        if _transcript is not UNSET:
+            transcript = []
+            for transcript_item_data in _transcript:
+                transcript_item = SimulationLine.from_dict(transcript_item_data)
+
+                transcript.append(transcript_item)
+
+        verdict = d.pop("verdict", UNSET)
+
         simulation_case = cls(
             id=id,
-            variation=variation,
             scenario=scenario,
+            started_at=started_at,
             state=state,
             turns=turns,
-            started_at=started_at,
+            variation=variation,
             call_id=call_id,
-            transcript=transcript,
-            passed=passed,
-            verdict=verdict,
-            score=score,
             ended=ended,
             error=error,
             finished_at=finished_at,
+            passed=passed,
+            score=score,
+            transcript=transcript,
+            verdict=verdict,
         )
 
         simulation_case.additional_properties = d

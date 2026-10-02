@@ -85,8 +85,9 @@ def sync_detailed(
 ) -> Response[Any | Error]:
     """Change what the agent is told to be
 
-     Applies from the next turn. The reply being spoken keeps the prompt it started with, because
-    rewriting it mid-sentence would have the agent change character in the middle of a thought.
+     Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt
+    it started with, because rewriting it mid-sentence would have the agent change character in the
+    middle of a thought.
 
     Args:
         id (str):
@@ -120,8 +121,9 @@ def sync(
 ) -> Any | Error | None:
     """Change what the agent is told to be
 
-     Applies from the next turn. The reply being spoken keeps the prompt it started with, because
-    rewriting it mid-sentence would have the agent change character in the middle of a thought.
+     Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt
+    it started with, because rewriting it mid-sentence would have the agent change character in the
+    middle of a thought.
 
     Args:
         id (str):
@@ -150,8 +152,9 @@ async def asyncio_detailed(
 ) -> Response[Any | Error]:
     """Change what the agent is told to be
 
-     Applies from the next turn. The reply being spoken keeps the prompt it started with, because
-    rewriting it mid-sentence would have the agent change character in the middle of a thought.
+     Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt
+    it started with, because rewriting it mid-sentence would have the agent change character in the
+    middle of a thought.
 
     Args:
         id (str):
@@ -183,8 +186,9 @@ async def asyncio(
 ) -> Any | Error | None:
     """Change what the agent is told to be
 
-     Applies from the next turn. The reply being spoken keeps the prompt it started with, because
-    rewriting it mid-sentence would have the agent change character in the middle of a thought.
+     Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt
+    it started with, because rewriting it mid-sentence would have the agent change character in the
+    middle of a thought.
 
     Args:
         id (str):

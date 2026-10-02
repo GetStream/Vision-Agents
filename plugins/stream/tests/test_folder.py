@@ -246,6 +246,152 @@ class TestFolder:
 
         assert load(root).hash() != before
 
+    def test_speed_and_harness_are_read_from_the_declaration(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nspeed: 1.1\nharness: default\n")
+
+        settings = load(root).settings
+
+        assert settings.speed == 1.1
+        assert settings.harness == "default"
+
+    def test_a_speed_that_is_not_a_number_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nspeed: fast\n")
+
+        with pytest.raises(ValueError, match="speed"):
+            load(root)
+
+    def test_a_page_may_be_read_again_on_a_schedule(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            "- url: https://example.com/plans\n  refresh_hours: 24\n"
+            "- https://example.com/pricing\n",
+        )
+
+        pages = load(root).knowledge_urls
+
+        assert [page.refresh_hours for page in pages] == [24, 0]
+
+    @pytest.mark.parametrize("hours", ["0", "1.5", "daily"])
+    def test_a_schedule_that_is_not_a_whole_number_of_hours_is_refused(
+        self, tmp_path: Path, hours: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            f"- url: https://example.com/plans\n  refresh_hours: {hours}\n",
+        )
+
+        with pytest.raises(ValueError, match="refresh_hours"):
+            load(root)
+
+    def test_simulations_are_read_from_every_file_in_name_order(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "simulations/b.yml",
+            "- name: refund\n  scenario: Ask for a refund.\n  assertion: None is promised.\n"
+            "  mode: audio\n  variations: 3\n  tags:\n    team: support\n",
+        )
+        write(
+            root,
+            "simulations/a.yaml",
+            "- name: lunch\n  scenario: Order lunch.\n  assertion: One wrap.\n",
+        )
+        write(root, "simulations/notes.md", "not a simulation\n")
+
+        simulations = load(root).simulations
+
+        assert simulations is not None
+        assert [simulation.name for simulation in simulations] == ["lunch", "refund"]
+        assert simulations[1].mode == "audio"
+        assert simulations[1].variations == 3
+        assert simulations[1].tags == {"team": "support"}
+
+    def test_no_simulations_directory_is_none_and_an_empty_one_is_empty(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        assert load(root).simulations is None
+
+        (root / "simulations").mkdir()
+        assert load(root).simulations == []
+
+    @pytest.mark.parametrize(
+        "declaration, refused",
+        [
+            ("- name: a\n  scenario: s\n  assertion: x\n  judge: me\n", "judge"),
+            ("- name: a\n  assertion: x\n", "scenario"),
+            ("- name: a\n  scenario: s\n", "assertion"),
+            ("- name: a\n  scenario: s\n  assertion: x\n  mode: video\n", "video"),
+            (
+                "- name: a\n  scenario: s\n  assertion: x\n  variations: many\n",
+                "variations",
+            ),
+            ("name: a\n", "list"),
+        ],
+    )
+    def test_a_simulation_that_cannot_be_run_is_refused(
+        self, tmp_path: Path, declaration: str, refused: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "simulations/a.yaml", declaration)
+
+        with pytest.raises(ValueError, match=refused):
+            load(root)
+
+    def test_two_simulations_cannot_share_a_name(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        simulation = "- name: lunch\n  scenario: s\n  assertion: a\n"
+        write(root, "simulations/a.yaml", simulation)
+        write(root, "simulations/b.yaml", simulation)
+
+        with pytest.raises(ValueError, match="also declared in a.yaml"):
+            load(root)
+
+    def test_a_directory_without_schedules_or_simulations_keeps_its_hash(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "knowledge/urls.yaml", "- https://example.com/plans\n")
+
+        # What every SDK took this directory to be before either was declared.
+        assert load(root).hash() == "bb5804bc853eaac855a30ec02037106a"
+
+    def test_schedules_and_simulations_hash_the_way_the_go_sdk_does(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            "- url: https://example.com/plans\n  refresh_hours: 24\n",
+        )
+        write(
+            root,
+            "simulations/lunch.yaml",
+            "- name: lunch <order> & change\n"
+            "  scenario: |\n    Order a turkey club, then swap it.\n"
+            "  assertion: One veggie wrap.\n"
+            "  variations: 3\n"
+            "  tags:\n    b: two\n    a: one\n",
+        )
+
+        # What the Go SDK's agents.Load(...).Hash() gives the same files.
+        assert load(root).hash() == "c55bc13d9e0e146d7facbe1db9e67774"
+
     def test_a_directory_without_a_declaration_cannot_be_loaded(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "instructions.md", "You are Jean.\n")

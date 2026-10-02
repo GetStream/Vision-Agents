@@ -18,30 +18,30 @@ class PluginConnection:
     """A catalog plugin as this agent has it, including whether it is logged in.
 
     Attributes:
-        plugin_id (str):
         name (str):
+        plugin_id (str):
         status (PluginConnectionStatus):
         category (str | Unset):
         description (str | Unset):
-        instance_required (bool | Unset):
         instance_hint (str | Unset):
+        instance_required (bool | Unset):
         instance_url (str | Unset):
     """
 
-    plugin_id: str
     name: str
+    plugin_id: str
     status: PluginConnectionStatus
     category: str | Unset = UNSET
     description: str | Unset = UNSET
-    instance_required: bool | Unset = UNSET
     instance_hint: str | Unset = UNSET
+    instance_required: bool | Unset = UNSET
     instance_url: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        plugin_id = self.plugin_id
-
         name = self.name
+
+        plugin_id = self.plugin_id
 
         status = self.status.value
 
@@ -49,9 +49,9 @@ class PluginConnection:
 
         description = self.description
 
-        instance_required = self.instance_required
-
         instance_hint = self.instance_hint
+
+        instance_required = self.instance_required
 
         instance_url = self.instance_url
 
@@ -59,8 +59,8 @@ class PluginConnection:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "plugin_id": plugin_id,
                 "name": name,
+                "plugin_id": plugin_id,
                 "status": status,
             }
         )
@@ -68,10 +68,10 @@ class PluginConnection:
             field_dict["category"] = category
         if description is not UNSET:
             field_dict["description"] = description
-        if instance_required is not UNSET:
-            field_dict["instance_required"] = instance_required
         if instance_hint is not UNSET:
             field_dict["instance_hint"] = instance_hint
+        if instance_required is not UNSET:
+            field_dict["instance_required"] = instance_required
         if instance_url is not UNSET:
             field_dict["instance_url"] = instance_url
 
@@ -80,9 +80,9 @@ class PluginConnection:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        plugin_id = d.pop("plugin_id")
-
         name = d.pop("name")
+
+        plugin_id = d.pop("plugin_id")
 
         status = PluginConnectionStatus(d.pop("status"))
 
@@ -90,20 +90,20 @@ class PluginConnection:
 
         description = d.pop("description", UNSET)
 
-        instance_required = d.pop("instance_required", UNSET)
-
         instance_hint = d.pop("instance_hint", UNSET)
+
+        instance_required = d.pop("instance_required", UNSET)
 
         instance_url = d.pop("instance_url", UNSET)
 
         plugin_connection = cls(
-            plugin_id=plugin_id,
             name=name,
+            plugin_id=plugin_id,
             status=status,
             category=category,
             description=description,
-            instance_required=instance_required,
             instance_hint=instance_hint,
+            instance_required=instance_required,
             instance_url=instance_url,
         )
 

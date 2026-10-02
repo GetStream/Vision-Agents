@@ -201,7 +201,7 @@ describe(
       // Everything a page does with the conversation afterwards is HTTP.
       const session = await agentOf(page).sessions.create({
         title,
-        project: "qa",
+        project_id: "qa",
         llm: model,
         watch: false,
       });
@@ -233,7 +233,7 @@ describe(
 
       // And the one thing it cannot do, said plainly rather than as a property read on
       // undefined: this is the first wall a caller writing a page hits.
-      assert.throws(() => session.respond("anything"), /not being watched/);
+      assert.throws(() => session.say("anything"), /not being watched/);
     });
 
     it("does not show one person's conversation to another", {
@@ -255,7 +255,7 @@ describe(
       const session = await agentOf(mine).sessions.create({ llm: model, watch: false });
       opened.push({ api: mine, id: session.id });
 
-      const listed = await theirs.get("/v1/agents/sessions");
+      const listed = await agentOf(theirs).sessions.query();
       assert.ok(
         !listed.items.some((each) => each.id === session.id),
         "somebody else's session was listed",

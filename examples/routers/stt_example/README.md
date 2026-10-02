@@ -56,7 +56,7 @@ uv sync
 uv run stt_example.py
 ```
 
-Nothing here calls `sync_routers`. `Router("clinic")` finds `routers/clinic/router.yaml`
+Nothing here calls `sync_routers`. `client.router("clinic")` finds `routers/clinic/router.yaml`
 and stores it on the first session; `.router_sync` records the md5, so a run that edits
 nothing sends nothing, and one that edits the YAML edits the config rather than storing
 another copy.

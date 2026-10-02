@@ -22,32 +22,39 @@ T = TypeVar("T", bound="Voice")
 class Voice:
     """
     Attributes:
+        created_at (datetime.datetime):
         id (str):
         name (str):
-        created_at (datetime.datetime):
         updated_at (datetime.datetime):
+        bindings (list[VoiceBinding] | Unset):
         description (str | Unset):
         samples (list[VoiceSample] | Unset):
-        bindings (list[VoiceBinding] | Unset):
     """
 
+    created_at: datetime.datetime
     id: str
     name: str
-    created_at: datetime.datetime
     updated_at: datetime.datetime
+    bindings: list[VoiceBinding] | Unset = UNSET
     description: str | Unset = UNSET
     samples: list[VoiceSample] | Unset = UNSET
-    bindings: list[VoiceBinding] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        created_at = self.created_at.isoformat()
+
         id = self.id
 
         name = self.name
 
-        created_at = self.created_at.isoformat()
-
         updated_at = self.updated_at.isoformat()
+
+        bindings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.bindings, Unset):
+            bindings = []
+            for bindings_item_data in self.bindings:
+                bindings_item = bindings_item_data.to_dict()
+                bindings.append(bindings_item)
 
         description = self.description
 
@@ -58,29 +65,22 @@ class Voice:
                 samples_item = samples_item_data.to_dict()
                 samples.append(samples_item)
 
-        bindings: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.bindings, Unset):
-            bindings = []
-            for bindings_item_data in self.bindings:
-                bindings_item = bindings_item_data.to_dict()
-                bindings.append(bindings_item)
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "created_at": created_at,
                 "id": id,
                 "name": name,
-                "created_at": created_at,
                 "updated_at": updated_at,
             }
         )
+        if bindings is not UNSET:
+            field_dict["bindings"] = bindings
         if description is not UNSET:
             field_dict["description"] = description
         if samples is not UNSET:
             field_dict["samples"] = samples
-        if bindings is not UNSET:
-            field_dict["bindings"] = bindings
 
         return field_dict
 
@@ -90,13 +90,22 @@ class Voice:
         from ..models.voice_sample import VoiceSample
 
         d = dict(src_dict)
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
         id = d.pop("id")
 
         name = d.pop("name")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
-
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        _bindings = d.pop("bindings", UNSET)
+        bindings: list[VoiceBinding] | Unset = UNSET
+        if _bindings is not UNSET:
+            bindings = []
+            for bindings_item_data in _bindings:
+                bindings_item = VoiceBinding.from_dict(bindings_item_data)
+
+                bindings.append(bindings_item)
 
         description = d.pop("description", UNSET)
 
@@ -109,23 +118,14 @@ class Voice:
 
                 samples.append(samples_item)
 
-        _bindings = d.pop("bindings", UNSET)
-        bindings: list[VoiceBinding] | Unset = UNSET
-        if _bindings is not UNSET:
-            bindings = []
-            for bindings_item_data in _bindings:
-                bindings_item = VoiceBinding.from_dict(bindings_item_data)
-
-                bindings.append(bindings_item)
-
         voice = cls(
+            created_at=created_at,
             id=id,
             name=name,
-            created_at=created_at,
             updated_at=updated_at,
+            bindings=bindings,
             description=description,
             samples=samples,
-            bindings=bindings,
         )
 
         voice.additional_properties = d

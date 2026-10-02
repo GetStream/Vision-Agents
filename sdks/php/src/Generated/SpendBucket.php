@@ -12,11 +12,11 @@ final readonly class SpendBucket
 {
     public function __construct(
         public \DateTimeImmutable $bucket,
-        // The modality or label value this row is for. "other" is everything outside the biggest few, and the empty s...
-        public string $value,
         // Millionths of a dollar, priced from the configured rates.
         public int $costMicrosTotal,
         public int $requestCount,
+        // The modality or label value this row is for. "other" is everything outside the biggest few, and the empty s...
+        public string $value,
     ) {
     }
 
@@ -27,9 +27,9 @@ final readonly class SpendBucket
     {
         return new self(
             bucket: Json::date($data, 'bucket'),
-            value: Json::string($data, 'value'),
             costMicrosTotal: Json::int($data, 'cost_micros_total'),
             requestCount: Json::int($data, 'request_count'),
+            value: Json::string($data, 'value'),
         );
     }
 
@@ -42,9 +42,9 @@ final readonly class SpendBucket
     {
         $out = [];
         $out['bucket'] = Json::dateValue($this->bucket);
-        $out['value'] = $this->value;
         $out['cost_micros_total'] = $this->costMicrosTotal;
         $out['request_count'] = $this->requestCount;
+        $out['value'] = $this->value;
         return $out;
     }
 }

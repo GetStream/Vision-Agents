@@ -47,7 +47,7 @@ class Router:
         app = web.Application()
         app.router.add_post("/v1/agents/sessions", self._create)
         app.router.add_get("/v1/agents/sessions/{id}/events", self._events)
-        app.router.add_delete("/v1/agents/sessions/{id}", self._close)
+        app.router.add_post("/v1/agents/sessions/{id}/stop", self._close)
         app.router.add_get("/v1/agents/configs", self._configs)
         app.router.add_post("/v1/agents/sync", self._sync)
         return app
@@ -79,6 +79,7 @@ class Router:
                 "call_type": self.created.get("call_type", "default"),
                 "user_id": self.created.get("user_id", ""),
                 "agent_id": self.created.get("agent_id", ""),
+                "modality": "voice",
                 "state": "live",
                 "created_at": "2026-01-01T00:00:00Z",
             },
@@ -158,12 +159,14 @@ class TestAccelerated:
         assert router.created["call_id"] == "call-1"
         assert router.created["instructions"] == "be brief"
 
-        async def test_the_session_carries_the_harness_the_agent_was_given(
-            self, router: Router, joined: stream.Accelerated
-        ):
-            assert router.created is not None
-            assert router.created["subagent"] == "llm-smart"
-            assert router.created["sandbox"] == "daytona"
+    async def test_the_harness_is_left_to_the_agent_config(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        # The router takes the harness from the config a session runs under, never from
+        # the session itself.
+        assert router.created is not None
+        for field in ("subagent", "sandbox", "tasks", "skills"):
+            assert field not in router.created
 
     async def test_named_keyterms_reach_the_session(
         self, router: Router, call: RemoteCall

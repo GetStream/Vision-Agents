@@ -15,10 +15,12 @@ final readonly class KnowledgeUrlRequest
         public string $namespace,
         // The page to read. It must be http or https: this is handed to a crawler and then used to key the passages i...
         public string $url,
-        // What to call the page, for a reader of the subscription. Optional: a page that is not named here is named b...
-        public ?string $title = null,
         // What the page is, for a reader of the subscription. Optional, and kept as written: it says why this page is...
         public ?string $description = null,
+        // How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it...
+        public ?int $refreshHours = null,
+        // What to call the page, for a reader of the subscription. Optional: a page that is not named here is named b...
+        public ?string $title = null,
     ) {
     }
 
@@ -30,8 +32,9 @@ final readonly class KnowledgeUrlRequest
         return new self(
             namespace: Json::string($data, 'namespace'),
             url: Json::string($data, 'url'),
-            title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
+            refreshHours: array_key_exists('refresh_hours', $data) && $data['refresh_hours'] !== null ? Json::int($data, 'refresh_hours') : null,
+            title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
         );
     }
 
@@ -45,11 +48,14 @@ final readonly class KnowledgeUrlRequest
         $out = [];
         $out['namespace'] = $this->namespace;
         $out['url'] = $this->url;
-        if ($this->title !== null) {
-            $out['title'] = $this->title;
-        }
         if ($this->description !== null) {
             $out['description'] = $this->description;
+        }
+        if ($this->refreshHours !== null) {
+            $out['refresh_hours'] = $this->refreshHours;
+        }
+        if ($this->title !== null) {
+            $out['title'] = $this->title;
         }
         return $out;
     }

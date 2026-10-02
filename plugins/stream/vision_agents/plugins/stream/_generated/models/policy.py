@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.budget import Budget
     from ..models.data_policy import DataPolicy
+    from ..models.policy_tags import PolicyTags
 
 
 T = TypeVar("T", bound="Policy")
@@ -19,10 +20,13 @@ T = TypeVar("T", bound="Policy")
 
 @_attrs_define
 class Policy:
-    """What an organization or an app decided about spend, data handling and prompt injection. Every field is optional, and
-    a field left out is no opinion rather than off.
+    """What an organization or an app decided about spend, data handling, prompt injection, which models may be used and
+    how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
 
         Attributes:
+            allowed_models (list[str] | Unset): The only models requests may be routed to, as provider/model names, in every
+                modality. Left out allows every model, and an empty list allows none. A request that could only go to models not
+                on the list is refused, and a failover never reaches one. Example: ['deepseek/DeepSeek-V4-Flash-0731'].
             budget (Budget | Unset): A cap on spend across every modality, reset on a UTC boundary each interval. Once it is
                 spent every new session and every LLM response is refused until the next interval. Checks are cached for a few
                 seconds, so a busy app can overshoot by what it spends in that time.
@@ -34,14 +38,23 @@ class Policy:
                 - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing
                 to time to first token. The end of the response is held until the verdict, and a response whose input reads as
                 an injection fails with prompt_injection before its tool calls can be acted on.
+            tags (PolicyTags | Unset): Labels recorded on every row of usage, over whatever the request labelled it with, so
+                spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags. Example:
+                {'application': 'support'}.
     """
 
+    allowed_models: list[str] | Unset = UNSET
     budget: Budget | Unset = UNSET
     data_policy: DataPolicy | Unset = UNSET
     prompt_injection: bool | Unset = UNSET
+    tags: PolicyTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        allowed_models: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_models, Unset):
+            allowed_models = self.allowed_models
+
         budget: dict[str, Any] | Unset = UNSET
         if not isinstance(self.budget, Unset):
             budget = self.budget.to_dict()
@@ -52,15 +65,23 @@ class Policy:
 
         prompt_injection = self.prompt_injection
 
+        tags: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tags, Unset):
+            tags = self.tags.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if allowed_models is not UNSET:
+            field_dict["allowed_models"] = allowed_models
         if budget is not UNSET:
             field_dict["budget"] = budget
         if data_policy is not UNSET:
             field_dict["data_policy"] = data_policy
         if prompt_injection is not UNSET:
             field_dict["prompt_injection"] = prompt_injection
+        if tags is not UNSET:
+            field_dict["tags"] = tags
 
         return field_dict
 
@@ -68,8 +89,11 @@ class Policy:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.budget import Budget
         from ..models.data_policy import DataPolicy
+        from ..models.policy_tags import PolicyTags
 
         d = dict(src_dict)
+        allowed_models = cast(list[str], d.pop("allowed_models", UNSET))
+
         _budget = d.pop("budget", UNSET)
         budget: Budget | Unset
         if isinstance(_budget, Unset):
@@ -86,10 +110,19 @@ class Policy:
 
         prompt_injection = d.pop("prompt_injection", UNSET)
 
+        _tags = d.pop("tags", UNSET)
+        tags: PolicyTags | Unset
+        if isinstance(_tags, Unset):
+            tags = UNSET
+        else:
+            tags = PolicyTags.from_dict(_tags)
+
         policy = cls(
+            allowed_models=allowed_models,
             budget=budget,
             data_policy=data_policy,
             prompt_injection=prompt_injection,
+            tags=tags,
         )
 
         policy.additional_properties = d

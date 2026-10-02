@@ -15,39 +15,39 @@ class ProviderHealth:
     """
     Attributes:
         available (bool): False once the error rate crosses the configured threshold.
-        requests (int): Requests seen in the current health window.
-        errors (int):
         error_rate (float):
+        errors (int):
         latency_ms_avg (float):
+        requests (int): Requests seen in the current health window.
     """
 
     available: bool
-    requests: int
-    errors: int
     error_rate: float
+    errors: int
     latency_ms_avg: float
+    requests: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         available = self.available
 
-        requests = self.requests
+        error_rate = self.error_rate
 
         errors = self.errors
 
-        error_rate = self.error_rate
-
         latency_ms_avg = self.latency_ms_avg
+
+        requests = self.requests
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "available": available,
-                "requests": requests,
-                "errors": errors,
                 "error_rate": error_rate,
+                "errors": errors,
                 "latency_ms_avg": latency_ms_avg,
+                "requests": requests,
             }
         )
 
@@ -58,20 +58,20 @@ class ProviderHealth:
         d = dict(src_dict)
         available = d.pop("available")
 
-        requests = d.pop("requests")
+        error_rate = d.pop("error_rate")
 
         errors = d.pop("errors")
 
-        error_rate = d.pop("error_rate")
-
         latency_ms_avg = d.pop("latency_ms_avg")
+
+        requests = d.pop("requests")
 
         provider_health = cls(
             available=available,
-            requests=requests,
-            errors=errors,
             error_rate=error_rate,
+            errors=errors,
             latency_ms_avg=latency_ms_avg,
+            requests=requests,
         )
 
         provider_health.additional_properties = d

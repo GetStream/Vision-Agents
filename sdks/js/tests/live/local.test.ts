@@ -73,14 +73,14 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     const session = await agent.sessions.create({
       title,
       description: "opened by the local live suite",
-      project: "docs",
+      project_id: "docs",
       custom: { suite: "local" },
       llm: model,
     });
     remember(session);
 
     assert.equal(session.created.title, title);
-    assert.equal(session.created.project, "docs");
+    assert.equal(session.created.project_id, "docs");
     assert.deepEqual(session.created.custom, { suite: "local" });
     assert.match(
       session.conversationId,
@@ -179,7 +179,7 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     const parent = remember(
       await agent.sessions.create({
         title: "the first ask",
-        project: "docs",
+        project_id: "docs",
         llm: model,
       }),
     );
@@ -189,7 +189,7 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     assert.notEqual(forked.id, parent.id);
     assert.equal(forked.created.forked_from, parent.id);
     assert.equal(forked.created.title, "asked again");
-    assert.equal(forked.created.project, "docs", "what the fork did not mention it inherits");
+    assert.equal(forked.created.project_id, "docs", "what the fork did not mention it inherits");
     assert.notEqual(
       forked.conversationId,
       parent.conversationId,
@@ -287,7 +287,7 @@ describe("the local router", { skip: await unreachable(url) }, () => {
 
     await session.close();
 
-    const running = await agent.sessions.query({ state: "running", limit: 50 });
+    const running = await agent.sessions.query({ state: "live", limit: 50 });
     assert.ok(
       !running.items.some((each) => each.id === session.id),
       "a closed session is still listed as running",

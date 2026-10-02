@@ -87,10 +87,10 @@ def sync_detailed(
 ) -> Response[Error | Session]:
     """Change the models and voice of one running session
 
-     Swaps what the agent runs on without leaving the call, for this session only: the agent config it
-    started from is untouched. The new models are opened before anything changes, so a target that does
-    not route is refused and the agent carries on as it was. They take over from the next turn; a reply
-    being spoken finishes on the models it started with.
+     Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this
+    session only: the agent config it started from is untouched. The new models are opened before
+    anything changes, so a target that does not route is refused and the agent carries on as it was.
+    They take over from the next turn; a reply being spoken finishes on the models it started with.
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
@@ -129,10 +129,10 @@ def sync(
 ) -> Error | Session | None:
     """Change the models and voice of one running session
 
-     Swaps what the agent runs on without leaving the call, for this session only: the agent config it
-    started from is untouched. The new models are opened before anything changes, so a target that does
-    not route is refused and the agent carries on as it was. They take over from the next turn; a reply
-    being spoken finishes on the models it started with.
+     Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this
+    session only: the agent config it started from is untouched. The new models are opened before
+    anything changes, so a target that does not route is refused and the agent carries on as it was.
+    They take over from the next turn; a reply being spoken finishes on the models it started with.
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
@@ -166,10 +166,10 @@ async def asyncio_detailed(
 ) -> Response[Error | Session]:
     """Change the models and voice of one running session
 
-     Swaps what the agent runs on without leaving the call, for this session only: the agent config it
-    started from is untouched. The new models are opened before anything changes, so a target that does
-    not route is refused and the agent carries on as it was. They take over from the next turn; a reply
-    being spoken finishes on the models it started with.
+     Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this
+    session only: the agent config it started from is untouched. The new models are opened before
+    anything changes, so a target that does not route is refused and the agent carries on as it was.
+    They take over from the next turn; a reply being spoken finishes on the models it started with.
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
@@ -206,10 +206,10 @@ async def asyncio(
 ) -> Error | Session | None:
     """Change the models and voice of one running session
 
-     Swaps what the agent runs on without leaving the call, for this session only: the agent config it
-    started from is untouched. The new models are opened before anything changes, so a target that does
-    not route is refused and the agent carries on as it was. They take over from the next turn; a reply
-    being spoken finishes on the models it started with.
+     Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this
+    session only: the agent config it started from is untouched. The new models are opened before
+    anything changes, so a target that does not route is refused and the agent carries on as it was.
+    They take over from the next turn; a reply being spoken finishes on the models it started with.
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its

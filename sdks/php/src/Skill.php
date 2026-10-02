@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\SessionSkill;
 use GetStream\VisionAgents\Generated\SkillRequest;
 
 /**
@@ -42,18 +41,20 @@ final readonly class Skill
         }
     }
 
-    public function toSession(): SessionSkill
-    {
-        return new SessionSkill($this->name, $this->description, $this->instructions, null, $this->captureVideo, $this->deadlineMs());
-    }
-
     /**
      * The config the skill belongs to is written by the same sync request, so the router fills
      * its id in.
      */
     public function toSync(): SkillRequest
     {
-        return new SkillRequest('', $this->name, $this->description, $this->instructions, $this->captureVideo, $this->deadlineMs());
+        return new SkillRequest(
+            configId: '',
+            description: $this->description,
+            instructions: $this->instructions,
+            name: $this->name,
+            captureVideo: $this->captureVideo,
+            deadlineMs: $this->deadlineMs(),
+        );
     }
 
     private function deadlineMs(): ?int

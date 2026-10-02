@@ -46,17 +46,6 @@ impl Skill {
         }
     }
 
-    pub(crate) fn session(&self) -> types::SessionSkill {
-        types::SessionSkill {
-            name: self.name.clone(),
-            description: self.description.clone(),
-            instructions: self.instructions.clone(),
-            capture_video: Some(self.capture_video),
-            deadline_ms: self.deadline_ms(),
-            revision: None,
-        }
-    }
-
     pub(crate) fn request(&self) -> types::SkillRequest {
         types::SkillRequest {
             name: self.name.clone(),
@@ -75,30 +64,26 @@ impl Skill {
 
 /// What stands between what a caller said and the model that answers them.
 ///
-/// The loop runs in the backend, so this is configuration rather than behaviour: it is
-/// serialized into the session and the decisions are taken there.
+/// The loop runs in the backend and is part of the agent's stored config, never of a
+/// session: [`crate::Agent::sync`] writes it, and every session created from the config
+/// runs it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Harness {
-    /// Offer the backend's built-in skills. Naming skills of your own replaces them.
-    pub use_skills: bool,
+    /// Which harness the backend runs. `None` is `default`, the only one there is.
+    pub name: Option<types::Harness>,
     /// Model targets for the work handed over. The one under `default`, or the only one, runs
     /// the skills.
     pub subagents: BTreeMap<String, String>,
     /// Where delegated code runs.
     pub vm: Option<Sandbox>,
-    /// Skills of your own, replacing the built-in set.
+    /// Skills of your own, stored and named by the config in place of the built-in set.
     pub skills: Vec<Skill>,
-    /// How much delegated work may run at once. Zero leaves the backend's default.
-    pub tasks: i64,
 }
 
 impl Harness {
     /// The harness most agents want: the built-in skills and nothing else changed.
     pub fn standard() -> Self {
-        Harness {
-            use_skills: true,
-            ..Harness::default()
-        }
+        Harness::default()
     }
 
     /// The model that runs delegated work, or empty when nothing is delegated.
@@ -112,19 +97,8 @@ impl Harness {
         }
     }
 
-    /// Whether the built-in set is turned off, by naming skills of its own or asking for none.
-    ///
-    /// An absent list and an empty one mean different things: one leaves the defaults
-    /// alone, the other turns delegation off.
-    pub fn replaces_skills(&self) -> bool {
-        !self.skills.is_empty() || !self.use_skills
-    }
-
     /// Refuses a harness that would mean something different on every run.
     pub fn validate(&self) -> Result<()> {
-        if self.tasks < 0 {
-            return Err(Error::configuration("tasks cannot be negative"));
-        }
         if self.subagents.len() > 1 && !self.subagents.contains_key("default") {
             return Err(Error::configuration(
                 "several subagents and no \"default\", so which one runs skills is undecided",

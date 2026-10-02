@@ -20,26 +20,26 @@ T = TypeVar("T", bound="IngestKnowledgeRequest")
 class IngestKnowledgeRequest:
     """
     Attributes:
+        documents (list[KnowledgeDocument]):
         namespace (str): The knowledge base to write into, which is what a config's knowledge_namespace names. Knowledge
             is never shared, so there is no default.
              Example: docs.
-        documents (list[KnowledgeDocument]):
         chunk_size (int | Unset): Characters per passage. Zero is the default, which is small enough that several
             passages fit in front of a model and large enough that one still answers the question on its own.
     """
 
-    namespace: str
     documents: list[KnowledgeDocument]
+    namespace: str
     chunk_size: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        namespace = self.namespace
-
         documents = []
         for documents_item_data in self.documents:
             documents_item = documents_item_data.to_dict()
             documents.append(documents_item)
+
+        namespace = self.namespace
 
         chunk_size = self.chunk_size
 
@@ -47,8 +47,8 @@ class IngestKnowledgeRequest:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "namespace": namespace,
                 "documents": documents,
+                "namespace": namespace,
             }
         )
         if chunk_size is not UNSET:
@@ -61,8 +61,6 @@ class IngestKnowledgeRequest:
         from ..models.knowledge_document import KnowledgeDocument
 
         d = dict(src_dict)
-        namespace = d.pop("namespace")
-
         documents = []
         _documents = d.pop("documents")
         for documents_item_data in _documents:
@@ -70,11 +68,13 @@ class IngestKnowledgeRequest:
 
             documents.append(documents_item)
 
+        namespace = d.pop("namespace")
+
         chunk_size = d.pop("chunk_size", UNSET)
 
         ingest_knowledge_request = cls(
-            namespace=namespace,
             documents=documents,
+            namespace=namespace,
             chunk_size=chunk_size,
         )
 

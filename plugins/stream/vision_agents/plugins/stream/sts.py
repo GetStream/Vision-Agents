@@ -67,6 +67,7 @@ class STS(realtime.Realtime):
         config_id: str = "",
         options: Optional[dict[str, Any]] = None,
         fps: int = 1,
+        backend: Optional[Backend] = None,
     ):
         """Route a conversation to `target`.
 
@@ -83,6 +84,8 @@ class STS(realtime.Realtime):
             options: Per-call overrides of that config's sts block. Usually built by
                 `Router.sts.realtime`.
             fps: Kept for the `Realtime` contract; the router takes no video yet.
+            backend: A backend to use as it is, instead of building one from `url` and
+                `customer_id`.
         """
         super().__init__(fps=fps)
         self.model = target
@@ -91,7 +94,7 @@ class STS(realtime.Realtime):
         self.tags = tags or {}
         self.config_id = config_id
         self.options = options or {}
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = backend or Backend(url=url, customer_id=customer_id)
 
         self._socket: Optional[Socket] = None
         self._reader: Optional[asyncio.Task[None]] = None

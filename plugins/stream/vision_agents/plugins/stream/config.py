@@ -22,8 +22,12 @@ from ._generated.models import (
     AgentMode,
     DispatchSetting,
     Error,
+    Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
+    SimulationDeclaration,
+    SimulationDeclarationMode,
+    SimulationDeclarationTags,
     SkillRequest,
     SessionVideo,
     SyncAgentRequest,
@@ -35,6 +39,7 @@ from .folder import (
     AGENT_STAMP,
     Folder,
     Settings,
+    Simulation,
     find,
     load,
     read_stamp,
@@ -111,8 +116,12 @@ async def sync_agent(
                 declared.title = page.title
             if page.description:
                 declared.description = page.description
+            if page.refresh_hours:
+                declared.refresh_hours = page.refresh_hours
             pages.append(declared)
         body.knowledge_urls = pages
+    if folder.simulations is not None:
+        body.simulations = [_simulation(item) for item in folder.simulations]
     _declare_settings(body, folder.settings)
 
     result = _answer(await sync_agent_request.asyncio(client=client, body=body))
@@ -315,8 +324,12 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.sts = settings.sts
     if settings.voice:
         body.voice = settings.voice
+    if settings.speed:
+        body.speed = settings.speed
     if settings.llm:
         body.llm = settings.llm
+    if settings.harness:
+        body.harness = Harness(settings.harness)
     if settings.subagent:
         body.subagent = settings.subagent
     if settings.video_max_frames:
@@ -345,6 +358,35 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         tags = SyncAgentRequestTags()
         tags.additional_properties = dict(settings.tags)
         body.tags = tags
+
+
+def _simulation(simulation: Simulation) -> SimulationDeclaration:
+    """A declared simulation as the sync request carries it, with the unset ones left out."""
+    declared = SimulationDeclaration(
+        name=simulation.name,
+        scenario=simulation.scenario,
+        assertion=simulation.assertion,
+    )
+    if simulation.mode:
+        declared.mode = SimulationDeclarationMode(simulation.mode)
+    if simulation.variations > 0:
+        declared.variations = simulation.variations
+    if simulation.max_turns > 0:
+        declared.max_turns = simulation.max_turns
+    for name in (
+        "caller_target",
+        "judge_target",
+        "caller_stt",
+        "caller_tts",
+        "caller_voice",
+    ):
+        if getattr(simulation, name):
+            setattr(declared, name, getattr(simulation, name))
+    if simulation.tags:
+        tags = SimulationDeclarationTags()
+        tags.additional_properties = dict(simulation.tags)
+        declared.tags = tags
+    return declared
 
 
 def _answer(answer: Union[T, Error, None]) -> T:

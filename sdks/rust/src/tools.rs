@@ -13,8 +13,7 @@ use crate::types;
 type Run = Arc<dyn Fn(Value) -> BoxFuture<'static, Result<Value, String>> + Send + Sync>;
 
 struct Tool {
-    description: String,
-    parameters: Map<String, Value>,
+    declaration: types::SessionTool,
     run: Run,
 }
 
@@ -52,6 +51,28 @@ impl Tools {
         O: Serialize,
         E: Display,
     {
+        let declaration = types::SessionTool {
+            name: name.to_string(),
+            description: description.to_string(),
+            parameters: match parameters {
+                Value::Object(schema) => schema,
+                _ => Map::new(),
+            },
+            ..Default::default()
+        };
+        self.register_tool(declaration, run)
+    }
+
+    /// [`Tools::register`], declared whole: for a `display_title` shown on the reply, or an
+    /// `executor` of `client` for a tool a person's device runs, whose call is still answered
+    /// here once the device has reported.
+    pub fn register_tool<F, Fut, O, E>(&self, declaration: types::SessionTool, run: F) -> &Self
+    where
+        F: Fn(Value) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<O, E>> + Send + 'static,
+        O: Serialize,
+        E: Display,
+    {
         let run: Run = Arc::new(move |arguments| {
             run(arguments)
                 .map(|answered| match answered {
@@ -60,18 +81,11 @@ impl Tools {
                 })
                 .boxed()
         });
-        let tool = Tool {
-            description: description.to_string(),
-            parameters: match parameters {
-                Value::Object(schema) => schema,
-                _ => Map::new(),
-            },
-            run,
-        };
+        let name = declaration.name.clone();
         self.registered
             .lock()
             .expect("tools")
-            .insert(name.to_string(), tool);
+            .insert(name, Tool { declaration, run });
         self
     }
 
@@ -80,12 +94,8 @@ impl Tools {
         self.registered
             .lock()
             .expect("tools")
-            .iter()
-            .map(|(name, tool)| types::SessionTool {
-                name: name.clone(),
-                description: tool.description.clone(),
-                parameters: tool.parameters.clone(),
-            })
+            .values()
+            .map(|tool| tool.declaration.clone())
             .collect()
     }
 

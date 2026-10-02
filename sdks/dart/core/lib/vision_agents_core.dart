@@ -14,7 +14,7 @@ export 'src/guests.dart' show GuestStore, MemoryGuestStore, guestStorageKey;
 export 'src/live_value.dart';
 export 'src/models.dart';
 export 'src/router.dart';
-export 'src/sessions.dart';
+export 'src/sessions.dart' show Responses, Sessions;
 export 'src/socket.dart';
 export 'src/tools.dart';
 export 'src/vision_agents.dart';

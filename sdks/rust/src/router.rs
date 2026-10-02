@@ -23,7 +23,9 @@ pub const SAMPLE_RATE: u32 = 16_000;
 /// How often a recording job is asked about.
 const POLL: Duration = Duration::from_secs(1);
 
-/// The router, as somewhere to send one modality at a time.
+/// The router, as somewhere to send one modality at a time. Had from [`Client::router`],
+/// which names the stored router config it takes its target and options from; what is
+/// passed per call as well overrides that one field of it.
 #[derive(Debug, Clone)]
 pub struct Router {
     client: Client,
@@ -32,19 +34,12 @@ pub struct Router {
 }
 
 impl Router {
-    pub fn new(client: Client) -> Self {
+    pub(crate) fn new(client: Client, config: &str) -> Self {
         Router {
             client,
-            config: None,
+            config: (!config.is_empty()).then(|| config.into()),
             tags: BTreeMap::new(),
         }
-    }
-
-    /// A stored router config to take options from, by id or name. What is passed per call
-    /// as well overrides that one field of it.
-    pub fn config(mut self, config: impl Into<String>) -> Self {
-        self.config = Some(config.into());
-        self
     }
 
     /// Cost labels for everything routed through this.

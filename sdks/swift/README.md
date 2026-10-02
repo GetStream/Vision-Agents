@@ -31,7 +31,7 @@ let turn = try await session.responses.create("What are your opening hours?")
 
 // Or watch it arrive: session.turns grows as the reply streams in.
 await session.start()
-try await session.send("And on Sundays?")
+_ = try await session.responses.create("And on Sundays?")
 
 // Out loud. The agent joins a call and so does this device.
 let voice = try await VoiceSession.start(agents: agents, agent: "myagent")
@@ -65,7 +65,9 @@ what only the device knows, and the agent only ever sees the answer.
 let lookup = AgentTool(
     name: "lookup_order",
     description: "Look up one of the caller's orders by its order number.",
-    parameters: .strings(["order_id": "the order number"], required: ["order_id"])
+    parameters: .strings(["order_id": "the order number"], required: ["order_id"]),
+    executor: .client,
+    displayTitle: "Looking up your order"
 ) { arguments in
     await Orders.local.find(arguments["order_id"]?.stringValue ?? "")
 }
@@ -76,13 +78,35 @@ let session = try await agents.sessions.create(options)
 await session.start()   // the socket is what carries tool calls to this device
 ```
 
-### Looking something up
+`executor: .client` shows the people in a persistent conversation that a device is running it,
+and `displayTitle` is what the reply's tool attachment says it is doing.
 
-`Router.search` is the one routed modality a device may reach, because a question and its
-answer are one round trip and the answer is for whoever asked:
+### Finding old conversations
+
+Lists page by cursor: pass a page's `nextCursor` back as `cursor` for the next one.
 
 ```swift
-let router = Router(backend: agents.backend, config: "healthcare")
+var query = SessionQuery(limit: 50)
+query.state = .live
+let page = try await agents.agent("myagent").sessions.query(query)
+let found = try await agents.agent("myagent").sessions.search("pricing")
+// page.hasMore, page.nextCursor
+
+try await session.update(title: "Pricing questions")      // nil leaves a field as it is
+_ = try await agents.agent("myagent").sessions.update(page.items[0].id, title: "Old pricing")
+
+try await agents.close(sessionID: page.items[0].id)         // stops it, keeps the transcript
+try await agents.agent("myagent").sessions.delete(page.items[0].id)   // and this deletes it
+```
+
+### Looking something up
+
+`search` is the one routed modality a device may reach, because a question and its answer are
+one round trip and the answer is for whoever asked. The router comes from the client, and which
+model answers is the router config's to say, not the call's:
+
+```swift
+let router = agents.router(config: "healthcare")   // routers/healthcare/router.yaml holds the target
 let found = try await router.search("perioperative antibiotic guidance")
 ```
 
@@ -93,7 +117,7 @@ let found = try await router.search("perioperative antibiotic guidance")
 the `id` of a `Response`, not the `turnID` a socket event carries:
 
 ```swift
-let turns = try await agents.responses(sessionID: session.id)
+let turns = try await agents.responses(sessionID: session.id).items
 try await agents.rewind(sessionID: session.id, to: turns[0].id)
 let branch = try await agents.fork(sessionID: session.id, ForkOptions(responseID: turns[0].id))
 ```
@@ -107,7 +131,7 @@ already showed, so reload it from `responses` after a rewind.
 
 The router is server-side only by default: a handful of operations are marked
 `x-client-accessible` in the spec and everything else answers a device 403. This SDK uses
-eleven of them, and `generate.py` fails if the filter names anything the spec does not open —
+twelve of them, and `generate.py` fails if the filter names anything the spec does not open —
 which is what stops it growing a method that only ever fails.
 
 What that leaves out, and where it went instead:
@@ -127,8 +151,8 @@ Every request and socket handshake sends `Stream-Auth-Type: jwt`, which is what 
 caller a device. It is sent even against a local router with no proxy in front, where the
 router would otherwise assume a caller is a backend.
 
-**Somebody else's conversation.** A session belongs to whoever opened it, so `sessions()` only
-ever lists this caller's own and `attach(sessionID:)` does not find one opened elsewhere. On a
+**Somebody else's conversation.** A session belongs to whoever opened it, so `sessions.query()`
+only ever lists this caller's own and `attach(sessionID:)` does not find one opened elsewhere. On a
 deployment verifying tokens, that boundary is the `user_id` the token names; a caller with no
 token is anonymous, and an anonymous claim to a signed-in user's name reaches nothing.
 

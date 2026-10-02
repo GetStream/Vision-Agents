@@ -11,23 +11,23 @@ use GetStream\VisionAgents\Json;
 final readonly class Speech
 {
     public function __construct(
+        public \DateTimeImmutable $createdAt,
         public string $id,
         public RecordingStatus|string $status,
-        public \DateTimeImmutable $createdAt,
         public \DateTimeImmutable $updatedAt,
-        public ?string $provider = null,
-        public ?string $model = null,
-        // What the audio is encoded as, which is what was asked for.
-        public ?string $format = null,
-        // Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead.
-        public ?string $url = null,
         // The audio itself, base64, when it was not stored behind a URL.
         public ?string $audio = null,
         public ?int $audioDurationMs = null,
         // How much text was spoken, which is what it was billed on.
         public ?int $characters = null,
-        public ?string $error = null,
         public ?\DateTimeImmutable $completedAt = null,
+        public ?string $error = null,
+        // What the audio is encoded as, which is what was asked for.
+        public ?string $format = null,
+        public ?string $model = null,
+        public ?string $provider = null,
+        // Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead.
+        public ?string $url = null,
     ) {
     }
 
@@ -37,19 +37,19 @@ final readonly class Speech
     public static function fromArray(array $data): self
     {
         return new self(
+            createdAt: Json::date($data, 'created_at'),
             id: Json::string($data, 'id'),
             status: Json::enum($data, 'status', RecordingStatus::class),
-            createdAt: Json::date($data, 'created_at'),
             updatedAt: Json::date($data, 'updated_at'),
-            provider: array_key_exists('provider', $data) && $data['provider'] !== null ? Json::string($data, 'provider') : null,
-            model: array_key_exists('model', $data) && $data['model'] !== null ? Json::string($data, 'model') : null,
-            format: array_key_exists('format', $data) && $data['format'] !== null ? Json::string($data, 'format') : null,
-            url: array_key_exists('url', $data) && $data['url'] !== null ? Json::string($data, 'url') : null,
             audio: array_key_exists('audio', $data) && $data['audio'] !== null ? Json::string($data, 'audio') : null,
             audioDurationMs: array_key_exists('audio_duration_ms', $data) && $data['audio_duration_ms'] !== null ? Json::int($data, 'audio_duration_ms') : null,
             characters: array_key_exists('characters', $data) && $data['characters'] !== null ? Json::int($data, 'characters') : null,
-            error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
             completedAt: array_key_exists('completed_at', $data) && $data['completed_at'] !== null ? Json::date($data, 'completed_at') : null,
+            error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
+            format: array_key_exists('format', $data) && $data['format'] !== null ? Json::string($data, 'format') : null,
+            model: array_key_exists('model', $data) && $data['model'] !== null ? Json::string($data, 'model') : null,
+            provider: array_key_exists('provider', $data) && $data['provider'] !== null ? Json::string($data, 'provider') : null,
+            url: array_key_exists('url', $data) && $data['url'] !== null ? Json::string($data, 'url') : null,
         );
     }
 
@@ -61,22 +61,10 @@ final readonly class Speech
     public function toArray(): array
     {
         $out = [];
+        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['id'] = $this->id;
         $out['status'] = Json::enumValue($this->status);
-        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['updated_at'] = Json::dateValue($this->updatedAt);
-        if ($this->provider !== null) {
-            $out['provider'] = $this->provider;
-        }
-        if ($this->model !== null) {
-            $out['model'] = $this->model;
-        }
-        if ($this->format !== null) {
-            $out['format'] = $this->format;
-        }
-        if ($this->url !== null) {
-            $out['url'] = $this->url;
-        }
         if ($this->audio !== null) {
             $out['audio'] = $this->audio;
         }
@@ -86,11 +74,23 @@ final readonly class Speech
         if ($this->characters !== null) {
             $out['characters'] = $this->characters;
         }
+        if ($this->completedAt !== null) {
+            $out['completed_at'] = Json::dateValue($this->completedAt);
+        }
         if ($this->error !== null) {
             $out['error'] = $this->error;
         }
-        if ($this->completedAt !== null) {
-            $out['completed_at'] = Json::dateValue($this->completedAt);
+        if ($this->format !== null) {
+            $out['format'] = $this->format;
+        }
+        if ($this->model !== null) {
+            $out['model'] = $this->model;
+        }
+        if ($this->provider !== null) {
+            $out['provider'] = $this->provider;
+        }
+        if ($this->url !== null) {
+            $out['url'] = $this->url;
         }
         return $out;
     }

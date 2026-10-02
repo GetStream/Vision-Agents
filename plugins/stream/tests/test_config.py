@@ -22,6 +22,7 @@ DIRECTORY_CONTENTS = {
     "skills",
     "knowledge",
     "knowledge_urls",
+    "simulations",
 }
 
 
@@ -37,6 +38,9 @@ class Router:
         self.skills: dict[str, dict[str, Any]] = {}
         self.knowledge: list[dict[str, Any]] = []
         self.pages: list[dict[str, Any]] = []
+        # What the last sync declared as the config's simulations, None when it said
+        # nothing about them.
+        self.simulations: list[dict[str, Any]] | None = None
         self.syncs = 0
         self.url = ""
         self._next = 0
@@ -92,6 +96,7 @@ class Router:
     async def _sync(self, request: web.Request) -> web.Response:
         body = await request.json()
         self.syncs += 1
+        self.simulations = body.get("simulations")
         existing_id = ""
         for stored in self.configs.values():
             if stored["name"] != body["name"]:
@@ -317,6 +322,13 @@ class TestKnowledge:
             {"namespace": "docs", "url": "https://example.com/handbook"}
         ]
 
+    async def test_a_page_may_be_read_again_on_a_schedule(
+        self, router: Router, knowledge: stream.Knowledge
+    ):
+        await knowledge.add_url("https://example.com/handbook", refresh_hours=24)
+
+        assert router.pages[0]["refresh_hours"] == 24
+
     async def test_an_agent_configured_by_hand_has_no_knowledge_base(
         self, router: Router
     ):
@@ -383,7 +395,7 @@ class TestSyncAgent:
     ):
         (support_dir / "knowledge" / "urls.yaml").write_text(
             "- https://example.com/pricing\n"
-            "- url: https://example.com/plans\n  title: Plans\n"
+            "- url: https://example.com/plans\n  title: Plans\n  refresh_hours: 24\n"
         )
 
         await stream.sync_agent(
@@ -396,11 +408,63 @@ class TestSyncAgent:
                 "namespace": "support",
                 "url": "https://example.com/plans",
                 "title": "Plans",
+                "refresh_hours": 24,
             },
         ]
         assert [document["source"] for document in router.knowledge[0]] == [
             "policy.md"
         ], "the declaration of pages is not itself looked things up in"
+
+    @pytest.fixture
+    def simulations_dir(self, support_dir):
+        simulations = support_dir / "simulations"
+        simulations.mkdir()
+        return simulations
+
+    async def test_a_directorys_simulations_are_synced_with_it(
+        self, router: Router, support_dir, simulations_dir
+    ):
+        (simulations_dir / "refunds.yaml").write_text(
+            "- name: late refund\n"
+            "  scenario: Ask for a refund 40 days late.\n"
+            "  assertion: No refund is promised.\n"
+            "  mode: text\n"
+            "  variations: 5\n"
+            "  tags:\n    team: support\n"
+        )
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.simulations == [
+            {
+                "name": "late refund",
+                "scenario": "Ask for a refund 40 days late.",
+                "assertion": "No refund is promised.",
+                "mode": "text",
+                "variations": 5,
+                "tags": {"team": "support"},
+            }
+        ]
+
+    async def test_simulations_are_left_alone_without_a_directory(
+        self, router: Router, support_dir
+    ):
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.simulations is None
+
+    async def test_an_empty_simulations_directory_clears_them(
+        self, router: Router, support_dir, simulations_dir
+    ):
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.simulations == []
 
     async def test_syncing_the_same_directory_twice_does_nothing(
         self, router: Router, support_dir
@@ -458,6 +522,8 @@ class TestSyncAgent:
             "stt: stt-fast\n"
             "tts: tts-fast\n"
             "voice: nova\n"
+            "speed: 1.1\n"
+            "harness: default\n"
             "search: search-fast\n"
             "greeting: Hello.\n"
             "sandbox: daytona\n"
@@ -477,6 +543,8 @@ class TestSyncAgent:
         assert stored["stt"] == "stt-fast"
         assert stored["tts"] == "tts-fast"
         assert stored["voice"] == "nova"
+        assert stored["speed"] == 1.1
+        assert stored["harness"] == "default"
         assert stored["search"] == "search-fast"
         assert stored["greeting"] == "Hello."
         assert stored["sandbox"] == "daytona"

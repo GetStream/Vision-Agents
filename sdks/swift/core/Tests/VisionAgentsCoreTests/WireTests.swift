@@ -67,7 +67,6 @@ import Testing
     /// The router reads one flat struct, so a command has to put its fields at the top level
     /// under the names in `readCommands`.
     @Test(arguments: [
-        (Command.respond("hi"), #"{"text":"hi","type":"respond"}"#),
         (Command.say("welcome"), #"{"text":"welcome","type":"say"}"#),
         (Command.interrupt, #"{"type":"interrupt"}"#),
         (Command.instructions("be brief"), #"{"instructions":"be brief","type":"instructions"}"#),
@@ -152,7 +151,7 @@ import Testing
         backend.setUser(User(id: "jlahey")) { "t\(await minted.next())" }
         let router = ExpiringRouter()
 
-        let output = try await backend.client(transport: router).listSessions(.init())
+        let output = try await backend.client(transport: router).querySessions(body: .json(.init()))
 
         #expect(throws: Never.self) { try output.ok.body.json }
         let sent = await router.requests
@@ -201,14 +200,26 @@ import Testing
     @Test func aRecordedTurnKeepsWhatWasAskedAndHowItEnded() {
         let response = Response(
             .init(
-                id: "r1", sessionId: "s1", said: "What are your hours?", status: .cancelled,
-                createdAt: Date(timeIntervalSince1970: 0)))
+                createdAt: Date(timeIntervalSince1970: 0), id: "r1", said: "What are your hours?",
+                sessionId: "s1", status: .cancelled))
 
         #expect(response.id == "r1")
         #expect(response.said == "What are your hours?")
         #expect(response.status == .cancelled)
         #expect(response.error == "")
         #expect(response.finishedAt == nil)
+    }
+
+    @Test func aSessionSaysHowTheUserTookPartAndWhereItIsKept() {
+        let session = Session(
+            .init(
+                agentId: "a1", callId: "", callType: "default", conversationId: "messaging:a1",
+                createdAt: Date(timeIntervalSince1970: 0), id: "s1", modality: .text,
+                projectId: "health", state: .live, userId: "jlahey"))
+
+        #expect(session.modality == .text)
+        #expect(session.conversationID == "messaging:a1")
+        #expect(session.projectID == "health")
     }
 
     @Test func a403IsRecognisedAsAServerSideOnlyPath() {
@@ -243,6 +254,6 @@ private actor ExpiringRouter: ClientTransport {
         if requests.count == 1 {
             return (HTTPResponse(status: .unauthorized, headerFields: headers), HTTPBody(#"{"error":"token expired"}"#))
         }
-        return (HTTPResponse(status: .ok, headerFields: headers), HTTPBody("[]"))
+        return (HTTPResponse(status: .ok, headerFields: headers), HTTPBody(#"{"items":[],"has_more":false}"#))
     }
 }

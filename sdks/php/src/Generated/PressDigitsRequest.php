@@ -11,10 +11,10 @@ use GetStream\VisionAgents\Json;
 final readonly class PressDigitsRequest
 {
     public function __construct(
-        // Who is carrying the call, e.g. "telnyx".
-        public string $vendor,
         // What to press. Only 0-9, * and # can be pressed, and w waits half a second between two of them.
         public string $digits,
+        // Who is carrying the call, e.g. "telnyx".
+        public string $vendor,
     ) {
     }
 
@@ -24,8 +24,8 @@ final readonly class PressDigitsRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            vendor: Json::string($data, 'vendor'),
             digits: Json::string($data, 'digits'),
+            vendor: Json::string($data, 'vendor'),
         );
     }
 
@@ -37,8 +37,8 @@ final readonly class PressDigitsRequest
     public function toArray(): array
     {
         $out = [];
-        $out['vendor'] = $this->vendor;
         $out['digits'] = $this->digits;
+        $out['vendor'] = $this->vendor;
         return $out;
     }
 }

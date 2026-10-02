@@ -12,50 +12,10 @@ import struct Foundation.Date
 extension Components {
     /// Types generated from the `#/components/parameters` section of the OpenAPI document.
     internal enum Parameters {
-        /// The session, as returned when it was created.
+        /// The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
         ///
-        /// - Remark: Generated from `#/components/parameters/SessionID`.
-        internal typealias SessionID = Swift.String
-        /// What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error.
-        ///
-        ///
-        /// - Remark: Generated from `#/components/parameters/SessionSearchText`.
-        internal typealias SessionSearchText = Swift.String
-        /// The agent name the session was opened against.
-        ///
-        /// - Remark: Generated from `#/components/parameters/SessionAgent`.
-        internal typealias SessionAgent = Swift.String
-        /// - Remark: Generated from `#/components/parameters/SessionConfigID`.
-        internal typealias SessionConfigID = Swift.String
-        /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
-        ///
-        ///
-        /// - Remark: Generated from `#/components/parameters/SessionUserID`.
-        internal typealias SessionUserID = Swift.String
-        /// - Remark: Generated from `#/components/parameters/SessionProject`.
-        internal typealias SessionProject = Swift.String
-        /// Omitted is both.
-        ///
-        /// - Remark: Generated from `#/components/parameters/SessionStateFilter`.
-        internal enum SessionStateFilter: String, Codable, Hashable, Sendable, CaseIterable {
-            case running = "running"
-            case closed = "closed"
-        }
-        /// Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-        ///
-        ///
-        /// - Remark: Generated from `#/components/parameters/SessionCustom`.
-        internal typealias SessionCustom = Swift.String
-        /// - Remark: Generated from `#/components/parameters/SessionCreatedAfter`.
-        internal typealias SessionCreatedAfter = Foundation.Date
-        /// - Remark: Generated from `#/components/parameters/SessionCreatedBefore`.
-        internal typealias SessionCreatedBefore = Foundation.Date
-        /// Up to 200. Omitted is 25.
-        ///
-        /// - Remark: Generated from `#/components/parameters/SessionLimit`.
-        internal typealias SessionLimit = Swift.Int
-        /// - Remark: Generated from `#/components/parameters/SessionOffset`.
-        internal typealias SessionOffset = Swift.Int
+        /// - Remark: Generated from `#/components/parameters/Cursor`.
+        internal typealias Cursor = Swift.String
         /// Up to 1000. Omitted is 200.
         ///
         /// - Remark: Generated from `#/components/parameters/ItemLimit`.
@@ -64,5 +24,13 @@ extension Components {
         ///
         /// - Remark: Generated from `#/components/parameters/ResponseIDFilter`.
         internal typealias ResponseIDFilter = Swift.String
+        /// The session, as returned when it was created.
+        ///
+        /// - Remark: Generated from `#/components/parameters/SessionID`.
+        internal typealias SessionID = Swift.String
+        /// Up to 200. Omitted is 25.
+        ///
+        /// - Remark: Generated from `#/components/parameters/SessionLimit`.
+        internal typealias SessionLimit = Swift.Int
     }
 }

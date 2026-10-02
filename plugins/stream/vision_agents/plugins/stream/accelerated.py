@@ -6,7 +6,6 @@ from typing import Any, AsyncIterator, Optional
 import aiortc
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.harness import Harness
 from vision_agents.core.llm.llm import (
     LLMResponseDelta,
     LLMResponseFinal,
@@ -23,16 +22,14 @@ from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from ._backend import Backend
 from ._latency import render_turn
-from ._generated.api.default import close_session, create_session, list_agent_configs
+from ._generated.api.default import create_session, list_agent_configs, stop_session
 from ._generated.models import (
     CreateSessionRequest,
     CreateSessionRequestTags,
     Error,
-    Sandbox,
     Session,
     SessionMemory,
     SessionMemoryFilter,
-    SessionSkill,
     SessionTool,
     SessionToolParameters,
     SessionVideo,
@@ -72,7 +69,6 @@ class Accelerated(OmniLLM):
         model: str = "",
         stt: str = "",
         tts: str = "",
-        subagent: str = "",
         voice: str = "",
         config: str = "",
         language: Optional[str] = None,
@@ -96,8 +92,6 @@ class Accelerated(OmniLLM):
             model: The model that answers.
             stt: The model that transcribes.
             tts: The model that speaks.
-            subagent: The model that does the thinking a harness delegates. Overridden by
-                the agent's harness when it names one.
             voice: A provider-specific voice id.
             config: The name of a stored agent config to start from, as passed to
                 `define_agent`. Everything else here overrides what it says. The name is
@@ -124,7 +118,6 @@ class Accelerated(OmniLLM):
         self.model = model
         self.stt = stt
         self.tts = tts
-        self.subagent = subagent
         self.voice = voice
         self.config = config
         self.language = language
@@ -255,7 +248,7 @@ class Accelerated(OmniLLM):
         if self._socket is not None and self._socket.open:
             await self._socket.send({"type": "close"})
         else:
-            await close_session.asyncio_detailed(
+            await stop_session.asyncio_detailed(
                 session.id, client=self.backend.client()
             )
         await self._stop_watching()
@@ -355,8 +348,6 @@ class Accelerated(OmniLLM):
 
         if call.memory_filter:
             request.memory = self._memory(call.memory_filter)
-
-        self._apply_harness(request, call.harness)
         return request
 
     def _tools(self) -> list[SessionTool]:
@@ -387,33 +378,6 @@ class Accelerated(OmniLLM):
             extra.additional_properties = narrowing
             memory.filter_ = extra
         return memory
-
-    def _apply_harness(
-        self, request: CreateSessionRequest, harness: Optional[Harness]
-    ) -> None:
-        """Fold the agent's harness into the session it is configuring."""
-        if harness is None:
-            if self.subagent:
-                request.subagent = self.subagent
-            return
-
-        spec = harness.spec()
-        request.subagent = spec.get("subagent", self.subagent)
-        if spec["tasks"]:
-            request.tasks = spec["tasks"]
-        if "sandbox" in spec:
-            request.sandbox = Sandbox(spec["sandbox"])
-        if "skills" in spec:
-            request.skills = [
-                SessionSkill(
-                    name=skill["name"],
-                    capture_video=skill["capture_video"],
-                    description=skill["description"],
-                    instructions=skill["instructions"],
-                    deadline_ms=skill["deadline_ms"],
-                )
-                for skill in spec["skills"]
-            ]
 
     async def _command(self, frame: dict[str, Any]) -> None:
         """Act on the session over the socket it is being watched on."""
