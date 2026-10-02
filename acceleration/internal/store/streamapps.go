@@ -412,3 +412,51 @@ func constraint(err error) string {
 	}
 	return ""
 }
+
+// StreamFallbackUse is how often app mode wrote a customer with no app of its own into
+// the deployment's app, and over what time.
+type StreamFallbackUse struct {
+	bun.BaseModel `bun:"table:stream_fallback_uses,alias:sfu"`
+
+	CustomerID string    `bun:"customer_id,pk"`
+	FirstAt    time.Time `bun:"first_at,notnull"`
+	LastAt     time.Time `bun:"last_at,notnull"`
+	Uses       int64     `bun:"uses,notnull"`
+}
+
+// RecordStreamFallbackUses adds uses of the fallback by a customer, the last at the time
+// given.
+func (s *Store) RecordStreamFallbackUses(ctx context.Context, customer string, uses int64, at time.Time) error {
+	at = at.UTC()
+	use := StreamFallbackUse{CustomerID: customer, FirstAt: at, LastAt: at, Uses: uses}
+	_, err := s.db.NewInsert().Model(&use).
+		On("CONFLICT (customer_id) DO UPDATE").
+		Set("last_at = GREATEST(sfu.last_at, EXCLUDED.last_at)").
+		Set("uses = sfu.uses + EXCLUDED.uses").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: record stream fallback use: %w", err)
+	}
+	return nil
+}
+
+// StreamFallbackUses are the customers that used the fallback since the time given, the
+// most recent first.
+func (s *Store) StreamFallbackUses(ctx context.Context, since time.Time) ([]StreamFallbackUse, error) {
+	var uses []StreamFallbackUse
+	err := s.db.NewSelect().Model(&uses).Where("last_at >= ?", since.UTC()).Order("last_at DESC").Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: read stream fallback uses: %w", err)
+	}
+	return uses, nil
+}
+
+// ConnectedStreamApps are every app the router acts in with its own keys.
+func (s *Store) ConnectedStreamApps(ctx context.Context) ([]StreamApp, error) {
+	var apps []StreamApp
+	err := s.db.NewSelect().Model(&apps).Where("state = ?", StreamAppConnected).Order("customer_id").Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: list stream apps: %w", err)
+	}
+	return apps, nil
+}
