@@ -795,14 +795,22 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Auth:              authenticator,
 		Logger:            logger,
 	}
-	if options.HookSecret == "" {
-		logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+
-			"the call events Stream sends cannot be told apart from anyone who found the url",
-			"hook", "POST /v1/phone/hooks/stream")
-	}
-	if settings.Stream.APIKey == "" {
-		logger.Warn("no stream.api_key set, so nobody can join a call from a browser",
-			"endpoint", "POST /v1/agents/calls/{id}/token")
+	switch {
+	case streamClients.PerApp() && settings.Stream.APIKey == "":
+		// Each registered app signs its own hooks and mints its own tokens, so only work in
+		// the deployment's own app goes without.
+		logger.Info("no stream.api_key or stream.api_secret set, so only registered apps act in Stream: "+
+			"nothing is written into a deployment app, and the old hook paths accept nothing")
+	case options.HookSecret == "" || settings.Stream.APIKey == "":
+		if options.HookSecret == "" {
+			logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+
+				"the call events Stream sends cannot be told apart from anyone who found the url",
+				"hook", "POST /v1/phone/hooks/stream")
+		}
+		if settings.Stream.APIKey == "" {
+			logger.Warn("no stream.api_key set, so nobody can join a call from a browser",
+				"endpoint", "POST /v1/agents/calls/{id}/token")
+		}
 	}
 	// A nil *turbopuffer.Store in an interface is not a nil interface, so the absence has
 	// to stay absent rather than becoming a value that says it is there.
