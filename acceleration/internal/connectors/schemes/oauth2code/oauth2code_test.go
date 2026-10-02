@@ -29,6 +29,9 @@ type OAuth2CodeSuite struct {
 	suite.Suite
 	ctx context.Context
 	ref core.ConnectionRef
+	// now is the clock the minting tests give the scheme; each read moves it by step.
+	now  time.Time
+	step time.Duration
 }
 
 func TestOAuth2CodeSuite(t *testing.T) {
@@ -38,6 +41,7 @@ func TestOAuth2CodeSuite(t *testing.T) {
 func (s *OAuth2CodeSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.ref = core.ConnectionRef{CustomerID: "acme", ConnectionID: "conn-1"}
+	s.now, s.step = time.Now(), 0
 }
 
 // TestTheSlackManifestBuildsThePrototypesAuthorizeURL is the T9 acceptance golden test.
@@ -533,8 +537,8 @@ func (s *OAuth2CodeSuite) connect(srv *fakeprovider.Server, scheme *oauth2code.S
 	return scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: p, State: out.State, Query: callback})
 }
 
-// accessToken reads the access token out of the material. Part 2's Wrap is what will use
-// it; until then this is the only way to show the token works.
+// accessToken reads the access token out of the material, so a test can call the fake with
+// it directly or tell one minted token from another.
 func (s *OAuth2CodeSuite) accessToken(m core.Material) string {
 	var payload struct {
 		AccessToken string `json:"access_token"`
