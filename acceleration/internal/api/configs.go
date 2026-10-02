@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -67,6 +69,11 @@ func (s *Server) CreateAgentConfig(ctx context.Context, request CreateAgentConfi
 	if message, ok := configComplaint(*request.Body); !ok {
 		return CreateAgentConfig400JSONResponse{badRequest(message)}, nil
 	}
+	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
+		return nil, err
+	} else if !ok {
+		return CreateAgentConfig400JSONResponse{badRequest(message)}, nil
+	}
 
 	config := storedConfig(*request.Body, customerID)
 	if err := s.store.CreateAgentConfig(ctx, &config); err != nil {
@@ -112,10 +119,21 @@ func (s *Server) UpdateAgentConfig(ctx context.Context, request UpdateAgentConfi
 	if err != nil {
 		return UpdateAgentConfig404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
 	}
+	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
+		return nil, err
+	} else if !ok {
+		return UpdateAgentConfig400JSONResponse{badRequest(message)}, nil
+	}
 
 	config := storedConfig(*request.Body, customerID)
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
+	// Unlike the rest of an update, bindings left out are kept rather than cleared: a client
+	// written before they existed saves a config without them, and saving it would otherwise
+	// take away every tool the agent was granted.
+	if request.Body.Connectors == nil {
+		config.Connectors = existing.Connectors
+	}
 	if err := s.store.UpdateAgentConfig(ctx, &config); err != nil {
 		return UpdateAgentConfig400JSONResponse{badRequest(err.Error())}, nil
 	}
@@ -288,7 +306,185 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if complaint, ok := visibleToolsComplaint(request.VisibleTools); !ok {
 		return complaint, false
 	}
+	if complaint, ok := connectorBindingsComplaint(request.Connectors); !ok {
+		return complaint, false
+	}
 	return dispatchComplaint(request.Dispatch)
+}
+
+// connectorAlias is what a binding may be called: a lowercase letter, then up to 62
+// lowercase letters, digits, - or _. It is the prototype's connectorAliasPattern
+// (internal/api/connectors.go:54 on codex/connector-support at cf62af0d), which gives no
+// reason for the length of 63; that is unverified.
+var connectorAlias = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+
+// aliasSeparator joins an alias to its tool's name in the name the model is offered,
+// <alias>__<tool>, which is split back at the first one: Prefix and Split in
+// internal/mcp/mcp.go:413-422 on codex/connector-support at cf62af0d, handed the alias by
+// internal/session/connector_tools.go:167 there, as plugins.PrefixSeparator does for plugins
+// today. An alias holding one would be split in the wrong place.
+const aliasSeparator = "__"
+
+// schemaDigest is a SHA-256, 32 bytes in lowercase hex, which is what the prototype took of
+// a tool's name, description and input schema (ToolSchemaDigest, internal/mcp/mcp.go:172-184
+// at cf62af0d) and checked a grant's digest against (connectorToolDigestPattern,
+// internal/api/connectors.go:56).
+var schemaDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+// maxConnectorTimeoutMs is the longest one connector call may be given. It is the
+// prototype's ceiling (internal/api/connectors.go:1176 at cf62af0d), and nothing there says
+// why 30 seconds; it is unverified.
+const maxConnectorTimeoutMs = 30000
+
+// connectorBindingsComplaint reports what is wrong with a config's connector bindings as
+// written, naming the binding. Whether what they name exists is unboundConnectors', which
+// asks the store. It is the prototype's connectorBindingsComplaint
+// (internal/api/connectors.go:1147-1192 at cf62af0d).
+func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool) {
+	if bindings == nil {
+		return "", true
+	}
+	aliases := make(map[string]bool, len(*bindings))
+	for index, binding := range *bindings {
+		alias := binding.Name
+		if !connectorAlias.MatchString(alias) {
+			return fmt.Sprintf("connectors[%d].name %q is not an alias: a lowercase letter, then up to 62 "+
+				"lowercase letters, digits, - or _", index, alias), false
+		}
+		if strings.Contains(alias, aliasSeparator) {
+			return fmt.Sprintf("connector binding %q has %s in its name, which is what separates an alias "+
+				"from its tool's name", alias, aliasSeparator), false
+		}
+		if aliases[alias] {
+			return fmt.Sprintf("two connector bindings are called %q", alias), false
+		}
+		aliases[alias] = true
+		if strings.TrimSpace(binding.ConnectorId) == "" {
+			return fmt.Sprintf("connector binding %q names no connector_id", alias), false
+		}
+		switch binding.Connection.Type {
+		case AgentConnectorSelectionTypeFixed:
+			if strings.TrimSpace(value(binding.Connection.ConnectionId)) == "" {
+				return fmt.Sprintf("connector binding %q is fixed, so it needs connection.connection_id", alias), false
+			}
+		case AgentConnectorSelectionTypeSession:
+			if binding.Connection.ConnectionId != nil {
+				return fmt.Sprintf("connector binding %q is chosen per session, so its connection is picked "+
+					"when a session is created and connection.connection_id is not set here", alias), false
+			}
+		default:
+			return fmt.Sprintf("connector binding %q: connection.type is %s or %s, not %q", alias,
+				AgentConnectorSelectionTypeFixed, AgentConnectorSelectionTypeSession, binding.Connection.Type), false
+		}
+		if binding.TimeoutMs != nil && (*binding.TimeoutMs < 1 || *binding.TimeoutMs > maxConnectorTimeoutMs) {
+			return fmt.Sprintf("connector binding %q: timeout_ms is between 1 and %d, not %d", alias,
+				maxConnectorTimeoutMs, *binding.TimeoutMs), false
+		}
+		tools := make(map[string]bool, len(binding.Tools))
+		for _, tool := range binding.Tools {
+			if strings.TrimSpace(tool.Name) == "" {
+				return fmt.Sprintf("connector binding %q grants a tool with no name", alias), false
+			}
+			if !schemaDigest.MatchString(tool.SchemaDigest) {
+				return fmt.Sprintf("connector binding %q: tool %q has a schema_digest that is not a SHA-256 "+
+					"in 64 lowercase hex characters", alias, tool.Name), false
+			}
+			if tools[tool.Name] {
+				return fmt.Sprintf("connector binding %q grants %q twice", alias, tool.Name), false
+			}
+			tools[tool.Name] = true
+		}
+	}
+	return "", true
+}
+
+// unboundConnectors reports a binding naming what the app cannot bind: a connector it cannot
+// see, built-in or its own, or for a fixed binding anything but a live connection the app
+// itself owns. A user's connection is theirs to use in their own sessions, and a fixed
+// binding would hand it to every session the config runs. An error is the store failing,
+// not the binding.
+func (s *Server) unboundConnectors(ctx context.Context, customerID string, bindings *[]AgentConnectorBinding) (string, bool, error) {
+	if bindings == nil {
+		return "", true, nil
+	}
+	for _, binding := range *bindings {
+		_, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorId)
+		if errors.Is(err, store.ErrNoConnectorDefinition) {
+			return fmt.Sprintf("connector binding %q names connector %q, and there is no such connector",
+				binding.Name, binding.ConnectorId), false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if binding.Connection.Type != AgentConnectorSelectionTypeFixed {
+			continue
+		}
+		id := value(binding.Connection.ConnectionId)
+		connection, err := s.store.ConnectorConnection(ctx, customerID, id)
+		if errors.Is(err, store.ErrNoConnectorConnection) {
+			return fmt.Sprintf("connector binding %q names connection %q, and the app has no such connection",
+				binding.Name, id), false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if connection.OwnerType != store.OwnerApp {
+			return fmt.Sprintf("connector binding %q is fixed, so its connection has to be the app's own, and "+
+				"%q is a user's: bind it with connection.type session instead", binding.Name, id), false, nil
+		}
+	}
+	return "", true, nil
+}
+
+// storedBindings turns the bindings a caller sent into what a config stores, as written.
+func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
+	stored := make([]store.ConnectorBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		tools := make([]store.ToolGrant, 0, len(binding.Tools))
+		for _, tool := range binding.Tools {
+			tools = append(tools, store.ToolGrant{Name: tool.Name, SchemaDigest: tool.SchemaDigest})
+		}
+		stored = append(stored, store.ConnectorBinding{
+			Name:        binding.Name,
+			ConnectorID: binding.ConnectorId,
+			Connection: store.ConnectionBinding{
+				Type:         string(binding.Connection.Type),
+				ConnectionID: value(binding.Connection.ConnectionId),
+			},
+			Tools:     tools,
+			Required:  value(binding.Required),
+			TimeoutMs: value(binding.TimeoutMs),
+		})
+	}
+	return stored
+}
+
+// bindingsOf renders a config's bindings for the wire.
+func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
+	rendered := make([]AgentConnectorBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		tools := make([]ConnectorToolGrant, 0, len(binding.Tools))
+		for _, tool := range binding.Tools {
+			tools = append(tools, ConnectorToolGrant{Name: tool.Name, SchemaDigest: tool.SchemaDigest})
+		}
+		required := binding.Required
+		one := AgentConnectorBinding{
+			Name:        binding.Name,
+			ConnectorId: binding.ConnectorID,
+			Connection: AgentConnectorSelection{
+				Type:         AgentConnectorSelectionType(binding.Connection.Type),
+				ConnectionId: optional(binding.Connection.ConnectionID),
+			},
+			Tools:    tools,
+			Required: &required,
+		}
+		if binding.TimeoutMs > 0 {
+			timeout := binding.TimeoutMs
+			one.TimeoutMs = &timeout
+		}
+		rendered = append(rendered, one)
+	}
+	return rendered
 }
 
 // dispatchComplaint reports a dispatch setting that is neither enabled nor disabled.
@@ -463,6 +659,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Plugins != nil {
 		config.Plugins = *request.Plugins
 	}
+	if request.Connectors != nil {
+		config.Connectors = storedBindings(*request.Connectors)
+	}
 	config.Keyterms = keytermsOf(request.Keyterms)
 	if request.VisibleTools != nil {
 		config.VisibleTools = *request.VisibleTools
@@ -538,6 +737,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.Plugins) > 0 {
 		named := config.Plugins
 		rendered.Plugins = &named
+	}
+	if len(config.Connectors) > 0 {
+		bindings := bindingsOf(config.Connectors)
+		rendered.Connectors = &bindings
 	}
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms

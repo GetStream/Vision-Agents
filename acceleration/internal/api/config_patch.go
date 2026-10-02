@@ -10,29 +10,30 @@ import (
 // AgentConfigPatch is what changes about an agent config. Every field is optional, and one
 // left out keeps what is stored.
 type AgentConfigPatch struct {
-	Name               *string            `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
-	Mode               *AgentMode         `json:"mode,omitempty"`
-	Stt                *string            `json:"stt,omitempty"`
-	Tts                *string            `json:"tts,omitempty"`
-	Sts                *string            `json:"sts,omitempty"`
-	Voice              *string            `json:"voice,omitempty"`
-	Speed              *float64           `json:"speed,omitempty" minimum:"0" doc:"The voice's rate of delivery, 1 being its own. Zero leaves it there."`
-	Llm                *string            `json:"llm,omitempty"`
-	Subagent           *string            `json:"subagent,omitempty"`
-	Search             *string            `json:"search,omitempty"`
-	Instructions       *string            `json:"instructions,omitempty"`
-	Greeting           *string            `json:"greeting,omitempty"`
-	Guardrail          *string            `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
-	Skills             *[]string          `json:"skills,omitempty"`
-	Plugins            *[]string          `json:"plugins,omitempty"`
-	Keyterms           *[]string          `json:"keyterms,omitempty"`
-	VisibleTools       *[]string          `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
-	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
-	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
-	Harness            *Harness           `json:"harness,omitempty"`
-	Dispatch           *AgentDispatch     `json:"dispatch,omitempty"`
-	Tags               *map[string]string `json:"tags,omitempty"`
-	Video              *SessionVideo      `json:"video,omitempty"`
+	Name               *string                  `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
+	Mode               *AgentMode               `json:"mode,omitempty"`
+	Stt                *string                  `json:"stt,omitempty"`
+	Tts                *string                  `json:"tts,omitempty"`
+	Sts                *string                  `json:"sts,omitempty"`
+	Voice              *string                  `json:"voice,omitempty"`
+	Speed              *float64                 `json:"speed,omitempty" minimum:"0" doc:"The voice's rate of delivery, 1 being its own. Zero leaves it there."`
+	Llm                *string                  `json:"llm,omitempty"`
+	Subagent           *string                  `json:"subagent,omitempty"`
+	Search             *string                  `json:"search,omitempty"`
+	Instructions       *string                  `json:"instructions,omitempty"`
+	Greeting           *string                  `json:"greeting,omitempty"`
+	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
+	Skills             *[]string                `json:"skills,omitempty"`
+	Plugins            *[]string                `json:"plugins,omitempty"`
+	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
+	Keyterms           *[]string                `json:"keyterms,omitempty"`
+	VisibleTools       *[]string                `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
+	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty"`
+	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
+	Harness            *Harness                 `json:"harness,omitempty"`
+	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
+	Tags               *map[string]string       `json:"tags,omitempty"`
+	Video              *SessionVideo            `json:"video,omitempty"`
 }
 
 func (*AgentConfigPatch) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -111,8 +112,14 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		Speed:        patch.Speed,
 		Guardrail:    patch.Guardrail,
 		VisibleTools: patch.VisibleTools,
+		Connectors:   patch.Connectors,
 		Dispatch:     patch.Dispatch,
 	}); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok, err := s.unboundConnectors(ctx, customerID, patch.Connectors); err != nil {
+		return nil, err
+	} else if !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 
@@ -133,6 +140,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
 	config.Skills = override(config.Skills, patch.Skills)
 	config.Plugins = override(config.Plugins, patch.Plugins)
+	if patch.Connectors != nil {
+		config.Connectors = storedBindings(*patch.Connectors)
+	}
 	if patch.Keyterms != nil {
 		config.Keyterms = keytermsOf(patch.Keyterms)
 	}
