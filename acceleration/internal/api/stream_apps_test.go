@@ -247,3 +247,59 @@ func (s *StreamAppsSuite) TestATextConversationIsKeptInTheCustomersApp() {
 	_, inDeployment := s.chat.Channel(channel)
 	s.False(inDeployment)
 }
+
+func (s *StreamAppsSuite) TestALegacyCallMintsNothingOnceFallbackIsRefused() {
+	// The call was made in the shared app before the customer registered its own, and
+	// the fallback is off: nothing more is done there in the customer's name.
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+	call := s.called(0)
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/calls/"+call.ID+"/token", map[string]any{})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "no longer mints")
+}
+
+func (s *StreamAppsSuite) TestATranscriptOfACallBeforeRegistrationIsReadFromTheDeploymentApp() {
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+	call := s.called(0)
+	s.lineIn(s.chat, call.AgentID, call.StartedAt.Add(time.Minute), "said before the app had its own")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said before the app had its own", read[0].Text)
+}
+
+func (s *StreamAppsSuite) TestARegisteredAppMintsNoGuestsUntilItOptsIn() {
+	s.setApps(s.customerID(), func(apps *suiteApps) {
+		identity := apps.own[s.customerID()]
+		identity.AllowGuests = false
+		apps.own[s.customerID()] = identity
+	})
+
+	s.Equal(http.StatusForbidden, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests", nil, nil))
+
+	s.setApps(s.customerID(), func(apps *suiteApps) {
+		identity := apps.own[s.customerID()]
+		identity.AllowGuests = true
+		apps.own[s.customerID()] = identity
+	})
+	s.Equal(http.StatusCreated, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests", nil, nil))
+}
+
+func (s *StreamAppsSuite) TestWorkWaitingOnTheDeploymentsAppIsAskedToRetry() {
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.waiting[s.customerID()] = true })
+	defer s.setApps(s.customerID(), func(apps *suiteApps) { delete(apps.waiting, s.customerID()) })
+
+	for _, request := range []struct{ method, path string }{
+		{http.MethodGet, "/v1/settings/app"},
+		{http.MethodPost, "/v1/agents/chat-token"},
+	} {
+		answered := s.serverClient.raw(request.method, request.path, map[string]any{"agent_id": "agent-" + s.utils.uuid()})
+		s.Equal(http.StatusServiceUnavailable, answered.StatusCode, request.path)
+		s.Equal("30", answered.Header.Get("Retry-After"), request.path)
+	}
+}

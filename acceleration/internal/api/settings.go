@@ -112,6 +112,9 @@ func (s *Server) getAppSettings(ctx context.Context, _ *struct{}) (*appSettingsR
 	if errors.Is(err, streamapp.ErrStreamAppDisconnected) || (err == nil && !found) {
 		return &appSettingsResponse{Body: AppSettings{Stream: settings}}, nil
 	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, streamWaiting()
+	}
 	if err != nil {
 		return nil, huma.Error503ServiceUnavailable("which Stream app this app acts in could not be read")
 	}

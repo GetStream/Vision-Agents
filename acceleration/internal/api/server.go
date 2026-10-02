@@ -334,7 +334,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	s.newAPI(mux)
-	handler := HandlerFromMux(NewStrictHandler(s, nil), mux)
+	handler := HandlerFromMux(NewStrictHandlerWithOptions(s, nil, StrictHTTPServerOptions{
+		ResponseErrorHandlerFunc: answerFailure,
+	}), mux)
 	// Sentry is outermost so it sees panics from every middleware below it, not
 	// only from the route handlers.
 	//

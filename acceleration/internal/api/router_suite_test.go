@@ -216,7 +216,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.data = testData{suite: s}
 
 	s.chat = chattest.NewServer(s.T())
-	s.apps = &suiteApps{own: map[string]streamapp.Identity{}, deployment: streamapp.NewDeployment(streamapp.DeploymentOptions{
+	s.apps = &suiteApps{own: map[string]streamapp.Identity{}, readOnly: map[string]bool{}, waiting: map[string]bool{}, deployment: streamapp.NewDeployment(streamapp.DeploymentOptions{
 		APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL, App: suiteStreamApp,
 	})}
 	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
@@ -617,6 +617,27 @@ func (c *testClient) do(method, path string, body, into any) int {
 }
 
 // call is do without decoding, for a test reading the error it was answered with.
+// raw is a request's whole answer, headers and all, its body already read.
+func (c *testClient) raw(method, path string, body any) *http.Response {
+	require := c.suite.Require()
+	payload := bytes.NewReader(nil)
+	if body != nil {
+		encoded, err := encode(body)
+		require.NoError(err)
+		payload = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequest(method, c.suite.server.URL+path, payload)
+	require.NoError(err)
+	request.Header = c.header.Clone()
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.suite.server.Client().Do(request)
+	require.NoError(err)
+	defer response.Body.Close()
+	_, err = readAll(response)
+	require.NoError(err)
+	return response
+}
+
 func (c *testClient) call(method, path string, body any) (int, []byte) {
 	require := c.suite.Require()
 	payload := bytes.NewReader(nil)
@@ -890,13 +911,22 @@ type suiteApps struct {
 	mu         sync.Mutex
 	own        map[string]streamapp.Identity
 	deployment *streamapp.Deployment
+	// readOnly are customers whose work in the deployment's app may be read and not
+	// added to, as app mode leaves it once the fallback is off.
+	readOnly map[string]bool
+	// waiting are customers whose app cannot be told until the deployment's own is known.
+	waiting map[string]bool
 }
 
 func (a *suiteApps) For(ctx context.Context, customer string) (streamapp.Identity, error) {
 	a.mu.Lock()
 	identity, ok := a.own[customer]
+	waiting := a.waiting[customer]
 	a.mu.Unlock()
-	if ok {
+	switch {
+	case waiting:
+		return streamapp.Identity{}, streamapp.ErrDeploymentAppUnknown
+	case ok:
 		return identity, nil
 	}
 	return a.deployment.For(ctx, customer)
@@ -904,12 +934,34 @@ func (a *suiteApps) For(ctx context.Context, customer string) (streamapp.Identit
 
 func (a *suiteApps) ForApp(ctx context.Context, customer string, app int64) (streamapp.Identity, error) {
 	a.mu.Lock()
-	identity, ok := a.own[customer]
+	readOnly := a.readOnly[customer]
 	a.mu.Unlock()
-	if ok && identity.StreamApp == app {
+	if readOnly && (app == 0 || app == a.deployment.App()) {
+		return streamapp.Identity{}, streamapp.ErrReadOnly
+	}
+	return a.ForAppReading(ctx, customer, app)
+}
+
+func (a *suiteApps) ForAppReading(ctx context.Context, customer string, app int64) (streamapp.Identity, error) {
+	a.mu.Lock()
+	identity, ok := a.own[customer]
+	waiting := a.waiting[customer]
+	a.mu.Unlock()
+	switch {
+	case waiting:
+		return streamapp.Identity{}, streamapp.ErrDeploymentAppUnknown
+	case ok && identity.StreamApp == app:
 		return identity, nil
 	}
 	return a.deployment.ForApp(ctx, customer, app)
+}
+
+// set changes how the suite's apps answer for a customer, and forgets what they said.
+func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {
+	s.apps.mu.Lock()
+	change(s.apps)
+	s.apps.mu.Unlock()
+	s.stream.Invalidate(customer)
 }
 
 // giveApp makes the customer act in an app of its own, a chattest of its own, from now on.
@@ -919,6 +971,7 @@ func (s *RouterSuite) giveApp(customer string, app int64, key string) *chattest.
 	s.apps.own[customer] = streamapp.Identity{
 		CustomerID: customer, StreamApp: app, APIKey: key,
 		Secret: streamapp.NewSecret(key + "-secret"), BaseURL: own.URL,
+		Registered: true, AllowGuests: true,
 	}
 	s.apps.mu.Unlock()
 	s.stream.Invalidate(customer)

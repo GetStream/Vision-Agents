@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // guestTokenValidity is how long a guest's token lasts.
@@ -46,6 +47,10 @@ func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserReq
 	}
 	if !mintable {
 		return CreateGuestUser400JSONResponse{badRequest(noStreamKeys)}, nil
+	}
+	// An app that registered its own Stream app decides whether guests are made in it.
+	if !bound.Identity.MintsGuests() {
+		return CreateGuestUser403Response{}, nil
 	}
 
 	body := GuestUserRequest{}
@@ -213,7 +218,7 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 		// Each conversation is joined in the app it was held in, which for a guest who
 		// talked before their app had an identity of its own is the deployment's.
 		bound, err := s.streamForApp(ctx, customerID, one.StreamAppPK)
-		if errors.Is(err, errNoStream) || elsewhere(err) {
+		if errors.Is(err, errNoStream) || elsewhere(err) || errors.Is(err, streamapp.ErrReadOnly) {
 			continue
 		}
 		if err != nil {

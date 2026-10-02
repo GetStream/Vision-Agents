@@ -159,6 +159,8 @@ func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenReq
 		return CreateCallToken400JSONResponse{badRequest(noStreamKeys)}, nil
 	case elsewhere(err):
 		return CreateCallToken400JSONResponse{badRequest(callElsewhere)}, nil
+	case errors.Is(err, streamapp.ErrReadOnly):
+		return CreateCallToken400JSONResponse{badRequest(callReadOnly)}, nil
 	case err != nil:
 		return nil, err
 	}
@@ -219,6 +221,8 @@ func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenReq
 		return CreateChatToken400JSONResponse{badRequest(noStreamKeys)}, nil
 	case elsewhere(err):
 		return CreateChatToken400JSONResponse{badRequest("that agent's conversation is kept in a Stream app this customer no longer acts in")}, nil
+	case errors.Is(err, streamapp.ErrReadOnly):
+		return CreateChatToken400JSONResponse{badRequest("that agent's conversation is kept in the router's shared Stream app, where this app no longer mints tokens")}, nil
 	case err != nil:
 		return nil, err
 	}
@@ -350,10 +354,27 @@ func elsewhere(err error) bool {
 // callElsewhere is what a call made in an app the customer no longer acts in answers.
 const callElsewhere = "that call was made in a Stream app this customer no longer acts in"
 
+// callReadOnly is what a call made in the router's shared app answers once this customer
+// may no longer act there: what was said can be read, and nothing more is minted.
+const callReadOnly = "that call was made in the router's shared Stream app, where this app no longer mints tokens"
+
+// streamForAppReading is the Stream app work pinned to one is read back in, which reaches
+// work kept in the router's shared app even once the customer may no longer write there.
+func (s *Server) streamForAppReading(ctx context.Context, customerID string, app int64) (streamapp.Bound, error) {
+	if s.stream == nil {
+		return streamapp.Bound{}, errNoStream
+	}
+	bound, err := s.stream.ForAppReading(ctx, customerID, app)
+	if errors.Is(err, streamapp.ErrNoIdentity) {
+		return streamapp.Bound{}, errNoStream
+	}
+	return bound, err
+}
+
 // transcriptOf is what was said on a call, read in the app the call was made in. A call
 // made in an app the customer no longer acts in has nothing readable from here.
 func (s *Server) transcriptOf(ctx context.Context, customerID string, call store.Call) ([]chatlog.Spoken, error) {
-	bound, err := s.streamForApp(ctx, customerID, call.StreamAppPK)
+	bound, err := s.streamForAppReading(ctx, customerID, call.StreamAppPK)
 	if elsewhere(err) {
 		return []chatlog.Spoken{}, nil
 	}

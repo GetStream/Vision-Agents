@@ -123,11 +123,13 @@ func init() {
 // generated operations and the sockets answer with.
 type apiError struct {
 	status  int
+	headers http.Header
 	Message string `json:"error"`
 }
 
-func (e *apiError) Error() string  { return e.Message }
-func (e *apiError) GetStatus() int { return e.status }
+func (e *apiError) Error() string           { return e.Message }
+func (e *apiError) GetStatus() int          { return e.status }
+func (e *apiError) GetHeaders() http.Header { return e.headers }
 
 // Schema documents the error as the Error schema rather than one of its own.
 func (*apiError) Schema(registry huma.Registry) *huma.Schema {
