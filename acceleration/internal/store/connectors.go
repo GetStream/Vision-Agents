@@ -241,7 +241,9 @@ func (s *Store) saveRevision(ctx context.Context, customerID string, manifest co
 			Manifest:    manifest,
 			CreatedAt:   time.Now().UTC(),
 		}
-		_, err = tx.NewInsert().Model(&saved).Exec(ctx)
+		// Read back what Postgres stored, which keeps microseconds, so the answer to a create
+		// is the row a later read returns.
+		_, err = tx.NewInsert().Model(&saved).Returning("created_at").Exec(ctx)
 		return err
 	})
 	if err != nil {

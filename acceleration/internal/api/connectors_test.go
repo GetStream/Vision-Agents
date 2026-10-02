@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
@@ -100,11 +99,7 @@ func (s *ConnectorsSuite) TestACustomMCPConnectorIsStoredAndReadBack() {
 	s.Equal([]ConnectorClientOwner{"dcr", "customer"}, created.Client.Policy)
 	s.Equal(ConnectorClientAuthMethod("client_secret_basic"), created.Client.AuthMethod)
 
-	read := s.get(id)
-	// Postgres keeps microseconds, and the answer to the create is what was written.
-	s.WithinDuration(created.CreatedAt, read.CreatedAt, time.Millisecond)
-	read.CreatedAt = created.CreatedAt
-	s.Equal(created, read)
+	s.Equal(created, s.get(id), "the answer to the create is the stored row")
 }
 
 func (s *ConnectorsSuite) TestAnIdThatWouldShadowABuiltInIsRefused() {
