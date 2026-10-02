@@ -28,11 +28,14 @@ scopes:
   list: [read_products, write_orders]
   separator: ","
 capture:
-  # The shop is the account for an offline token: row 4 («Shopify shop domain», axis 6).
-  # Not verify: the before_complete hook checks the callback's HMAC, shop included.
-  - name: shop
+  # The shop the callback names. The browser sends it, so it is unverified: the
+  # before_complete hook checks the callback's HMAC and that this shop is the shop input.
+  - name: callback_shop
     from: callback_query
     key: shop
+    verify: true
+# The shop is the account for an offline token: row 4 («Shopify shop domain», axis 6). It is
+# the input the connection was created with, not the callback's value.
 identity: [shop]
 refresh:
   # Rotating, refresh token for 90 days: row 4; [grant] refresh_token_expires_in 7776000

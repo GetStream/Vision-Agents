@@ -44,6 +44,12 @@ capture:
   - name: api_domain
     from: token_response
     path: $.api_domain
+    # api_base is this value whole, so it must stay a Zoho API host. [multidc] shows
+    # api_domain=https://www.zohoapis.in, and Zoho CRM's multi-DC page
+    # (https://www.zoho.com/crm/developer/docs/api/v8/multi-dc.html, opened October 1,
+    # 2026) shows www.zohoapis.eu and www.zohoapis.com.cn. The other data centers' suffixes
+    # follow the accounts hosts above and are not on either page. # unverified
+    host_suffixes: [.zohoapis.com, .zohoapis.eu, .zohoapis.in, .zohoapis.com.au, .zohoapis.jp, .zohoapis.ca, .zohoapis.sa, .zohoapis.uk]
   # location and accounts-server arrive on the callback: row 3; [multidc]. Verify: the
   # browser sends them, and accounts_server must agree with the region's host.
   - name: location

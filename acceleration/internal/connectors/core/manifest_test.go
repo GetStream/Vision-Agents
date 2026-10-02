@@ -151,6 +151,27 @@ func (s *ManifestSuite) TestACapturedValueCannotAddAPathSegment() {
 	s.ErrorContains(err, `{metadata.realm_id}: "1/../../other" has characters outside RFC 3986 unreserved`)
 }
 
+// A dot segment is all unreserved characters, so it gets past the character check, and a
+// client that normalizes the path (RFC 3986 section 5.2.4) would send the credential to
+// the shortened path.
+func (s *ManifestSuite) TestADotSegmentCannotRemoveAPathSegment() {
+	for _, value := range []string{"..", "."} {
+		_, err := s.load("quickbooks").Resolve("oauth2_code", nil, map[string]string{"realm_id": value})
+		s.ErrorContains(err, `{metadata.realm_id}: "`+value+`" is a dot segment`)
+
+		_, err = s.load("microsoft").Resolve("oauth2_code", map[string]string{"tenant": value}, nil)
+		s.ErrorContains(err, `{tenant}: "`+value+`" is a dot segment`)
+	}
+
+	m := s.load("github")
+	p, err := m.Resolve("github_app", nil, nil)
+	s.Require().NoError(err)
+	captured, err := p.Apply(url.Values{"installation_id": {".."}}, nil)
+	s.Require().NoError(err)
+	_, err = m.Resolve("github_app", nil, captured.Metadata)
+	s.ErrorContains(err, `{metadata.installation_id}: ".." is a dot segment`)
+}
+
 func (s *ManifestSuite) TestGoogleReadsTheAccountFromTheIDTokenSub() {
 	p, err := s.load("google").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
@@ -242,6 +263,28 @@ func (s *ManifestSuite) TestShopifyAccountIsTheShopAndItsCallbackGoesThroughTheH
 	captured, err := p.Apply(s.callback("shopify.callback"), nil)
 	s.Require().NoError(err)
 	s.Equal("example-shop.myshopify.com", captured.AccountID)
+	s.Equal([]string{"callback_shop"}, captured.Unverified)
+}
+
+// The callback's shop is what the browser sent; the account is the shop the connection was
+// created for, and the hook compares the two.
+func (s *ManifestSuite) TestShopifyAccountIsTheInputShopNotTheCallbackShop() {
+	p, err := s.load("shopify").Resolve("oauth2_code", map[string]string{"shop": "example-shop.myshopify.com"}, nil)
+	s.Require().NoError(err)
+	query := s.callback("shopify.callback")
+	query.Set("shop", "evil.example")
+
+	captured, err := p.Apply(query, nil)
+	s.Require().NoError(err)
+	s.Equal("example-shop.myshopify.com", captured.AccountID)
+	s.Equal("evil.example", captured.Metadata["callback_shop"])
+	s.Equal([]string{"callback_shop"}, captured.Unverified)
+}
+
+func (s *ManifestSuite) TestACaptureCannotShareAnInputsName() {
+	_, err := ParseManifest(minimal("inputs:\n  - name: shop\n    pattern: \"[a-z]+\"\n" +
+		"capture:\n  - name: shop\n    from: callback_query\n    key: shop\n"))
+	s.ErrorContains(err, `capture[0].name: "shop" is also an input`)
 }
 
 func (s *ManifestSuite) TestGitHubInstallationIDIsUnverifiedUntilConfirmed() {
@@ -274,9 +317,72 @@ func (s *ManifestSuite) TestAMetadataVarThatIsNotCapturedIsRejected() {
 }
 
 func (s *ManifestSuite) TestACallbackValueCannotPickTheHost() {
-	_, err := ParseManifest(minimal("endpoints:\n  api_base: \"{metadata.server}\"\n" +
-		"capture:\n  - name: server\n    from: callback_query\n    key: server\n"))
-	s.ErrorContains(err, "endpoints.api_base: {metadata.server} would pick the host from the callback query")
+	for _, template := range []string{"\"{metadata.server}\"", "https://{metadata.server}/v1", "https://{metadata.server}.example.com/v1"} {
+		_, err := ParseManifest(minimal("endpoints:\n  api_base: " + template + "\n" +
+			"capture:\n  - name: server\n    from: callback_query\n    key: server\n"))
+		s.ErrorContains(err, "endpoints.api_base: {metadata.server} would pick the host from the callback query", template)
+	}
+}
+
+func (s *ManifestSuite) TestATokenResponseValueIsTheWholeOriginOrOutsideTheHost() {
+	_, err := ParseManifest(minimal("endpoints:\n  api_base: https://{metadata.region}.example.com/v1\n" +
+		"capture:\n  - name: region\n    from: token_response\n    path: $.region\n"))
+	s.ErrorContains(err, "endpoints.api_base: {metadata.region} is in the host")
+}
+
+func (s *ManifestSuite) TestAWholeOriginCaptureNeedsHostSuffixes() {
+	_, err := ParseManifest(minimal("endpoints:\n  api_base: \"{metadata.instance_url}\"\n" +
+		"capture:\n  - name: instance_url\n    from: token_response\n    path: $.instance_url\n"))
+	s.ErrorContains(err, `endpoints.api_base: {metadata.instance_url} is the whole origin, so capture "instance_url" needs host_suffixes`)
+}
+
+func (s *ManifestSuite) TestACallbackValueCannotHaveHostSuffixes() {
+	_, err := ParseManifest(minimal("capture:\n  - name: server\n    from: callback_query\n    key: server\n" +
+		"    host_suffixes: [.example.com]\n"))
+	s.ErrorContains(err, "capture[0].host_suffixes: a callback_query value is never an origin")
+}
+
+func (s *ManifestSuite) TestAnInputCannotBeTheWholeOrigin() {
+	_, err := ParseManifest(minimal("inputs:\n  - name: base\n    pattern: \"https://.+\"\n" +
+		"endpoints:\n  api_base: \"{base}/v1\"\n"))
+	s.ErrorContains(err, "endpoints.api_base: {base}: only a captured value with host_suffixes can be the whole origin")
+}
+
+// instance_url arrives in the token response and becomes api_base whole, so a hostile or
+// broken token endpoint could otherwise point the bearer token at any host.
+func (s *ManifestSuite) TestAnOriginCaptureStaysUnderItsHostSuffixes() {
+	m := s.load("salesforce")
+	p, err := m.Resolve("oauth2_code", nil, nil)
+	s.Require().NoError(err)
+	for _, value := range []string{
+		"https://evil.example",
+		"https://login.salesforce.com.evil.example",
+		"https://evil.example?",
+		"https://evil.example#",
+		"https://127.0.0.1",
+		"https://[::1]",
+		"https://169.254.169.254",
+		"https://.my.salesforce.com",
+		"https://example-org.my.salesforce.com:8443",
+		"https://example-org.my.salesforce.com/services",
+		"http://example-org.my.salesforce.com",
+	} {
+		_, err := m.Resolve("oauth2_code", nil, map[string]string{"instance_url": value, "identity_url": "x"})
+		s.ErrorContains(err, "{metadata.instance_url}", value)
+
+		token, err := json.Marshal(map[string]string{"instance_url": value, "id": "https://login.salesforce.com/id/00D/005"})
+		s.Require().NoError(err)
+		_, err = p.Apply(nil, token)
+		s.ErrorContains(err, "capture instance_url", value)
+	}
+}
+
+func (s *ManifestSuite) TestAnOriginCaptureIsStoredAsSchemeAndHost() {
+	p, err := s.load("salesforce").Resolve("oauth2_code", nil, nil)
+	s.Require().NoError(err)
+	captured, err := p.Apply(nil, []byte(`{"instance_url":"https://Example-Org.my.salesforce.com/","id":"https://login.salesforce.com/id/00D/005"}`))
+	s.Require().NoError(err)
+	s.Equal("https://example-org.my.salesforce.com", captured.Metadata["instance_url"])
 }
 
 func (s *ManifestSuite) TestAVarMustCoverEveryValueOfItsInput() {
@@ -293,6 +399,11 @@ func (s *ManifestSuite) TestAnInputWithoutAnEnumOrAPatternIsRejected() {
 func (s *ManifestSuite) TestAHookNameThatIsNotAStringIsRejected() {
 	_, err := ParseManifest(minimal("hooks:\n  before_complete: 5\n"))
 	s.ErrorContains(err, "a hook name must be a string, not !!int")
+}
+
+func (s *ManifestSuite) TestAnchorsAndAliasesAreRejected() {
+	_, err := ParseManifest(minimal("hooks:\n  before_complete: &h shopify.check\n  after_token: *h\n"))
+	s.ErrorContains(err, "manifest: line 6: anchors and aliases are not allowed")
 }
 
 func (s *ManifestSuite) TestAnUnknownHookPointIsRejected() {

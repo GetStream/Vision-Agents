@@ -60,6 +60,11 @@ capture:
   - name: instance_url
     from: token_response
     path: $.instance_url
+    # api_base is this value whole, so it must stay a Salesforce host. My Domain hosts, the
+    # sandbox ones included, end in .my.salesforce.com; no Salesforce page is in the doc's
+    # sources and Salesforce's help renders client-side, so the suffix is not checked
+    # against a vendor page. # unverified
+    host_suffixes: [.my.salesforce.com]
   - name: identity_url
     from: token_response
     path: $.id
