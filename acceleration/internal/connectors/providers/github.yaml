@@ -1,0 +1,90 @@
+# GitHub's remote MCP server (internal/mcp/connectors.yaml:77-84 on codex/connector-support at
+# cf62af0d, «[proto]:N» below). The core's fixture testdata/manifests/github.yaml is the
+# GitHub App installation flow; this is the MCP server's user flow. Vendor pages, opened
+# October 2, 2026:
+#   [remote]  https://github.com/github/github-mcp-server/blob/f10e4e1f923d46b86f2e80e849aa74084c847184/docs/remote-server.md
+#   [host]    https://github.com/github/github-mcp-server/blob/f10e4e1f923d46b86f2e80e849aa74084c847184/docs/host-integration.md
+#   [oauth]   https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
+#   [user]    https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
+#   [refresh] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens
+# And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/ at
+#         2026-10-02T21:06:34Z: resource https://api.githubcopilot.com/mcp/,
+#         authorization_servers [https://github.com/login/oauth], scopes_supported [repo,
+#         read:org, read:user, user:email, read:packages, write:packages, read:project,
+#         project, gist, notifications].
+#   [as]  GET https://github.com/.well-known/oauth-authorization-server/login/oauth at
+#         2026-10-02T21:06:35Z: issuer https://github.com/login/oauth, authorize
+#         https://github.com/login/oauth/authorize, token
+#         https://github.com/login/oauth/access_token, code_challenge_methods_supported
+#         [S256], authorization_response_iss_parameter_supported true, no
+#         registration_endpoint, no token_endpoint_auth_methods_supported.
+id: github
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+# [proto]:78-80
+name: GitHub
+category: Developer tools
+description: Search repositories, inspect issues and pull requests, and make changes.
+endpoints:
+  # [remote] («URL: https://api.githubcopilot.com/mcp/»); [proto]:81.
+  mcp: https://api.githubcopilot.com/mcp/
+  # The issuer [prm] names. [host] asks hosts to discover the endpoints rather than hard-code
+  # https://github.com/login/oauth/authorize, so authorize and token come from [as]. The issuer
+  # is pinned instead of found from the MCP endpoint: oauth2_code strips the trailing slash
+  # before the well-known suffix (RFC 9728 section 3.1), and that document,
+  # /.well-known/oauth-protected-resource/mcp at 2026-10-02T21:06:34Z, names resource
+  # https://api.githubcopilot.com/mcp without it, which section 3.3 refuses; the root
+  # document answered 404 at 2026-10-02T21:10:21Z.
+  issuer: https://github.com/login/oauth
+  # RFC 8707 resource indicator: [prm]'s resource. Whether GitHub's authorization server
+  # reads it is not documented on the pages above. # unverified
+  resource: https://api.githubcopilot.com/mcp/
+# Authorization code with PKCE S256: [oauth], [user] (code_challenge_method S256); [as].
+schemes: [oauth2_code]
+client:
+  # A GitHub App or an OAuth App registered ahead of time: «Dynamic Client Registration is
+  # NOT supported by Remote GitHub MCP Server at this time» ([host]), and [as] has neither a
+  # registration_endpoint nor a CIMD flag. The prototype said dcr ([proto]:83); the vendor
+  # page wins. [host] recommends a GitHub App and says a user's organization may have to
+  # approve or install it, which is why a customer may bring its own; operator before
+  # customer otherwise is our policy, not a vendor fact.
+  policy: [operator, customer]
+  # client_id and client_secret go in the token request body: [oauth], [user]. [as] lists no
+  # methods, so without this oauth2_code would pick client_secret_basic, which neither page
+  # documents.
+  auth_method: client_secret_post
+  # [proto]:84
+  env: GITHUB
+scopes:
+  # All of [prm]'s scopes_supported, as MCP 2025-11-25 «Scope Selection Strategy» asks. An
+  # OAuth App takes them; a GitHub App's user token has fine-grained permissions instead and
+  # its scope «will always be an empty string» ([user]). The prototype asked for none
+  # ([proto]:77-84, docs/connector-design.md:148 there), before [prm] listed them.
+  list:
+    - repo
+    - read:org
+    - read:user
+    - user:email
+    - read:packages
+    - write:packages
+    - read:project
+    - project
+    - gist
+    - notifications
+  # No separator, so a space: [oauth] («A space-delimited list of scopes»). The token
+  # response answers granted scopes with commas («"scope":"repo,gist"», [oauth]), which one
+  # separator cannot say; see the PR.
+# No identity: the token response carries no account id ([oauth], [user]), and GET /user
+# is a profile request this schema cannot make.
+refresh:
+  # A GitHub App's user token: «expires after 8 hours», the refresh token after 6 months
+  # (refresh_token_expires_in 15897600 seconds, 4416h), and «Once you use a refresh token,
+  # that refresh token and the old user access token will no longer work»: [user],
+  # [refresh]. An OAuth App's token does not expire unless expiry is enabled ([oauth]).
+  rotating: true
+  access_ttl: 8h
+  refresh_ttl: 4416h
+sources:
+  - kind: mcp
+    endpoint: mcp

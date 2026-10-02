@@ -1,0 +1,49 @@
+# Gong's hosted MCP server (internal/mcp/connectors.yaml:85-94 on codex/connector-support at
+# cf62af0d, «[proto]:N» below). Vendor pages, opened October 2, 2026:
+#   [setup] https://help.gong.io/docs/create-an-integration-to-connect-to-the-mcp-server
+#   [about] https://help.gong.io/docs/about-gong-mcp-server
+# And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://mcp.gong.io/.well-known/oauth-protected-resource/mcp at
+#         2026-10-02T21:06:35Z: resource https://mcp.gong.io/mcp, authorization_servers
+#         [https://mcp.gong.io], scopes_supported [mcp:read, mcp:write].
+#   [as]  GET https://mcp.gong.io/.well-known/oauth-authorization-server at
+#         2026-10-02T21:06:35Z: issuer https://mcp.gong.io, authorize
+#         https://app.gong.io/oauth2/authorize, token
+#         https://app.gong.io/oauth2/generate-mcp-token, registration
+#         https://app.gong.io/oauth2/register, grant_types_supported [authorization_code,
+#         refresh_token], token_endpoint_auth_methods_supported [client_secret_basic,
+#         client_secret_post], code_challenge_methods_supported [S256], no revocation_endpoint.
+id: gong
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+# [proto]:86-88
+name: Gong
+category: Revenue
+description: Review recorded conversations, transcripts, and revenue intelligence.
+endpoints:
+  # «Gong MCP server URL: https://mcp.gong.io/mcp»: [setup]; [proto]:89. Authorize and token
+  # are not written: oauth2_code discovers them through [prm] and [as], which name the same
+  # two URLs [proto]:92-93 pinned.
+  mcp: https://mcp.gong.io/mcp
+# «The MCP server uses OAuth to authenticate requests»: [setup]. PKCE S256: [as].
+schemes: [oauth2_code]
+client:
+  # [setup]'s two integration types: manual («Gong issues a client ID and secret»), which a
+  # customer's Gong admin creates, so the customer's client; and automatic («No client ID or
+  # secret setup is needed. Any matching client can connect»), registration at [as]'s
+  # registration_endpoint. [proto]:91 (customer_dcr) is the same pair. No auth_method: [as]
+  # lists client_secret_basic and client_secret_post and oauth2_code picks basic, which is
+  # what [proto]:94 pinned.
+  policy: [customer, dcr]
+scopes:
+  # All of [prm]'s scopes_supported, as MCP 2025-11-25 «Scope Selection Strategy» asks; [as]
+  # lists the same two. [about] says «The MCP server is read-only», so what mcp:write grants
+  # is unverified. The prototype asked for none ([proto]:85-94).
+  list: [mcp:read, mcp:write]
+# No identity, capture or refresh policy: neither page documents the token response, its
+# lifetimes or rotation. # unverified
+# [setup]'s personal and shared authorization are set on the integration in Gong, not in the
+# request (docs/connector-design.md:149 at cf62af0d).
+sources:
+  - kind: mcp
+    endpoint: mcp
