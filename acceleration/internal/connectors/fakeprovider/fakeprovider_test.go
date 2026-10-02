@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -90,6 +91,19 @@ func (s *FakeProviderSuite) TestACodeRedeemedTwiceRevokesItsGrant() {
 	s.Equal(http.StatusUnauthorized, s.call(srv, first["access_token"].(string)).StatusCode)
 }
 
+func (s *FakeProviderSuite) TestACodeRedeemedAgainAfterItExpiredStillRevokesItsGrant() {
+	srv := fakeprovider.New(s.T())
+	authorize, verifier := s.authorizeURL(srv, nil)
+	code := s.consent(srv, authorize).Query().Get("code")
+	_, first := s.exchange(srv, code, verifier)
+
+	srv.Advance(11 * time.Minute) // past codeTTL, RFC 6749 §4.1.2's 10 minutes
+	status, body := s.exchange(srv, code, verifier)
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("invalid_grant", body["error"])
+	s.Equal(http.StatusUnauthorized, s.call(srv, first["access_token"].(string)).StatusCode)
+}
+
 func (s *FakeProviderSuite) TestADynamicallyRegisteredPublicClientCanConnect() {
 	srv := fakeprovider.New(s.T())
 	response, err := srv.Client().Post(srv.URL+fakeprovider.PathRegister, "application/json",
@@ -147,6 +161,24 @@ func (s *FakeProviderSuite) TestRotatingRefreshWithGraceAcceptsTheOldTokenUntilT
 	s.Equal("invalid_grant", body["error"])
 }
 
+func (s *FakeProviderSuite) TestAnExpiredGraceTokenIsRefusedAndTheRotatedOneKeepsWorking() {
+	srv := fakeprovider.New(s.T(), fakeprovider.RotatingRefreshWithGrace)
+	first := s.connect(srv, nil)
+	old := first["refresh_token"].(string)
+	status, second := s.refresh(srv, old)
+	s.Require().Equal(http.StatusOK, status)
+
+	srv.Advance(fakeprovider.Grace)
+	status, third := s.refresh(srv, second["refresh_token"].(string))
+	s.Require().Equal(http.StatusOK, status)
+	status, _ = s.refresh(srv, old)
+	s.Equal(http.StatusBadRequest, status, "past the window the old token is refused")
+
+	status, _ = s.refresh(srv, third["refresh_token"].(string))
+	s.Equal(http.StatusOK, status, "an expired old token does not end the grant")
+	s.Equal(http.StatusOK, s.call(srv, third["access_token"].(string)).StatusCode)
+}
+
 func (s *FakeProviderSuite) TestNonRotatingRefreshKeepsTheSameRefreshToken() {
 	srv := fakeprovider.New(s.T(), fakeprovider.NonRotatingRefresh)
 	first := s.connect(srv, nil)
@@ -177,6 +209,8 @@ func (s *FakeProviderSuite) TestInvalidGrantRefusesEveryRefresh() {
 	status, body := s.refresh(srv, first["refresh_token"].(string))
 	s.Equal(http.StatusBadRequest, status)
 	s.Equal("invalid_grant", body["error"])
+	s.Equal(http.StatusOK, s.call(srv, first["access_token"].(string)).StatusCode,
+		"only the refresh is refused; the access token works until it expires")
 }
 
 func (s *FakeProviderSuite) TestLostResponseSpendsTheRefreshTokenAndAnswersNothing() {
@@ -271,6 +305,53 @@ func (s *FakeProviderSuite) TestCommaScopesAnswersInSlackShapeThatTheSlackManife
 	s.Equal(srv.UserID, captured.Metadata["user_id"])
 }
 
+func (s *FakeProviderSuite) TestCommaScopesAnswersARefreshInTheSameSlackShape() {
+	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
+	first := s.connect(srv, url.Values{"scope": {"channels:history,chat:write"}, "user_scope": {"search:read"}})
+	s.Equal(float64(43200), first["expires_in"])
+	user := first["authed_user"].(map[string]any)
+	s.Equal(float64(43200), user["expires_in"])
+	s.Require().NotEmpty(user["refresh_token"])
+
+	status, refreshed := s.refresh(srv, first["refresh_token"].(string))
+	s.Require().Equal(http.StatusOK, status)
+	s.Equal(true, refreshed["ok"])
+	s.Equal("bot", refreshed["token_type"])
+	s.Equal("channels:history,chat:write", refreshed["scope"])
+	s.Equal(float64(43200), refreshed["expires_in"])
+	var recorded map[string]any
+	s.Require().NoError(json.Unmarshal(s.read("../core/testdata/recorded/slack.token.json"), &recorded))
+	for key := range recorded {
+		s.Contains(refreshed, key)
+	}
+	captured := s.apply("../core/testdata/manifests/slack.yaml", nil, refreshed)
+	s.Equal(srv.TeamID, captured.Metadata["team_id"])
+
+	status, userRefreshed := s.refresh(srv, user["refresh_token"].(string))
+	s.Require().Equal(http.StatusOK, status)
+	s.Equal("user", userRefreshed["token_type"])
+	s.Equal("search:read", userRefreshed["scope"])
+	s.Equal(http.StatusOK, s.call(srv, userRefreshed["access_token"].(string)).StatusCode)
+}
+
+func (s *FakeProviderSuite) TestCommaScopesNamesTokenErrorsAsSlackDoes() {
+	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
+	authorize, verifier := s.authorizeURL(srv, nil)
+	code := s.consent(srv, authorize).Query().Get("code")
+
+	_, body := s.post(srv, fakeprovider.PathToken, url.Values{
+		"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {"https://client.example/other"},
+		"code_verifier": {verifier},
+	}, true)
+	s.Equal("bad_redirect_uri", body["error"])
+
+	_, body = s.exchange(srv, code, "another-verifier-of-enough-length-to-look-real")
+	s.Equal("invalid_code_verifier", body["error"])
+
+	_, body = s.post(srv, fakeprovider.PathToken, url.Values{"grant_type": {"password"}}, true)
+	s.Equal("invalid_grant_type", body["error"])
+}
+
 func (s *FakeProviderSuite) TestCommaScopesRefusesASpaceSeparatedScope() {
 	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
 	authorize, _ := s.authorizeURL(srv, url.Values{"scope": {"channels:history chat:write"}})
@@ -296,6 +377,10 @@ func (s *FakeProviderSuite) TestCallbackRealmIDPutsTheRealmInTheCallbackThatTheQ
 	s.Equal(srv.RealmID, captured.Metadata["realm_id"])
 	s.Equal(srv.RealmID, captured.AccountID)
 	s.Contains(captured.Unverified, "realm_id")
+
+	status, refreshed := s.refresh(srv, body["refresh_token"].(string))
+	s.Require().Equal(http.StatusOK, status)
+	s.Equal(body["x_refresh_token_expires_in"], refreshed["x_refresh_token_expires_in"])
 }
 
 func (s *FakeProviderSuite) TestSignedCallbackIsSignedWithTheClientSecret() {

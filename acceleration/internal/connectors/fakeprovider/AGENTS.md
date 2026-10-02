@@ -21,22 +21,22 @@ That is the whole setup. The server closes when the test ends (`t.Cleanup`). It 
 
 ## Baseline
 
-With no personality the server is strict: PKCE with `S256` only (RFC 7636 §4.4.1, §4.6; RFC 9700 §2.1.1), `iss` in every authorization response (RFC 9207 §2), `resource` checked when sent (RFC 8707 §2), a code redeemed twice revokes its grant (RFC 6749 §4.1.2), refresh tokens rotate on every use and a replayed one revokes the grant (RFC 9700 §4.14.2), access tokens live `AccessTTL`. The MCP endpoint is dual-era: MCP 2026-07-28 (per-request `_meta`, `server/discover`, header validation) and 2025-11-25 (`initialize`), two tools (`echo`, `fail` with `isError`) on two `tools/list` pages.
+With no personality the server is strict: PKCE with `S256` only (RFC 7636 §4.4.1, §4.6; RFC 9700 §2.1.1), `iss` in every authorization response (RFC 9207 §2), `resource` checked when sent (RFC 8707 §2), a code redeemed twice revokes its grant, even after it expired (RFC 6749 §4.1.2), refresh tokens rotate on every use and a replayed one revokes the grant (RFC 9700 §4.14.2), access tokens live `AccessTTL`. The MCP endpoint is dual-era: MCP 2026-07-28 (per-request `_meta`, `server/discover`, header validation) and 2025-11-25 (`initialize`), two tools (`echo`, `fail` with `isError`) on two `tools/list` pages.
 
 ## Personalities
 
 | Personality | Behaviour | Source | Serves |
 | --- | --- | --- | --- |
-| `RotatingRefreshWithGrace` | A rotated refresh token keeps working for `Grace`, then `invalid_grant` | oauth-jsclient README («previous refresh tokens expire 24 hours after you receive a new one») | T10 grace retry |
+| `RotatingRefreshWithGrace` | A rotated refresh token keeps working for `Grace`, then gets `invalid_grant`; the grant and the token the rotation issued stay | oauth-jsclient README («previous refresh tokens expire 24 hours after you receive a new one») | T10 grace retry |
 | `NonRotatingRefresh` | A refresh answers without `refresh_token`; the old one stays valid | RFC 6749 §6 | T10 |
 | `NoRefreshToken` | The exchange returns an access token alone; it expires | RFC 6749 §5.1 | T10, T12 |
-| `InvalidGrant` | Every refresh gets 400 `invalid_grant` | RFC 6749 §5.2 | T10 InvalidGrant, T12 |
+| `InvalidGrant` | Every refresh gets 400 `invalid_grant`; access tokens already issued work until they expire | RFC 6749 §5.2 | T10 InvalidGrant, T12 |
 | `LostResponse` | A refresh rotates, then the connection closes with no answer | RFC 9700 §4.14.2 (why a replay then fails) | T8, T10 Uncertain, T12 |
 | `Unavailable` | The token endpoint answers 503 and changes nothing | RFC 9110 §15.6.4 | T10 Transient, T11 |
 | `InsufficientScope` | `tools/call` without `RequiredScope` gets 403 `insufficient_scope` with the scope to ask for | RFC 6750 §3.1; MCP 2025-11-25 «Scope Challenge Handling» | T10 ScopeRequired, T27 |
 | `ClaimsChallenge` | MCP requests get 401 `insufficient_claims` with `claims` until the token came from a consent passing them | Microsoft «Claims challenges, claims requests and client capabilities» | T10 ScopeRequired, T27 |
 | `RateLimited` | MCP requests get 429 with `Retry-After: 30` | RFC 6585 §4; RFC 9110 §10.2.3 | T10 RateLimited, T28 |
-| `CommaScopes` | `scope` and `user_scope` split on commas; token response in `oauth.v2.access` shape with `team` and `authed_user`; token errors as 200 `ok:false` | docs.slack.dev oauth.v2.access, installing-with-oauth, node-slack-sdk web-api | T9, T10 |
+| `CommaScopes` | `scope` and `user_scope` split on commas; token response, refresh included, in `oauth.v2.access` shape with `team` and `authed_user` (the user token with its own `refresh_token`); access tokens live `SlackAccessTTL` (12 h); token errors as 200 `ok:false` with Slack's names | docs.slack.dev oauth.v2.access, using-token-rotation, installing-with-oauth, node-slack-sdk web-api | T9, T10 |
 | `CallbackRealmID` | `realmId` in the callback | oauth-jsclient `src/OAuthClient.js` createToken | T9 |
 | `SignedCallback` | `shop`, `host`, `timestamp` and an `hmac` over the callback; `Sign` recomputes it | shopify.dev «Authorization code grant» | the `shopify.callback_hmac` hook (architecture doc, stress-test row 4) |
 | `ForeignIssuer` | The callback names `ForeignIssuerURL` as `iss` | RFC 9207 §2.4 | T9 |

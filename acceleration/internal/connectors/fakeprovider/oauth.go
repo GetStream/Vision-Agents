@@ -213,7 +213,8 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	case "refresh_token":
 		s.refreshGrant(w, r, c)
 	default:
-		s.tokenError(w, http.StatusBadRequest, "unsupported_grant_type", "") // RFC 6749 §5.2
+		// RFC 6749 §5.2; Slack names it invalid_grant_type (oauth.v2.access errors).
+		s.tokenError(w, http.StatusBadRequest, "unsupported_grant_type", "invalid_grant_type")
 	}
 }
 
@@ -242,24 +243,40 @@ func (s *Server) authenticate(r *http.Request) (c *client, basic bool) {
 func (s *Server) exchange(w http.ResponseWriter, r *http.Request, c *client) {
 	form := r.PostForm
 	code := s.codes[form.Get("code")]
-	if code == nil || s.now().After(code.expires) {
+	if code == nil {
 		s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_code")
 		return
 	}
+	// Checked before expiry, so a code presented again after codeTTL still ends its grant.
 	if code.used {
 		// RFC 6749 §4.1.2: a code used twice is refused, and the server «SHOULD revoke
 		// (when possible) all tokens previously issued based on that authorization code».
 		code.grant.revoked = true
+		if code.userGrant != nil {
+			code.userGrant.revoked = true
+		}
+		s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_code")
+		return
+	}
+	if s.now().After(code.expires) {
 		s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_code")
 		return
 	}
 	// RFC 6749 §4.1.3: the code is bound to the client and the redirect URI. RFC 7636 §4.6:
-	// BASE64URL(SHA256(code_verifier)) must equal the challenge, or invalid_grant. Slack's
-	// page does not say which code a PKCE mismatch gets; invalid_code is assumed (unverified).
+	// BASE64URL(SHA256(code_verifier)) must equal the challenge, or invalid_grant. The Slack
+	// names are from the oauth.v2.access error list: bad_redirect_uri «did not match the
+	// redirect_uri in the original request», invalid_code_verifier «The code_verifier is
+	// invalid». A code bound to another client keeps invalid_code, which is unverified.
 	digest := sha256.Sum256([]byte(form.Get("code_verifier")))
-	if code.clientID != c.id || form.Get("redirect_uri") != code.redirectURI ||
-		base64.RawURLEncoding.EncodeToString(digest[:]) != code.challenge {
+	switch {
+	case code.clientID != c.id:
 		s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_code")
+		return
+	case form.Get("redirect_uri") != code.redirectURI:
+		s.tokenError(w, http.StatusBadRequest, "invalid_grant", "bad_redirect_uri")
+		return
+	case base64.RawURLEncoding.EncodeToString(digest[:]) != code.challenge:
+		s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_code_verifier")
 		return
 	}
 	if form.Get("resource") != "" && form.Get("resource") != s.resource() {
@@ -268,14 +285,22 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request, c *client) {
 	}
 	code.used = true
 	code.grant = &grant{clientID: c.id, scopes: code.scopes, claims: code.claims}
-	body := s.issue(code.grant, !s.is(NoRefreshToken))
-	if s.is(CommaScopes) {
-		body = s.slackShape(body, code)
-	}
-	if s.is(CallbackRealmID) {
-		// The refresh token's lifetime in seconds; the value is oauth-jsclient README's
-		// example response.
-		body["x_refresh_token_expires_in"] = 8726400
+	body := s.shape(s.issue(code.grant, !s.is(NoRefreshToken)), code.grant)
+	if s.is(CommaScopes) && len(code.userScopes) > 0 {
+		// The user token is a grant of its own, so it refreshes on its own refresh token.
+		code.userGrant = &grant{clientID: c.id, scopes: code.userScopes, user: true}
+		issued := s.issue(code.userGrant, !s.is(NoRefreshToken))
+		// The user token in authed_user carries expires_in and refresh_token beside it
+		// (docs.slack.dev/authentication/using-token-rotation, «If you make use of a user
+		// token»).
+		user := body["authed_user"].(map[string]any)
+		user["access_token"] = issued["access_token"]
+		user["scope"] = strings.Join(code.userScopes, ",")
+		user["token_type"] = "user"
+		user["expires_in"] = issued["expires_in"]
+		if rt, ok := issued["refresh_token"]; ok {
+			user["refresh_token"] = rt
+		}
 	}
 	writeToken(w, body)
 }
@@ -292,14 +317,25 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request, c *client)
 		s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_refresh_token")
 		return
 	}
-	if !rt.rotatedAt.IsZero() && !(s.is(RotatingRefreshWithGrace) && s.now().Before(rt.rotatedAt.Add(Grace))) {
-		// RFC 9700 §4.14.2: a rotated refresh token presented again means one of two parties
-		// holds a stolen copy, so the server «will revoke the active refresh token».
-		rt.grant.revoked = true
-		s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_refresh_token")
-		return
+	if !rt.rotatedAt.IsZero() {
+		if !s.is(RotatingRefreshWithGrace) {
+			// RFC 9700 §4.14.2: a rotated refresh token presented again means one of two
+			// parties holds a stolen copy, so the server «will revoke the active refresh token».
+			rt.grant.revoked = true
+			s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_refresh_token")
+			return
+		}
+		if !s.now().Before(rt.rotatedAt.Add(Grace)) {
+			// Past the window the old token has only expired. QuickBooks: «previous refresh
+			// tokens expire 24 hours after you receive a new one» (oauth-jsclient README);
+			// Slack: «the refresh token you used is revoked after a short grace period»
+			// (docs.slack.dev/authentication/using-token-rotation). Neither ends the grant, so
+			// the token the rotation issued keeps working.
+			s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_refresh_token")
+			return
+		}
 	}
-	body := s.issue(rt.grant, !s.is(NonRotatingRefresh))
+	body := s.shape(s.issue(rt.grant, !s.is(NonRotatingRefresh)), rt.grant)
 	if s.is(LostResponse) {
 		// The rotation is committed; the answer never leaves. net/http closes the connection
 		// without a response for this panic value.
@@ -311,10 +347,14 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request, c *client)
 // issue mints an access token for g and, when rotate is set, a new refresh token that
 // retires the current one. Call it with mu held.
 func (s *Server) issue(g *grant, rotate bool) map[string]any {
+	ttl := AccessTTL
+	if s.is(CommaScopes) {
+		ttl = SlackAccessTTL
+	}
 	access := synthetic("access")
-	s.access[access] = &accessToken{grant: g, scopes: g.scopes, expires: s.now().Add(AccessTTL)}
+	s.access[access] = &accessToken{grant: g, scopes: g.scopes, expires: s.now().Add(ttl)}
 	// RFC 6749 §5.1.
-	body := map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": int(AccessTTL.Seconds())}
+	body := map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": int(ttl.Seconds())}
 	if len(g.scopes) > 0 {
 		body["scope"] = strings.Join(g.scopes, " ")
 	}
@@ -329,26 +369,41 @@ func (s *Server) issue(g *grant, rotate bool) map[string]any {
 	return body
 }
 
+// shape adds what a vendor-shaped personality puts in every token response, the code
+// exchange and a refresh alike. Call it with mu held.
+func (s *Server) shape(body map[string]any, g *grant) map[string]any {
+	if s.is(CommaScopes) {
+		body = s.slackShape(body, g)
+	}
+	if s.is(CallbackRealmID) {
+		// The refresh token's lifetime in seconds. oauth-jsclient README lists
+		// x_refresh_token_expires_in in its token object, the shape every token response
+		// fills; the value is the README's example response.
+		body["x_refresh_token_expires_in"] = 8726400
+	}
+	return body
+}
+
 // slackShape rewrites a token response as oauth.v2.access answers
-// (docs.slack.dev/reference/methods/oauth.v2.access): ok, a bot token with comma scopes,
-// team, enterprise and authed_user, which carries a user token when user_scope was asked.
-func (s *Server) slackShape(body map[string]any, code *authorizationCode) map[string]any {
+// (docs.slack.dev/reference/methods/oauth.v2.access), which is also the refresh call
+// (docs.slack.dev/authentication/using-token-rotation, «Refresh a token»): ok, a bot token
+// with comma scopes, team, enterprise and authed_user. A refresh of a user token answers
+// token_type user with its comma scopes; what else Slack puts beside them is unverified.
+func (s *Server) slackShape(body map[string]any, g *grant) map[string]any {
 	body["ok"] = true
+	body["scope"] = strings.Join(g.scopes, ",")
+	if g.user {
+		body["token_type"] = "user"
+		return body
+	}
 	body["token_type"] = "bot"
-	body["scope"] = strings.Join(code.scopes, ",")
 	body["bot_user_id"] = "U0000BOT"
 	body["app_id"] = "A0000APP"
 	body["team"] = map[string]string{"name": "Fake", "id": s.TeamID}
 	body["enterprise"] = nil
-	user := map[string]any{"id": s.UserID}
-	if len(code.userScopes) > 0 {
-		token := synthetic("user")
-		s.access[token] = &accessToken{grant: code.grant, scopes: code.userScopes, expires: s.now().Add(AccessTTL)}
-		user["access_token"] = token
-		user["scope"] = strings.Join(code.userScopes, ",")
-		user["token_type"] = "user"
-	}
-	body["authed_user"] = user
+	// On the exchange authed_user is oauth.v2.access's; that a refresh repeats it is
+	// unverified, and it is kept so a manifest's capture reads the same on both.
+	body["authed_user"] = map[string]any{"id": s.UserID}
 	return body
 }
 

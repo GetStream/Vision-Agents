@@ -43,6 +43,11 @@ const (
 	// README; Slack «brief», docs.slack.dev/authentication/using-token-rotation) and a test
 	// crosses it with Advance.
 	Grace = 30 * time.Minute
+	// SlackAccessTTL is how long an access token works under CommaScopes: Slack's rotated
+	// tokens «will always expire in 43,200 seconds, which is 12 hours»
+	// (docs.slack.dev/authentication/using-token-rotation), and core's recorded Slack
+	// response has expires_in 43200.
+	SlackAccessTTL = 12 * time.Hour
 	// codeTTL is RFC 6749 §4.1.2: «A maximum authorization code lifetime of 10 minutes is
 	// RECOMMENDED».
 	codeTTL = 10 * time.Minute
@@ -68,7 +73,8 @@ type Personality string
 const (
 	// RotatingRefreshWithGrace keeps a rotated refresh token valid for Grace after the
 	// rotation, as QuickBooks does («previous refresh tokens expire 24 hours after you
-	// receive a new one», oauth-jsclient README).
+	// receive a new one», oauth-jsclient README). After Grace the old token gets invalid_grant
+	// and the grant, with the token the rotation issued, stays.
 	RotatingRefreshWithGrace Personality = "rotating_refresh_with_grace"
 	// NonRotatingRefresh answers a refresh without a refresh_token, so the client keeps the
 	// one it has (RFC 6749 §6: the server «MAY issue a new refresh token»).
@@ -76,8 +82,9 @@ const (
 	// NoRefreshToken issues an access token alone (RFC 6749 §5.1: refresh_token is
 	// OPTIONAL), so once it expires only a new consent helps.
 	NoRefreshToken Personality = "no_refresh_token"
-	// InvalidGrant refuses every refresh with invalid_grant (RFC 6749 §5.2), as a provider
-	// does once the user revoked the grant.
+	// InvalidGrant refuses every refresh with invalid_grant (RFC 6749 §5.2). Only the refresh
+	// is refused: access tokens already issued keep working until they expire. A test that
+	// needs the grant gone as well revokes a token at PathRevoke.
 	InvalidGrant Personality = "invalid_grant"
 	// LostResponse performs a refresh, rotation included, then closes the connection before
 	// answering. The old refresh token is spent and the new one never arrives.
@@ -95,8 +102,8 @@ const (
 	// §10.2.3) of RetryAfter.
 	RateLimited Personality = "rate_limited"
 	// CommaScopes plays Slack's OAuth v2: scope and user_scope are comma-separated, the token
-	// response is oauth.v2.access's shape with team and authed_user, and token errors come as
-	// HTTP 200 with ok false.
+	// response, refresh included, is oauth.v2.access's shape with team and authed_user, access
+	// tokens live SlackAccessTTL, and token errors come as HTTP 200 with ok false.
 	CommaScopes Personality = "comma_scopes"
 	// CallbackRealmID adds realmId to the callback, as QuickBooks does: Intuit's SDK reads it
 	// from the redirect (oauth-jsclient src/OAuthClient.js createToken, params.realmId).
@@ -160,6 +167,9 @@ type grant struct {
 	revoked  bool
 	// current is the refresh token in use; a rotated one stays in refresh with rotatedAt set.
 	current string
+	// user marks the grant of the Slack user token CommaScopes issues beside the bot token's
+	// when user_scope was asked.
+	user bool
 }
 
 type authorizationCode struct {
@@ -172,6 +182,7 @@ type authorizationCode struct {
 	expires     time.Time
 	used        bool
 	grant       *grant
+	userGrant   *grant
 }
 
 type accessToken struct {
