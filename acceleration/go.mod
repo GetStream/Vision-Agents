@@ -3,7 +3,7 @@ module github.com/GetStream/Vision-Agents/acceleration
 go 1.27.0
 
 require (
-	github.com/GetStream/getstream-go-webrtc v0.0.0-20261002062754-9f0bc192c9af
+	github.com/GetStream/getstream-go-webrtc v0.0.0-20261002071521-533d73575c02
 	github.com/GetStream/getstream-go/v5 v5.2.0
 	github.com/GetStream/protocol v1.50.0-3rtt.2
 	github.com/danielgtaylor/huma/v2 v2.39.1
