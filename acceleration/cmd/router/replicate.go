@@ -66,7 +66,14 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 	defer pgStore.Close()
 	// An imported row may be pinned only to the app its customer acts in here, and one
 	// pinned to the deployment's own app can be placed only once that app is known.
-	streamClients := newStreamClients(settings)
+	secrets, err := newSecretSealer(settings)
+	if err != nil {
+		return err
+	}
+	streamClients, err := newStreamClients(settings, pgStore, secrets, logger)
+	if err != nil {
+		return err
+	}
 	learning, cancel := context.WithTimeout(ctx, learnTimeout)
 	if _, err := streamClients.LearnDeploymentApp(learning); err != nil && !errors.Is(err, streamapp.ErrNoIdentity) {
 		logger.Warn("stream: could not learn which Stream app is this deployment's own, so a row "+

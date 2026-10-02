@@ -349,7 +349,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// Checked before anything is opened, so a deployment that turned on something holding
 	// secrets without a keyring is refused at startup rather than on its first secret.
-	if _, err := newSecretSealer(settings); err != nil {
+	secrets, err := newSecretSealer(settings)
+	if err != nil {
 		return err
 	}
 
@@ -621,7 +622,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// Every Stream action taken for a customer, a call joined, a line made, a transcript
 	// written, a token minted, is taken in the app this resolves for them.
-	streamClients := newStreamClients(settings)
+	streamClients, err := newStreamClients(settings, pgStore, secrets, logger)
+	if err != nil {
+		return err
+	}
+	if err := checkDeploymentApp(ctx, settings, streamClients); err != nil {
+		return err
+	}
 	if pgStore != nil {
 		pgStore.SetStreamPins(streamPins(streamClients))
 	}

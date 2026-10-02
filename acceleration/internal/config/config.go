@@ -131,8 +131,15 @@ type Stream struct {
 	BaseURL string `koanf:"base_url"`
 	// Tenancy says whose app the router acts in. deployment, the default, is the
 	// deployment's own app for every customer, as it always was. app is each customer's
-	// own, which this build does not offer yet.
+	// own, registered with its keys.
 	Tenancy string `koanf:"tenancy"`
+	// Fallback is what app mode does for a customer that registered no app: deployment
+	// writes it into the deployment's own app, as before, and refuse writes it nowhere.
+	// Unset is refuse. Deployment mode never reads it.
+	Fallback string `koanf:"fallback"`
+	// AppID is the deployment's own app's id, which Stream is asked for when it is not
+	// set. A pin naming it is finished with the deployment's own key, in either mode.
+	AppID int64 `koanf:"app_id"`
 }
 
 // What Stream.Tenancy holds.
@@ -140,6 +147,21 @@ const (
 	TenancyDeployment = "deployment"
 	TenancyApp        = "app"
 )
+
+// What Stream.Fallback holds.
+const (
+	FallbackDeployment = "deployment"
+	FallbackRefuse     = "refuse"
+)
+
+// EffectiveFallback is what app mode does for a customer with no app of its own: refuse
+// unless the deployment said otherwise, so leaving it out fails closed.
+func (s Stream) EffectiveFallback() string {
+	if s.Fallback == "" {
+		return FallbackRefuse
+	}
+	return s.Fallback
+}
 
 // Agent is how an agent holds a conversation, where that is the deployment's choice.
 type Agent struct {
@@ -182,6 +204,8 @@ var variables = map[string]string{
 	"stream.base_url":     "STREAM_BASE_URL",
 	"stream.user_token":   "STREAM_USER_TOKEN",
 	"stream.tenancy":      "ROUTER_STREAM_TENANCY",
+	"stream.fallback":     "ROUTER_STREAM_FALLBACK",
+	"stream.app_id":       "ROUTER_STREAM_APP_ID",
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
@@ -305,12 +329,36 @@ func (c Config) validate() error {
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:
 	case TenancyApp:
-		return fmt.Errorf("config: stream.tenancy=%s is not available in this build", TenancyApp)
+		if err := c.validateAppTenancy(); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("config: stream.tenancy is %s or %s, got %q", TenancyDeployment, TenancyApp, c.Stream.Tenancy)
 	}
+	switch c.Stream.Fallback {
+	case "", FallbackDeployment, FallbackRefuse:
+	default:
+		return fmt.Errorf("config: stream.fallback is %s or %s, got %q", FallbackDeployment, FallbackRefuse, c.Stream.Fallback)
+	}
+	if c.Stream.AppID < 0 {
+		return fmt.Errorf("config: stream.app_id is a Stream app's id, got %d", c.Stream.AppID)
+	}
 	if c.DataMove.Retention < 0 {
 		return fmt.Errorf("config: data_move.retention cannot be negative, got %s", c.DataMove.Retention)
+	}
+	return nil
+}
+
+// validateAppTenancy refuses an app mode that could not keep its promises. Registered apps
+// and their keys live in Postgres. A fixed user token is the deployment's own, and the voice
+// edge would prefer it to a token of the app a session is in.
+func (c Config) validateAppTenancy() error {
+	if c.Postgres.DSN == "" {
+		return fmt.Errorf("config: stream.tenancy=%s keeps every app's keys in Postgres: set postgres.dsn", TenancyApp)
+	}
+	if c.Stream.UserToken != "" {
+		return fmt.Errorf("config: stream.tenancy=%s cannot use stream.user_token, which is one "+
+			"app's fixed token: unset it", TenancyApp)
 	}
 	return nil
 }
@@ -344,6 +392,8 @@ func (c Config) export() error {
 		"stream.base_url":             c.Stream.BaseURL,
 		"stream.user_token":           c.Stream.UserToken,
 		"stream.tenancy":              c.Stream.Tenancy,
+		"stream.fallback":             c.Stream.Fallback,
+		"stream.app_id":               appID(c.Stream.AppID),
 		"data_move.retention":         c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day": fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":   fmt.Sprint(c.RateLimit.TokensPerDay),
@@ -371,4 +421,12 @@ func splitList(raw string) []string {
 		}
 	}
 	return entries
+}
+
+// appID writes an app id back, or nothing for one nobody set.
+func appID(id int64) string {
+	if id == 0 {
+		return ""
+	}
+	return fmt.Sprint(id)
 }

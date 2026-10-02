@@ -188,14 +188,67 @@ func (s *ConfigSuite) TestStreamTenancyDefaultsToDeployment() {
 	s.Equal(TenancyDeployment, config.Stream.Tenancy)
 }
 
-func (s *ConfigSuite) TestStreamTenancyAppIsRefusedUntilAvailable() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	_, _, err := Load("")
-	s.ErrorContains(err, "not available")
-
+func (s *ConfigSuite) TestStreamTenancyIsDeploymentOrApp() {
 	s.T().Setenv("ROUTER_STREAM_TENANCY", "shared")
-	_, _, err = Load("")
+	_, _, err := Load("")
 	s.ErrorContains(err, "stream.tenancy")
+}
+
+func (s *ConfigSuite) TestAppModeIsRefusedWithoutPostgres() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "postgres.dsn")
+}
+
+func (s *ConfigSuite) TestAppModeRefusesAUserTokenInTheEnvironment() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("STREAM_USER_TOKEN", "one-apps-token")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "stream.user_token")
+	s.NotContains(err.Error(), "one-apps-token")
+}
+
+func (s *ConfigSuite) TestAppModeStartsWithPostgresAndNoUserToken() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal(TenancyApp, config.Stream.Tenancy)
+}
+
+func (s *ConfigSuite) TestStreamFallbackDefaultsToRefuseInAppMode() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.Stream.Fallback)
+	s.Equal(FallbackRefuse, config.Stream.EffectiveFallback())
+
+	s.T().Setenv("ROUTER_STREAM_FALLBACK", FallbackDeployment)
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(FallbackDeployment, config.Stream.EffectiveFallback())
+
+	s.T().Setenv("ROUTER_STREAM_FALLBACK", "maybe")
+	_, _, err = Load("")
+	s.ErrorContains(err, "stream.fallback")
+}
+
+func (s *ConfigSuite) TestTheDeploymentsAppIDIsReadAsANumber() {
+	s.T().Setenv("ROUTER_STREAM_APP_ID", "1234")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(int64(1234), config.Stream.AppID)
+
+	s.T().Setenv("ROUTER_STREAM_APP_ID", "-4")
+	_, _, err = Load("")
+	s.ErrorContains(err, "stream.app_id")
 }
 
 func (s *ConfigSuite) TestTheStreamBaseURLIsReadOnce() {
