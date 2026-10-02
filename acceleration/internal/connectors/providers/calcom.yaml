@@ -1,0 +1,39 @@
+# Cal.com's hosted MCP server (internal/mcp/connectors.yaml:60-66 on codex/connector-support at
+# cf62af0d, «[proto]:N» below). The id is the prototype's ([proto]:60), and the one the core
+# guard already denies (internal/connectors/core/guard_test.go). Vendor page, opened
+# October 2, 2026:
+#   [mcp] https://cal.com/docs/mcp-server
+# And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://mcp.cal.com/.well-known/oauth-protected-resource/mcp at
+#         2026-10-02T21:06:33Z: resource https://mcp.cal.com/mcp, authorization_servers
+#         [https://mcp.cal.com], no scopes_supported.
+#   [as]  GET https://mcp.cal.com/.well-known/oauth-authorization-server at
+#         2026-10-02T21:06:34Z: issuer https://mcp.cal.com, authorize, token, registration and
+#         revocation endpoints under https://mcp.cal.com/oauth/, grant_types_supported
+#         [authorization_code, refresh_token], code_challenge_methods_supported [S256],
+#         token_endpoint_auth_methods_supported [none], no client_id_metadata_document_supported.
+id: calcom
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+# [proto]:61-63
+name: Cal.com
+category: Scheduling
+description: Manage bookings, event types and schedules.
+endpoints:
+  # [mcp] («https://mcp.cal.com/mcp»); [proto]:64. Authorize, token and revoke are not
+  # written: oauth2_code discovers them through [prm] and [as] (RFC 9728 and 8414), which
+  # answer for this exact endpoint.
+  mcp: https://mcp.cal.com/mcp
+# «Streamable HTTP transport with OAuth 2.1 authentication»: [mcp]. PKCE S256: [as].
+schemes: [oauth2_code]
+client:
+  # [as] has a registration_endpoint for public clients and no CIMD flag; [proto]:66.
+  policy: [dcr]
+# No scopes: [prm] names none and [mcp] lists none, so the scope parameter is left out, as
+# MCP 2025-11-25 «Scope Selection Strategy» asks («omitting the scope parameter if
+# scopes_supported is undefined»). The prototype asked for none either ([proto]:60-66).
+# No identity, capture or refresh policy: neither [mcp] nor [as] documents a token response,
+# token lifetimes or rotation. # unverified
+sources:
+  - kind: mcp
+    endpoint: mcp
