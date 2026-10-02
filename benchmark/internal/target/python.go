@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,11 @@ type Python struct {
 	Pipeline string
 	Env      []string
 	Logger   *slog.Logger
+
+	// metrics are what the agent measured about each call, kept from when its session closed
+	// until the run asks for them.
+	metricsMu sync.Mutex
+	metrics   map[string]map[string]float64
 }
 
 func (p *Python) Prepare(ctx context.Context) (func(), error) {
@@ -84,8 +90,65 @@ func (p *Python) StartCall(ctx context.Context, callID string, callType string) 
 	return func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
+		// The session's metrics go with it, so they are read before it is closed.
+		p.keepMetrics(callID, sessionMetrics(closeCtx, p.logger(), p.URL, callID, sessionID))
 		closeAgentSession(closeCtx, p.logger(), p.URL, callID, sessionID)
 	}, nil
+}
+
+// AgentMetrics returns what the agent measured about a call it has finished, and forgets it.
+func (p *Python) AgentMetrics(callID string) map[string]float64 {
+	p.metricsMu.Lock()
+	defer p.metricsMu.Unlock()
+	metrics := p.metrics[callID]
+	delete(p.metrics, callID)
+	return metrics
+}
+
+func (p *Python) keepMetrics(callID string, metrics map[string]float64) {
+	if len(metrics) == 0 {
+		return
+	}
+	p.metricsMu.Lock()
+	defer p.metricsMu.Unlock()
+	if p.metrics == nil {
+		p.metrics = map[string]map[string]float64{}
+	}
+	p.metrics[callID] = metrics
+}
+
+// sessionMetrics reads a session's metrics and keeps the ones that were measured. An agent
+// that measured nothing for a metric reports it as null, which is not a zero.
+func sessionMetrics(ctx context.Context, logger *slog.Logger, agentURL, callID, sessionID string) map[string]float64 {
+	url := strings.TrimRight(agentURL, "/") + "/calls/" + callID + "/sessions/" + sessionID + "/metrics"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logger.Warn("read agent session metrics", "err", err)
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		logger.Warn("read agent session metrics", "status", resp.StatusCode)
+		return nil
+	}
+	var parsed struct {
+		Metrics map[string]*float64 `json:"metrics"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		logger.Warn("read agent session metrics", "err", err)
+		return nil
+	}
+	measured := map[string]float64{}
+	for name, value := range parsed.Metrics {
+		if value != nil {
+			measured[name] = *value
+		}
+	}
+	return measured
 }
 
 func (p *Python) logger() *slog.Logger {

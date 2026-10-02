@@ -143,6 +143,14 @@ A trial passes only when every hard gate passes. Latency is reported separately,
 
 Not every scripted turn yields a latency sample. A barge-in turn has no reply gap by definition, a turn the caller played while the agent was still speaking has no meaningful one, and a turn the agent never answered has none at all. Those turns are counted and named in `dropped_turns` in each call's `metrics.json` and totalled per pack in the report, so a P50 cannot quietly rest on one measurement. Percentiles are pooled over every measured turn in the pack — not a median of per-call medians — and every reported P50 carries its sample count.
 
+### Reply time
+
+Reply time is the gap from the end of each caller turn to the start of the agent's reply, measured from the recordings. Its headline is the **P50 and P95 over non-tool turns**: a turn that waited on a tool is slower for a reason the conversation loop does not own, so tool turns are reported on their own (`tool_p50_ms`) and stay in the all-turns figures. The **mean** is shown beside the percentiles rather than instead of them, because a few slow turns move it a long way; a mean well above the P50 says the slow turns are worth reading. `summary.json` carries `non_tool_p50_ms`, `non_tool_p95_ms`, `non_tool_mean_ms`, `tool_p50_ms` and `v2v_mean_ms` with their sample counts, and `report.md` has a Reply time table.
+
+`voicebench compare` shows each reply-time statistic with its 95% bootstrap interval and marks a run whose interval lies wholly above the best run's, so a gap the samples cannot tell from noise is not read as a win. Against a baseline it prints the non-tool P50 difference with the interval of that difference, and the smallest detectable difference, half the interval's width: with those samples, a change smaller than that cannot be told from noise. The resampling is seeded, so the same summaries always print the same intervals.
+
+Where the time goes is a diagnostic for our own targets, not a figure to set against LiveKit, which reports nothing comparable. For targets on the router, each call keeps the router's timeline as `timeline.json`, and `metrics.json` lists every caller turn's stages: speech-to-text settling, cadence, the flow controller's decision, model to first text, text to TTS and TTS to audio, which run one after another and make up the roundtrip. `report.md` shows their medians over every timed turn. For the `python` target, the averages the agent session reports about itself (`stt_latency_ms__avg`, `llm_time_to_first_token_ms__avg`, `tts_latency_ms__avg` and the rest) are read just before the session closes and kept as `agent_metrics.json`, with the median across calls in `report.md`.
+
 ### Time to first response
 
 Time to first response is the gap from the end of the caller's first utterance to the start of the agent's first audible reply to it, measured from the recordings the same way as voice-to-voice. It is the first reply that has to run speech recognition, the model, and speech synthesis on caller input, so it carries the call's cold-start costs (first model request, connection warm-up) that the pooled V2V numbers average away.
@@ -164,7 +172,7 @@ There is no single industry-standard score across these verticals. Voicebench ta
 | Tool filler | Filler begins before a delayed tool returns | Heard without blocking | Yes |
 | Barge-in | Interruption to agent silence | ≤ 800 ms | Yes |
 | Selectivity | Ignore coughs and side talk; accept real interruptions | Hold on non-directed speech | Yes |
-| Reply gap | Caller end to agent onset, excluding tool turns | P50 300–700 ms | No |
+| Reply time | Caller end to agent onset, non-tool turns; tool turns reported apart | P50 300–700 ms; P95, mean and sample count reported | No |
 | Voice-to-voice | Caller end to agent onset, every measurable turn | P50 300–700 ms; P95 and sample count reported | No |
 | Time to first response | Caller end to agent onset, first caller turn of each call only | P50 and P95 with sample count reported; no target yet | No |
 | Stability | Non-tool gap over 2× that call's P50 | Zero spikes | No |

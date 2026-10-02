@@ -325,6 +325,14 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 		}
 	}
 
+	if reporter, ok := cfg.Target.(agentMetricsReporter); ok {
+		metrics.AgentMetrics = reporter.AgentMetrics(callID)
+		if len(metrics.AgentMetrics) > 0 {
+			if err := writeJSON(filepath.Join(callDir, "agent_metrics.json"), metrics.AgentMetrics); err != nil {
+				return result, err
+			}
+		}
+	}
 	score.ScoreFiller(&metrics, sc, rec, sess, agentTranscript)
 	score.ApplyGates(&metrics, sc)
 	result.Metrics = metrics
@@ -347,12 +355,23 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 		result.Warnings = append(result.Warnings, "agent heard transcript: "+err.Error())
 		cfg.Logger.Warn("agent heard transcript", "err", err)
 	}
+	stages, err := captureRouterTimeline(cfg, callID, callDir)
+	if err != nil {
+		result.Warnings = append(result.Warnings, "router timeline: "+err.Error())
+		cfg.Logger.Warn("router timeline", "err", err)
+	}
+	result.Metrics.Stages = stages
 	if judgeVerdict != nil {
 		if err := writeJSON(filepath.Join(callDir, "judge.json"), judgeVerdict); err != nil {
 			return result, err
 		}
 	}
 	return result, nil
+}
+
+// agentMetricsReporter is a target that can say what its agent measured about a call.
+type agentMetricsReporter interface {
+	AgentMetrics(callID string) map[string]float64
 }
 
 func persistTrialResult(result report.CallResult) error {

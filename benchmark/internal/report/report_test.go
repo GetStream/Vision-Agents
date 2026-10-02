@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,5 +266,69 @@ func TestSummaryReportsTimeToFirstResponse(t *testing.T) {
 	}))
 	if !strings.Contains(empty, "| telecom | — | — | 0 | 0 |") {
 		t.Fatalf("a pack with no first response must not read as 0 ms:\n%s", empty)
+	}
+}
+
+func TestSummaryReportsReplyTimeOnNonToolTurnsWithToolTurnsApart(t *testing.T) {
+	turns := func(ms ...int) []score.Timing {
+		var out []score.Timing
+		for i, v := range ms {
+			out = append(out, score.Timing{TurnID: fmt.Sprintf("t%d", i), V2VMS: v})
+		}
+		return out
+	}
+	withTool := turns(1000, 2000, 3000, 10000)
+	withTool[3].Tool = true
+	sum := BuildSummary("accelerated", "run1", 1, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true, Metrics: score.Metrics{V2V: withTool}},
+	})
+	pack := sum.Packs[0]
+	if pack.NonToolP50 != 2000 || pack.NonToolP95 != 3000 || pack.NonToolMean != 2000 || pack.NonToolSamples != 3 {
+		t.Fatalf("non-tool reply time %+v", pack)
+	}
+	if pack.ToolP50 != 10000 || pack.ToolSamples != 1 || pack.V2VMean != 4000 {
+		t.Fatalf("a tool turn is reported apart and still counted in all turns: %+v", pack)
+	}
+	md := Markdown(sum)
+	if !strings.Contains(md, "| restaurant | 2000 ms (n=3) | 3000 ms (n=3) | 2000 ms (n=3) | 10000 ms (n=1) | 2000 ms (n=4) | 4000 ms (n=4) |") {
+		t.Fatalf("reply time table missing:\n%s", md)
+	}
+}
+
+func TestSummaryPoolsTheRoutersStagesOverEveryTurn(t *testing.T) {
+	stage := func(decision int) score.StageTiming {
+		return score.StageTiming{TurnID: "t", CadenceMs: 350, DecisionMs: decision, RoundtripMs: 2000 + decision}
+	}
+	sum := BuildSummary("accelerated", "run1", 2, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true,
+			Metrics: score.Metrics{Stages: []score.StageTiming{stage(400), stage(500)}, AgentMetrics: map[string]float64{"stt_latency_ms__avg": 100}}},
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 2, Outcome: OutcomePass, Passed: true,
+			Metrics: score.Metrics{Stages: []score.StageTiming{stage(1200)}, AgentMetrics: map[string]float64{"stt_latency_ms__avg": 300}}},
+	})
+	pack := sum.Packs[0]
+	if pack.StageSamples != 3 || pack.StageP50["decision_ms"] != 500 || pack.StageP50["cadence_ms"] != 350 {
+		t.Fatalf("stages are pooled over turns, not calls: %+v", pack)
+	}
+	if pack.AgentMetricsP50["stt_latency_ms__avg"] != 100 {
+		t.Fatalf("agent metrics %+v", pack.AgentMetricsP50)
+	}
+	md := Markdown(sum)
+	if !strings.Contains(md, "## Where the router's time goes") || !strings.Contains(md, "| restaurant | 0 ms | 350 ms | 500 ms | 0 ms | 0 ms | 0 ms | 2500 ms | 3 |") {
+		t.Fatalf("stage table missing:\n%s", md)
+	}
+	if !strings.Contains(md, "## What the agent measured") || !strings.Contains(md, "| restaurant | 100 ms | — |") {
+		t.Fatalf("agent metrics table missing:\n%s", md)
+	}
+}
+
+func TestAReportWithoutStagesLeavesTheirTablesOut(t *testing.T) {
+	// The accelerated target's Python agent measures none of its own stages, because the
+	// router runs them, and reports only counters such as the time to join.
+	md := Markdown(BuildSummary("accelerated", "run1", 1, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true,
+			Metrics: score.Metrics{AgentMetrics: map[string]float64{"call_join_ms__avg": 2800, "llm_tool_calls__total": 0}}},
+	}))
+	if strings.Contains(md, "Where the router's time goes") || strings.Contains(md, "What the agent measured") {
+		t.Fatalf("a run with nothing to break down should not print an empty breakdown:\n%s", md)
 	}
 }
