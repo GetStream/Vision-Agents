@@ -12,6 +12,7 @@
 //	phone list
 //	phone hooks
 //	phone hooks -url https://example.ngrok.app
+//	phone hooks -url https://example.ngrok.app -app 1234
 //	phone release -number +15125551234
 //
 // Stream's SIP is inbound only today, so dialling out is the vendor placing the call and
@@ -31,6 +32,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -500,8 +502,18 @@ func hooks(ctx context.Context, arguments []string) error {
 		"public base url of the router, e.g. https://example.ngrok.app; empty only shows what is set")
 	remove := flags.String("remove", "",
 		"public base url to stop delivering to, for a tunnel that is gone")
+	app := flags.String("app", "",
+		"this Stream app's id, for a router in app mode: its hooks are delivered to a path of its own and checked with its keys")
 	if err := flags.Parse(arguments); err != nil {
 		return err
+	}
+	var segment string
+	if *app != "" {
+		id, err := strconv.ParseInt(*app, 10, 64)
+		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != *app {
+			return fmt.Errorf("-app is a Stream app id, not %q", *app)
+		}
+		segment = "/" + *app
 	}
 
 	stream, err := phone.NewStream(phone.StreamOptions{APIKey: streamKey(), APISecret: streamSecret()})
@@ -516,7 +528,7 @@ func hooks(ctx context.Context, arguments []string) error {
 	if *remove != "" {
 		base := strings.TrimSuffix(*remove, "/")
 
-		hookURL := base + phone.CallHookPath
+		hookURL := base + phone.CallHookPath + segment
 		removed, err := stream.RemoveCallHook(ctx, hookURL)
 		if err != nil {
 			return err
@@ -527,7 +539,7 @@ func hooks(ctx context.Context, arguments []string) error {
 			fmt.Printf("nothing was delivering to %s\n", hookURL)
 		}
 
-		messageURL := base + chat.MessageHookPath
+		messageURL := base + chat.MessageHookPath + segment
 		removed, err = messages.RemoveMessageHook(ctx, messageURL)
 		if err != nil {
 			return err
@@ -542,7 +554,7 @@ func hooks(ctx context.Context, arguments []string) error {
 	if *url != "" {
 		base := strings.TrimSuffix(*url, "/")
 
-		hookURL := base + phone.CallHookPath
+		hookURL := base + phone.CallHookPath + segment
 		updated, err := stream.PointCallHook(ctx, hookURL)
 		if err != nil {
 			return err
@@ -553,7 +565,7 @@ func hooks(ctx context.Context, arguments []string) error {
 			fmt.Printf("call events now go to %s\n", hookURL)
 		}
 
-		messageURL := base + chat.MessageHookPath
+		messageURL := base + chat.MessageHookPath + segment
 		updated, err = messages.PointMessageHook(ctx, messageURL)
 		if err != nil {
 			return err

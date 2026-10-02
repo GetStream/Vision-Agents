@@ -40,7 +40,7 @@ func (s *StreamCredentialsSuite) SetupTest() {
 func streamAppID() int64 { return 1_000_000_000 + rand.Int64N(8_000_000_000) }
 
 // numberedApp is an app of its own whose id is a Stream app id.
-func (s *StreamCredentialsSuite) numberedApp(id int64) testApp {
+func (s *RouterSuite) numberedApp(id int64) testApp {
 	ctx := context.Background()
 	organization := store.Organization{Name: "organization-" + s.utils.uuid()}
 	s.Require().NoError(s.store.CreateOrganization(ctx, &organization))
@@ -49,14 +49,14 @@ func (s *StreamCredentialsSuite) numberedApp(id int64) testApp {
 	return s.data.keyed(organization, app)
 }
 
-func (s *StreamCredentialsSuite) appID() int64 {
+func (s *RouterSuite) appID() int64 {
 	id, err := strconv.ParseInt(s.customerID(), 10, 64)
 	s.Require().NoError(err)
 	return id
 }
 
 // answerAs makes the suite's Stream say it is app id, set up as the router needs.
-func (s *StreamCredentialsSuite) answerAs(id int64) {
+func (s *RouterSuite) answerAs(id int64) {
 	s.chat.SetApp(chattest.App{
 		ID:           id,
 		ChannelTypes: map[string]map[string][]string{"agent": {"channel_member": {"read-channel", "create-message"}}},
@@ -68,13 +68,13 @@ type keyInput = map[string]any
 
 func key(apiKey, secret string) keyInput { return keyInput{"api_key": apiKey, "api_secret": secret} }
 
-func (s *StreamCredentialsSuite) put(body map[string]any) (int, string) {
+func (s *RouterSuite) put(body map[string]any) (int, string) {
 	status, answered := s.serverClient.call(http.MethodPut, "/v1/settings/app/stream/credentials", body)
 	return status, string(answered)
 }
 
 // registered registers the keys given, the first primary, against the revision given.
-func (s *StreamCredentialsSuite) registered(revision int64, keys ...keyInput) StreamSettings {
+func (s *RouterSuite) registered(revision int64, keys ...keyInput) StreamSettings {
 	var settings AppSettings
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/settings/app/stream/credentials",
 		map[string]any{"keys": keys, "expected_revision": revision}, &settings))

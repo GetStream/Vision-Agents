@@ -9,6 +9,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // callerPrefix is what the inbound routing rule names a SIP caller, so the number they are
@@ -55,7 +56,7 @@ type callEvent struct {
 // belonging to nobody — get better on a second delivery, while the caller is on the line for
 // the whole of it.
 func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
-	if s.hookSecret == "" {
+	if !s.hooksConfigured() {
 		// Refusing is the only safe answer: without the secret there is no way to tell
 		// Stream from anyone who found the URL, and this path starts agents.
 		http.Error(w, "call events are not configured", http.StatusNotFound)
@@ -67,9 +68,8 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("rejected a call event before reading its signature")
 		return
 	}
-	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.hookSecret) {
-		s.logger.Warn("rejected a call event with a bad signature", "bytes", len(payload))
-		http.Error(w, "that is not a call event from Stream", http.StatusUnauthorized)
+	origin, ok := s.verifyHook(w, r, payload, "call event")
+	if !ok {
 		return
 	}
 
@@ -86,7 +86,9 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not read that call event", http.StatusBadRequest)
 			return
 		}
-		s.dispatchArrivingCall(r, event)
+		if s.acting(r.Context(), origin, eventType, payload) {
+			s.dispatchArrivingCall(r, origin, event)
+		}
 
 	case getstream.EventTypeCallSessionEnded:
 		var event callEvent
@@ -94,7 +96,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not read that call event", http.StatusBadRequest)
 			return
 		}
-		s.releaseEndedCall(r, event)
+		s.releaseEndedCall(r, origin, event)
 
 	default:
 		s.logger.Debug("ignoring a call event", "type", eventType)
@@ -103,7 +105,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 // dispatchArrivingCall works out whose call it is and hands it to one of their workers.
-func (s *Server) dispatchArrivingCall(r *http.Request, event callEvent) {
+func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event callEvent) {
 	callType, callID, split := strings.Cut(event.CallCid, ":")
 	if !split {
 		s.logger.Debug("a call event named no call", "cid", event.CallCid)
@@ -115,10 +117,15 @@ func (s *Server) dispatchArrivingCall(r *http.Request, event callEvent) {
 
 	// Only a call one of the numbers reaches is a phone call. Every video call in the app
 	// arrives here too, and there is nothing to answer on those.
-	number, err := s.store.NumberByCall(r.Context(), callType, callID)
+	// And only a number attached in the app the hook came from: a call of the same name in
+	// another app rings somebody else's phone.
+	number, err := s.store.NumberByCallInApp(r.Context(), origin.scope(), callType, callID)
+	if err == nil && !origin.deployment && number.CustomerID != origin.customer {
+		err = store.ErrAmbiguousHook
+	}
 	if err != nil {
 		s.logger.Debug("no number reaches an arriving call",
-			"call", event.CallCid, "error", err)
+			"call", event.CallCid, "stream_app", origin.app, "error", err)
 		return
 	}
 
@@ -140,6 +147,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, event callEvent) {
 			"number", number.E164, "error", err)
 		return
 	}
+	s.pinHook(origin, number.CustomerID, event.CallCid)
 	s.logger.Info("handed an arriving call to a worker",
 		"call", event.CallCid, "customer", number.CustomerID,
 		"number", number.E164, "caller", call.CallerNumber, "worker", worker.ID)
@@ -151,7 +159,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, event callEvent) {
 // it, and cleanup is best-effort. ReleaseCall removes the record before deleting at Stream,
 // so a failed Stream delete is logged and the trunk leaks; a later delivery finds no record
 // to retry, and there is no sweeper.
-func (s *Server) releaseEndedCall(r *http.Request, event callEvent) {
+func (s *Server) releaseEndedCall(r *http.Request, origin hookOrigin, event callEvent) {
 	if s.phone == nil {
 		return
 	}
@@ -160,13 +168,9 @@ func (s *Server) releaseEndedCall(r *http.Request, event callEvent) {
 		s.logger.Debug("a call event named no call", "cid", event.CallCid)
 		return
 	}
-	// The hook is signed with the deployment's own secret, so the event is about a call in
-	// the deployment's app, and only what was made there is released.
-	var deployment int64
-	if s.stream != nil {
-		deployment = s.stream.DeploymentApp()
-	}
-	if err := s.phone.ReleaseCall(r.Context(), deployment, true, callType, callID); err != nil {
+	// The event is about a call in the app that signed it, and only what was made there is
+	// released: a call's id is only unique within its app.
+	if err := s.phone.ReleaseCall(r.Context(), origin.app, origin.deployment, callType, callID); err != nil {
 		s.logger.Error("could not release an ended call's resources", "call", event.CallCid, "error", err)
 	}
 }

@@ -110,6 +110,10 @@ type ManagerOptions struct {
 
 // Manager owns the sessions this process is running.
 type Manager struct {
+	// hookPins are the apps hooks came from, by the call or channel they named.
+	hookPinsMu sync.Mutex
+	hookPins   map[string]hookPinned
+
 	logs          *logRecorder
 	conversations *persistent.Service
 	options       ManagerOptions
@@ -146,6 +150,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	}
 
 	manager := &Manager{
+		hookPins:      map[string]hookPinned{},
 		options:       options,
 		logger:        options.Logger,
 		sessions:      map[string]*Session{},
@@ -1108,6 +1113,14 @@ func (m *Manager) stream(ctx context.Context, spec Spec) (streamapp.Bound, error
 	if m.options.Stream == nil {
 		return nowhere, nil
 	}
+	// A session a hook started acts in the app the hook came from.
+	if pin, ok := m.hookPin(spec); ok {
+		bound, err := m.options.Stream.ForApp(ctx, spec.CustomerID, pin)
+		if err != nil {
+			return streamapp.Bound{}, fmt.Errorf("session: the app the hook for this session came from: %w", err)
+		}
+		return bound, nil
+	}
 	// A call that already has lines, a number's or a placed call's, is in the app they were
 	// made in, and the agent has to join it there.
 	if m.options.Store != nil && spec.CallID != "" && !spec.Text {
@@ -1131,6 +1144,43 @@ func (m *Manager) stream(ctx context.Context, spec Spec) (streamapp.Bound, error
 		return streamapp.Bound{}, fmt.Errorf("session: which Stream app to act in: %w", err)
 	}
 	return bound, nil
+}
+
+// hookPinFor is how long a hook's app is remembered for the session it starts.
+const hookPinFor = 10 * time.Minute
+
+type hookPinned struct {
+	app int64
+	at  time.Time
+}
+
+// PinHook remembers which app a hook for a customer's call or channel came from, for the
+// session a worker opens to answer it, which acts there.
+func (m *Manager) PinHook(customer, cid string, app int64) {
+	m.hookPinsMu.Lock()
+	defer m.hookPinsMu.Unlock()
+	now := time.Now()
+	for key, pinned := range m.hookPins {
+		if now.Sub(pinned.at) > hookPinFor {
+			delete(m.hookPins, key)
+		}
+	}
+	m.hookPins[customer+"\x00"+cid] = hookPinned{app: app, at: now}
+}
+
+// hookPin is the app a hook for the session's call or channel came from, if one did lately.
+func (m *Manager) hookPin(spec Spec) (int64, bool) {
+	cid := streamapp.AgentChannelType + ":" + spec.AgentID
+	if spec.CallID != "" && !spec.Text {
+		cid = spec.CallType + ":" + spec.CallID
+	}
+	m.hookPinsMu.Lock()
+	defer m.hookPinsMu.Unlock()
+	pinned, ok := m.hookPins[spec.CustomerID+"\x00"+cid]
+	if !ok || time.Since(pinned.at) > hookPinFor {
+		return 0, false
+	}
+	return pinned.app, true
 }
 
 // ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream

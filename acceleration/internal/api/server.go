@@ -348,7 +348,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
+	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
+	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	s.newAPI(mux)
 	handler := HandlerFromMux(NewStrictHandlerWithOptions(s, nil, StrictHTTPServerOptions{

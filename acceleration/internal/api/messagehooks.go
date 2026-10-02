@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -56,7 +57,7 @@ type messageEvent struct {
 // from Stream is a 200: Stream retries a non-2xx, and a message nobody can answer is not
 // answerable on the second delivery either.
 func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
-	if s.hookSecret == "" {
+	if !s.hooksConfigured() {
 		// Refusing is the only safe answer: without the secret there is no way to tell
 		// Stream from anyone who found the URL, and this path starts agents.
 		http.Error(w, "message events are not configured", http.StatusNotFound)
@@ -68,9 +69,8 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("rejected a message event before reading its signature")
 		return
 	}
-	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.hookSecret) {
-		s.logger.Warn("rejected a message event with a bad signature", "bytes", len(payload))
-		http.Error(w, "that is not a message event from Stream", http.StatusUnauthorized)
+	origin, ok := s.verifyHook(w, r, payload, "message event")
+	if !ok {
 		return
 	}
 
@@ -86,7 +86,9 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not read that message event", http.StatusBadRequest)
 			return
 		}
-		s.routeArrivingMessage(r, event)
+		if s.acting(r.Context(), origin, eventType, payload) {
+			s.routeArrivingMessage(r, origin, event)
+		}
 	} else {
 		s.logger.Debug("ignoring a message event", "type", eventType)
 	}
@@ -118,13 +120,15 @@ func addressed(event messageEvent) bool {
 
 // routeArrivingMessage answers a message from the session running on its channel, or hands
 // it to a worker to start one.
-func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
+func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, event messageEvent) {
 	if !addressed(event) {
 		return
 	}
 
 	if s.sessions != nil {
-		if found, running := s.sessions.ByAgent(event.ChannelID); running {
+		// A session running on a channel of the same name in another app is somebody
+		// else's conversation.
+		if found, running := s.sessions.ByAgent(event.ChannelID); running && origin.owns(found.Spec().CustomerID, found.Spec().StreamApp) {
 			if found.Spec().PersistConversation {
 				return
 			}
@@ -142,7 +146,7 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 
 	// Nothing is running, so this has to be given to a worker, and that needs to know
 	// whose channel it is and which agent answers in it.
-	customerID, configID, found := s.ownerOf(r.Context(), event)
+	customerID, configID, found := s.ownerOf(r.Context(), origin, event)
 	if !found {
 		return
 	}
@@ -168,9 +172,10 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 			"channel", event.ChannelID, "customer", customerID, "error", err)
 		return
 	}
+	s.pinHook(origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
 	s.logger.Info("handed an arriving message to a worker",
 		"channel", event.ChannelID, "customer", customerID,
-		"config", configID, "worker", worker.ID)
+		"config", configID, "worker", worker.ID, "stream_app", origin.app)
 }
 
 // ConfigField is the custom field on an agent channel naming the agent config that answers
@@ -194,8 +199,12 @@ const ConfigField = "agent_config_id"
 // The row the last conversation left is asked first, because a channel that has held one is
 // the ordinary case and its row is what actually ran. A channel with no row falls back to
 // what the channel itself declares.
-func (s *Server) ownerOf(ctx context.Context, event messageEvent) (customerID, configID string, found bool) {
-	if previous, err := s.store.CallByAgent(ctx, event.ChannelID); err == nil {
+//
+// Both are looked for only within the app the hook came from: the channel's last call has to
+// have been in that app, and a config the channel names has to be the app's own customer's.
+func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string, found bool) {
+	if previous, err := s.store.CallByAgentInApp(ctx, origin.scope(), event.ChannelID); err == nil &&
+		(origin.deployment || previous.CustomerID == origin.customer) {
 		return previous.CustomerID, previous.ConfigID, true
 	}
 
@@ -212,7 +221,26 @@ func (s *Server) ownerOf(ctx context.Context, event messageEvent) (customerID, c
 			"channel", event.ChannelID, "config", declared, "error", err)
 		return "", "", false
 	}
+	if owner, scoped := s.configOwnerOf(origin); scoped && config.CustomerID != owner {
+		s.logger.Warn("an arriving message's channel names another app's config",
+			"channel", event.ChannelID, "config", declared, "stream_app", origin.app)
+		return "", "", false
+	}
 	return config.CustomerID, config.ID, true
+}
+
+// configOwnerOf is the only customer whose configs a channel in the hook's app may name: the
+// registered app's own customer, or in app mode the deployment's own customer for a hook
+// from the deployment's app, so a channel there never starts a fallback tenant's agent. In
+// deployment mode every customer shares the app, and a channel may name any config.
+func (s *Server) configOwnerOf(origin hookOrigin) (string, bool) {
+	switch {
+	case !origin.deployment:
+		return origin.customer, true
+	case s.stream != nil && s.stream.PerApp():
+		return strconv.FormatInt(origin.app, 10), true
+	}
+	return "", false
 }
 
 // answerMessage answers from a session that is already running.
