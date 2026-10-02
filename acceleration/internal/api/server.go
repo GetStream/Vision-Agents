@@ -11,10 +11,12 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -395,8 +397,110 @@ func (s *Server) Handler() http.Handler {
 		Repanic:         false,
 		WaitForDelivery: false,
 	})
-	return instrumented.Handle(withTrace(withCORS(s.corsOrigins,
-		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))))
+	return instrumented.Handle(withTrace(withTiming(withCORS(s.corsOrigins,
+		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))
+}
+
+// withTiming reports how long the server itself spent, so a caller timing a call can tell
+// a slow API from a slow network rather than having to guess which it is looking at.
+//
+// It is said twice because the two readers are different. Server-Timing is what a
+// browser's network panel reads with nothing taught to it, beside the time on the wire.
+// The duration field is what the rest of Stream's API already answers with, so an SDK
+// reads it the way it reads every other response.
+//
+// Outermost of our own middlewares, so the number covers authentication, the quota and
+// the policies as well as the handler: all of it is time the caller waited.
+func withTiming(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&timedResponse{ResponseWriter: w, started: time.Now()}, r)
+	})
+}
+
+// timedResponse stamps the header and names the duration in the body, both at the moment
+// the answer begins rather than when it ends: what is reported is how long the caller
+// waited to be answered, which for a streamed response is not how long the stream ran.
+type timedResponse struct {
+	http.ResponseWriter
+	started time.Time
+	stamped bool
+	opened  bool
+}
+
+func (t *timedResponse) WriteHeader(code int) {
+	t.stamp()
+	t.ResponseWriter.WriteHeader(code)
+}
+
+func (t *timedResponse) Write(body []byte) (int, error) {
+	if !t.opened {
+		t.opened = true
+		if opening, ok := t.opening(body); ok {
+			t.stamp()
+			if _, err := t.ResponseWriter.Write(opening); err != nil {
+				return 0, err
+			}
+			// The brace the body starts with has just been written as part of the
+			// opening, so what is left is everything after it. A short write is reported
+			// as it happened; a complete one consumed the whole of what was handed in.
+			written, err := t.ResponseWriter.Write(body[1:])
+			if err != nil {
+				return written, err
+			}
+			return len(body), nil
+		}
+	}
+	t.stamp()
+	return t.ResponseWriter.Write(body)
+}
+
+// Unwrap lets flushing, deadlines and a socket upgrade reach the writer underneath through
+// http.ResponseController.
+func (t *timedResponse) Unwrap() http.ResponseWriter { return t.ResponseWriter }
+
+func (t *timedResponse) stamp() {
+	if t.stamped {
+		return
+	}
+	t.stamped = true
+	t.ResponseWriter.Header().Set("Server-Timing", fmt.Sprintf("app;dur=%.2f", t.spent()))
+}
+
+// spent is how long the server has had the request, in milliseconds.
+func (t *timedResponse) spent() float64 {
+	return float64(time.Since(t.started).Microseconds()) / 1000
+}
+
+// opening returns what to write in place of the brace a JSON object starts with, naming
+// the duration as its first field.
+//
+// Only a JSON object gets one: an array has nowhere to put it, and a stream, a recording
+// and a socket are not documents. A response that declared its length is left alone too,
+// since lengthening it afterwards would make the header a lie.
+func (t *timedResponse) opening(body []byte) ([]byte, bool) {
+	header := t.ResponseWriter.Header()
+	if header.Get("Content-Length") != "" {
+		return nil, false
+	}
+	media, _, err := mime.ParseMediaType(header.Get("Content-Type"))
+	if err != nil || media != "application/json" {
+		return nil, false
+	}
+	if len(body) < 2 || body[0] != '{' {
+		return nil, false
+	}
+
+	// What follows the brace says whether the field needs a comma after it, so a body
+	// that has not got that far yet is left alone rather than guessed at.
+	rest := bytes.TrimLeft(body[1:], " \t\r\n")
+	if len(rest) == 0 {
+		return nil, false
+	}
+	opening := fmt.Sprintf(`{"duration":"%.2fms"`, t.spent())
+	if rest[0] == '}' {
+		return []byte(opening), true
+	}
+	return []byte(opening + ","), true
 }
 
 // withTrace opens a span for the whole request and names it after the route that served
@@ -712,6 +816,7 @@ func withCORS(allowed []string, next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
 			w.Header().Set("Access-Control-Allow-Methods", corsMethods)
+			w.Header().Set("Access-Control-Expose-Headers", "Server-Timing")
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing

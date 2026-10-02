@@ -3,6 +3,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"regexp"
@@ -163,7 +164,22 @@ func (s *PostureSuite) assertRefusedAlike(wrongly func(http.Header)) {
 	s.Equal(http.StatusUnauthorized, status)
 
 	_, nothingAtAll := s.unauthenticatedClient.call(http.MethodGet, "/v1/stt/providers", nil)
-	s.Equal(string(nothingAtAll), string(refusal))
+	s.Equal(withoutDuration(nothingAtAll), withoutDuration(refusal))
+}
+
+// withoutDuration is an answer with the time it took taken out of it, which two refusals
+// are never going to agree on. What is left is what a caller could tell them apart by.
+func withoutDuration(body []byte) string {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return string(body)
+	}
+	delete(fields, "duration")
+	rendered, err := json.Marshal(fields)
+	if err != nil {
+		return string(body)
+	}
+	return string(rendered)
 }
 
 // operations are the ones the embedded spec describes, which is what the middleware reads.
