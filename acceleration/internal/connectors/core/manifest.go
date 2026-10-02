@@ -31,6 +31,11 @@ type Manifest struct {
 	// reconnect.
 	Revision int    `yaml:"revision" json:"revision"`
 	Name     string `yaml:"name" json:"name"`
+	// Category and Description are what a catalog shows beside the name, as the prototype's
+	// catalog carried them (internal/mcp/connectors.yaml:4-5 on codex/connector-support at
+	// cf62af0d). Nothing that connects reads them.
+	Category    string `yaml:"category,omitempty" json:"category,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	// Inputs are what a connection is created with: a shop, a region, a tenant.
 	Inputs []Input `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	// Vars are fixed strings picked by an enum input's value, such as a login host per
