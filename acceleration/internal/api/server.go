@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -166,6 +167,9 @@ type Options struct {
 	// Policies holds each organization's and app's budget, data policy and prompt
 	// injection setting. Absent without a database, in which case the policy paths say so.
 	Policies *policy.Enforcer
+	// Connectors holds the adapters connectors are built from. A custom connector may only
+	// name a scheme registered here, so with none registered every custom one is refused.
+	Connectors core.Registry
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
@@ -200,6 +204,7 @@ type Server struct {
 	dataRetention time.Duration
 	quota         *quota.Limiter
 	policies      *policy.Enforcer
+	connectors    core.Registry
 	trusted       []netip.Prefix
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -289,6 +294,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		dataRetention: retention,
 		quota:         options.Quota,
 		policies:      options.Policies,
+		connectors:    options.Connectors,
 		trusted:       options.TrustedProxies,
 		upgrader:      newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
