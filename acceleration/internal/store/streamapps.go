@@ -217,8 +217,12 @@ func (r StreamAppRegistration) valid() error {
 }
 
 // lockStreamApp reads a customer's app for update, and refuses a write made against a
-// revision that is no longer current.
+// revision that is no longer current. Writes for one customer are taken one at a time,
+// first registrations included, which have no row yet to lock.
 func lockStreamApp(ctx context.Context, tx bun.Tx, customer string, expected *int64) (StreamApp, error) {
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext('stream_apps:' || ?))", customer); err != nil {
+		return StreamApp{}, fmt.Errorf("store: lock stream app: %w", err)
+	}
 	var app StreamApp
 	err := tx.NewSelect().Model(&app).Where("customer_id = ?", customer).For("UPDATE").Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {

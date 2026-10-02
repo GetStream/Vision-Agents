@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -254,4 +255,24 @@ func (s *StoreSuite) TestChecksAreKeptWithWhenTheyRan() {
 	s.Require().NoError(err)
 	s.JSONEq(`{"channel_type":"present"}`, string(held.Checks))
 	s.True(at.Equal(*held.CheckedAt))
+}
+
+func (s *StoreSuite) TestTwoFirstRegistrationsCannotBothWin() {
+	results := make(chan error, 2)
+	for _, apiKey := range []string{"first", "second"} {
+		go func() {
+			first := registration("4242", 4242, apiKey)
+			first.ExpectedRevision = revision(0)
+			_, err := s.store.PutStreamApp(s.ctx, first)
+			results <- err
+		}()
+	}
+
+	var conflicts int
+	for range 2 {
+		if errors.Is(<-results, ErrStreamAppChanged) {
+			conflicts++
+		}
+	}
+	s.Equal(1, conflicts, "the second is told the app changed since it read it")
 }
