@@ -132,6 +132,18 @@ func unique() string {
 	return hex.EncodeToString(raw)
 }
 
+// Messages are the texts of a channel's messages, in the order they were written.
+func (s *Server) Messages(id string) []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	var texts []string
+	for _, message := range s.db.messagesIn(id) {
+		text, _ := message["text"].(string)
+		texts = append(texts, text)
+	}
+	return texts
+}
+
 // refuse answers the way Chat does when it will not do what was asked.
 func refuse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusBadRequest)
@@ -199,6 +211,17 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		result["users"] = written
+	case r.Method == http.MethodPatch && len(parts) >= 2 && parts[len(parts)-2] == "agent":
+		// A partial update sets the fields it names on the channel.
+		id := parts[len(parts)-1]
+		data, exists := db.channels[id]
+		if !exists {
+			refuse(w, "channel "+id+" does not exist")
+			return
+		}
+		set, _ := body["set"].(map[string]any)
+		maps.Copy(data, set)
+		result["channel"] = data
 	case r.Method == http.MethodPost && len(parts) >= 2 && parts[len(parts)-2] == "agent":
 		// An update adds the members it names to the channel, which is how a reader comes
 		// to be able to watch it.

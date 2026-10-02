@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -232,4 +233,17 @@ func (s *StreamAppsSuite) pinOf(id string) int64 {
 		return err == nil
 	}, settleFor, 10*time.Millisecond, "the session was never written down")
 	return stored.StreamAppPK
+}
+
+func (s *StreamAppsSuite) TestATextConversationIsKeptInTheCustomersApp() {
+	// This is the conversation the customer's clients read, so it has to be in their app
+	// and not the deployment's.
+	created := s.serverClient.createSession(textSession(nil))
+
+	s.Require().NotNil(created.ConversationId)
+	channel := strings.TrimPrefix(*created.ConversationId, "agent:")
+	_, inOwn := s.own.Channel(channel)
+	s.True(inOwn)
+	_, inDeployment := s.chat.Channel(channel)
+	s.False(inDeployment)
 }

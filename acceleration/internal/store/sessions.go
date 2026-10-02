@@ -195,6 +195,25 @@ func (s *Store) StoredSession(ctx context.Context, customerID, id string) (Agent
 	return session, nil
 }
 
+// ConversationPin is the Stream app a customer's conversation was kept in, read off the
+// newest session that held it. Found is false for a conversation no session of theirs did.
+func (s *Store) ConversationPin(ctx context.Context, customerID, conversationID string) (int64, bool, error) {
+	var pin sql.NullInt64
+	err := s.db.NewSelect().Model((*AgentSession)(nil)).Column("stream_app_pk").
+		Where("customer_id = ?", customerID).
+		Where("conversation_id = ?", conversationID).
+		OrderExpr("created_at DESC").
+		Limit(1).
+		Scan(ctx, &pin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("store: conversation pin: %w", err)
+	}
+	return pin.Int64, true, nil
+}
+
 // DeleteSession deletes one of a customer's sessions, and its turns and their items with it.
 // A session that is not there is not an error: a retried delete has nothing left to do.
 func (s *Store) DeleteSession(ctx context.Context, customerID, id string) error {

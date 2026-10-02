@@ -62,7 +62,7 @@ func TestVoiceArtifactsSuite(t *testing.T) {
 
 func (s *VoiceArtifactsSuite) SetupTest() {
 	db, client := newChat(s.T())
-	service, err := newService(s.T().TempDir(), client)
+	service, err := NewForChat(s.T().TempDir(), client)
 	s.Require().NoError(err)
 	s.T().Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(s.T().Context(), "customer", "agent", "", "alice")

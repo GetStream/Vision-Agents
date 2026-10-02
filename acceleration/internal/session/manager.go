@@ -247,9 +247,18 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, err
 		}
 		var truncated bool
-		conv, previous, truncated, err = service.OpenForCallerWithCustom(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = service.OpenInApp(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if err != nil {
 			return nil, err
+		}
+		// A conversation is kept where it was first written, and a session resuming it
+		// acts there too, whichever app its customer acts in now.
+		if kept := conv.StreamApp(); kept != spec.StreamApp && m.options.Stream != nil {
+			if stream, err = m.options.Stream.ForApp(ctx, spec.CustomerID, kept); err != nil {
+				conv.Release()
+				return nil, fmt.Errorf("session: the app conversation %s is kept in: %w", conv.CID(), err)
+			}
+			spec.StreamApp = kept
 		}
 		spec.ConversationID = conv.CID()
 		conv.ShowTools(spec.VisibleTools)
@@ -1135,11 +1144,19 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.conversations == nil {
-		var err error
-		m.conversations, err = persistent.New(os.Getenv("CHAT_OUTBOX_DIR"))
+		// A conversation is kept in the Stream app its session acts in, so without a way
+		// to say which app that is there is nowhere to keep one.
+		if m.options.Stream == nil {
+			return nil, errors.New("Stream Chat credentials are required for persistent conversations")
+		}
+		service, err := persistent.NewForChats(os.Getenv("CHAT_OUTBOX_DIR"), persistent.StreamApps(m.options.Stream))
 		if err != nil {
 			return nil, err
 		}
+		if m.options.Store != nil {
+			service.SetPins(m.options.Store.ConversationPin)
+		}
+		m.conversations = service
 	}
 	return m.conversations, nil
 }

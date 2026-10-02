@@ -152,7 +152,7 @@ func (s *Session) retitle(ctx context.Context, said []spoken) error {
 	if n.titles.records != nil {
 		n.titles.records.Described(s.spec.CustomerID, s.id, named.Title, named.Description, nil)
 	}
-	return n.service.Describe(ctx, s.spec.ConversationID, named.Title, named.Description)
+	return n.service.Describe(ctx, s.spec.CustomerID, s.spec.ConversationID, named.Title, named.Description)
 }
 
 func (t *titler) ask(ctx context.Context, spec Spec, id string, said []spoken) (title, error) {

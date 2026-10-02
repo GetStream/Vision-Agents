@@ -379,7 +379,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // not.
 func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *session.Manager {
 	s.outbox = s.T().TempDir()
-	conversations, err := conversation.NewForChat(s.outbox, s.chat.Client)
+	conversations, err := conversation.NewForChats(s.outbox, conversation.StreamApps(s.stream))
 	s.Require().NoError(err)
 	s.T().Cleanup(conversations.Close)
 
