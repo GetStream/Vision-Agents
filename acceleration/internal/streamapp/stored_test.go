@@ -456,3 +456,14 @@ func (s *StoredSuite) TestTheDeploymentAppsOwnRegistrationChecksItsHooksAsTheDep
 		s.Empty(verifier.CustomerID)
 	}
 }
+
+func (s *StoredSuite) TestADeploymentWithNoKeyOfItsOwnMakesNobodyWait() {
+	// Its own app can never be learned, so nobody's work can turn out to be that app's.
+	s.deployment = NewDeployment(DeploymentOptions{Strict: true})
+	source := s.source(false)
+
+	_, err := source.For(s.ctx, s.customer)
+	s.ErrorIs(err, ErrNoIdentity)
+	_, err = source.ForApp(s.ctx, s.customer, 999)
+	s.ErrorIs(err, ErrStreamAppMoved)
+}

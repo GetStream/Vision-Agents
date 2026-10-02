@@ -143,7 +143,7 @@ func (s *Stored) For(ctx context.Context, customer string) (Identity, error) {
 	if s.ownsDeploymentApp(customer, deployment) {
 		return s.inDeploymentApp(ctx, customer, deployment)
 	}
-	if deployment == 0 && couldBeAnApp(customer) {
+	if s.waitsFor(deployment, customer) {
 		// Until the deployment's own app is known, this may be its customer.
 		return Identity{}, ErrDeploymentAppUnknown
 	}
@@ -190,7 +190,7 @@ func (s *Stored) forApp(ctx context.Context, customer string, app int64) (Identi
 		return identity, false, err
 	case err != nil && !errors.Is(err, store.ErrNoStreamApp):
 		return Identity{}, false, err
-	case deployment == 0:
+	case deployment == 0 && s.deployment.knowable():
 		// The pin may be the deployment's own app, which is not known yet.
 		return Identity{}, false, ErrDeploymentAppUnknown
 	}
@@ -205,7 +205,7 @@ func (s *Stored) legacy(ctx context.Context, customer string, app, deployment in
 		identity, err := s.inDeploymentApp(ctx, customer, app)
 		return identity, false, err
 	}
-	if deployment == 0 && couldBeAnApp(customer) {
+	if s.waitsFor(deployment, customer) {
 		return Identity{}, false, ErrDeploymentAppUnknown
 	}
 	identity, err := s.inDeploymentApp(ctx, customer, app)
@@ -216,6 +216,14 @@ func (s *Stored) legacy(ctx context.Context, customer string, app, deployment in
 // app's id written exactly as Stream writes it.
 func (s *Stored) ownsDeploymentApp(customer string, deployment int64) bool {
 	return deployment != 0 && customer == strconv.FormatInt(deployment, 10)
+}
+
+// waitsFor reports whether a customer's work waits for the deployment's own app to be known,
+// because the customer may be that app's: only while the app is not known, can still be
+// learned, and the customer's id could be an app's at all. A deployment with no key of its
+// own never learns its app, and has none for anybody's work to be.
+func (s *Stored) waitsFor(deployment int64, customer string) bool {
+	return deployment == 0 && s.deployment.knowable() && couldBeAnApp(customer)
 }
 
 // couldBeAnApp reports whether a customer id could be a Stream app's id at all.
