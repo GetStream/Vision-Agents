@@ -30,7 +30,7 @@ func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisio
 	shipped, err := builtinManifests(providers.FS)
 	s.Require().NoError(err)
 
-	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme")
+	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
 	s.Require().Len(listed, 2)
 	for i, id := range []string{"linear", "slack"} {
@@ -228,11 +228,11 @@ func (s *StoreSuite) TestACustomDefinitionIsOnlyItsOwnCustomers() {
 	_, err = s.store.LatestConnectorDefinition(s.ctx, "globex", "custom_crm")
 	s.True(errors.Is(err, ErrNoConnectorDefinition), "fetched as the latest: %v", err)
 
-	theirs, err := s.store.ListConnectorDefinitions(s.ctx, "globex")
+	theirs, err := s.store.ListConnectorDefinitions(s.ctx, "globex", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
 	s.Equal([]string{"linear", "slack"}, definitionIDs(theirs), "another customer sees the built-ins alone")
 
-	ours, err := s.store.ListConnectorDefinitions(s.ctx, "acme")
+	ours, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
 	s.Equal([]string{"linear", "slack", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
 }
