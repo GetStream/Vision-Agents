@@ -23,7 +23,9 @@ type Scheme interface {
 	// values the manifest asked to capture.
 	Complete(ctx context.Context, in CompleteInput) (Material, Captured, error)
 	// Mint produces a short-lived Credential from Material. It may rotate Material; the
-	// resolver persists what comes back under the lock.
+	// resolver persists what comes back under the lock. A failed renewal returns an
+	// *OutcomeError and no Material, and, while the old credential has not expired yet,
+	// that credential beside the error, so the call can still go out.
 	Mint(ctx context.Context, m Material, p Profile) (Credential, Material, error)
 	// Wrap applies the credential to every outbound request: a header, a signature or a TLS
 	// client certificate. base is the egress transport (egress.NewClient passes it), so

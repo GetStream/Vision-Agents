@@ -18,11 +18,14 @@ import (
 // 3) alike, since Mint and a source both hand it theirs and the two cannot always be told
 // apart. In order:
 //
-//   - err: a request that was never written (errNotSent, or a failed dial) is Transient,
-//     since nothing reached the provider. Any other failure is Uncertain: the provider may
-//     have acted on it, so a rotated refresh token must not be replayed. The prototype
-//     treated every transport and read failure of a refresh that way (internal/mcp/oauth.go:
-//     560-572 on codex/connector-support at cf62af0d).
+//   - err with no response: a request that was never written (errNotSent, or a failed
+//     dial) is Transient, since nothing reached the provider. Any other failure is
+//     Uncertain: the provider may have acted on it, so a rotated refresh token must not be
+//     replayed. The prototype treated every transport failure of a refresh that way
+//     (internal/mcp/oauth.go:560-572 on codex/connector-support at cf62af0d).
+//   - err with a response, a body that could not be read: the status and headers that did
+//     arrive decide, as below without the body. Only a 1xx-3xx stays Uncertain, since a
+//     success whose body was lost may have rotated the refresh token.
 //   - 429 is RateLimited (RFC 6585 section 4), with Retry-After.
 //   - A Bearer challenge in WWW-Authenticate: insufficient_scope is ScopeRequired with the
 //     challenge's scope (RFC 6750 section 3.1); insufficient_claims on a 401 is
@@ -31,27 +34,30 @@ import (
 //     learn.microsoft.com/en-us/entra/identity-platform/claims-challenge); invalid_token is
 //     InvalidGrant, since the resolver hands out only a token it believes live and RFC 6750
 //     section 3.1 says the provider found it «expired, revoked, malformed, or invalid».
-//   - An error member in a JSON body, at any status, because some servers answer errors
-//     with 200 (RFC 6749 section 5.2 does not, the fake's Slack shape does): see errorCodes.
+//   - An error member in a JSON body that errorCodes names, at any status, because some
+//     servers answer errors with 200 (RFC 6749 section 5.2 does not, the fake's Slack shape
+//     does). An error member it does not name is a resource's own error, such as a 404's
+//     not_found, and falls through: Mint's redeem makes it a refusal of the refresh.
 //   - 503 is Transient (RFC 9110 section 15.6.4: the server «is currently unable to handle
 //     the request»). Any other 5xx is Uncertain: a 500 (section 15.6.1) does not say nothing
 //     happened, and a 502 or 504 (sections 15.6.3, 15.6.5) says a gateway lost the answer
 //     of a server that may have acted. The prototype made every non-2xx refresh answer
 //     Uncertain (oauth.go:582-584).
 //   - Anything else is OK: nothing about the credential for the core to act on. A 404 is
-//     still the caller's to report.
+//     still the caller's to report, and so is a resource's own error code.
 //
 // RetryAfter is set whenever the answer carries a Retry-After the outcome can use.
 func (s *Scheme) Classify(resp *http.Response, body []byte, err error) core.Outcome {
-	if err != nil {
+	if resp == nil {
 		var dial *net.OpError
 		if errors.Is(err, errNotSent) || (errors.As(err, &dial) && dial.Op == "dial") {
 			return core.Outcome{Kind: core.OutcomeTransient}
 		}
 		return core.Outcome{Kind: core.OutcomeUncertain}
 	}
-	if resp == nil {
-		return core.Outcome{Kind: core.OutcomeUncertain}
+	if err != nil {
+		// What arrived of the body is not trusted.
+		body = nil
 	}
 	retryAfter := s.retryAfter(resp.Header.Get("Retry-After"))
 	if resp.StatusCode == http.StatusTooManyRequests {
@@ -72,17 +78,7 @@ func (s *Scheme) Classify(resp *http.Response, body []byte, err error) core.Outc
 			return core.Outcome{Kind: core.OutcomeInvalidGrant}
 		}
 	}
-	if code := errorCode(body); code != "" {
-		kind, known := errorCodes[code]
-		if !known {
-			// Any other error member is a refusal: the server answered that it did not do
-			// it, so nothing was spent and a later attempt may pass. The prototype kept such
-			// a connection connected and «temporarily unavailable»
-			// (internal/connectors/runtime.go:114-121 at cf62af0d). RFC 6749 section 5.2's
-			// invalid_request, invalid_client, unauthorized_client, unsupported_grant_type
-			// and invalid_scope land here.
-			kind = core.OutcomeTransient
-		}
+	if kind, known := errorCodes[errorCode(body)]; known {
 		return core.Outcome{Kind: kind, RetryAfter: retryAfter}
 	}
 	switch {
@@ -90,6 +86,8 @@ func (s *Scheme) Classify(resp *http.Response, body []byte, err error) core.Outc
 		return core.Outcome{Kind: core.OutcomeTransient, RetryAfter: retryAfter}
 	case resp.StatusCode >= http.StatusInternalServerError:
 		return core.Outcome{Kind: core.OutcomeUncertain, RetryAfter: retryAfter}
+	case err != nil && resp.StatusCode < http.StatusBadRequest:
+		return core.Outcome{Kind: core.OutcomeUncertain}
 	}
 	return core.Outcome{Kind: core.OutcomeOK}
 }
@@ -115,6 +113,15 @@ var errorCodes = map[string]core.OutcomeKind{
 	// made both Uncertain (internal/mcp/oauth.go:576-578 at cf62af0d).
 	"internal_error": core.OutcomeUncertain,
 	"fatal_error":    core.OutcomeUncertain,
+	// RFC 6749 section 5.2's other codes, which only a token endpoint answers: a refusal,
+	// so nothing was spent and a later attempt may pass. The prototype kept such a
+	// connection connected and «temporarily unavailable» (internal/connectors/runtime.go:
+	// 114-121 at cf62af0d). invalid_request is left out: RFC 6750 section 3.1 has a
+	// resource answer it for a malformed call, which says nothing about the credential.
+	"invalid_client":         core.OutcomeTransient,
+	"unauthorized_client":    core.OutcomeTransient,
+	"unsupported_grant_type": core.OutcomeTransient,
+	"invalid_scope":          core.OutcomeTransient,
 }
 
 // errorCode is the error member of a JSON object body, or "" when there is none.
@@ -204,12 +211,20 @@ func (l *challengeLexer) challenge() (string, map[string]string, bool) {
 		start := l.at
 		name := l.token()
 		l.skip(" \t")
-		if name == "" || !l.consume('=') {
-			// The next challenge, or a token68 this reader has no use for.
-			l.at = start
-			if name == "" {
+		if name == "" {
+			// Not a parameter: the rest of a token68, which may end in "=" padding (RFC 9110
+			// section 11.2), or text this reader cannot parse. The next comma is where the
+			// next parameter or challenge can start.
+			if next := strings.IndexByte(l.text[l.at:], ','); next >= 0 {
+				l.at += next
+			} else {
 				l.at = len(l.text)
 			}
+			return scheme, params, true
+		}
+		if !l.consume('=') {
+			// The next challenge, or a token68 without padding.
+			l.at = start
 			return scheme, params, true
 		}
 		l.skip(" \t")

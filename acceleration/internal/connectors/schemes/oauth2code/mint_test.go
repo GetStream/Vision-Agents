@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -199,6 +200,68 @@ func (s *OAuth2CodeSuite) TestEachRefusedRefreshIsTheOutcomeItsAnswerMeans() {
 	}
 }
 
+// TestARefreshThatFailsBeforeExpiryStillHandsOutTheValidToken is the table of refusals
+// inside the margin: each comes back as its outcome, with the token that has not expired yet
+// and no material.
+func (s *OAuth2CodeSuite) TestARefreshThatFailsBeforeExpiryStillHandsOutTheValidToken() {
+	for _, row := range []struct {
+		personality fakeprovider.Personality
+		want        core.OutcomeKind
+	}{
+		{fakeprovider.Unavailable, core.OutcomeTransient},
+		{fakeprovider.RateLimited, core.OutcomeRateLimited},
+		{fakeprovider.ServerError, core.OutcomeUncertain},
+		{fakeprovider.LostResponse, core.OutcomeUncertain},
+		{fakeprovider.InvalidGrant, core.OutcomeInvalidGrant},
+	} {
+		srv := fakeprovider.New(s.T())
+		profile := s.preregistered(srv)
+		scheme, material := s.connected(srv, profile, nil)
+		srv.Use(row.personality)
+
+		s.now = s.now.Add(fakeprovider.AccessTTL - 30*time.Second)
+		credential, returned, err := scheme.Mint(s.ctx, material, profile)
+		s.Equal(row.want, s.outcome(err).Kind, row.personality)
+		s.Equal(core.Material{}, returned, row.personality)
+		// Off again, since RateLimited answers resource calls with 429 too.
+		srv.Use()
+		s.Equal(http.StatusOK, s.wrapped(srv, scheme, credential), row.personality)
+	}
+}
+
+func (s *OAuth2CodeSuite) TestARefreshRefusedWithAnErrorCodeClassifyDoesNotNameIsTransient() {
+	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
+	profile := s.preregistered(srv)
+	profile.Scopes.Separator = ","
+	secret := srv.ClientSecret
+	lookup := func(_ context.Context, _ core.ConnectionRef, _ core.Profile, owner core.ClientOwner) (oauth2code.Client, bool, error) {
+		return oauth2code.Client{ID: srv.ClientID, Secret: secret}, owner == core.ClientOperator, nil
+	}
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: lookup, Now: s.clock})
+	material, _, err := s.connect(srv, scheme, profile)
+	s.Require().NoError(err)
+
+	secret = "rotated-elsewhere"
+	s.now = s.now.Add(fakeprovider.SlackAccessTTL)
+	_, _, err = scheme.Mint(s.ctx, material, profile)
+	s.Equal(core.OutcomeTransient, s.outcome(err).Kind, "200 ok:false invalid_client_id is a refusal, not a lost token")
+	var refused *oauth2code.TokenError
+	s.Require().ErrorAs(err, &refused)
+	s.Equal("invalid_client_id", refused.Code)
+}
+
+func (s *OAuth2CodeSuite) TestARefusalWhoseBodyWasCutOffIsNotRetriedInTheGraceWindow() {
+	srv := fakeprovider.New(s.T())
+	profile := s.registered(srv)
+	scheme, material := s.connected(srv, profile, nil)
+	srv.Use(fakeprovider.CutOffRefusal)
+
+	s.now = s.now.Add(24 * time.Hour)
+	_, _, err := scheme.Mint(s.ctx, material, profile)
+	s.Equal(core.OutcomeTransient, s.outcome(err).Kind, "the 400 arrived, so nothing was spent")
+	s.Equal(1, srv.Refreshes(), "a refusal is not sent again")
+}
+
 func (s *OAuth2CodeSuite) TestARefreshLooksThePreregisteredClientSecretUpAgain() {
 	srv := fakeprovider.New(s.T())
 	profile := s.preregistered(srv)
@@ -307,6 +370,9 @@ func (s *OAuth2CodeSuite) TestClassifyMakesARefusedGrantInvalidGrant() {
 			srv.Advance(fakeprovider.AccessTTL)
 			return s.mcpAnswer(srv, access)
 		}},
+		{"a Bearer invalid_token after another scheme's padded token68", func() (*http.Response, []byte, error) {
+			return s.synthetic(http.StatusUnauthorized, http.Header{"Www-Authenticate": {`Newauth abc==, Bearer error="invalid_token"`}}, "")
+		}},
 	} {
 		s.Equal(core.Outcome{Kind: core.OutcomeInvalidGrant}, s.classify(row.answer), row.name)
 	}
@@ -338,6 +404,9 @@ func (s *OAuth2CodeSuite) TestClassifyMakesAnAnswerThatMayHaveTakenEffectUncerta
 		{"a 504 from a gateway", func() (*http.Response, []byte, error) {
 			return s.synthetic(http.StatusGatewayTimeout, nil, "")
 		}},
+		{"a 200 whose body was cut off", func() (*http.Response, []byte, error) {
+			return s.cutOff(http.StatusOK, nil)
+		}},
 	} {
 		s.Equal(core.Outcome{Kind: core.OutcomeUncertain}, s.classify(row.answer), row.name)
 	}
@@ -356,6 +425,9 @@ func (s *OAuth2CodeSuite) TestClassifyMakesAFailureThatChangedNothingTransient()
 		{"a 503 with Retry-After", func() (*http.Response, []byte, error) {
 			return s.synthetic(http.StatusServiceUnavailable, http.Header{"Retry-After": {"120"}}, "")
 		}, core.Outcome{Kind: core.OutcomeTransient, RetryAfter: 2 * time.Minute}},
+		{"a 503 whose body was cut off", func() (*http.Response, []byte, error) {
+			return s.cutOff(http.StatusServiceUnavailable, nil)
+		}, core.Outcome{Kind: core.OutcomeTransient}},
 		{"a refused dial", func() (*http.Response, []byte, error) {
 			closed := httptest.NewTLSServer(http.NotFoundHandler())
 			closed.Close()
@@ -422,6 +494,9 @@ func (s *OAuth2CodeSuite) TestClassifyMakesA429RateLimitedWithItsRetryAfter() {
 		{"no Retry-After", func() (*http.Response, []byte, error) {
 			return s.synthetic(http.StatusTooManyRequests, nil, "")
 		}, 0},
+		{"a body that was cut off", func() (*http.Response, []byte, error) {
+			return s.cutOff(http.StatusTooManyRequests, http.Header{"Retry-After": {"30"}})
+		}, 30 * time.Second},
 	} {
 		got := s.classify(row.answer)
 		s.Equal(core.OutcomeRateLimited, got.Kind, row.name)
@@ -440,6 +515,15 @@ func (s *OAuth2CodeSuite) TestClassifyLeavesAnAnswerWithNothingForTheCoreOK() {
 		}},
 		{"a 404", func() (*http.Response, []byte, error) {
 			return s.synthetic(http.StatusNotFound, nil, "not found")
+		}},
+		{"a 404 with a resource's own error code", func() (*http.Response, []byte, error) {
+			return s.synthetic(http.StatusNotFound, nil, `{"error":"not_found"}`)
+		}},
+		{"a 200 ok:false with a resource's own error code, the Slack Web API shape", func() (*http.Response, []byte, error) {
+			return s.synthetic(http.StatusOK, nil, `{"ok":false,"error":"channel_not_found"}`)
+		}},
+		{"a 400 whose body was cut off", func() (*http.Response, []byte, error) {
+			return s.cutOff(http.StatusBadRequest, nil)
 		}},
 	} {
 		s.Equal(core.Outcome{Kind: core.OutcomeOK}, s.classify(row.answer), row.name)
@@ -475,6 +559,19 @@ func (s *OAuth2CodeSuite) TestRevokeWithNoEndpointSaysSoAndSendsNothing() {
 	s.ErrorIs(scheme.Revoke(s.ctx, material, profile), oauth2code.ErrNoRevocationEndpoint)
 	s.Equal(0, srv.Hits(fakeprovider.PathRevoke))
 	s.Equal(http.StatusOK, s.call(srv, s.accessToken(material)))
+}
+
+func (s *OAuth2CodeSuite) TestRevokingAnAccessTokenTheProviderDoesNotRevokeSaysSo() {
+	srv := fakeprovider.New(s.T(), fakeprovider.NoRefreshToken, fakeprovider.AccessTokenNotRevocable)
+	profile := s.preregistered(srv)
+	profile.Endpoints["revoke"] = srv.URL + fakeprovider.PathRevoke
+	scheme, material := s.connected(srv, profile, nil)
+
+	err := scheme.Revoke(s.ctx, material, profile)
+	s.ErrorIs(err, oauth2code.ErrTokenTypeNotRevocable)
+	var failed *core.OutcomeError
+	s.False(errors.As(err, &failed), "not a retryable outcome")
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(material)), "nothing was revoked")
 }
 
 func (s *OAuth2CodeSuite) TestARefusedRevocationIsAnOutcomeError() {
@@ -608,6 +705,13 @@ func (s *OAuth2CodeSuite) read(response *http.Response, err error) (*http.Respon
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
 	return response, body, err
+}
+
+// cutOff is an answer whose status and headers arrived and whose body did not, as
+// tokenPost hands it on: the response with the read error.
+func (s *OAuth2CodeSuite) cutOff(status int, header http.Header) (*http.Response, []byte, error) {
+	response, _, _ := s.synthetic(status, header, "")
+	return response, nil, io.ErrUnexpectedEOF
 }
 
 // synthetic is an answer no fake personality gives, built as a provider would send it.

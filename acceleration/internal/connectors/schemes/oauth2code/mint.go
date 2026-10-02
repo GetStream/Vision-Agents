@@ -24,6 +24,11 @@ const defaultMargin = time.Minute
 // nothing was sent, and the grant lives on at the provider.
 var ErrNoRevocationEndpoint = errors.New("oauth2code: the provider has no revocation endpoint")
 
+// ErrTokenTypeNotRevocable is Revoke when the revocation endpoint answers
+// unsupported_token_type (RFC 7009 section 2.2.1): it does not revoke that kind of token, so
+// asking again will not help, and nothing was revoked.
+var ErrTokenTypeNotRevocable = errors.New("oauth2code: the provider does not revoke this kind of token")
+
 // errNoAccessToken is what a request carried by Wrap fails with when the credential holds
 // no access token, rather than leave without one.
 var errNoAccessToken = errors.New("oauth2code: the credential has no access token")
@@ -31,7 +36,10 @@ var errNoAccessToken = errors.New("oauth2code: the credential has no access toke
 // Mint returns the access token in m, renewed first when it is inside the margin of its
 // expiry (RFC 6749 section 6). The Material that comes back is m itself when nothing was
 // renewed, and new material when a refresh succeeded; a failed refresh returns no Material,
-// m is never written to, and the error is a *core.OutcomeError the resolver acts on.
+// m is never written to, and the error is a *core.OutcomeError the resolver acts on. When the
+// refresh failed inside the margin, before the access token expired, that still valid token
+// comes back with the error, so a provider's bad minute is not a failed call: the resolver
+// can use it and still act on the outcome. Once the token has expired there is none.
 //
 // When a refresh's answer is Uncertain (lost, or a 5xx that may have rotated the token) and
 // the manifest gives the provider a refresh.grace, the same refresh token is sent once more
@@ -60,6 +68,9 @@ func (s *Scheme) Mint(ctx context.Context, m core.Material, p core.Profile) (cor
 	}
 	next, err := s.refresh(ctx, p, current)
 	if err != nil {
+		if s.cfg.Now().Before(current.ExpiresAt) {
+			return credential(current), core.Material{}, err
+		}
 		return core.Credential{}, core.Material{}, err
 	}
 	payload, err := json.Marshal(next)
@@ -85,10 +96,15 @@ func (s *Scheme) Wrap(base http.RoundTripper, c core.Credential) http.RoundTripp
 
 // Revoke asks the provider to revoke the grant (RFC 7009) at the manifest's revoke
 // endpoint, else the one the authorization server's metadata named. It sends the refresh
-// token when there is one, since RFC 7009 section 2.1 has the server then «also invalidate
-// all access tokens based on the same authorization grant», and the access token otherwise.
+// token when there is one, since section 2 makes revoking a refresh token a MUST and an
+// access token only a SHOULD, and the access token otherwise.
+//
 // A nil error means the endpoint answered 200, which section 2.2 also answers for a token
-// it did not know: it is not proof that anything was revoked. A refusal is a
+// it did not know: it is not proof that anything was revoked. Nor does it end the access
+// token: section 2.1 has the server «also invalidate all access tokens based on the same
+// authorization grant» only if it «supports the revocation of access tokens», so the access
+// token may work until it expires. ErrTokenTypeNotRevocable is the server saying it does not
+// revoke that kind of token (section 2.2.1, unsupported_token_type). Any other refusal is a
 // *core.OutcomeError; section 2.2.1 answers 503 when the client should try again.
 func (s *Scheme) Revoke(ctx context.Context, m core.Material, p core.Profile) error {
 	current, err := open(m)
@@ -119,6 +135,9 @@ func (s *Scheme) Revoke(ctx context.Context, m core.Material, p core.Profile) er
 	response, raw, err := s.tokenPost(ctx, endpoint, form, c)
 	if err == nil && response.StatusCode == http.StatusOK {
 		return nil
+	}
+	if err == nil && errorCode(raw) == "unsupported_token_type" {
+		return fmt.Errorf("%w (%s, HTTP %d)", ErrTokenTypeNotRevocable, form.Get("token_type_hint"), response.StatusCode)
 	}
 	outcome := s.Classify(response, raw, err)
 	if outcome.Kind == core.OutcomeOK {
@@ -192,6 +211,12 @@ func (s *Scheme) refresh(ctx context.Context, p core.Profile, current material) 
 func (s *Scheme) redeem(ctx context.Context, endpoint string, form url.Values, c client) (tokenResponse, error) {
 	response, raw, err := s.tokenPost(ctx, endpoint, cloneValues(form), c)
 	outcome := s.Classify(response, raw, err)
+	if outcome.Kind == core.OutcomeOK && errorCode(raw) != "" {
+		// An error member Classify does not name, at any status: the token endpoint refused
+		// the refresh (RFC 6749 section 5.2), so nothing was spent. Some servers send it with
+		// 200, as the fake's Slack shape does.
+		outcome.Kind = core.OutcomeTransient
+	}
 	if outcome.Kind == core.OutcomeOK {
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
 			body, err := decodeObject(raw)

@@ -36,25 +36,31 @@ Mint(Material, Profile)
   none       no refresh token: still valid -> the token; expired -> InvalidGrant
   refresh    endpoints.refresh or the token endpoint, checkEndpoint; client secret looked up again by material.ref;
              grant_type, refresh_token, scope (granted scopes, only with scopes.send_on_refresh), resource
-  classify   Classify on the answer; a 2xx without a readable token is Uncertain, any other refusal Transient
+  classify   Classify on the answer; a 2xx without a readable token is Uncertain; an error member Classify does
+             not name, or any other refusal, is Transient
   grace      Uncertain and refresh.grace > 0 and the window the first attempt opened still running -> the same
              refresh token once more (the retired one still works there); never without a grace
   -> Credential, new Material (new refresh token if one came, refresh_ttl expiry), or *core.OutcomeError and
-     no Material; m is never written to. A refresh token dying before the next refresh logs a warning
+     no Material, with the old Credential beside it while that has not expired; m is never written to. A
+     refresh token dying before the next refresh logs a warning
 
 Classify(resp, body, err)
-  err        never written (errNotSent, failed dial) Transient; any other Uncertain
+  err        no response: never written (errNotSent, failed dial) Transient, any other Uncertain. A response whose
+             body was lost: status and headers decide as below, and a 1xx-3xx is Uncertain
   429        RateLimited, Retry-After (delay-seconds or HTTP-date)
   challenge  Bearer insufficient_scope -> ScopeRequired + scopes; 401 insufficient_claims -> ScopeRequired + decoded
-             claims; invalid_token -> InvalidGrant
+             claims; invalid_token -> InvalidGrant. A token68 or unparseable text skips to the next comma
   body       invalid_grant, invalid_refresh_token -> InvalidGrant; temporarily_unavailable -> Transient;
-             server_error, internal_error, fatal_error -> Uncertain; insufficient_scope -> ScopeRequired; any other
-             error member -> Transient
+             server_error, internal_error, fatal_error -> Uncertain; insufficient_scope -> ScopeRequired;
+             invalid_client, unauthorized_client, unsupported_grant_type, invalid_scope -> Transient; any other
+             code is a resource's own error and falls through
   status     503 Transient; other 5xx Uncertain; anything else OK
 
 Wrap(base, Credential)      Authorization: Bearer on a clone of each request; no access token -> every request fails
 Revoke(Material, Profile)   endpoints.revoke or the discovered revocation_endpoint (else ErrNoRevocationEndpoint),
-                            RFC 7009 with the refresh token (else the access token); 200 -> nil, not proof
+                            RFC 7009 with the refresh token (else the access token); unsupported_token_type ->
+                            ErrTokenTypeNotRevocable; 200 -> nil, not proof, and the access token may work until
+                            it expires (§2.1 only if the server revokes access tokens)
 ```
 
 ## Rules
@@ -65,7 +71,7 @@ Revoke(Material, Profile)   endpoints.revoke or the discovered revocation_endpoi
 - **State is the core's to seal.** `BeginOutput.State` holds the PKCE verifier and, for a registered client, its secret; the core seals it into the attempt, whose one-use consumption is the replay guard across replicas. The in-process spent set refuses a replay within one process before its code reaches the provider, where a second redemption would revoke the grant (RFC 6749 §4.1.2).
 - **A preregistered client's secret is never sealed.** It is looked up again at `Complete`, at refresh and at revocation, so a rotated secret lives in one place. `core.Scheme` hands `Mint` and `Revoke` no `ConnectionRef`, so `Complete` keeps the one it ran for in the material; the core seals material bound to that connection. Only a client this scheme registered keeps its secret in State and Material.
 - **A rotated refresh token is never replayed outside a grace window.** A failure that may have taken effect is `Uncertain`, and `Mint` sends the same refresh token again only when the manifest's `refresh.grace` says the provider still accepts it, once, inside the window. Anything else would be the replay RFC 9700 §4.14.2 revokes a grant for.
-- **A failed `Mint` or `Revoke` is a `*core.OutcomeError`** whose `Outcome` came from `Classify`, and leaves the caller's material as it was. Nothing this package logs or returns names a token or a secret.
+- **A failed `Mint` or `Revoke` is a `*core.OutcomeError`** whose `Outcome` came from `Classify`, and leaves the caller's material as it was. The exceptions are `Revoke`'s two answers that no retry changes, `ErrNoRevocationEndpoint` and `ErrTokenTypeNotRevocable`. Nothing this package logs or returns names a token or a secret.
 - **`private_key_jwt` is built, not offered.** `PrivateKeyJWT` (`privatekeyjwt.go`) makes the assertion (OIDC Core §9, RFC 7523 §2.2, §3); `supportedMethods` leaves the method out until a client record can hold a private key (T19).
 - **The redirect URI is bound to the attempt.** `Complete` sends the one `Begin` used (RFC 6749 §4.1.3); `CompleteInput` has none to confuse it with.
 - **Every hardcoded value cites its source** beside it: an RFC section, the CIMD draft (`draft-ietf-oauth-client-id-metadata-document-02`), MCP authorization 2025-11-25, a vendor page when no RFC defines the behaviour (the `claims` challenge is Microsoft's, `invalid_refresh_token`, `internal_error` and `fatal_error` are Slack's), or a line of the prototype `internal/mcp/oauth.go` or `internal/connectors/runtime.go` on `codex/connector-support` at `cf62af0d`.
