@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // noSessions is what every session path says on a deployment that only inspects routing.
@@ -112,6 +113,9 @@ func (s *Server) ForkSession(ctx context.Context, request ForkSessionRequestObje
 	spec.CallerKind = KindFrom(ctx)
 
 	created, err := s.sessions.Create(ctx, spec)
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
+	}
 	if err != nil {
 		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
 	}

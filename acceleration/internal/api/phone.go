@@ -12,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // The phone paths are served only when a deployment configured telephony. Without it they
@@ -283,6 +284,9 @@ func (s *Server) AttachPhoneNumber(
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
 		return AttachPhoneNumber404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
 	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
+	}
 	if err != nil {
 		return AttachPhoneNumber400JSONResponse{badRequest(err.Error())}, nil
 	}
@@ -347,6 +351,9 @@ func (s *Server) PlacePhoneCall(
 	placed, err := s.phone.Call(ctx, call)
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
 		return PlacePhoneCall404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
 	}
 	if err != nil {
 		return PlacePhoneCall400JSONResponse{badRequest(err.Error())}, nil
@@ -428,6 +435,9 @@ func (s *Server) TransferPhoneCall(
 	placed, err := s.phone.Transfer(ctx, transfer)
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
 		return TransferPhoneCall404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
 	}
 	if err != nil {
 		return TransferPhoneCall400JSONResponse{badRequest(err.Error())}, nil

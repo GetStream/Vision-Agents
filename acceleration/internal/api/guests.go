@@ -42,6 +42,9 @@ func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserReq
 		return CreateGuestUser401JSONResponse{missingCustomer()}, nil
 	}
 	bound, mintable, err := s.streamFor(ctx, customerID)
+	if elsewhere(err) {
+		return CreateGuestUser400JSONResponse{badRequest("this app's Stream app is disconnected, so no guest can be made in it")}, nil
+	}
 	if err != nil {
 		return nil, err
 	}

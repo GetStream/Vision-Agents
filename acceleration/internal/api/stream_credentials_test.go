@@ -276,3 +276,15 @@ func (s *StreamCredentialsSuite) TestAMalformedBodyNeverEchoesTheSecretsInIt() {
 		})
 	}
 }
+
+func (s *StreamCredentialsSuite) TestADisconnectedAppIsToldItMintsNoGuests() {
+	apiKey := "own-key-" + s.utils.uuid()
+	s.registered(0, key(apiKey, "a-long-stream-secret"))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/settings/app/stream/credentials",
+		map[string]any{"keys": []keyInput{}, "expected_revision": 1, "proof": key(apiKey, "a-long-stream-secret")}, nil))
+
+	status, failure := s.anonymousClient.failure(http.MethodPost, "/v1/agents/guests", nil)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "disconnected")
+}
