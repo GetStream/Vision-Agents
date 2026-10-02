@@ -85,6 +85,7 @@ func New(options Options) (*Router, error) {
 // Start selects a provider and opens a session, falling back to the next candidate when
 // one fails to start.
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
+	request.Options = routeDefaults(request.Target, request.Options)
 	core := routing.Request{
 		CustomerID:    request.CustomerID,
 		AgentID:       request.AgentID,
@@ -104,4 +105,18 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		return nil, err
 	}
 	return newSession(provider, config, core.Owner(), r.Recorder()), nil
+}
+
+// eagerRoutes are the shortcuts for a live conversation, where a reply started on a guess
+// that the turn is over is worth the occasional one taken back.
+var eagerRoutes = map[string]bool{"en-low-latency": true, "multilingual-low-latency": true}
+
+// routeDefaults fills in what a request to target leaves unsaid. A caller who said
+// eager_end_of_turn either way keeps what they said.
+func routeDefaults(target string, asked options.STT) options.STT {
+	if asked.EagerEndOfTurn == nil && eagerRoutes[target] {
+		eager := true
+		asked.EagerEndOfTurn = &eager
+	}
+	return asked
 }

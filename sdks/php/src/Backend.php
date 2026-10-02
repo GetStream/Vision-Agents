@@ -34,6 +34,8 @@ final readonly class Backend
     public string $customerId;
     public string $apiKey;
     public string $userId;
+    /** The end user this backend speaks for while keeping its own server credential. */
+    public string $onBehalfOf;
     public bool $authenticate;
     private string $apiSecret;
     private string $token;
@@ -50,6 +52,7 @@ final readonly class Backend
      * @param string $userId the end user this is acting for, if it is acting for one
      * @param ?bool $authenticate whether the router sits behind Stream's authenticating proxy,
      *     which wants the credential spelled `api_key` and `stream-auth-type: jwt`
+     * @param string $onBehalfOf the end user a server-side caller speaks for, keeping its own credential
      */
     public function __construct(
         ?string $url = null,
@@ -59,6 +62,7 @@ final readonly class Backend
         string $token = '',
         string $userId = '',
         ?bool $authenticate = null,
+        string $onBehalfOf = '',
     ) {
         $this->url = rtrim($url ?? self::env(self::URL_ENV) ?? self::DEFAULT_URL, '/');
         $this->customerId = $customerId ?? self::env(self::CUSTOMER_ENV) ?? '';
@@ -70,6 +74,7 @@ final readonly class Backend
         $this->apiSecret = $apiSecret ?? ($token !== '' || $this->apiKey === '' ? '' : (self::env(self::API_SECRET_ENV) ?? ''));
         $this->token = $token;
         $this->userId = $userId;
+        $this->onBehalfOf = $onBehalfOf;
         $this->authenticate = $authenticate ?? self::flag(self::env(self::AUTHENTICATE_ENV));
 
         if ($this->authenticate && $this->apiKey === '') {
@@ -114,6 +119,20 @@ final readonly class Backend
     }
 
     /**
+     * The same backend, still speaking with its own server credential, saying which end user it
+     * acts for. Unlike `actingFor`, nothing is signed for that user in any mode, so what it
+     * writes is the server's: the router answers it with the model rather than handing it to a
+     * dispatch worker.
+     */
+    public function onBehalfOf(string $userId): self
+    {
+        if (!$this->serverSide()) {
+            throw new ConfigurationException('only a server-side backend can act on behalf of a user');
+        }
+        return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, $this->apiSecret, $this->token, $this->userId, $this->authenticate, $userId);
+    }
+
+    /**
      * What every request and every socket handshake carries.
      *
      * Minted per call, so a worker idle longer than a token lasts does not wake up holding an
@@ -130,11 +149,7 @@ final readonly class Backend
                     . ' for a router that trusts one, or apiKey with apiSecret or a token',
                 );
             }
-            $headers = ['X-Customer-Id' => $this->customerId];
-            if ($this->userId !== '') {
-                $headers['X-Stream-User-Id'] = $this->userId;
-            }
-            return $headers;
+            return ['X-Customer-Id' => $this->customerId, ...$this->userHeader()];
         }
         if ($this->apiSecret === '' && $this->token === '') {
             throw new ConfigurationException('apiKey needs the secret it belongs to, or a token minted with it');
@@ -147,6 +162,7 @@ final readonly class Backend
                 'api_key' => $this->apiKey,
                 'stream-auth-type' => 'jwt',
                 'Authorization' => 'Bearer ' . $this->proxyToken(),
+                ...($this->onBehalfOf !== '' ? ['X-Stream-User-Id' => $this->onBehalfOf] : []),
             ];
         }
 
@@ -154,10 +170,7 @@ final readonly class Backend
         if ($this->apiSecret !== '') {
             $headers['Authorization'] = 'Bearer ' . self::sign(['server' => true], $this->apiSecret);
             $headers['Stream-Auth-Type'] = 'server';
-            if ($this->userId !== '') {
-                $headers['X-Stream-User-Id'] = $this->userId;
-            }
-            return $headers;
+            return [...$headers, ...$this->userHeader()];
         }
         $headers['Authorization'] = 'Bearer ' . $this->token;
         $headers['Stream-Auth-Type'] = 'jwt';
@@ -210,9 +223,18 @@ final readonly class Backend
         if ($this->token !== '') {
             return $this->token;
         }
-        return $this->userId !== ''
+        return $this->userId !== '' && $this->onBehalfOf === ''
             ? self::sign(['user_id' => $this->userId], $this->apiSecret)
             : self::sign(['server' => true], $this->apiSecret);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function userHeader(): array
+    {
+        $user = $this->onBehalfOf !== '' ? $this->onBehalfOf : $this->userId;
+        return $user === '' ? [] : ['X-Stream-User-Id' => $user];
     }
 
     private static function base64url(string $bytes): string

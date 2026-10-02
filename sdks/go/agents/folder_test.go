@@ -250,6 +250,9 @@ keyterms: [Vision Agents]
 speed: 0.9
 video:
   source: camera
+dispatch:
+  incoming_call: enabled
+  text: enabled
 `)
 
 	folder, err := Load(root)
@@ -268,6 +271,9 @@ video:
 	}
 	if settings.Video.Source != "camera" || settings.Video.MaxFrames != 1 {
 		t.Errorf("the video read as %+v", settings.Video)
+	}
+	if settings.Dispatch == nil || settings.Dispatch.IncomingCall != "enabled" || settings.Dispatch.Text != "enabled" {
+		t.Errorf("what is left to dispatch read as %+v", settings.Dispatch)
 	}
 }
 

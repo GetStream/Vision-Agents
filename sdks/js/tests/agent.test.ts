@@ -341,7 +341,12 @@ describe("Agent", () => {
       const folder: Folder = {
         path: "/agents/jean",
         name: "jean",
-        settings: { llm: "llm-smart", stt: "flux", tags: { team: "support" } },
+        settings: {
+          llm: "llm-smart",
+          stt: "flux",
+          tags: { team: "support" },
+          dispatch: { incoming_call: "disabled", text: "enabled" },
+        },
         instructions: "Be brief.",
         guardrail: "Refuse medical advice.",
         skills: [{ name: "think", description: "Think", instructions: "Work it out." }],
@@ -365,6 +370,7 @@ describe("Agent", () => {
       assert.equal(body.llm, "llm-fast", "what the code set wins over agent.yaml");
       assert.equal(body.stt, "flux", "what only agent.yaml says still goes");
       assert.deepEqual(body.tags, { team: "support" });
+      assert.deepEqual(body.dispatch, { incoming_call: "disabled", text: "enabled" });
       assert.equal(body.skills?.length, 1);
       assert.equal(body.knowledge?.length, 1);
       assert.deepEqual(body.knowledge_urls, [{ url: "https://example.com", title: "Home" }]);

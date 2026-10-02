@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/sdks/go/client"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
@@ -15,7 +16,8 @@ import (
 // InboundCall is a call the router could not answer itself.
 type InboundCall = stream.InboundCall
 
-// InboundMessage is something written to an agent that no session is running for.
+// InboundMessage is something written to an agent that no session is running for, or to a
+// running session whose agent leaves text to dispatch.
 type InboundMessage = stream.InboundMessage
 
 // AgentFactory builds the agent for a conversation nothing is answering yet. It is given
@@ -85,6 +87,9 @@ type DispatchOptions struct {
 //		return err
 //	}
 //	dispatch.OnMessage(func(ctx context.Context, message agents.InboundMessage) error {
+//		if message.SessionID != "" {
+//			return dispatch.Answer(ctx, message)
+//		}
 //		conversation, err := dispatch.Conversation(ctx, message, build)
 //		if err != nil {
 //			return err
@@ -94,6 +99,7 @@ type DispatchOptions struct {
 //	return dispatch.Run(ctx)
 type Dispatch struct {
 	dispatch *stream.Dispatch
+	backend  stream.Backend
 	logger   *slog.Logger
 
 	turnTimeout time.Duration
@@ -130,6 +136,7 @@ func NewDispatch(options DispatchOptions) (*Dispatch, error) {
 	}
 	return &Dispatch{
 		dispatch:    socket,
+		backend:     options.Backend,
 		logger:      logger,
 		turnTimeout: options.TurnTimeout,
 		onEvent:     options.OnEvent,
@@ -137,7 +144,8 @@ func NewDispatch(options DispatchOptions) (*Dispatch, error) {
 	}, nil
 }
 
-// OnMessage registers what to do with a message written to an agent that is not running.
+// OnMessage registers what to do with a message written to an agent that is not running, or
+// to a running session whose agent leaves text to dispatch.
 func (d *Dispatch) OnMessage(handler func(context.Context, InboundMessage) error) {
 	d.dispatch.OnMessage(handler)
 }
@@ -166,6 +174,9 @@ func (d *Dispatch) Active() int { return d.dispatch.Active() }
 // answering calls the factory. The session is opened on the message's own channel, so what
 // it writes lands in the conversation the question was asked in.
 func (d *Dispatch) Conversation(ctx context.Context, message InboundMessage, build AgentFactory) (*Conversation, error) {
+	if message.SessionID != "" {
+		return nil, errors.New("agents: a session is already holding this conversation; answer it there with Answer")
+	}
 	if message.ChannelID == "" {
 		return nil, errors.New("agents: a message with no channel is one there is nowhere to answer")
 	}
@@ -208,6 +219,27 @@ func (d *Dispatch) Conversation(ctx context.Context, message InboundMessage, bui
 	d.held[message.ChannelID] = started
 	d.logger.Info("started an agent", "channel", message.ChannelID, "session", session.ID())
 	return started, nil
+}
+
+// Answer has the model answer a message written to a running session whose agent leaves
+// text to dispatch, which is what the person who wrote it is waiting on.
+//
+// The response is created with this worker's own credential, acting for whoever wrote the
+// message, so it reaches a conversation that belongs to them and goes to the model rather
+// than back to a worker. It carries the message's command, so the answer lands on it.
+func (d *Dispatch) Answer(ctx context.Context, message InboundMessage) error {
+	if message.SessionID == "" {
+		return errors.New("agents: no session is holding this message; open one with Conversation")
+	}
+	backend := d.backend
+	backend.ActingFor = message.UserID
+	api, err := client.New(backend)
+	if err != nil {
+		return err
+	}
+	_, err = api.Agent(message.AgentID).Sessions.Responses(message.SessionID).
+		Create(ctx, message.Text, client.Command(message.CommandID))
+	return err
 }
 
 // Run waits for work until the context is cancelled or the router closes the connection

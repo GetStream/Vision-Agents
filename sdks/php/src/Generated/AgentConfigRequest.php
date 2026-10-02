@@ -47,6 +47,7 @@ final readonly class AgentConfigRequest
         // Cost labels, carried onto every request a session using it makes.
         /** @var array<string, string>|null */
         public ?array $tags = null,
+        public ?AgentDispatch $dispatch = null,
     ) {
     }
 
@@ -75,6 +76,7 @@ final readonly class AgentConfigRequest
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
         );
     }
 
@@ -140,6 +142,9 @@ final readonly class AgentConfigRequest
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
+        }
+        if ($this->dispatch !== null) {
+            $out['dispatch'] = $this->dispatch->toArray();
         }
         return $out;
     }

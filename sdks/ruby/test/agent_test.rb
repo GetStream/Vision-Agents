@@ -321,6 +321,18 @@ class TestAgent < LocalRouterTest
     FileUtils.rm_rf(File.dirname(root))
   end
 
+  def test_sync_sends_what_the_folder_leaves_to_dispatch
+    root = folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\ndispatch:\n  text: enabled\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    assert_equal({ "text" => "enabled" }, @router.last(:post, "/v1/agents/sync").json["dispatch"])
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
   def test_an_untouched_folder_is_read_back_rather_than_written
     root = folder
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })

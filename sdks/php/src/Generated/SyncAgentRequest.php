@@ -48,6 +48,7 @@ final readonly class SyncAgentRequest
         public Sandbox|string|null $sandbox = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
+        public ?AgentDispatch $dispatch = null,
     ) {
     }
 
@@ -78,6 +79,7 @@ final readonly class SyncAgentRequest
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
         );
     }
 
@@ -147,6 +149,9 @@ final readonly class SyncAgentRequest
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
+        }
+        if ($this->dispatch !== null) {
+            $out['dispatch'] = $this->dispatch->toArray();
         }
         return $out;
     }

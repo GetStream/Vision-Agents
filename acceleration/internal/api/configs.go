@@ -288,7 +288,50 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if complaint, ok := visibleToolsComplaint(request.VisibleTools); !ok {
 		return complaint, false
 	}
+	return dispatchComplaint(request.Dispatch)
+}
+
+// dispatchComplaint reports a dispatch setting that is neither enabled nor disabled.
+func dispatchComplaint(asked *AgentDispatch) (string, bool) {
+	if asked == nil {
+		return "", true
+	}
+	if asked.IncomingCall != nil && !asked.IncomingCall.Valid() {
+		return fmt.Sprintf("dispatch.incoming_call is %s or %s, not %q", Enabled, Disabled, *asked.IncomingCall), false
+	}
+	if asked.Text != nil && !asked.Text.Valid() {
+		return fmt.Sprintf("dispatch.text is %s or %s, not %q", Enabled, Disabled, *asked.Text), false
+	}
 	return "", true
+}
+
+// applyDispatch writes what a caller said about dispatch onto a config. A setting left out
+// keeps what is stored.
+func applyDispatch(config *store.AgentConfig, asked *AgentDispatch) {
+	if asked == nil {
+		return
+	}
+	if asked.IncomingCall != nil {
+		config.DispatchIncomingCall = *asked.IncomingCall == Enabled
+	}
+	if asked.Text != nil {
+		config.DispatchText = *asked.Text == Enabled
+	}
+}
+
+// dispatchOf renders what a config leaves to dispatch workers, spelling out both settings.
+func dispatchOf(config store.AgentConfig) *AgentDispatch {
+	setting := func(enabled bool) *DispatchSetting {
+		rendered := Disabled
+		if enabled {
+			rendered = Enabled
+		}
+		return &rendered
+	}
+	return &AgentDispatch{
+		IncomingCall: setting(config.DispatchIncomingCall),
+		Text:         setting(config.DispatchText),
+	}
 }
 
 // visibleToolsComplaint reports what is wrong with the tools a config shows end users, if
@@ -431,6 +474,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.VideoSource = value(request.Video.Source)
 		config.VideoMaxFrames = value(request.Video.MaxFrames)
 	}
+	applyDispatch(&config, request.Dispatch)
 	return config
 }
 
@@ -486,6 +530,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		named = Default
 	}
 	rendered.Harness = &named
+	rendered.Dispatch = dispatchOf(config)
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills

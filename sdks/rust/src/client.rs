@@ -93,6 +93,19 @@ impl Client {
         })
     }
 
+    /// This client's own credential, speaking for `user_id` without minting a token for them.
+    pub(crate) fn acting_for(&self, user_id: &str) -> Client {
+        let mut backend = self.inner.backend.clone();
+        backend.user_id = String::new();
+        backend.acting_for = user_id.into();
+        Client {
+            inner: Arc::new(Inner {
+                backend,
+                http: self.inner.http.clone(),
+            }),
+        }
+    }
+
     /// A client acting for a guest: a guest is a user with a token.
     pub fn as_guest(&self, guest: &types::GuestUser) -> Result<Client> {
         self.as_user(&guest.id, &guest.token)

@@ -345,7 +345,7 @@ public sealed class AgentTests : IDisposable
     {
         var root = Path.Combine(_workspace, "agents", "jean");
         Directory.CreateDirectory(Path.Combine(root, "knowledge"));
-        File.WriteAllText(Path.Combine(root, "agent.yaml"), "name: jean\nllm: openai/gpt-5.6\ntags:\n  team: docs\n");
+        File.WriteAllText(Path.Combine(root, "agent.yaml"), "name: jean\nllm: openai/gpt-5.6\ntags:\n  team: docs\ndispatch:\n  text: enabled\n");
         File.WriteAllText(Path.Combine(root, "instructions.md"), "You are Jean.\n");
         File.WriteAllText(Path.Combine(root, "knowledge", "pricing.md"), "A penny.\n");
         File.WriteAllText(Path.Combine(root, "knowledge", "urls.yaml"), "- url: https://example.com/plans\n  title: Plans\n");
@@ -371,6 +371,8 @@ public sealed class AgentTests : IDisposable
         var synced = router.Only("POST", "/v1/agents/sync").Body!;
         Assert.Equal(("jean", "openai/gpt-5.6", "You are Jean."), (synced.Text("name"), synced.Text("llm"), synced.Text("instructions")));
         Assert.Equal(("docs", "acme"), (synced["tags"].Text("team"), synced["tags"].Text("tenant")));
+        Assert.Equal("enabled", synced["dispatch"].Text("text"));
+        Assert.Null(synced["dispatch"]!["incoming_call"]);
         Assert.Equal("pricing.md", synced["knowledge"]![0].Text("source"));
         Assert.Equal(("https://example.com/plans", "Plans"), (synced["knowledge_urls"]![0].Text("url"), synced["knowledge_urls"]![0].Text("title")));
         Assert.Equal(synced.Text("hash"), Folder.Load(root).ReadStamp());

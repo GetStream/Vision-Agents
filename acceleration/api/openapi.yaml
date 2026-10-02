@@ -153,6 +153,8 @@ components:
         created_at:
           format: date-time
           type: string
+        dispatch:
+          $ref: '#/components/schemas/AgentDispatch'
         greeting:
           type: string
         guardrail:
@@ -230,6 +232,8 @@ components:
       additionalProperties: false
       description: What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
       properties:
+        dispatch:
+          $ref: '#/components/schemas/AgentDispatch'
         greeting:
           type: string
         guardrail:
@@ -295,6 +299,8 @@ components:
       type: object
     AgentConfigRequest:
       properties:
+        dispatch:
+          $ref: '#/components/schemas/AgentDispatch'
         greeting:
           type: string
         guardrail:
@@ -382,6 +388,19 @@ components:
           type: string
       required:
         - name
+      type: object
+    AgentDispatch:
+      description: |
+        What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+      properties:
+        incoming_call:
+          $ref: '#/components/schemas/DispatchSetting'
+          description: |
+            A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config.
+        text:
+          $ref: '#/components/schemas/DispatchSetting'
+          description: |
+            An end user's message is handed to a dispatch worker, with the session it was written to, instead of being answered by the model. The worker answers by creating a response on that session with a server-side credential, passing the message's command_id when it has one; that is the only text the model answers.
       type: object
     AgentLog:
       properties:
@@ -1515,6 +1534,12 @@ components:
         - delegate
         - settle
         - fail
+      type: string
+    DispatchSetting:
+      description: Whether this kind of work is left to the customer's own dispatch worker.
+      enum:
+        - enabled
+        - disabled
       type: string
     Endpointing:
       description: |
@@ -3918,6 +3943,10 @@ components:
         diarize:
           description: Label each stretch of speech with who said it.
           type: boolean
+        eager_end_of_turn:
+          description: |
+            Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency.
+          type: boolean
         endpointing:
           $ref: '#/components/schemas/Endpointing'
         entities:
@@ -4006,6 +4035,8 @@ components:
     SyncAgentRequest:
       description: An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
       properties:
+        dispatch:
+          $ref: '#/components/schemas/AgentDispatch'
         greeting:
           type: string
         guardrail:
@@ -7827,11 +7858,13 @@ paths:
     get:
       description: |
         A WebSocket, which OpenAPI cannot describe past the upgrade. The worker connects here and waits, rather than being called, because the agent runs in the customer's own process and this service cannot reach into it.
-        The socket opens with a `ready` frame naming the worker, and a `call` frame arrives for each call handed to it. The worker sends `load` so the pool can rank it, `accepted` or `rejected` per call, and `ping` to time the round trip itself.
+        The socket opens with a `ready` frame naming the worker, and a `call` or `message` frame arrives for each piece of work handed to it, each carrying the `work_id` that names it. The worker answers `done` with that `work_id`, and an `error` when it could not be done, which is what frees its room for the next piece. It also sends `load` so an operator can see what each worker is under, and `ping` to time the round trip itself.
+        Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so a worker that never reports `done` is one the router cannot tell is busy.
+        A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`, and a `command_id` when it was sent as a durable command. The model has not answered it: the worker does, by creating a response on that session with a server-side credential and the same `command_id` and text.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type has no query parameter, so a browser cannot open one at all.
       operationId: dispatchCalls
       parameters:
-        - description: How many calls this worker takes at once.
+        - description: How much work this worker takes at once, calls and messages together.
           in: query
           name: capacity
           required: false
@@ -7839,6 +7872,22 @@ paths:
             default: 4
             minimum: 1
             type: integer
+        - description: |
+            How much work this worker is still running from before it reconnected, which the router counts against its capacity until each piece is reported `done`. Sending this at all, even as 0, is what says the worker reports `done`; one that leaves it out is held only to the depth of its queue.
+          in: query
+          name: active
+          required: false
+          schema:
+            minimum: 0
+            type: integer
+        - description: |
+            The kinds of work this worker accepts, comma separated. Absent is both. A worker that only answers in writing says `message`, so a caller is never left listening to a phone it would have dropped.
+          in: query
+          name: handles
+          required: false
+          schema:
+            example: call,message
+            type: string
       responses:
         "101":
           description: The socket is open

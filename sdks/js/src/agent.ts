@@ -106,6 +106,12 @@ export interface Declaration {
   keyterms?: string[];
   tags?: Record<string, string>;
   video?: Schemas["SessionVideo"];
+  /**
+   * What the agent leaves to this application's own dispatch worker. With `text` enabled
+   * the model does not answer what end users write: the worker is handed it, and answers
+   * with `dispatch.answer`.
+   */
+  dispatch?: Schemas["AgentDispatch"];
 }
 
 /**
@@ -592,6 +598,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
+    ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),
   };
 }
 

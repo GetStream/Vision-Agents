@@ -37,7 +37,7 @@ func DefaultRegistry() *Registry {
 			Keyterms:          spec.Keyterms,
 			MipOptOut:         trainingRefused(spec),
 			EotThreshold:      settings.EotThreshold,
-			EagerEotThreshold: settings.EagerEotThreshold,
+			EagerEotThreshold: fluxEagerEotThreshold(spec, settings),
 			Logger:            spec.Logger,
 		}
 		// Flux decides where a turn ended itself, and eot_timeout_ms is how long a
@@ -121,6 +121,8 @@ func DefaultRegistry() *Registry {
 			return nil, err
 		}
 
+		// Ink 2 always sends an eager end of turn, at the server's own threshold, so
+		// eager_end_of_turn has nothing to turn on here.
 		options := cartesia.Options{
 			Model:                 spec.Model,
 			Keyterms:              spec.Keyterms,
@@ -282,6 +284,26 @@ type elevenlabsSettings struct {
 func trainingRefused(spec routing.Spec) bool {
 	allowed := spec.STT.DataPolicy.AllowTraining
 	return allowed != nil && !*allowed
+}
+
+// fluxEagerThreshold is Deepgram's suggested starting point for eager_eot_threshold.
+const fluxEagerThreshold = 0.6
+
+// fluxEagerEotThreshold is the eager_eot_threshold this request asks Flux for. Zero leaves
+// eager end of turn off, which is Flux's own default. An overwrite names the number
+// itself and wins; otherwise eager_end_of_turn asks for fluxEagerThreshold, lowered to the
+// request's eot_threshold since Flux refuses an eager threshold above it.
+func fluxEagerEotThreshold(spec routing.Spec, settings deepgramSettings) float64 {
+	if settings.EagerEotThreshold != 0 {
+		return settings.EagerEotThreshold
+	}
+	if spec.STT.EagerEndOfTurn == nil || !*spec.STT.EagerEndOfTurn {
+		return 0
+	}
+	if settings.EotThreshold != 0 {
+		return min(fluxEagerThreshold, settings.EotThreshold)
+	}
+	return fluxEagerThreshold
 }
 
 // transcriptionMode is what Gemini calls the mode this request asked for. Empty leaves it

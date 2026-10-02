@@ -88,6 +88,11 @@ dispatch
     })
     .WaitForMessage(async message =>
     {
+        if (message.SessionId != "")
+        {
+            await dispatch.AnswerAsync(message);
+            return;
+        }
         var agent = await dispatch.GetOrCreateAgentAsync(message, () => new Agent(new AgentOptions { ConfigId = message.ConfigId }));
         await agent.Session!.RespondAsync(message.Text);
     });
@@ -96,8 +101,13 @@ await dispatch.RunAsync(stopping);
 ```
 
 `GetOrCreateAgentAsync` keeps one agent per channel, so the second message on it goes to
-the agent that answered the first. `RunAsync` returns when the token is cancelled, after
-the work in hand has finished. A connection the router drops is opened again.
+the agent that answered the first. An agent whose agent.yaml says `dispatch: {text: enabled}`
+hands what end users write to the worker with the running `SessionId` (and `CommandId`);
+`AnswerAsync` has the model answer it with the worker's credential acting for the writer, and
+`GetOrCreateAgentAsync` refuses such a message. The router is told each call and message is
+`done`, with the exception's message if the handler threw. `RunAsync` returns when the token
+is cancelled, after the work in hand has finished. A connection the router drops is opened
+again, telling the router how much is still being handled.
 
 A worker can also host tools for every session opened under an agent id, including
 sessions opened from a browser. The router sends each call here. Handlers are optional:
@@ -115,7 +125,7 @@ reason.
 
 ```
 agents/jean/
-  agent.yaml            required: what it runs on (llm, stt, tts, tags, ...)
+  agent.yaml            required: what it runs on (llm, stt, tts, tags, dispatch, ...)
   instructions.md
   guardrail.md
   skills/think.md

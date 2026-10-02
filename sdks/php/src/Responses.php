@@ -34,10 +34,11 @@ final readonly class Responses
      * takes seconds, and a request that waited them out would time out on anything worth asking.
      *
      * @param list<ImageSource> $images
+     * @param ?string $commandId the durable command this answers, so the reply lands on it
      */
-    public function create(string $text, array $images = []): AgentResponse
+    public function create(string $text, array $images = [], ?string $commandId = null): AgentResponse
     {
-        $body = new CreateResponseRequest($text, $images === [] ? null : $images);
+        $body = new CreateResponseRequest($text, $images === [] ? null : $images, commandId: $commandId === '' ? null : $commandId);
         $created = $this->client->post('/v1/agents/sessions/{id}/responses', ['id' => $this->sessionId], body: $body->toArray());
         return new AgentResponse($this->client, ResponseRow::fromArray(Json::asObject($created)));
     }

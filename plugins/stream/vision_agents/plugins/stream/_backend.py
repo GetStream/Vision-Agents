@@ -16,6 +16,7 @@ API_SECRET_ENV = "STREAM_API_SECRET"
 AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
 
 CUSTOMER_HEADER = "X-Customer-Id"
+USER_HEADER = "X-Stream-User-Id"
 DEFAULT_URL = "http://localhost:8080"
 
 # How long a token minted here lasts. Short, because it is minted per request and a stolen
@@ -53,6 +54,8 @@ class Backend:
             ``STREAM_ACCELERATION_AUTHENTICATE``.
         user: The user this is acting for, as chat and video want them. The id is what the
             router reads; a name is what a transcript shows without a second lookup.
+        acting_for: The end user a server-side credential speaks for. Unlike ``user_id``
+            it keeps the app's own credential, so the request is still the server's.
     """
 
     url: Optional[str] = None
@@ -63,6 +66,7 @@ class Backend:
     user_id: str = ""
     authenticate: Optional[bool] = None
     user: dict[str, object] = field(default_factory=dict)
+    acting_for: str = ""
 
     def __post_init__(self):
         self.url = (self.url or os.environ.get(URL_ENV) or DEFAULT_URL).rstrip("/")
@@ -149,6 +153,13 @@ class Backend:
         Minted per read, so a client left idle longer than a token lasts does not wake up
         holding an expired one.
         """
+        headers = self._credentials()
+        if self.acting_for:
+            headers[USER_HEADER] = self.acting_for
+        return headers
+
+    def _credentials(self) -> dict[str, str]:
+        """Who is calling, as headers."""
         if not self.api_key:
             return {CUSTOMER_HEADER: str(self.customer_id)}
 
@@ -167,7 +178,7 @@ class Backend:
             headers["Authorization"] = f"Bearer {self._server_token()}"
             headers["Stream-Auth-Type"] = "server"
             if self.user_id:
-                headers["X-Stream-User-Id"] = self.user_id
+                headers[USER_HEADER] = self.user_id
             return headers
 
         headers["Authorization"] = f"Bearer {self.token}"
@@ -187,6 +198,7 @@ class Backend:
                 token=str(self.customer_id),
                 auth_header_name=CUSTOMER_HEADER,
                 prefix="",
+                headers={USER_HEADER: self.acting_for} if self.acting_for else {},
             )
 
         credentials = dict(self.headers)

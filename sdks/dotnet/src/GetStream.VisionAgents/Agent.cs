@@ -225,10 +225,13 @@ public sealed record InboundCall
     public DateTimeOffset? At { get; init; }
 }
 
-/// <summary>A message written to an agent that is not running, as dispatch hands it over.</summary>
+/// <summary>
+/// A message written to an agent that is not running, or to a running session whose agent
+/// leaves text to dispatch, as dispatch hands it over.
+/// </summary>
 public sealed record InboundMessage
 {
-    /// <summary>The channel it was written in.</summary>
+    /// <summary>The channel it was written in, empty for a session that keeps no channel.</summary>
     public required string ChannelId { get; init; }
 
     /// <summary>The channel's type.</summary>
@@ -239,6 +242,15 @@ public sealed record InboundMessage
 
     /// <summary>The config the message was routed to.</summary>
     public string ConfigId { get; init; } = "";
+
+    /// <summary>
+    /// The running session it was written to, set when its agent leaves text to dispatch.
+    /// Nothing has answered it: <see cref="Dispatch.AnswerAsync"/> has the model do so.
+    /// </summary>
+    public string SessionId { get; init; } = "";
+
+    /// <summary>The durable command it was sent as, which the answer lands on. May be empty.</summary>
+    public string CommandId { get; init; } = "";
 
     /// <summary>What was written.</summary>
     public string Text { get; init; } = "";
@@ -697,6 +709,9 @@ public sealed class Agent : IAsyncDisposable
         request.Tags = declared.Tags.Count > 0 ? new Dictionary<string, string>(declared.Tags) : null;
         request.Video = declared.Video is { } video
             ? new SessionVideo { Source = VisionAgentsClient.Blank(video.Source), MaxFrames = video.MaxFrames }
+            : null;
+        request.Dispatch = declared.Dispatch is { } dispatch
+            ? new AgentDispatch { IncomingCall = VisionAgentsClient.Blank(dispatch.IncomingCall), Text = VisionAgentsClient.Blank(dispatch.Text) }
             : null;
     }
 

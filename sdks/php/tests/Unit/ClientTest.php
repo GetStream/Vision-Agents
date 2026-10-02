@@ -83,6 +83,33 @@ final class ClientTest extends TestCase
         self::assertArrayNotHasKey('x-api-key', $sent->headers);
     }
 
+    public function testBehindTheProxyActingForSignsTheUsersTokenAndOnBehalfOfKeepsTheServers(): void
+    {
+        $this->router->answer('GET', '/v1/agents/configs', 200, []);
+        $backend = new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret', authenticate: true);
+
+        (new Client($backend->actingFor('ada')))->get('/v1/agents/configs');
+        (new Client($backend->onBehalfOf('ada')))->get('/v1/agents/configs');
+
+        [$acting, $behalf] = $this->router->received();
+        self::assertSame('ada', self::claims($acting->headers['authorization'])['user_id']);
+        self::assertArrayNotHasKey('x-stream-user-id', $acting->headers);
+        self::assertTrue(self::claims($behalf->headers['authorization'])['server']);
+        self::assertArrayNotHasKey('user_id', self::claims($behalf->headers['authorization']));
+        self::assertSame('ada', $behalf->headers['x-stream-user-id']);
+    }
+
+    public function testOnBehalfOfKeepsTheCustomerHeader(): void
+    {
+        $this->router->answer('GET', '/v1/agents/configs', 200, []);
+
+        (new Client(new Backend(url: $this->router->url, customerId: 'examples')->onBehalfOf('ada')))->get('/v1/agents/configs');
+
+        $sent = $this->router->received()[0];
+        self::assertSame('examples', $sent->headers['x-customer-id']);
+        self::assertSame('ada', $sent->headers['x-stream-user-id']);
+    }
+
     public function testPathAndQueryEncoding(): void
     {
         $this->router->answer('GET', '/v1/agents/sessions/a%2Fb', 200, []);
@@ -156,5 +183,14 @@ final class ClientTest extends TestCase
 
         self::assertSame(2, $claimed->sessionsMoved);
         self::assertSame(['guest_id' => 'guest_1', 'user_id' => 'ada'], $this->router->received()[0]->json());
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function claims(string $authorization): array
+    {
+        $payload = explode('.', substr($authorization, strlen('Bearer ')))[1];
+        return Json::asObject(Json::decode((string) base64_decode(strtr($payload, '-_', '+/'), true)));
     }
 }

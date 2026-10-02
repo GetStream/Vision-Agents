@@ -7,7 +7,7 @@ namespace GetStream.VisionAgents.Tests;
 public sealed class DispatchTests
 {
     [Fact]
-    public async Task ACallIsHandedOverAndTheRouterToldHowItWent()
+    public async Task ACallIsHandedOverAndTheRouterToldWhenItIsDone()
     {
         await using var router = await TestRouter.StartAsync();
         var told = new List<JsonObject>();
@@ -16,12 +16,12 @@ public sealed class DispatchTests
             await peer.SendAsync(new { type = "ready", worker_id = "worker-1" });
             await peer.SendAsync(new
             {
-                type = "call", call_id = "c1", call_type = "agent", called_number = "+15552223333", caller_number = "+15550001111",
+                type = "call", work_id = "w1", call_id = "c1", call_type = "agent", called_number = "+15552223333", caller_number = "+15550001111",
                 custom = new { campaign = "spring", ignored = 3 }, at = "2026-09-24T10:00:00Z",
             });
-            told.Add(await peer.ReceiveAsync("accepted"));
-            await peer.SendAsync(new { type = "call", call_id = "c2", call_type = "agent", called_number = "+15552223333" });
-            told.Add(await peer.ReceiveAsync("rejected"));
+            told.Add(await peer.ReceiveAsync("done"));
+            await peer.SendAsync(new { type = "call", work_id = "w2", call_id = "c2", call_type = "agent", called_number = "+15552223333" });
+            told.Add(await peer.ReceiveAsync("done"));
         });
         using var client = Fixtures.Client(router);
         var dispatch = new Dispatch(new DispatchOptions { Client = client, Capacity = 2 });
@@ -35,13 +35,155 @@ public sealed class DispatchTests
         await dispatch.RunAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("worker-1", dispatch.WorkerId);
-        Assert.Equal("2", router.Only("GET", "/v1/dispatch").Query["capacity"]);
+        var query = router.Only("GET", "/v1/dispatch").Query;
+        Assert.Equal(("2", "0", "call"), (query["capacity"], query["active"], query["handles"]));
         var call = answered.First();
         Assert.Equal(("c1", "+15552223333", "+15550001111"), (call.CallId, call.CalledNumber, call.CallerNumber));
         Assert.Equal(new Dictionary<string, string> { ["campaign"] = "spring" }, call.Custom);
         Assert.Equal(new DateTimeOffset(2026, 9, 24, 10, 0, 0, TimeSpan.Zero), call.At);
-        Assert.Equal("c1", told[0].Text("call_id"));
-        Assert.Equal(("c2", "nobody is free"), (told[1].Text("call_id"), told[1].Text("reason")));
+        Assert.Equal("w1", told[0].Text("work_id"));
+        Assert.Null(told[0]["error"]);
+        Assert.Equal(("w2", "nobody is free"), (told[1].Text("work_id"), told[1].Text("error")));
+    }
+
+    [Fact]
+    public async Task AMessageNoHandlerAnswersIsDoneWithAnError()
+    {
+        await using var router = await TestRouter.StartAsync();
+        JsonObject? done = null;
+        router.OnSocket("/v1/dispatch", async peer =>
+        {
+            await peer.SendAsync(new { type = "message", work_id = "w1", channel_id = "ch1", text = "hi" });
+            done = await peer.ReceiveAsync("done");
+        });
+        using var client = Fixtures.Client(router);
+        var dispatch = new Dispatch(new DispatchOptions { Client = client });
+        dispatch.WaitForCall(_ => Task.CompletedTask);
+
+        await dispatch.RunAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(("w1", "this worker answers no messages"), (done.Text("work_id"), done.Text("error")));
+    }
+
+    [Fact]
+    public async Task AMessageWrittenToARunningSessionCarriesItsSessionAndCommand()
+    {
+        await using var router = await TestRouter.StartAsync();
+        JsonObject? done = null;
+        router.OnSocket("/v1/dispatch", async peer =>
+        {
+            await peer.SendAsync(new
+            {
+                type = "message", work_id = "w1", agent_id = "support", session_id = "s1", command_id = "cmd-1", user_id = "ada", text = "hi",
+            });
+            done = await peer.ReceiveAsync("done");
+        });
+        using var client = Fixtures.Client(router);
+        var dispatch = new Dispatch(new DispatchOptions { Client = client });
+        InboundMessage? handed = null;
+        dispatch.WaitForMessage(message =>
+        {
+            handed = message;
+            return Task.CompletedTask;
+        });
+
+        await dispatch.RunAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("message", router.Only("GET", "/v1/dispatch").Query["handles"]);
+        Assert.Equal(("s1", "cmd-1", "", "hi"), (handed!.SessionId, handed.CommandId, handed.ChannelId, handed.Text));
+        Assert.Equal("w1", done.Text("work_id"));
+        Assert.Null(done!["error"]);
+    }
+
+    [Fact]
+    public async Task AnsweringAMessageCreatesAResponseWithTheServerCredentialActingForItsWriter()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/s1/responses", 202, new { id = "r1", session_id = "s1", status = "running" });
+        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
+        var dispatch = new Dispatch(new DispatchOptions { Client = client });
+
+        var response = await dispatch.AnswerAsync(
+            new InboundMessage { ChannelId = "", SessionId = "s1", CommandId = "cmd-1", UserId = "ada", Text = "what does it cost?" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("r1", response.Id);
+        var seen = router.Only("POST", "/v1/agents/sessions/s1/responses");
+        Assert.Equal(("what does it cost?", "cmd-1"), (seen.Body.Text("text"), seen.Body.Text("command_id")));
+        Assert.Equal(("ada", "server"), (seen.Headers["X-Stream-User-Id"], seen.Headers["Stream-Auth-Type"]));
+        Assert.True(Fixtures.Claims(seen.Headers["Authorization"])["server"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task AnsweringBehindTheProxyKeepsTheServerToken()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/s1/responses", 202, new { id = "r1", session_id = "s1", status = "running" });
+        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret, Authenticate = true });
+        var dispatch = new Dispatch(new DispatchOptions { Client = client });
+
+        await dispatch.AnswerAsync(new InboundMessage { ChannelId = "", SessionId = "s1", UserId = "ada", Text = "hi" },
+            TestContext.Current.CancellationToken);
+
+        var seen = router.Only("POST", "/v1/agents/sessions/s1/responses");
+        Assert.Null(seen.Body!["command_id"]);
+        Assert.Equal("ada", seen.Headers["X-Stream-User-Id"]);
+        var claims = Fixtures.Claims(seen.Headers["Authorization"]);
+        Assert.True(claims["server"]!.GetValue<bool>());
+        Assert.Null(claims["user_id"]);
+    }
+
+    [Fact]
+    public async Task AMessageASessionIsHoldingIsAnsweredThereRatherThanByANewAgent()
+    {
+        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
+        var dispatch = new Dispatch(new DispatchOptions { Client = client });
+
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => dispatch.GetOrCreateAgentAsync(
+            new InboundMessage { ChannelId = "ch1", SessionId = "s1" }, () => throw new InvalidOperationException("never built"),
+            TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => dispatch.AnswerAsync(
+            new InboundMessage { ChannelId = "ch1" }, TestContext.Current.CancellationToken));
+
+        Assert.Contains("AnswerAsync", refused.Message);
+    }
+
+    [Fact]
+    public async Task AWorkerReconnectingSaysWhatItIsStillHandling()
+    {
+        await using var router = await TestRouter.StartAsync();
+        var opened = 0;
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        JsonObject? done = null;
+        router.OnSocket("/v1/dispatch", async peer =>
+        {
+            if (Interlocked.Increment(ref opened) == 1)
+            {
+                await peer.SendAsync(new { type = "call", work_id = "w1", call_id = "c1" });
+                await started.Task;
+                peer.Abort();
+                return;
+            }
+            await peer.ReceiveAsync("ping");
+            release.SetResult();
+            done = await peer.ReceiveAsync("done");
+        });
+        using var client = Fixtures.Client(router);
+        var dispatch = new Dispatch(new DispatchOptions { Client = client, ReportEvery = TimeSpan.FromMilliseconds(50) })
+        {
+            FirstRetry = TimeSpan.FromMilliseconds(10),
+        };
+        dispatch.WaitForCall(_ =>
+        {
+            started.SetResult();
+            return release.Task;
+        });
+
+        await dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["0", "1"], router.To("GET", "/v1/dispatch").Select(seen => seen.Query["active"]));
+        Assert.Equal("w1", done.Text("work_id"));
     }
 
     [Fact]
@@ -181,6 +323,7 @@ public sealed class DispatchTests
 
         await dispatch.RunAsync(TestContext.Current.CancellationToken);
 
+        Assert.Equal("", router.Only("GET", "/v1/dispatch").Query["handles"]);
         Assert.Equal(("stream-support", 60000), (declared.Text("agent_id"), declared!["timeout_ms"]!.GetValue<int>()));
         var tool = Assert.Single(declared["tools"]!.AsArray())!;
         Assert.Equal(("investigate_sdk", "Read SDK source"), (tool["name"]!.GetValue<string>(), tool["description"]!.GetValue<string>()));

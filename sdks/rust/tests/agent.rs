@@ -328,6 +328,26 @@ async fn a_directory_is_synced_once_and_then_only_read_back() {
 }
 
 #[tokio::test]
+async fn what_a_directory_leaves_to_dispatch_is_synced_as_written() {
+    let server = Server::start().await;
+    synced(&server);
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "agent.yaml",
+        "name: jean\ndispatch:\n  text: enabled\n",
+    );
+    let agent = Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client());
+
+    agent.sync().await.unwrap();
+
+    let body = server.request(Method::POST, "/v1/agents/sync").body;
+    assert_eq!(body["dispatch"], json!({"text": "enabled"}));
+}
+
+#[tokio::test]
 async fn cost_tracking_is_part_of_what_a_directory_is_synced_under() {
     let server = Server::start().await;
     synced(&server);

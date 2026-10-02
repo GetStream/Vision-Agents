@@ -162,6 +162,7 @@ type Settings struct {
 	Keyterms []string          `yaml:"keyterms"`
 	Tags     map[string]string `yaml:"tags"`
 	Video    *VideoSettings    `yaml:"video"`
+	Dispatch *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -172,6 +173,14 @@ type VideoSettings struct {
 	Source string `yaml:"source"`
 	// MaxFrames is how many recent frames are captured, from 1 to 8. Zero reads as one.
 	MaxFrames int `yaml:"max_frames"`
+}
+
+// DispatchSettings is what the agent leaves to this application's own dispatch worker,
+// each "enabled" or "disabled". With Text enabled the model does not answer what end users
+// write: the worker is handed it, and answers by creating a response on the session.
+type DispatchSettings struct {
+	IncomingCall string `yaml:"incoming_call"`
+	Text         string `yaml:"text"`
 }
 
 // Folder is an agent written down as a directory.

@@ -335,6 +335,24 @@ func (e DecisionKind) Valid() bool {
 	}
 }
 
+// Defines values for DispatchSetting.
+const (
+	Disabled DispatchSetting = "disabled"
+	Enabled  DispatchSetting = "enabled"
+)
+
+// Valid indicates whether the value is a known member of the DispatchSetting enum.
+func (e DispatchSetting) Valid() bool {
+	switch e {
+	case Disabled:
+		return true
+	case Enabled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Endpointing.
 const (
 	EndpointingSemantic Endpointing = "semantic"
@@ -1494,8 +1512,11 @@ type ActivityGranularity string
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
 	CreatedAt time.Time `json:"created_at"`
-	Greeting  *string   `json:"greeting,omitempty"`
-	Guardrail *string   `json:"guardrail,omitempty"`
+
+	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+	Dispatch  *AgentDispatch `json:"dispatch,omitempty"`
+	Greeting  *string        `json:"greeting,omitempty"`
+	Guardrail *string        `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 	Harness            *Harness  `json:"harness,omitempty"`
@@ -1533,7 +1554,9 @@ type AgentConfig struct {
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
 type AgentConfigPatch struct {
-	Greeting *string `json:"greeting,omitempty"`
+	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+	Greeting *string        `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -1573,7 +1596,9 @@ type AgentConfigPatch struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
-	Greeting *string `json:"greeting,omitempty"`
+	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+	Greeting *string        `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -1634,6 +1659,15 @@ type AgentConfigRequest struct {
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// AgentDispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+type AgentDispatch struct {
+	// IncomingCall Whether this kind of work is left to the customer's own dispatch worker.
+	IncomingCall *DispatchSetting `json:"incoming_call,omitempty"`
+
+	// Text Whether this kind of work is left to the customer's own dispatch worker.
+	Text *DispatchSetting `json:"text,omitempty"`
 }
 
 // AgentLog defines model for AgentLog.
@@ -2349,6 +2383,9 @@ type DataPolicy struct {
 
 // DecisionKind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
 type DecisionKind string
+
+// DispatchSetting Whether this kind of work is left to the customer's own dispatch worker.
+type DispatchSetting string
 
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 type Endpointing string
@@ -3951,6 +3988,9 @@ type SttOptions struct {
 	// Diarize Label each stretch of speech with who said it.
 	Diarize *bool `json:"diarize,omitempty"`
 
+	// EagerEndOfTurn Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency.
+	EagerEndOfTurn *bool `json:"eager_end_of_turn,omitempty"`
+
 	// Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 	Endpointing *Endpointing `json:"endpointing,omitempty"`
 
@@ -4029,7 +4069,9 @@ type SttOptions struct {
 
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
-	Greeting *string `json:"greeting,omitempty"`
+	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+	Greeting *string        `json:"greeting,omitempty"`
 
 	// Guardrail The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`

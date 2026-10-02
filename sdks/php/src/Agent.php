@@ -273,6 +273,7 @@ final class Agent
             keyterms: $pipeline->keyterms ?? ($declared->keyterms === [] ? null : $declared->keyterms),
             sandbox: $this->sandbox ?? ($declared->sandbox === '' ? null : (Sandbox::tryFrom($declared->sandbox) ?? $declared->sandbox)),
             tags: $tags === [] ? null : $tags,
+            dispatch: $declared->dispatch,
         );
         $result = SyncAgentResult::fromArray(Json::asObject($this->client->post('/v1/agents/sync', body: $body->toArray())));
         $folder?->writeStamp($hash);

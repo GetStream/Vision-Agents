@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -136,6 +138,22 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 			if found.Spec().PersistConversation {
 				return
 			}
+			if found.Spec().DispatchText {
+				_, err := s.dispatchText(r.Context(), found, dispatch.Message{
+					ChannelType: event.ChannelType,
+					ChannelID:   event.ChannelID,
+					Custom:      customOf(event.ChannelCustom),
+					Text:        event.Message.Text,
+					MessageID:   event.Message.ID,
+					UserID:      event.Message.User.ID,
+					UserName:    event.Message.User.Name,
+				}, "")
+				if err != nil {
+					s.logger.Error("nobody could answer an arriving message",
+						"channel", event.ChannelID, "session", found.ID(), "error", err)
+				}
+				return
+			}
 			// On its own goroutine because a model call takes seconds and Stream is
 			// waiting on this delivery. The answer goes back to the channel rather than
 			// in a response, so there is nothing here to wait for.
@@ -221,6 +239,49 @@ func (s *Server) ownerOf(ctx context.Context, event messageEvent) (customerID, c
 		return "", "", false
 	}
 	return config.CustomerID, config.ID, true
+}
+
+// leftToDispatch reports whether text this kind of caller sent a session goes to the
+// customer's dispatch worker rather than the model. Only an end user's does: the server is
+// how the worker answers, so what it sends always reaches the model.
+func leftToDispatch(found *session.Session, kind auth.Kind) bool {
+	return found.Spec().DispatchText && kind != auth.KindServer
+}
+
+// dispatchText hands text an end user wrote to a session to one of the customer's dispatch
+// workers, instead of the model. A durable command is accepted first, so the message is
+// recorded and shown as being answered, and withdrawn again if no worker can take it.
+func (s *Server) dispatchText(ctx context.Context, found *session.Session, message dispatch.Message, clientID string) (conversation.CommandReceipt, error) {
+	if s.dispatch == nil {
+		return conversation.CommandReceipt{}, errors.New("this agent leaves text to a dispatch worker, and this deployment has none")
+	}
+	var receipt conversation.CommandReceipt
+	if message.CommandID != "" {
+		accepted, err := found.AwaitCommand(ctx, message.CommandID, message.Text, clientID)
+		if err != nil || accepted.Duplicate {
+			return accepted, err
+		}
+		receipt = accepted
+	}
+
+	spec := found.Spec()
+	message.AgentID = spec.AgentID
+	message.ConfigID = spec.ConfigID
+	message.SessionID = found.ID()
+	message.At = time.Now().UTC()
+	worker, err := s.dispatch.AssignMessage(spec.CustomerID, message)
+	if err != nil {
+		if message.CommandID != "" {
+			if _, stopped := found.InterruptCommand(message.CommandID); stopped != nil {
+				s.logger.Error("could not withdraw a command no worker took",
+					"session", found.ID(), "command", message.CommandID, "error", stopped)
+			}
+		}
+		return conversation.CommandReceipt{}, err
+	}
+	s.logger.Info("handed a message to a worker",
+		"session", found.ID(), "customer", spec.CustomerID, "worker", worker.ID)
+	return receipt, nil
 }
 
 // answerMessage answers from a session that is already running.

@@ -12,6 +12,7 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.agent_dispatch import AgentDispatch
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
     from ..models.session_video import SessionVideo
@@ -50,6 +51,8 @@ class SyncAgentRequest:
             video (SessionVideo | Unset):
             subagent (str | Unset):
             search (str | Unset):
+            dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
+                /v1/dispatch. Omitted settings are disabled.
             greeting (str | Unset):
             plugins (list[str] | Unset):
             keyterms (list[str] | Unset):
@@ -75,6 +78,7 @@ class SyncAgentRequest:
     video: SessionVideo | Unset = UNSET
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
+    dispatch: AgentDispatch | Unset = UNSET
     greeting: str | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
@@ -134,6 +138,10 @@ class SyncAgentRequest:
 
         search = self.search
 
+        dispatch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.dispatch, Unset):
+            dispatch = self.dispatch.to_dict()
+
         greeting = self.greeting
 
         plugins: list[str] | Unset = UNSET
@@ -188,6 +196,8 @@ class SyncAgentRequest:
             field_dict["subagent"] = subagent
         if search is not UNSET:
             field_dict["search"] = search
+        if dispatch is not UNSET:
+            field_dict["dispatch"] = dispatch
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if plugins is not UNSET:
@@ -203,6 +213,7 @@ class SyncAgentRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.agent_dispatch import AgentDispatch
         from ..models.knowledge_document import KnowledgeDocument
         from ..models.knowledge_url_declaration import (
             KnowledgeUrlDeclaration,
@@ -279,6 +290,13 @@ class SyncAgentRequest:
 
         search = d.pop("search", UNSET)
 
+        _dispatch = d.pop("dispatch", UNSET)
+        dispatch: AgentDispatch | Unset
+        if isinstance(_dispatch, Unset):
+            dispatch = UNSET
+        else:
+            dispatch = AgentDispatch.from_dict(_dispatch)
+
         greeting = d.pop("greeting", UNSET)
 
         plugins = cast(list[str], d.pop("plugins", UNSET))
@@ -316,6 +334,7 @@ class SyncAgentRequest:
             video=video,
             subagent=subagent,
             search=search,
+            dispatch=dispatch,
             greeting=greeting,
             plugins=plugins,
             keyterms=keyterms,

@@ -96,6 +96,8 @@ dispatch.wait_for_call do |call|
 end
 
 dispatch.wait_for_message do |message|
+  next dispatch.answer(message) unless message.session_id.empty?
+
   dispatch.get_or_create_agent(message) { GetStream::VisionAgents::Agent.new(config: "support") }
           .reply(message)
 end
@@ -103,9 +105,17 @@ end
 dispatch.run
 ```
 
-A call handler that returns accepts the call; one that raises rejects it with the message as
-the reason. A message only arrives when no agent is running on its channel, and
-`get_or_create_agent` keeps one agent per channel for the same reason.
+Every call and message carries a `work_id`, and when its handler returns or raises the worker
+sends `done` for it, with the error message when it raised; work with no handler registered is
+reported done with an error too. The handshake says `capacity`, `active` (calls and messages
+still being handled) and `handles` (`call`, `message`, or neither).
+
+A message arrives when no agent is running on its channel, and `get_or_create_agent` keeps one
+agent per channel for the same reason. An agent whose `agent.yaml` says
+`dispatch: {text: enabled}` hands what end users write to the worker instead, with
+`message.session_id` and `message.command_id` set: `dispatch.answer(message)` has the model
+answer it on that session, with the worker's own credential acting for `message.user_id`.
+`get_or_create_agent` refuses such a message.
 
 A worker can also run tools for every session under an agent id, whoever opened it, such as
 a conversation started from a browser:

@@ -310,6 +310,59 @@ func (s *STTRouterSuite) TestRegistryReadsTheFluxTurnThresholdsFromOverwrites() 
 	s.Zero(settings.EagerEotThreshold, "what was not named keeps Flux's own default")
 }
 
+func (s *STTRouterSuite) TestTheLowLatencyShortcutsEndTurnsEagerlyByDefault() {
+	for _, target := range []string{"en-low-latency", "multilingual-low-latency"} {
+		eager := routeDefaults(target, options.STT{}).EagerEndOfTurn
+		s.Require().NotNilf(eager, "target %s", target)
+		s.Truef(*eager, "target %s", target)
+	}
+}
+
+func (s *STTRouterSuite) TestACallerCanTurnEagerEndOfTurnOffOnALowLatencyShortcut() {
+	no := false
+	eager := routeDefaults("en-low-latency", options.STT{EagerEndOfTurn: &no}).EagerEndOfTurn
+
+	s.Require().NotNil(eager)
+	s.False(*eager)
+}
+
+func (s *STTRouterSuite) TestOtherTargetsLeaveEagerEndOfTurnUnsaid() {
+	s.Nil(routeDefaults("en-high-accuracy", options.STT{}).EagerEndOfTurn)
+	s.Nil(routeDefaults("deepgram/flux-general-en", options.STT{}).EagerEndOfTurn)
+}
+
+func (s *STTRouterSuite) TestFluxLeavesEagerEndOfTurnOffUnlessAsked() {
+	s.Zero(fluxEagerEotThreshold(routing.Spec{}, deepgramSettings{}))
+
+	no := false
+	s.Zero(fluxEagerEotThreshold(routing.Spec{STT: options.STT{EagerEndOfTurn: &no}}, deepgramSettings{}))
+}
+
+func (s *STTRouterSuite) TestAskingForAnEagerEndOfTurnTurnsItOnInFlux() {
+	yes := true
+	spec := routing.Spec{STT: options.STT{EagerEndOfTurn: &yes}}
+
+	s.InDelta(0.6, fluxEagerEotThreshold(spec, deepgramSettings{}), 0.001)
+}
+
+func (s *STTRouterSuite) TestFluxsEagerThresholdNeverExceedsItsEndOfTurnThreshold() {
+	yes := true
+	spec := routing.Spec{STT: options.STT{EagerEndOfTurn: &yes}}
+
+	s.InDelta(0.55, fluxEagerEotThreshold(spec, deepgramSettings{EotThreshold: 0.55}), 0.001,
+		"Flux refuses an eager threshold above eot_threshold")
+	s.InDelta(0.6, fluxEagerEotThreshold(spec, deepgramSettings{EotThreshold: 0.8}), 0.001)
+}
+
+func (s *STTRouterSuite) TestAFluxEagerThresholdOverwriteWinsOverTheSharedOption() {
+	yes := true
+	spec := routing.Spec{STT: options.STT{EagerEndOfTurn: &yes}}
+
+	s.InDelta(0.4, fluxEagerEotThreshold(spec, deepgramSettings{EagerEotThreshold: 0.4}), 0.001)
+	s.InDelta(0.4, fluxEagerEotThreshold(routing.Spec{}, deepgramSettings{EagerEotThreshold: 0.4}), 0.001,
+		"an overwrite alone still turns it on, as it did before the shared option")
+}
+
 func (s *STTRouterSuite) TestRegistryRefusesAnOverwriteTheProviderHasNoFieldFor() {
 	registry := DefaultRegistry()
 	s.T().Setenv("DEEPGRAM_API_KEY", "test-key")

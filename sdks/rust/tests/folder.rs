@@ -260,6 +260,8 @@ fn a_declaration_key_nobody_knows_is_refused() {
         "keyterms: Vision Agents\n",
         "video:\n  frames: 2\n",
         "sandbox: docker\n",
+        "dispatch:\n  sms: enabled\n",
+        "dispatch:\n  text: on\n",
     ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", declaration);
