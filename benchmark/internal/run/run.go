@@ -251,6 +251,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 		score.MarkToolTurns(&metrics, rec, sess.Tools)
 	}
 	score.SummarizeTiming(&metrics)
+	metrics.FirstResponse = score.FirstResponse(metrics, rec)
 	metrics.BargeInStopMS = score.BargeInStopMS(rec)
 	metrics.OverlapChecks = score.ScoreOverlaps(rec)
 	metrics.SelectivityHold = score.SelectivityHold(metrics.OverlapChecks)

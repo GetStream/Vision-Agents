@@ -50,6 +50,7 @@ const (
 // Metrics is the per-call scorecard.
 type Metrics struct {
 	V2V                 []Timing       `json:"v2v"`
+	FirstResponse       *Timing        `json:"first_response,omitempty"`
 	Dropped             []DroppedTurn  `json:"dropped_turns,omitempty"`
 	CallDurationMS      int            `json:"call_duration_ms"`
 	ToolCount           int            `json:"tool_count"`
@@ -177,6 +178,24 @@ func MarkToolTurns(m *Metrics, rec caller.Result, tools []world.ToolCall) {
 			}
 		}
 	}
+}
+
+// FirstResponse is the reply gap of the caller's first utterance, or nil when that turn
+// produced no V2V sample. It never falls back to a later turn: that would mix a steady-state
+// reply into a cold-start metric. Run it after MarkToolTurns so the tool flag carries over.
+func FirstResponse(m Metrics, rec caller.Result) *Timing {
+	for _, ev := range rec.Events {
+		if !ev.Text {
+			continue
+		}
+		for _, t := range m.V2V {
+			if t.TurnID == ev.TurnID {
+				return &t
+			}
+		}
+		return nil
+	}
+	return nil
 }
 
 // SummarizeTiming fills P50/P95/max. Human-band and spikes use non-tool turns.
