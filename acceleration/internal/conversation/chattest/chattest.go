@@ -20,6 +20,7 @@ type store struct {
 	mu       sync.Mutex
 	channels map[string]map[string]any
 	messages map[string]map[string]any
+	users    map[string]map[string]any
 	order    []string
 	now      func() time.Time
 }
@@ -34,7 +35,10 @@ type Server struct {
 // NewServer serves Chat from memory for the life of the test.
 func NewServer(t *testing.T) *Server {
 	t.Helper()
-	db := &store{channels: map[string]map[string]any{}, messages: map[string]map[string]any{}, now: time.Now}
+	db := &store{
+		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
+		users: map[string]map[string]any{}, now: time.Now,
+	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
 	t.Cleanup(server.Close)
 	client, err := getstream.NewClient("test", "secret", getstream.WithBaseUrl(server.URL))
@@ -66,6 +70,22 @@ func (s *Server) Channel(id string) (map[string]any, bool) {
 	return data, ok
 }
 
+// User returns a user as Chat holds them, and whether Chat has them at all.
+func (s *Server) User(id string) (map[string]any, bool) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	user, ok := s.db.users[id]
+	return user, ok
+}
+
+// PutUser stores a user the app made itself, the way a real person is already there before
+// the router writes anything near them.
+func (s *Server) PutUser(user map[string]any) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.users[user["id"].(string)] = user
+}
+
 // refuse answers the way Chat does when it will not do what was asked.
 func refuse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusBadRequest)
@@ -94,6 +114,31 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {
+	case strings.HasSuffix(r.URL.Path, "/users") && r.Method == http.MethodGet:
+		var payload struct {
+			FilterConditions map[string]any `json:"filter_conditions"`
+		}
+		_ = json.Unmarshal([]byte(r.URL.Query().Get("payload")), &payload)
+		users := []map[string]any{}
+		if id, ok := payload.FilterConditions["id"].(map[string]any); ok {
+			if in, ok := id["$in"].([]any); ok {
+				for _, wanted := range in {
+					if user, exists := db.users[fmt.Sprint(wanted)]; exists {
+						users = append(users, user)
+					}
+				}
+			}
+		}
+		result["users"] = users
+	case strings.HasSuffix(r.URL.Path, "/users") && r.Method == http.MethodPost:
+		// An upsert replaces the user whole, which is what Chat does.
+		written, _ := body["users"].(map[string]any)
+		for id, user := range written {
+			if fields, ok := user.(map[string]any); ok {
+				db.users[id] = fields
+			}
+		}
+		result["users"] = written
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/channels"):
 		// A query finds channels and never creates one.
 		channels := []map[string]any{}

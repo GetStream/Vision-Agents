@@ -363,7 +363,7 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 		if userID == "" {
 			userID = "support-operator"
 		}
-		_, err := s.client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{Users: map[string]getstream.UserRequest{agentID: {ID: agentID}, userID: {ID: userID}}})
+		err := CreateMissingUsers(ctx, s.client, map[string]getstream.UserRequest{agentID: {ID: agentID}, userID: {ID: userID}})
 		if err != nil {
 			return nil, nil, false, err
 		}

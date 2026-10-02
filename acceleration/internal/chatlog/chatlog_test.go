@@ -498,3 +498,21 @@ func (s *ChatLogSuite) typed(chat *chattest.Server, user, text string) {
 		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &user}})
 	s.Require().NoError(err)
 }
+
+func (s *ChatLogSuite) TestATranscriptLeavesAnExistingParticipantAlone() {
+	// A participant is a real person in the app. Writing what they said must not replace
+	// their profile with the name the call knew them by.
+	chat := s.useChat()
+	chat.PutUser(map[string]any{"id": "alice", "name": "Alice Example", "image": "https://example.com/alice.png"})
+	writer := newWriter(s.log)
+
+	writer.handle(message{author: User{ID: "alice", Name: "alice"}, text: "hello", kind: whole, source: SourceSpeech})
+	writer.handle(message{author: User{ID: "bob", Name: "Bob"}, text: "hi", kind: whole, source: SourceSpeech})
+
+	alice, _ := chat.User("alice")
+	s.Equal("Alice Example", alice["name"])
+	s.Equal("https://example.com/alice.png", alice["image"])
+	bob, created := chat.User("bob")
+	s.Require().True(created, "somebody the app has never seen is still created")
+	s.Equal("Bob", bob["name"])
+}

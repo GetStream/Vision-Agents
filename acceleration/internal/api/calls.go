@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -208,11 +209,9 @@ func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenReq
 		return nil, err
 	}
 
-	if _, err := client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
-		Users: map[string]getstream.UserRequest{
-			agentID: {ID: agentID},
-			userID:  {ID: userID, Name: &userName},
-		},
+	if err := conversation.CreateMissingUsers(ctx, client, map[string]getstream.UserRequest{
+		agentID: {ID: agentID},
+		userID:  {ID: userID, Name: &userName},
 	}); err != nil {
 		return nil, err
 	}

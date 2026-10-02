@@ -670,10 +670,7 @@ func (l *Log) upsert(ctx context.Context, user User) error {
 	if user.Name != "" {
 		request.Name = &user.Name
 	}
-	_, err := l.client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
-		Users: map[string]getstream.UserRequest{user.ID: request},
-	})
-	return err
+	return conversation.CreateMissingUsers(ctx, l.client, map[string]getstream.UserRequest{user.ID: request})
 }
 
 // participantUser is who a participant is in chat. Their user id is what identifies them
