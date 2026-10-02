@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"sync"
 	"time"
 
@@ -143,7 +142,7 @@ func (s *Stored) For(ctx context.Context, customer string) (Identity, error) {
 	if s.ownsDeploymentApp(customer, deployment) {
 		return s.inDeploymentApp(ctx, customer, deployment)
 	}
-	if s.waitsFor(deployment, customer) {
+	if s.waitsFor(customer) {
 		// Until the deployment's own app is known, this may be its customer.
 		return Identity{}, ErrDeploymentAppUnknown
 	}
@@ -151,6 +150,7 @@ func (s *Stored) For(ctx context.Context, customer string) (Identity, error) {
 		return Identity{}, ErrNoIdentity
 	}
 	if deployment == 0 {
+		// Falling back names the deployment's app, which has to be known to be named.
 		return Identity{}, ErrDeploymentAppUnknown
 	}
 	s.fellBack(ctx, customer)
@@ -190,7 +190,7 @@ func (s *Stored) forApp(ctx context.Context, customer string, app int64) (Identi
 		return identity, false, err
 	case err != nil && !errors.Is(err, store.ErrNoStreamApp):
 		return Identity{}, false, err
-	case deployment == 0 && s.deployment.knowable():
+	case s.deployment.pending():
 		// The pin may be the deployment's own app, which is not known yet.
 		return Identity{}, false, ErrDeploymentAppUnknown
 	}
@@ -205,31 +205,24 @@ func (s *Stored) legacy(ctx context.Context, customer string, app, deployment in
 		identity, err := s.inDeploymentApp(ctx, customer, app)
 		return identity, false, err
 	}
-	if s.waitsFor(deployment, customer) {
+	if s.waitsFor(customer) {
 		return Identity{}, false, ErrDeploymentAppUnknown
 	}
 	identity, err := s.inDeploymentApp(ctx, customer, app)
 	return identity, true, err
 }
 
-// ownsDeploymentApp reports whether a customer is the deployment app's own, which is the
-// app's id written exactly as Stream writes it.
+// ownsDeploymentApp reports whether a customer is the deployment app's own.
 func (s *Stored) ownsDeploymentApp(customer string, deployment int64) bool {
-	return deployment != 0 && customer == strconv.FormatInt(deployment, 10)
+	return deployment != 0 && customer == CustomerOf(deployment)
 }
 
 // waitsFor reports whether a customer's work waits for the deployment's own app to be known,
-// because the customer may be that app's: only while the app is not known, can still be
-// learned, and the customer's id could be an app's at all. A deployment with no key of its
-// own never learns its app, and has none for anybody's work to be.
-func (s *Stored) waitsFor(deployment int64, customer string) bool {
-	return deployment == 0 && s.deployment.knowable() && couldBeAnApp(customer)
-}
-
-// couldBeAnApp reports whether a customer id could be a Stream app's id at all.
-func couldBeAnApp(customer string) bool {
-	id, err := strconv.ParseInt(customer, 10, 64)
-	return err == nil && id > 0 && strconv.FormatInt(id, 10) == customer
+// because the customer may be that app's: only while that app is pending and the
+// customer's id could be an app's at all.
+func (s *Stored) waitsFor(customer string) bool {
+	_, couldBe := ParseAppID(customer)
+	return s.deployment.pending() && couldBe
 }
 
 func (s *Stored) inDeploymentApp(ctx context.Context, customer string, app int64) (Identity, error) {
@@ -256,7 +249,11 @@ func (s *Stored) registered(ctx context.Context, app store.StreamApp) (Identity,
 		return Identity{}, fmt.Errorf("streamapp: opening key %s of the app registered for %s: %w", key.APIKey, app.CustomerID, err)
 	}
 	if stale {
-		s.rewrap(ctx, app, key, secret)
+		if _, err := s.rewrap(ctx, app, key, secret); err != nil {
+			// A chore, not a condition of using the key: the old seal still opens.
+			s.logger.Warn("stream: could not seal a key again under the current key version",
+				"customer_id", app.CustomerID, "api_key", key.APIKey, "error", err)
+		}
 	}
 	return Identity{
 		CustomerID: app.CustomerID, StreamApp: app.StreamAppPK, APIKey: key.APIKey, Secret: secret,
@@ -276,17 +273,14 @@ func activeKey(app store.StreamApp) (store.StreamAppKey, bool) {
 	return store.StreamAppKey{}, false
 }
 
-// rewrap seals a key again under the keyring's current version. It is a chore, not a
-// condition of using the key: a failure leaves the old seal, which still opens.
-func (s *Stored) rewrap(ctx context.Context, app store.StreamApp, key store.StreamAppKey, secret Secret) {
+// rewrap seals a key again under the keyring's current version, and reports whether it
+// replaced the seal: a key replaced meanwhile is left as it now is.
+func (s *Stored) rewrap(ctx context.Context, app store.StreamApp, key store.StreamAppKey, secret Secret) (bool, error) {
 	sealed, err := SealKey(s.sealer, app.CustomerID, app.StreamAppPK, key.APIKey, secret.Reveal())
-	if err == nil {
-		_, err = s.store.RewrapStreamAppKey(ctx, app.CustomerID, key.APIKey, key.Sealed, sealed.Sealed, sealed.KEKVersion)
-	}
 	if err != nil {
-		s.logger.Warn("stream: could not seal a key again under the current key version",
-			"customer_id", app.CustomerID, "api_key", key.APIKey, "error", err)
+		return false, err
 	}
+	return s.store.RewrapStreamAppKey(ctx, app.CustomerID, key.APIKey, key.Sealed, sealed.Sealed, sealed.KEKVersion)
 }
 
 // fellBack notes that a customer was written into the deployment's app for want of one of

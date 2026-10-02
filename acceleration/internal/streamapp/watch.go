@@ -38,19 +38,14 @@ func (s *Stored) Watch(ctx context.Context, clients *Clients, every time.Duratio
 // blocked, and what was pinned to it ends. A key Stream refuses is marked rejected, so the
 // app's next key is used from then on.
 func (s *Stored) CheckApps(ctx context.Context, clients *Clients, ended Ended) {
-	apps, err := s.store.ConnectedStreamApps(ctx)
+	apps, err := s.store.StreamApps(ctx, true)
 	if err != nil {
 		s.logger.Warn("stream: could not list the apps to check", "error", err)
 		return
 	}
-	for _, listed := range apps {
+	for _, app := range apps {
 		if ctx.Err() != nil {
 			return
-		}
-		app, err := s.store.StreamApp(ctx, listed.CustomerID)
-		if err != nil {
-			s.logger.Warn("stream: could not read an app to check", "customer_id", listed.CustomerID, "error", err)
-			continue
 		}
 		s.check(ctx, clients, app, ended)
 	}
@@ -62,12 +57,14 @@ func (s *Stored) check(ctx context.Context, clients *Clients, app store.StreamAp
 		s.logger.Warn("stream: could not act in an app to check it", "customer_id", app.CustomerID, "error", err)
 		return
 	}
-	bound, err := clients.bind(identity)
+	// A client of the check's own, so checking every app does not push the ones in use out
+	// of the cache.
+	client, err := newStreamClient(identity, clients.http)
 	if err != nil {
 		s.logger.Warn("stream: could not act in an app to check it", "customer_id", app.CustomerID, "error", err)
 		return
 	}
-	readiness, err := ReadReadiness(ctx, bound.Client, s.now())
+	readiness, err := ReadReadiness(ctx, client, s.now())
 	var refused *getstream.StreamError
 	if errors.As(err, &refused) && (refused.StatusCode == http.StatusUnauthorized || refused.StatusCode == http.StatusForbidden) {
 		reason := fmt.Sprintf("Stream answered %d to the key", refused.StatusCode)
@@ -90,15 +87,11 @@ func (s *Stored) check(ctx context.Context, clients *Clients, app store.StreamAp
 	if err := s.store.RecordStreamAppChecks(ctx, app.CustomerID, checks, readiness.CheckedAt); err != nil {
 		s.logger.Warn("stream: could not record an app's checks", "customer_id", app.CustomerID, "error", err)
 	}
-	var reason string
-	switch {
-	case readiness.App != app.StreamAppPK:
+	reason := readiness.standing()
+	if readiness.App != app.StreamAppPK {
 		reason = "the app's key belongs to another Stream app"
-	case readiness.Suspended:
-		reason = "Stream suspended the app"
-	case readiness.AuthChecksOff:
-		reason = "the app does not check the tokens it is sent"
-	default:
+	}
+	if reason == "" {
 		return
 	}
 	blocked, err := s.store.BlockStreamApp(ctx, app.CustomerID, reason)

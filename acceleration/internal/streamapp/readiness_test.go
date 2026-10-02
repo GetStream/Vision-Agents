@@ -133,8 +133,9 @@ func (s *ReadinessSuite) TestAConfiguredDeploymentAppIsCheckedOnce() {
 }
 
 func (s *ReadinessSuite) TestAMismatchedDeploymentAppStopsNamingPins() {
-	// In deployment mode new work carries on, and a pin naming the configured id waits
-	// rather than being finished with a key that belongs to another app.
+	// In deployment mode new work carries on, and a pin naming the configured id is parked
+	// rather than finished with a key that belongs to another app. Waiting would be waiting
+	// for an id that can no longer be learned.
 	s.stream.SetApp(chattest.App{ID: 1})
 	source := NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: s.stream.URL, App: 99})
 	cache := NewClients(source, ClientsOptions{})
@@ -144,7 +145,7 @@ func (s *ReadinessSuite) TestAMismatchedDeploymentAppStopsNamingPins() {
 	s.ErrorIs(err, ErrDeploymentAppMismatch)
 	s.Zero(cache.DeploymentApp())
 	_, err = source.ForApp(s.ctx, "acme", 99)
-	s.ErrorIs(err, ErrDeploymentAppUnknown)
+	s.ErrorIs(err, ErrStreamAppMoved)
 	_, err = source.For(s.ctx, "acme")
 	s.NoError(err)
 }

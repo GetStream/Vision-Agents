@@ -32,7 +32,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -43,6 +42,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 const (
@@ -509,8 +509,7 @@ func hooks(ctx context.Context, arguments []string) error {
 	}
 	var segment string
 	if *app != "" {
-		id, err := strconv.ParseInt(*app, 10, 64)
-		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != *app {
+		if _, ok := streamapp.ParseAppID(*app); !ok {
 			return fmt.Errorf("-app is a Stream app id, not %q", *app)
 		}
 		segment = "/" + *app

@@ -45,7 +45,7 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 	// The deployment's own secret checks only the deployment app's hooks, and only when
 	// there is one: an empty secret is one anybody can sign with.
 	ours := func(named string) []Verifier {
-		if !deployment.Configured() || (named != "" && named != deployment.identity.APIKey) {
+		if own == 0 || !deployment.Configured() || (named != "" && named != deployment.identity.APIKey) {
 			return nil
 		}
 		return []Verifier{{StreamApp: own, APIKey: deployment.identity.APIKey, Secret: deployment.identity.Secret, Deployment: true}}
@@ -60,11 +60,11 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 		case !errors.Is(err, store.ErrNoStreamApp):
 			return nil, err
 		}
-		if own == 0 && len(verifiers) == 0 && deployment.Configured() {
+		if len(verifiers) == 0 && deployment.pending() {
 			// The app named may be the deployment's own, which is not known yet.
 			return nil, ErrDeploymentAppUnknown
 		}
-		if own != 0 && pathApp == own {
+		if pathApp == own {
 			verifiers = append(verifiers, ours(apiKey)...)
 		}
 		return verifiers, nil
@@ -80,10 +80,7 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 		}
 		c.rememberUnknownKey(apiKey)
 	}
-	if !deployment.Configured() {
-		return nil, nil
-	}
-	if own == 0 {
+	if deployment.pending() {
 		return nil, ErrDeploymentAppUnknown
 	}
 	return ours(""), nil

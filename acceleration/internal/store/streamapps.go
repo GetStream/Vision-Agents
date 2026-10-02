@@ -455,12 +455,35 @@ func (s *Store) StreamFallbackUses(ctx context.Context, since time.Time) ([]Stre
 	return uses, nil
 }
 
-// ConnectedStreamApps are every app the router acts in with its own keys.
-func (s *Store) ConnectedStreamApps(ctx context.Context) ([]StreamApp, error) {
+// StreamApps are every registered app, with its keys, or with connected only those the
+// router acts in with their own keys.
+func (s *Store) StreamApps(ctx context.Context, connected bool) ([]StreamApp, error) {
 	var apps []StreamApp
-	err := s.db.NewSelect().Model(&apps).Where("state = ?", StreamAppConnected).Order("customer_id").Scan(ctx)
-	if err != nil {
+	query := s.db.NewSelect().Model(&apps).Order("customer_id")
+	if connected {
+		query = query.Where("state = ?", StreamAppConnected)
+	}
+	if err := query.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("store: list stream apps: %w", err)
+	}
+	if len(apps) == 0 {
+		return apps, nil
+	}
+	customers := make([]string, 0, len(apps))
+	for _, app := range apps {
+		customers = append(customers, app.CustomerID)
+	}
+	var keys []StreamAppKey
+	if err := s.db.NewSelect().Model(&keys).Where("customer_id IN (?)", bun.In(customers)).
+		OrderExpr("key_created_at ASC NULLS LAST, created_at ASC, api_key ASC").Scan(ctx); err != nil {
+		return nil, fmt.Errorf("store: list stream app keys: %w", err)
+	}
+	held := make(map[string][]StreamAppKey, len(apps))
+	for _, key := range keys {
+		held[key.CustomerID] = append(held[key.CustomerID], key)
+	}
+	for i := range apps {
+		apps[i].Keys = held[apps[i].CustomerID]
 	}
 	return apps, nil
 }

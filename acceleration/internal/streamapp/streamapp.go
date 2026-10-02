@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strconv"
 )
 
 // Identity is one customer's Stream app and the credential the router acts in it with.
@@ -80,3 +81,17 @@ var (
 	// the app the deployment's key belongs to.
 	ErrDeploymentAppMismatch = errors.New("streamapp: the deployment's key belongs to another Stream app than stream.app_id names")
 )
+
+// ParseAppID reads a Stream app id written the way Stream writes it: a positive number,
+// with no sign, padding or leading zero. Anything else names no app.
+func ParseAppID(written string) (int64, bool) {
+	app, err := strconv.ParseInt(written, 10, 64)
+	if err != nil || app <= 0 || strconv.FormatInt(app, 10) != written {
+		return 0, false
+	}
+	return app, true
+}
+
+// CustomerOf is the customer a Stream app is its own customer as: its id, written as Stream
+// writes it. Only that exact string is the app's own customer.
+func CustomerOf(app int64) string { return strconv.FormatInt(app, 10) }

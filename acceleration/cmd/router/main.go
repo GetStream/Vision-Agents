@@ -799,7 +799,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	case streamClients.PerApp() && settings.Stream.APIKey == "":
 		// Each registered app signs its own hooks and mints its own tokens, so only work in
 		// the deployment's own app goes without.
-		logger.Info("no stream.api_key or stream.api_secret set, so only registered apps act in Stream: "+
+		logger.Info("no stream.api_key or stream.api_secret set, so only registered apps act in Stream: " +
 			"nothing is written into a deployment app, and the old hook paths accept nothing")
 	case options.HookSecret == "" || settings.Stream.APIKey == "":
 		if options.HookSecret == "" {

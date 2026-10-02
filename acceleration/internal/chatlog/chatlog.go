@@ -30,11 +30,12 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // ChannelType is the Stream Chat channel type transcripts are written to.
-const ChannelType = "agent"
+const ChannelType = streamapp.AgentChannelType
 
 // queueSize bounds how far the writer may fall behind before messages are dropped.
 const queueSize = 256

@@ -56,8 +56,8 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 	signature := r.Header.Get(signatureHeader)
 	var pathApp int64
 	if named := r.PathValue("app"); named != "" {
-		app, err := strconv.ParseInt(named, 10, 64)
-		if err != nil || app <= 0 || strconv.FormatInt(app, 10) != named {
+		app, ok := streamapp.ParseAppID(named)
+		if !ok {
 			http.NotFound(w, r)
 			return hookOrigin{}, false
 		}

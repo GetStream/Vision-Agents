@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1276,7 +1275,7 @@ func (m *Manager) sameApp(ctx context.Context, service *persistent.Service, spec
 // app, so the customer can tell which of their keys signed it. A session acting in the
 // deployment's shared app names none, and is signed as it always was.
 func ownKey(customer string, stream streamapp.Identity) string {
-	if stream.StreamApp == 0 || strconv.FormatInt(stream.StreamApp, 10) != customer {
+	if stream.StreamApp == 0 || streamapp.CustomerOf(stream.StreamApp) != customer {
 		return ""
 	}
 	return stream.APIKey

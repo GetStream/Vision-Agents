@@ -284,14 +284,7 @@ func (c *Clients) bind(identity Identity) (Bound, error) {
 		return Bound{Identity: identity, Client: element.Value.(*kept).client}, nil
 	}
 
-	baseURL := identity.BaseURL
-	if baseURL == "" {
-		baseURL = getstream.DefaultBaseURL
-	}
-	// The base URL is always passed, because the SDK otherwise reads STREAM_BASE_URL from
-	// the process environment, which would make it the deployment's for every app.
-	client, err := getstream.NewClient(identity.APIKey, identity.Secret.Reveal(),
-		getstream.WithBaseUrl(baseURL), getstream.WithHTTPClient(c.http))
+	client, err := newStreamClient(identity, c.http)
 	if err != nil {
 		return Bound{}, err
 	}
@@ -305,4 +298,19 @@ func (c *Clients) bind(identity Identity) (Bound, error) {
 		delete(c.clients, oldest.Value.(*kept).key)
 	}
 	return Bound{Identity: identity, Client: client}, nil
+}
+
+// newStreamClient is a client acting with an identity. The base URL is always passed,
+// because the SDK otherwise reads STREAM_BASE_URL from the process environment, which would
+// make it the deployment's for every app.
+func newStreamClient(identity Identity, httpClient *http.Client) (*getstream.Stream, error) {
+	baseURL := identity.BaseURL
+	if baseURL == "" {
+		baseURL = getstream.DefaultBaseURL
+	}
+	options := []getstream.ClientOption{getstream.WithBaseUrl(baseURL)}
+	if httpClient != nil {
+		options = append(options, getstream.WithHTTPClient(httpClient))
+	}
+	return getstream.NewClient(identity.APIKey, identity.Secret.Reveal(), options...)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -14,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // askTimeout bounds answering one written message. It is generous compared with a spoken
@@ -245,7 +245,7 @@ func (s *Server) configOwnerOf(origin hookOrigin) (string, bool) {
 	case !origin.deployment:
 		return origin.customer, true
 	case s.stream != nil && s.stream.PerApp():
-		return strconv.FormatInt(origin.app, 10), true
+		return streamapp.CustomerOf(origin.app), true
 	}
 	return "", false
 }

@@ -36,6 +36,17 @@ const (
 	TypeUnknown TypeState = "unknown"
 )
 
+// standing is why the router may not act in an app Stream describes so, empty when it may.
+func (r Readiness) standing() string {
+	switch {
+	case r.Suspended:
+		return "Stream suspended the app"
+	case r.AuthChecksOff:
+		return "the app does not check the tokens it is sent"
+	}
+	return ""
+}
+
 // Readiness is what an app holds of what the router needs to act in it.
 type Readiness struct {
 	// App is the app's id as Stream reports it.
@@ -169,23 +180,26 @@ func (c *Clients) LearnDeploymentApp(ctx context.Context) (int64, error) {
 }
 
 // learn reads the deployment app's id with its own credential and records it, or checks
-// it against the one configured. An id learned or checked already is not asked for again.
+// it against the one configured. An id Stream has given already is not asked for again.
 func (d *Deployment) learn(ctx context.Context, clients *Clients) (int64, error) {
-	if app, settled, err := d.settled(); settled {
-		return app, err
+	if learned := d.learned.Load(); learned != 0 {
+		return d.learnt(learned)
 	}
 	if !d.Configured() {
 		return 0, ErrNoIdentity
 	}
-	bound, err := clients.bind(d.identity)
+	// Asked with a client of its own rather than the cache's, and only for the id: nothing
+	// else the app says matters here, and a failure is not kept for the next attempt.
+	client, err := newStreamClient(d.identity, clients.http)
 	if err != nil {
 		return 0, err
 	}
-	// Asked directly rather than through the minute's cache, so a failure is not what the
-	// next attempt is told too.
-	readiness, err := ReadReadiness(ctx, bound.Client, clients.now())
+	app, err := client.GetApp(ctx, &getstream.GetAppRequest{})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("streamapp: reading the deployment's app: %w", err)
 	}
-	return d.verifyOrLearn(readiness.App)
+	if app.Data.App.ID <= 0 {
+		return 0, errors.New("streamapp: Stream named no app for the deployment's key")
+	}
+	return d.learnt(int64(app.Data.App.ID))
 }

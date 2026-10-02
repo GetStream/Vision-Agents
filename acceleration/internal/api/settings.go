@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -171,7 +170,7 @@ func (s *Server) writesInto(customerID string, identity streamapp.Identity) Stre
 	if identity.StreamApp != 0 && identity.StreamApp != deployment {
 		return WritesIntoThisApp
 	}
-	if deployment != 0 && customerID == strconv.FormatInt(deployment, 10) {
+	if deployment != 0 && customerID == streamapp.CustomerOf(deployment) {
 		return WritesIntoThisApp
 	}
 	return WritesIntoDeploymentApp

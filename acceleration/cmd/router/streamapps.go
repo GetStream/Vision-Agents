@@ -277,17 +277,13 @@ func readKeys(pairs []string, stdin io.Reader) ([]streamapp.Key, error) {
 
 // listStreamApps prints every registered app and its keys, never a secret.
 func listStreamApps(ctx context.Context, pgStore *store.Store, out io.Writer) error {
-	var customers []string
-	if err := pgStore.DB().NewSelect().Table("stream_apps").Column("customer_id").Order("customer_id").Scan(ctx, &customers); err != nil {
+	apps, err := pgStore.StreamApps(ctx, false)
+	if err != nil {
 		return err
 	}
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(table, "CUSTOMER\tSTREAM APP\tSTATE\tREVISION\tPRIMARY\tKEYS")
-	for _, customer := range customers {
-		app, err := pgStore.StreamApp(ctx, customer)
-		if err != nil {
-			return err
-		}
+	for _, app := range apps {
 		described := make([]string, 0, len(app.Keys))
 		for _, key := range app.Keys {
 			described = append(described, fmt.Sprintf("%s (...%s, %s)", key.APIKey, key.Last4, key.Status))
@@ -394,7 +390,7 @@ func runLegacy(ctx context.Context, args []string, settings config.Config, logge
 			if err != nil {
 				return err
 			}
-			own := strconv.FormatInt(deployment, 10)
+			own := streamapp.CustomerOf(deployment)
 			for customer, rows := range records {
 				if customer != own {
 					counted = append(counted, store.LegacyCount{Kind: "conversation", CustomerID: customer, Rows: int64(rows)})

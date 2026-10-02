@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -56,11 +55,7 @@ type Registered struct {
 // Verify asks Stream which app a key belongs to and how that app stands. The client it
 // asks with is made for the question and kept nowhere.
 func (s *Stored) Verify(ctx context.Context, key Key) (Readiness, error) {
-	baseURL := s.deployment.identity.BaseURL
-	if baseURL == "" {
-		baseURL = getstream.DefaultBaseURL
-	}
-	client, err := getstream.NewClient(key.APIKey, key.Secret.Reveal(), getstream.WithBaseUrl(baseURL))
+	client, err := newStreamClient(Identity{APIKey: key.APIKey, Secret: key.Secret, BaseURL: s.deployment.identity.BaseURL}, nil)
 	if err != nil {
 		return Readiness{}, fmt.Errorf("%w: key %s", ErrKeyRefused, key.APIKey)
 	}
@@ -132,17 +127,15 @@ func (s *Stored) Register(ctx context.Context, registration Registration) (Regis
 // admissible refuses a key whose app may not be registered by this customer.
 func (s *Stored) admissible(customer string, named int64, apiKey string, readiness Readiness) error {
 	switch {
-	case named == 0 && strconv.FormatInt(readiness.App, 10) != customer:
+	case named == 0 && CustomerOf(readiness.App) != customer:
 		return fmt.Errorf("%w: key %s belongs to another Stream app than this one", ErrKeyRefused, apiKey)
 	case named != 0 && readiness.App != named:
 		return fmt.Errorf("%w: key %s belongs to another Stream app than the one named", ErrKeyRefused, apiKey)
-	case readiness.Suspended:
-		return fmt.Errorf("%w: the Stream app key %s belongs to is suspended", ErrKeyRefused, apiKey)
-	case readiness.AuthChecksOff:
-		return fmt.Errorf("%w: the Stream app key %s belongs to does not check the tokens it is sent", ErrKeyRefused, apiKey)
+	case readiness.standing() != "":
+		return fmt.Errorf("%w: key %s: %s", ErrKeyRefused, apiKey, readiness.standing())
 	}
 	deployment := s.deployment.App()
-	if deployment != 0 && readiness.App == deployment && customer != strconv.FormatInt(deployment, 10) {
+	if deployment != 0 && readiness.App == deployment && customer != CustomerOf(deployment) {
 		return fmt.Errorf("%w: key %s belongs to the router's own Stream app, which is only its own customer's", ErrKeyRefused, apiKey)
 	}
 	return nil
@@ -191,16 +184,12 @@ func (s *Stored) ForKey(ctx context.Context, identity Identity, apiKey string) I
 // Rewrap seals every key under an older key version again under the current one, and
 // reports how many it sealed again.
 func (s *Stored) Rewrap(ctx context.Context) (int, error) {
-	apps, err := s.store.ConnectedStreamApps(ctx)
+	apps, err := s.store.StreamApps(ctx, true)
 	if err != nil {
 		return 0, err
 	}
 	rewrapped := 0
-	for _, listed := range apps {
-		app, err := s.store.StreamApp(ctx, listed.CustomerID)
-		if err != nil {
-			return rewrapped, err
-		}
+	for _, app := range apps {
 		for _, key := range app.Keys {
 			secret, stale, err := OpenKey(s.sealer, app, key)
 			if err != nil {
@@ -209,11 +198,7 @@ func (s *Stored) Rewrap(ctx context.Context) (int, error) {
 			if !stale {
 				continue
 			}
-			sealed, err := SealKey(s.sealer, app.CustomerID, app.StreamAppPK, key.APIKey, secret.Reveal())
-			if err != nil {
-				return rewrapped, err
-			}
-			applied, err := s.store.RewrapStreamAppKey(ctx, app.CustomerID, key.APIKey, key.Sealed, sealed.Sealed, sealed.KEKVersion)
+			applied, err := s.rewrap(ctx, app, key, secret)
 			if err != nil {
 				return rewrapped, err
 			}
