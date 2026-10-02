@@ -1037,6 +1037,14 @@ func (c *Conversation) Observe(event agent.Event) {
 		c.called(m, toolCall{id: e.ID, name: e.Tool, arguments: e.Arguments, startedAt: e.StartedAt})
 		c.state("tools")
 		persist = true
+	case agent.ToolApprovalDecided:
+		if !c.acceptTurn(e.TurnID, false) {
+			return
+		}
+		if !decided(m, e.ID, e.Allowed, e.Summary, time.Now()) {
+			return
+		}
+		persist = true
 	case agent.ToolRan:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
