@@ -755,6 +755,18 @@ func (s *ConverseSuite) TestAnUnfinishedTurnWhoseControllerFailedIsPutAgain() {
 	s.Error(actions[0].Err)
 }
 
+func (s *ConverseSuite) TestAFinishedTurnOverTheAgentWhoseControllerFailedTakesTheFloor() {
+	ready := s.settle("make it six people, and gluten instead", s.talking())
+
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Err:         errors.New("402 Payment Required"),
+	}, s.talking())
+	s.Equal([]ActionKind{ActInterrupt, ActAnswer}, kinds(actions),
+		"queueing it would leave the caller waiting out the whole reply")
+	s.Equal("make it six people, and gluten instead", actions[1].Text)
+}
+
 func (s *ConverseSuite) TestATurnHeldOverTheAgentIsAnsweredOnceItStopsTalking() {
 	ready := s.settle("and make it eight o'clock", s.talking())
 	s.converse.Ruled(harness.Decided{

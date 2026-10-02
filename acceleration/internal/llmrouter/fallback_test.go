@@ -72,6 +72,41 @@ func TestRequestFailureFallsBackThroughAccelerate(t *testing.T) {
 	require.Empty(t, requests)
 }
 
+func TestAProviderOutOfCreditFallsBack(t *testing.T) {
+	broke := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusPaymentRequired)
+		fmt.Fprint(w, `{"error":{"message":"Your prepayment credits are depleted","type":"billing_error"}}`)
+	}))
+	defer broke.Close()
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"fallback\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"respond\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer backup.Close()
+	registry := NewRegistry()
+	registry.Register("gemini", func(spec routing.Spec) (Provider, error) {
+		return Started(openai.New(openai.Options{APIKey: "test", BaseURL: broke.URL, Model: spec.Model}))
+	})
+	registry.Register("anthropic", func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: backup.URL, Model: spec.Model}))
+	})
+	router, err := New(Options{Registry: registry, Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{Provider: "gemini", Model: "gemini-3.8-flash", Languages: []string{"en"}}, {Provider: "anthropic", Model: "claude-haiku-5", Languages: []string{"en"}}}, Aliases: map[string]routing.Alias{"llm-flow": {Prefer: "gemini/gemini-3.8-flash"}}}})
+	require.NoError(t, err)
+	defer router.Close()
+	session, err := router.Start(t.Context(), Request{CustomerID: "customer", Target: "llm-flow"})
+	require.NoError(t, err)
+	defer session.Close()
+	require.Equal(t, "gemini", session.Provider())
+
+	stream, err := session.Create(t.Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "Party of four."}}})
+	require.NoError(t, err)
+	response, err := llm.Collect(stream)
+	require.NoError(t, err)
+	require.Equal(t, "anthropic", response.Provider)
+	require.Equal(t, "respond", response.OutputText)
+}
+
 func TestAPriorityListFallsBackInTheOrderItWasWritten(t *testing.T) {
 	var asked atomic.Int32
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
