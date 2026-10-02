@@ -612,6 +612,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if pgStore != nil {
 		pgStore.SetStreamPins(streamPins(streamClients))
 	}
+	go learnDeploymentApp(ctx, streamClients, logger)
 
 	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, logger)
 	if err != nil {

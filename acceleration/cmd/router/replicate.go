@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 const replicateUsage = `usage: router replicate --from <url> --api-key <key> --api-secret <secret> [flags]
@@ -63,8 +64,16 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 		return err
 	}
 	defer pgStore.Close()
-	// An imported row may be pinned only to the app its customer acts in here.
-	pgStore.SetStreamPins(streamPins(newStreamClients(settings)))
+	// An imported row may be pinned only to the app its customer acts in here, and one
+	// pinned to the deployment's own app can be placed only once that app is known.
+	streamClients := newStreamClients(settings)
+	learning, cancel := context.WithTimeout(ctx, learnTimeout)
+	if _, err := streamClients.LearnDeploymentApp(learning); err != nil && !errors.Is(err, streamapp.ErrNoIdentity) {
+		logger.Warn("stream: could not learn which Stream app is this deployment's own, so a row "+
+			"pinned to one will be refused", "error", err)
+	}
+	cancel()
+	pgStore.SetStreamPins(streamPins(streamClients))
 
 	source := &deployment{
 		url:    strings.TrimSuffix(*from, "/"),
