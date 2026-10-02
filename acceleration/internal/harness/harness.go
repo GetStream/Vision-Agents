@@ -99,6 +99,9 @@ type noted struct {
 }
 
 // Turn is what the harness is asked to answer.
+// toolReplyEffort is how hard the model thinks before answering a tool result.
+const toolReplyEffort = "low"
+
 type Turn struct {
 	// ID correlates the reply with the turn the agent is measuring.
 	ID string
@@ -110,6 +113,8 @@ type Turn struct {
 	// Note is something true of this turn alone, such as the caller not having been
 	// heard clearly. It is not remembered past the reply it shapes.
 	Note string
+	// AfterTool says the reply follows a tool result rather than the caller.
+	AfterTool bool
 }
 
 // Harness decides what the fast model is asked and what becomes of what it answers.
@@ -305,9 +310,18 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	model := session.Capabilities()
 	h.mu.Unlock()
 
+	// A reply to a tool result is given a little thinking. The caller was told to wait
+	// while the tool ran, so it costs them nothing they notice, and at no effort Luna
+	// answers a free table with "may I book it?" instead of booking it.
+	var reasoning llm.ReasoningParams
+	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
+		reasoning.Effort = toolReplyEffort
+	}
+
 	return session.Create(ctx, llm.ResponseParams{
 		ID:                 turn.ID,
 		Purpose:            "reply",
+		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,
 		Instructions:       instructions,

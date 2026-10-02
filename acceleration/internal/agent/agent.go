@@ -1444,6 +1444,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
+		AfterTool:    true,
 	}, "")
 }
 
