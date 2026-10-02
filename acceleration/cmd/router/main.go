@@ -27,6 +27,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -838,6 +839,12 @@ func openStore(ctx context.Context, settings config.Config) (*store.Store, error
 		return nil, err
 	}
 	if err := pgStore.Migrate(ctx); err != nil {
+		pgStore.Close()
+		return nil, err
+	}
+	// Seeded whether connectors are on or not: the built-ins are data with no secret in
+	// them, and a deployment that turns connectors on later finds them already there.
+	if err := pgStore.SeedConnectorDefinitions(ctx, providers.FS); err != nil {
 		pgStore.Close()
 		return nil, err
 	}
