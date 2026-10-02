@@ -25,8 +25,10 @@ func (s *StoreSuite) revisions(id string) []ConnectorDefinition {
 	return definitions
 }
 
-func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtRevisionOne() {
+func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisionItNames() {
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+	shipped, err := builtinManifests(providers.FS)
+	s.Require().NoError(err)
 
 	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme")
 	s.Require().NoError(err)
@@ -34,8 +36,8 @@ func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtRevisionOn
 	for i, id := range []string{"linear", "slack"} {
 		s.Equal(id, listed[i].ID)
 		s.Equal(BuiltinCustomer, listed[i].CustomerID)
-		s.Equal(1, listed[i].Revision)
-		s.Equal(1, listed[i].Manifest.Revision, "the stored manifest names the revision it is stored as")
+		s.Equal(shipped[i].Revision, listed[i].Revision, "stored at the revision its file names")
+		s.Equal(shipped[i].Revision, listed[i].Manifest.Revision, "the stored manifest names the revision it is stored as")
 		s.Equal(listed[i].Manifest.Name, listed[i].Name)
 		s.NotEmpty(listed[i].Category)
 		s.NotEmpty(listed[i].Description)
