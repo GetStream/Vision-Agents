@@ -354,3 +354,52 @@ func TestASocketIsAuthenticatedOnTheHandshake(t *testing.T) {
 		t.Errorf("the socket was opened for %q, want alice", user)
 	}
 }
+
+func TestABackendWithACustomerIdStillAuthenticates(t *testing.T) {
+	// A backend that names who it bills and hands over its credential is going through the
+	// proxy, which refuses a request carrying a customer id alone.
+	t.Setenv(APIKeyEnv, "")
+	t.Setenv(APISecretEnv, "")
+
+	resolved, err := Backend{URL: "https://acceleration.example.com", CustomerID: "acme", APIKey: "ntv9", APISecret: "shh"}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.Authenticate {
+		t.Fatal("a backend with a customer id and a credential sent neither key nor token")
+	}
+	credentials, err := resolved.Credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credentials.Get(APIKeyHeader) != "ntv9" || credentials.Get(AuthorizationHeader) == "" {
+		t.Errorf("the credential was not sent: %v", credentials)
+	}
+}
+
+func TestTheHostedRouterIsAlwaysAuthenticated(t *testing.T) {
+	t.Setenv(URLEnv, "")
+	t.Setenv(APIKeyEnv, "ntv9")
+	t.Setenv(APISecretEnv, "shh")
+
+	resolved, err := Backend{CustomerID: "acme"}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.URL != DefaultURL || !resolved.Authenticate {
+		t.Errorf("resolved to %s, authenticating %v", resolved.URL, resolved.Authenticate)
+	}
+}
+
+func TestALocalRouterToldOnlyWhoToBillIsNotSentTheEnvironmentsCredential(t *testing.T) {
+	t.Setenv(APIKeyEnv, "ntv9")
+	t.Setenv(APISecretEnv, "shh")
+
+	resolved, err := Backend{URL: "http://localhost:8080", CustomerID: "acme"}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Authenticate {
+		t.Error("a key and secret lying around turned authentication on for a local router")
+	}
+}

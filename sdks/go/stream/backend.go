@@ -67,7 +67,8 @@ type Backend struct {
 	CustomerID string
 	// Authenticate says the router is reached through the proxy, so requests carry the app
 	// credential below rather than naming a customer. It is on whenever no customer id is
-	// set, which is every router but a local one.
+	// set, whenever the router is the hosted one, and whenever a credential is passed in,
+	// which is every router but a local one told only who to bill.
 	Authenticate bool
 	// APIKey and APISecret are the Stream app to authenticate as. Empty falls back to STREAM_API_KEY and STREAM_API_SECRET.
 	APIKey    string
@@ -105,7 +106,10 @@ func (b Backend) Resolve() (Backend, error) {
 	// A Stream key and secret are in the environment for video and chat whether or not a
 	// local router is being talked to, so a customer id is what says which: sending the
 	// credential to a router with nothing in front of it reads as an end user's device.
-	if b.CustomerID == "" {
+	// What does not depend on the environment does say: the hosted router is always behind
+	// the proxy, and a credential passed in was passed in to be used.
+	passed := b.APIKey != "" && (b.APISecret != "" || b.Token != "")
+	if b.CustomerID == "" || b.URL == DefaultURL || passed {
 		b.Authenticate = true
 	}
 	if b.Authenticate {
