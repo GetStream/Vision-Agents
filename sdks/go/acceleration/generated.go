@@ -55,22 +55,22 @@ func (e AgentLogSeverity) Valid() bool {
 
 // Defines values for AgentLogSource.
 const (
-	Agent  AgentLogSource = "agent"
-	System AgentLogSource = "system"
-	Tool   AgentLogSource = "tool"
-	User   AgentLogSource = "user"
+	AgentLogSourceAgent  AgentLogSource = "agent"
+	AgentLogSourceSystem AgentLogSource = "system"
+	AgentLogSourceTool   AgentLogSource = "tool"
+	AgentLogSourceUser   AgentLogSource = "user"
 )
 
 // Valid indicates whether the value is a known member of the AgentLogSource enum.
 func (e AgentLogSource) Valid() bool {
 	switch e {
-	case Agent:
+	case AgentLogSourceAgent:
 		return true
-	case System:
+	case AgentLogSourceSystem:
 		return true
-	case Tool:
+	case AgentLogSourceTool:
 		return true
-	case User:
+	case AgentLogSourceUser:
 		return true
 	default:
 		return false
@@ -302,6 +302,48 @@ func (e ConnectorClientOwner) Valid() bool {
 	case Dcr:
 		return true
 	case Operator:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectorConnectionOwnerType.
+const (
+	ConnectorConnectionOwnerTypeApp  ConnectorConnectionOwnerType = "app"
+	ConnectorConnectionOwnerTypeUser ConnectorConnectionOwnerType = "user"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorConnectionOwnerType enum.
+func (e ConnectorConnectionOwnerType) Valid() bool {
+	switch e {
+	case ConnectorConnectionOwnerTypeApp:
+		return true
+	case ConnectorConnectionOwnerTypeUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectorConnectionStatus.
+const (
+	ConnectorConnectionStatusConnected            ConnectorConnectionStatus = "connected"
+	ConnectorConnectionStatusDisconnected         ConnectorConnectionStatus = "disconnected"
+	ConnectorConnectionStatusNeedsReauthorization ConnectorConnectionStatus = "needs_reauthorization"
+	ConnectorConnectionStatusPending              ConnectorConnectionStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorConnectionStatus enum.
+func (e ConnectorConnectionStatus) Valid() bool {
+	switch e {
+	case ConnectorConnectionStatusConnected:
+		return true
+	case ConnectorConnectionStatusDisconnected:
+		return true
+	case ConnectorConnectionStatusNeedsReauthorization:
+		return true
+	case ConnectorConnectionStatusPending:
 		return true
 	default:
 		return false
@@ -2264,6 +2306,84 @@ type ConnectorClientAuthMethod string
 
 // ConnectorClientOwner operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 type ConnectorClientOwner string
+
+// ConnectorConnection One account at one connector, owned by the app or by one of its users. Credentials are never shown.
+type ConnectorConnection struct {
+	// AccountId The provider account, known once it is connected.
+	AccountId *string `json:"account_id,omitempty"`
+
+	// AuthScheme How the connection authenticates, one of its connector's schemes.
+	AuthScheme  string     `json:"auth_scheme"`
+	ConnectorId string     `json:"connector_id"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+
+	// DefinitionRevision The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+	DefinitionRevision *int64 `json:"definition_revision,omitempty"`
+
+	// ExpiresAt When the current credential expires. Absent when there is none or it does not.
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	GrantedScopes *[]string  `json:"granted_scopes,omitempty"`
+	Id            *string    `json:"id,omitempty"`
+
+	// Inputs What the connection was created with, the connector's defaults filled in.
+	Inputs map[string]string `json:"inputs"`
+	Label  *string           `json:"label,omitempty"`
+
+	// Metadata What the provider said about the account when it was connected, such as a workspace id. Empty until then.
+	Metadata *map[string]string `json:"metadata,omitempty"`
+
+	// Owner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
+	Owner ConnectorConnectionOwner `json:"owner"`
+
+	// Revision Advances with every new credential, starting at 1.
+	Revision *int64 `json:"revision,omitempty"`
+
+	// Status pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
+	Status    ConnectorConnectionStatus `json:"status"`
+	UpdatedAt *time.Time                `json:"updated_at,omitempty"`
+}
+
+// ConnectorConnectionOwner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
+type ConnectorConnectionOwner struct {
+	// Type app is the app's own account, user one user's.
+	Type ConnectorConnectionOwnerType `json:"type"`
+
+	// UserId The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id.
+	UserId *string `json:"user_id,omitempty"`
+}
+
+// ConnectorConnectionOwnerType app is the app's own account, user one user's.
+type ConnectorConnectionOwnerType string
+
+// ConnectorConnectionPage defines model for ConnectorConnectionPage.
+type ConnectorConnectionPage struct {
+	HasMore bool                   `json:"has_more"`
+	Items   *[]ConnectorConnection `json:"items"`
+
+	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ConnectorConnectionRequest A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
+type ConnectorConnectionRequest struct {
+	// AuthScheme One of the connector's schemes. Omitted is its only one; a connector with several needs it named.
+	AuthScheme *string `json:"auth_scheme,omitempty"`
+
+	// ConnectorId A built-in, such as slack, or one of the app's own.
+	ConnectorId string `json:"connector_id"`
+
+	// Inputs Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern.
+	Inputs *map[string]string `json:"inputs,omitempty"`
+
+	// Label A name to tell connections apart by.
+	Label *string `json:"label,omitempty"`
+
+	// Owner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
+	Owner ConnectorConnectionOwner `json:"owner"`
+}
+
+// ConnectorConnectionStatus pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
+type ConnectorConnectionStatus string
 
 // ConnectorDefinition A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
 type ConnectorDefinition struct {
@@ -4837,6 +4957,27 @@ type ListAgentConfigsParams struct {
 	Name *ConfigName `form:"name,omitempty" json:"name,omitempty"`
 }
 
+// ListConnectorConnectionsParams defines parameters for ListConnectorConnections.
+type ListConnectorConnectionsParams struct {
+	// OwnerType app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
+	OwnerType ConnectorConnectionOwnerType `form:"owner_type" json:"owner_type"`
+
+	// ConnectorId Keeps one connector's.
+	ConnectorId *string `form:"connector_id,omitempty" json:"connector_id,omitempty"`
+
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// DeleteConnectorConnectionParams defines parameters for DeleteConnectorConnection.
+type DeleteConnectorConnectionParams struct {
+	// Force Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists.
+	Force *bool `form:"force,omitempty" json:"force,omitempty"`
+}
+
 // ListConnectorsParams defines parameters for ListConnectors.
 type ListConnectorsParams struct {
 	// Q Keeps the connectors whose id, name, category or description holds this, ignoring case.
@@ -5117,6 +5258,9 @@ type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 
 // AuthorizePluginJSONRequestBody defines body for AuthorizePlugin for application/json ContentType.
 type AuthorizePluginJSONRequestBody = AuthorizePluginRequest
+
+// CreateConnectorConnectionJSONRequestBody defines body for CreateConnectorConnection for application/json ContentType.
+type CreateConnectorConnectionJSONRequestBody = ConnectorConnectionRequest
 
 // CreateConnectorJSONRequestBody defines body for CreateConnector for application/json ContentType.
 type CreateConnectorJSONRequestBody = CustomConnectorRequest
@@ -5763,6 +5907,55 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePlugin(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListConnectorConnections List connections
+	//
+	// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connections (the `ListConnectorConnections` operationId).
+	ListConnectorConnections(ctx context.Context, params *ListConnectorConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConnectorConnectionWithBody Create a connection
+	//
+	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
+	CreateConnectorConnectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConnectorConnection Create a connection
+	//
+	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
+	CreateConnectorConnection(ctx context.Context, body CreateConnectorConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteConnectorConnection Delete a connection
+	//
+	// Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnectorConnection` operationId).
+	DeleteConnectorConnection(ctx context.Context, id string, params *DeleteConnectorConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetConnectorConnection Read a connection
+	//
+	// An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnectorConnection` operationId).
+	GetConnectorConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectors List or search connectors
 	//
@@ -7621,6 +7814,105 @@ func (c *Client) AuthorizePluginWithBody(ctx context.Context, id ResourceID, plu
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 func (c *Client) AuthorizePlugin(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequest(c.Server, id, pluginId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListConnectorConnections List connections
+//
+// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connections (the `ListConnectorConnections` operationId).
+func (c *Client) ListConnectorConnections(ctx context.Context, params *ListConnectorConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectorConnectionsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConnectorConnectionWithBody Create a connection
+//
+// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
+func (c *Client) CreateConnectorConnectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectorConnectionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConnectorConnection Create a connection
+//
+// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
+func (c *Client) CreateConnectorConnection(ctx context.Context, body CreateConnectorConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectorConnectionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteConnectorConnection Delete a connection
+//
+// Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnectorConnection` operationId).
+func (c *Client) DeleteConnectorConnection(ctx context.Context, id string, params *DeleteConnectorConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectorConnectionRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConnectorConnection Read a connection
+//
+// An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connections/{id} (the `GetConnectorConnection` operationId).
+func (c *Client) GetConnectorConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectorConnectionRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -11403,6 +11695,227 @@ func NewAuthorizePluginRequestWithBody(server string, id ResourceID, pluginId Pl
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListConnectorConnectionsRequest constructs an http.Request for the ListConnectorConnections method
+func NewListConnectorConnectionsRequest(server string, params *ListConnectorConnectionsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "owner_type", params.OwnerType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.ConnectorId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "connector_id", *params.ConnectorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateConnectorConnectionRequest calls the generic CreateConnectorConnection builder with application/json body
+func NewCreateConnectorConnectionRequest(server string, body CreateConnectorConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateConnectorConnectionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateConnectorConnectionRequestWithBody constructs an http.Request for the CreateConnectorConnection method, with any body, and a specified content type
+func NewCreateConnectorConnectionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteConnectorConnectionRequest constructs an http.Request for the DeleteConnectorConnection method
+func NewDeleteConnectorConnectionRequest(server string, id string, params *DeleteConnectorConnectionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Force != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "force", *params.Force, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetConnectorConnectionRequest constructs an http.Request for the GetConnectorConnection method
+func NewGetConnectorConnectionRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -16856,6 +17369,61 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
+	// ListConnectorConnectionsWithResponse List connections
+	//
+	// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connections (the `ListConnectorConnections` operationId).
+	ListConnectorConnectionsWithResponse(ctx context.Context, params *ListConnectorConnectionsParams, reqEditors ...RequestEditorFn) (*ListConnectorConnectionsResponse, error)
+
+	// CreateConnectorConnectionWithBodyWithResponse Create a connection
+	//
+	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
+	CreateConnectorConnectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectorConnectionResponse, error)
+
+	// CreateConnectorConnectionWithResponse Create a connection
+	//
+	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
+	CreateConnectorConnectionWithResponse(ctx context.Context, body CreateConnectorConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorConnectionResponse, error)
+
+	// DeleteConnectorConnectionWithResponse Delete a connection
+	//
+	// Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnectorConnection` operationId).
+	DeleteConnectorConnectionWithResponse(ctx context.Context, id string, params *DeleteConnectorConnectionParams, reqEditors ...RequestEditorFn) (*DeleteConnectorConnectionResponse, error)
+
+	// GetConnectorConnectionWithResponse Read a connection
+	//
+	// An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnectorConnection` operationId).
+	GetConnectorConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorConnectionResponse, error)
+
 	// ListConnectorsWithResponse List or search connectors
 	//
 	// The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -19853,6 +20421,296 @@ func (r AuthorizePluginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AuthorizePluginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListConnectorConnectionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorConnectionPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectorConnectionsResponse) GetJSON200() *ConnectorConnectionPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListConnectorConnectionsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListConnectorConnectionsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListConnectorConnectionsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListConnectorConnectionsResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectorConnectionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectorConnectionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectorConnectionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectorConnectionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateConnectorConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ConnectorConnection
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateConnectorConnectionResponse) GetJSON201() *ConnectorConnection {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateConnectorConnectionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateConnectorConnectionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateConnectorConnectionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateConnectorConnectionResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateConnectorConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateConnectorConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateConnectorConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateConnectorConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteConnectorConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteConnectorConnectionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteConnectorConnectionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteConnectorConnectionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteConnectorConnectionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteConnectorConnectionResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteConnectorConnectionResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteConnectorConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteConnectorConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteConnectorConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteConnectorConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetConnectorConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorConnection
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConnectorConnectionResponse) GetJSON200() *ConnectorConnection {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetConnectorConnectionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetConnectorConnectionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetConnectorConnectionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetConnectorConnectionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetConnectorConnectionResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectorConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectorConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectorConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectorConnectionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27336,6 +28194,91 @@ func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, i
 	return ParseAuthorizePluginResponse(rsp)
 }
 
+// ListConnectorConnectionsWithResponse List connections
+//
+// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connections (the `ListConnectorConnections` operationId).
+func (c *ClientWithResponses) ListConnectorConnectionsWithResponse(ctx context.Context, params *ListConnectorConnectionsParams, reqEditors ...RequestEditorFn) (*ListConnectorConnectionsResponse, error) {
+	rsp, err := c.ListConnectorConnections(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectorConnectionsResponse(rsp)
+}
+
+// CreateConnectorConnectionWithBodyWithResponse Create a connection
+//
+// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
+func (c *ClientWithResponses) CreateConnectorConnectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectorConnectionResponse, error) {
+	rsp, err := c.CreateConnectorConnectionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConnectorConnectionResponse(rsp)
+}
+
+// CreateConnectorConnectionWithResponse Create a connection
+//
+// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
+func (c *ClientWithResponses) CreateConnectorConnectionWithResponse(ctx context.Context, body CreateConnectorConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorConnectionResponse, error) {
+	rsp, err := c.CreateConnectorConnection(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConnectorConnectionResponse(rsp)
+}
+
+// DeleteConnectorConnectionWithResponse Delete a connection
+//
+// Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnectorConnection` operationId).
+func (c *ClientWithResponses) DeleteConnectorConnectionWithResponse(ctx context.Context, id string, params *DeleteConnectorConnectionParams, reqEditors ...RequestEditorFn) (*DeleteConnectorConnectionResponse, error) {
+	rsp, err := c.DeleteConnectorConnection(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConnectorConnectionResponse(rsp)
+}
+
+// GetConnectorConnectionWithResponse Read a connection
+//
+// An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connections/{id} (the `GetConnectorConnection` operationId).
+func (c *ClientWithResponses) GetConnectorConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorConnectionResponse, error) {
+	rsp, err := c.GetConnectorConnection(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectorConnectionResponse(rsp)
+}
+
 // ListConnectorsWithResponse List or search connectors
 //
 // The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -30858,6 +31801,239 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListConnectorConnectionsResponse parses an HTTP response from a ListConnectorConnectionsWithResponse call
+func ParseListConnectorConnectionsResponse(rsp *http.Response) (*ListConnectorConnectionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectorConnectionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorConnectionPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateConnectorConnectionResponse parses an HTTP response from a CreateConnectorConnectionWithResponse call
+func ParseCreateConnectorConnectionResponse(rsp *http.Response) (*CreateConnectorConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateConnectorConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ConnectorConnection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteConnectorConnectionResponse parses an HTTP response from a DeleteConnectorConnectionWithResponse call
+func ParseDeleteConnectorConnectionResponse(rsp *http.Response) (*DeleteConnectorConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteConnectorConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConnectorConnectionResponse parses an HTTP response from a GetConnectorConnectionWithResponse call
+func ParseGetConnectorConnectionResponse(rsp *http.Response) (*GetConnectorConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectorConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorConnection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

@@ -1253,6 +1253,149 @@ components:
         - dcr
         - cimd
       type: string
+    ConnectorConnection:
+      description: One account at one connector, owned by the app or by one of its users. Credentials are never shown.
+      properties:
+        account_id:
+          description: The provider account, known once it is connected.
+          readOnly: true
+          type: string
+        auth_scheme:
+          description: How the connection authenticates, one of its connector's schemes.
+          type: string
+        connector_id:
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        definition_revision:
+          description: The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+          format: int64
+          readOnly: true
+          type: integer
+        expires_at:
+          description: When the current credential expires. Absent when there is none or it does not.
+          format: date-time
+          readOnly: true
+          type: string
+        granted_scopes:
+          items:
+            type: string
+          nullable: true
+          readOnly: true
+          type: array
+        id:
+          readOnly: true
+          type: string
+        inputs:
+          additionalProperties:
+            type: string
+          description: What the connection was created with, the connector's defaults filled in.
+          type: object
+        label:
+          type: string
+        metadata:
+          additionalProperties:
+            type: string
+          description: What the provider said about the account when it was connected, such as a workspace id. Empty until then.
+          readOnly: true
+          type: object
+        owner:
+          $ref: '#/components/schemas/ConnectorConnectionOwner'
+        revision:
+          description: Advances with every new credential, starting at 1.
+          format: int64
+          readOnly: true
+          type: integer
+        status:
+          $ref: '#/components/schemas/ConnectorConnectionStatus'
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+        - id
+        - connector_id
+        - definition_revision
+        - owner
+        - auth_scheme
+        - inputs
+        - metadata
+        - status
+        - granted_scopes
+        - revision
+        - created_at
+        - updated_at
+      type: object
+    ConnectorConnectionOwner:
+      additionalProperties: false
+      description: 'Whose a connection is: the app''s, which any of its agents may be bound to, or one user''s.'
+      properties:
+        type:
+          $ref: '#/components/schemas/ConnectorConnectionOwnerType'
+        user_id:
+          description: The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id.
+          type: string
+      required:
+        - type
+      type: object
+    ConnectorConnectionOwnerType:
+      description: app is the app's own account, user one user's.
+      enum:
+        - app
+        - user
+      type: string
+    ConnectorConnectionPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ConnectorConnection'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    ConnectorConnectionRequest:
+      additionalProperties: false
+      description: A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
+      properties:
+        auth_scheme:
+          description: One of the connector's schemes. Omitted is its only one; a connector with several needs it named.
+          type: string
+        connector_id:
+          description: A built-in, such as slack, or one of the app's own.
+          minLength: 1
+          type: string
+        inputs:
+          additionalProperties:
+            type: string
+          description: Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern.
+          type: object
+        label:
+          description: A name to tell connections apart by.
+          maxLength: 120
+          type: string
+        owner:
+          $ref: '#/components/schemas/ConnectorConnectionOwner'
+      required:
+        - connector_id
+        - owner
+      type: object
+    ConnectorConnectionStatus:
+      description: pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
+      enum:
+        - pending
+        - connected
+        - needs_reauthorization
+        - disconnected
+      type: string
     ConnectorDefinition:
       description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
       properties:
@@ -5982,6 +6125,180 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
       summary: Start a plugin login
+  /v1/agents/connections:
+    get:
+      description: |-
+        One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listConnectorConnections
+      parameters:
+        - description: app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
+          explode: false
+          in: query
+          name: owner_type
+          required: true
+          schema:
+            $ref: '#/components/schemas/ConnectorConnectionOwnerType'
+            description: app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
+        - description: Keeps one connector's.
+          explode: false
+          in: query
+          name: connector_id
+          schema:
+            description: Keeps one connector's.
+            type: string
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorConnectionPage'
+          description: A page of connections
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: List connections
+    post:
+      description: |-
+        A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: createConnectorConnection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectorConnectionRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorConnection'
+          description: The pending connection
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Create a connection
+  /v1/agents/connections/{id}:
+    delete:
+      description: |-
+        Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteConnectorConnection
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+        - description: Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists.
+          explode: false
+          in: query
+          name: force
+          schema:
+            description: Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists.
+            type: boolean
+      responses:
+        "204":
+          description: The connection is deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Delete a connection
+    get:
+      description: |-
+        An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: getConnectorConnection
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorConnection'
+          description: The connection
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Read a connection
   /v1/agents/connectors:
     get:
       description: |-
