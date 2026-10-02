@@ -142,9 +142,18 @@ public sealed class Responses
     /// An incognito session records nothing, so the turn it hands back has no id: there is
     /// nothing to read back afterwards, which is what incognito means.
     /// </remarks>
-    public async Task<Response> CreateAsync(string text, IReadOnlyList<ImageSource>? images = null, CancellationToken cancellationToken = default)
+    /// <param name="text">What to answer.</param>
+    /// <param name="images">Images to show the agent with it.</param>
+    /// <param name="commandId">The durable command this answers, reused on a retry; null sends none.</param>
+    /// <param name="cancellationToken">Stops waiting.</param>
+    public async Task<Response> CreateAsync(string text, IReadOnlyList<ImageSource>? images = null, string? commandId = null, CancellationToken cancellationToken = default)
     {
-        var request = new CreateResponseRequest { Text = text, Images = images is { Count: > 0 } ? [.. images] : null };
+        var request = new CreateResponseRequest
+        {
+            Text = text,
+            Images = images is { Count: > 0 } ? [.. images] : null,
+            CommandId = VisionAgentsClient.Blank(commandId),
+        };
         var created = await _client.PostAsync<AgentResponse>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses", request, cancellationToken).ConfigureAwait(false);
         return new Response(_client, created);

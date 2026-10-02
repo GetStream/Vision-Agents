@@ -246,7 +246,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		spec.ContextTruncated = truncated
 		displays := map[string]persistent.ToolDisplay{}
 		for _, tool := range spec.Tools {
-			displays[tool.Name] = persistent.ToolDisplay{Title: tool.DisplayTitle, Client: tool.Client}
+			display := persistent.ToolDisplay{Title: tool.DisplayTitle, Client: tool.Client}
+			if approval := tool.Approval; approval != nil {
+				display.Approval = &persistent.ToolApproval{
+					Title: approval.Title, Message: approval.Message, ReasonArgument: approval.ReasonArgument,
+					AllowTitle: approval.AllowTitle, DeclineTitle: approval.DeclineTitle,
+				}
+			}
+			displays[tool.Name] = display
 		}
 		conv.DescribeTools(displays)
 		// A fork opens an empty channel of its own and then reads the parent's, so the model

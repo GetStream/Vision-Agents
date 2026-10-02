@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Folder;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\VisionAgents\Generated\AgentDispatch;
+use GetStream\VisionAgents\Generated\DispatchSetting;
 use GetStream\VisionAgents\Generated\SessionVideo;
 
 /**
@@ -41,6 +43,7 @@ final readonly class Declaration
         public array $keyterms = [],
         public array $tags = [],
         public ?SessionVideo $video = null,
+        public ?AgentDispatch $dispatch = null,
     ) {
     }
 
@@ -70,6 +73,8 @@ final readonly class Declaration
                 $values['tags'] = self::tags($value);
             } elseif ($key === 'video') {
                 $values['video'] = self::video($value);
+            } elseif ($key === 'dispatch') {
+                $values['dispatch'] = self::dispatch($value);
             } else {
                 throw new ConfigurationException("\"{$key}\" is not something agent.yaml declares");
             }
@@ -92,6 +97,7 @@ final readonly class Declaration
             keyterms: self::pickList($values, 'keyterms'),
             tags: self::pickTags($values),
             video: ($values['video'] ?? null) instanceof SessionVideo ? $values['video'] : null,
+            dispatch: ($values['dispatch'] ?? null) instanceof AgentDispatch ? $values['dispatch'] : null,
         );
     }
 
@@ -166,6 +172,28 @@ final readonly class Declaration
             throw new ConfigurationException('video.max_frames must be an integer from 1 to 8');
         }
         return new SessionVideo($source === '' ? null : $source, $frames);
+    }
+
+    /**
+     * Each setting is `enabled` or `disabled`, passed through for the router to judge.
+     */
+    private static function dispatch(mixed $value): ?AgentDispatch
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_array($value) || (array_is_list($value) && $value !== [])) {
+            throw new ConfigurationException('dispatch is a mapping');
+        }
+        $settings = ['incoming_call' => null, 'text' => null];
+        foreach ($value as $key => $each) {
+            if (!array_key_exists($key, $settings)) {
+                throw new ConfigurationException("\"dispatch.{$key}\" is not something agent.yaml declares");
+            }
+            $setting = self::scalar("dispatch.{$key}", $each);
+            $settings[$key] = $setting === '' ? null : (DispatchSetting::tryFrom($setting) ?? $setting);
+        }
+        return new AgentDispatch($settings['incoming_call'], $settings['text']);
     }
 
     /**

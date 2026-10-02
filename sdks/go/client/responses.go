@@ -175,7 +175,8 @@ type Responses struct {
 	kept bool
 }
 
-// Input is something shown to the agent along with what is asked: an Image or a Clip.
+// Input is something sent along with what is asked: an Image or a Clip to show the agent, or
+// the Command it answers.
 type Input interface {
 	attachTo(request *acceleration.CreateResponseRequest)
 }
@@ -212,6 +213,16 @@ func (v Clip) attachTo(request *acceleration.CreateResponseRequest) {
 		source.MaxFrames = &v.MaxFrames
 	}
 	request.Videos = appended(request.Videos, source)
+}
+
+// Command is the durable command a dispatch worker was handed, passed back with the text it
+// was sent as so the model's answer lands on it. See stream.InboundMessage.CommandID.
+type Command string
+
+func (c Command) attachTo(request *acceleration.CreateResponseRequest) {
+	if c != "" {
+		request.CommandId = pointer(string(c))
+	}
 }
 
 // ClipFile is a video on disk, sent inline so the router needs no way to reach it.
@@ -252,7 +263,7 @@ func (r *Responses) Create(ctx context.Context, text string, inputs ...Input) (*
 		input.attachTo(&request)
 	}
 	// A command carries text only, so a question showing the agent something goes without one.
-	if r.kept && request.Images == nil && request.Videos == nil {
+	if r.kept && request.CommandId == nil && request.Images == nil && request.Videos == nil {
 		id := make([]byte, 16)
 		if _, err := rand.Read(id); err != nil {
 			return nil, err

@@ -96,16 +96,36 @@ internal sealed class Backend
         }
     }
 
+    private Backend(Backend from)
+    {
+        Url = from.Url;
+        CustomerId = from.CustomerId;
+        ApiKey = from.ApiKey;
+        ApiSecret = from.ApiSecret;
+        Token = from.Token;
+        UserId = from.UserId;
+        Authenticate = from.Authenticate;
+    }
+
     public string Url { get; }
     public string CustomerId { get; }
     public string ApiKey { get; }
     public string ApiSecret { get; }
     public string Token { get; }
-    public string UserId { get; }
+    public string UserId { get; private init; }
     public bool Authenticate { get; }
+
+    /// <summary>
+    /// The end user this server-side credential speaks for. Unlike <see cref="UserId"/> it
+    /// keeps the server's token, so what it writes is answered by the model rather than
+    /// handed to a dispatch worker.
+    /// </summary>
+    public string ActingFor { get; private init; } = "";
 
     /// <summary>Whether this speaks for a process the customer runs rather than a device.</summary>
     public bool ServerSide => ApiSecret != "" || (ApiKey == "" && CustomerId != "");
+
+    public Backend Acting(string userId) => new(this) { UserId = "", ActingFor = userId };
 
     public Backend As(string userId, string token) => new(new VisionAgentsOptions
     {
@@ -124,6 +144,10 @@ internal sealed class Backend
     /// </summary>
     public IReadOnlyList<KeyValuePair<string, string>> Headers()
     {
+        if (ActingFor != "")
+        {
+            return [.. new Backend(this).Headers(), new("X-Stream-User-Id", ActingFor)];
+        }
         if (ApiKey == "")
         {
             return [new("X-Customer-Id", CustomerId)];

@@ -194,6 +194,29 @@ func (s *DisplaySuite) TestAVisibleToolsCitationsReachChatAndAHiddenOnesDoNot() 
 	s.NotContains(raw, "internal")
 }
 
+func (s *DisplaySuite) TestAnApprovalReachesTheCommandsReply() {
+	c := s.open("athena")
+	c.DescribeTools(map[string]ToolDisplay{"athena_device_location": {Title: "Checking your location", Client: true,
+		Approval: &ToolApproval{Title: "Share your location?", ReasonArgument: "purpose"}}})
+	_, err := c.BeginCommand("command-a", "What's the weather here?", "ios-1")
+	s.Require().NoError(err)
+	c.BindTurn("command-a", "turn-a")
+	c.Observe(agent.Responding{TurnID: "turn-a"})
+	c.Observe(agent.ToolStarted{ID: "toolu_01A", TurnID: "turn-a", Tool: "athena_device_location",
+		Arguments: `{"purpose":"to check the weather"}`, StartedAt: time.Now().UTC()})
+	part := current(c).Parts[0]
+	s.Equal("awaiting_approval", part.Status)
+	s.Equal("employee", part.TargetUserID)
+	s.Equal("ios-1", part.TargetClientID)
+	s.Equal("to check the weather", part.Approval.Reason)
+
+	c.Observe(agent.ToolApprovalDecided{ID: "toolu_01A", TurnID: "turn-other", Allowed: true})
+	s.Equal("awaiting_approval", current(c).Parts[0].Status, "an answer for another turn changes nothing")
+	c.Observe(agent.ToolApprovalDecided{ID: "toolu_01A", TurnID: "turn-a", Allowed: true})
+	s.Equal("awaiting_client", current(c).Parts[0].Status)
+	s.Equal("allowed", current(c).Parts[0].Approval.Decision)
+}
+
 func (s *DisplaySuite) TestRevisionsIgnoreDuplicateLateAndCrossCommandEvents() {
 	c := s.open("athena")
 	_, err := c.BeginCommand("command-a", "First question", "")

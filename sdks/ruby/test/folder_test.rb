@@ -104,7 +104,8 @@ class TestFolder < Minitest::Test
   end
 
   def test_a_declaration_key_nobody_knows_is_refused
-    ["name: jean\nlmm: openai/gpt-5.6\n", "video:\n  max_frames: 9\n", "keyterms: Vision Agents\n"].each do |yaml|
+    ["name: jean\nlmm: openai/gpt-5.6\n", "video:\n  max_frames: 9\n", "keyterms: Vision Agents\n",
+     "dispatch:\n  sms: enabled\n"].each do |yaml|
       write("agent.yaml", yaml)
 
       assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }

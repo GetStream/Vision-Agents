@@ -36,8 +36,10 @@ module GetStream
       # @param token [String] a token minted for user_id to hold, in place of the secret.
       # @param user_id [String] the end user this acts for, if any.
       # @param authenticate [Boolean] whether the router sits behind Stream's proxy.
+      # @param acting_for [String] the end user a server-side credential speaks for. Unlike
+      #   user_id it keeps this backend's own credential; see #acting_for.
       def initialize(url: nil, customer_id: nil, api_key: nil, api_secret: nil, token: nil,
-                     user_id: nil, authenticate: nil, user: nil)
+                     user_id: nil, authenticate: nil, user: nil, acting_for: nil)
         @url = present(url) || present(ENV.fetch(URL_ENV, nil)) || DEFAULT_URL
         @url = @url.chomp("/")
         @customer_id = customer_id || ENV.fetch(CUSTOMER_ENV, "")
@@ -51,6 +53,7 @@ module GetStream
         @authenticate = authenticate.nil? ? flag(ENV.fetch(AUTHENTICATE_ENV, nil)) : authenticate
         @user = user || {}
         @user_id = (user_id || @user["id"] || @user[:id]).to_s
+        @acting_for = acting_for.to_s
 
         validate
       end
@@ -79,28 +82,23 @@ module GetStream
                     token: token, user_id: named["id"], authenticate: @authenticate, user: named)
       end
 
+      # This backend's own credential, speaking for one end user.
+      #
+      # Unlike #as_user no token is minted for the user, in any mode: the request is still the
+      # server's, so what it writes is answered by the model rather than handed to a dispatch
+      # worker. The user is named in X-Stream-User-Id.
+      def acting_for(user_id)
+        Backend.new(url: @url, customer_id: @customer_id, api_key: @api_key, api_secret: @api_secret,
+                    token: @token, user_id: @user_id, authenticate: @authenticate, user: @user,
+                    acting_for: user_id)
+      end
+
       # What every request and socket handshake carries. Minted per read, so a client left
       # idle longer than a token lasts does not wake up holding an expired one.
       def headers
-        return { CUSTOMER_HEADER => @customer_id } if @api_key.empty?
-
-        if @authenticate
-          # jwt whoever the token is for: the proxy works out the caller from the token and
-          # refuses a request claiming to be the server.
-          return { "api_key" => @api_key, "stream-auth-type" => "jwt",
-                   "Authorization" => "Bearer #{proxy_token}" }
-        end
-
-        headers = { "X-Api-Key" => @api_key }
-        if @api_secret.empty?
-          headers["Authorization"] = "Bearer #{@token}"
-          headers["Stream-Auth-Type"] = "jwt"
-        else
-          headers["Authorization"] = "Bearer #{Backend.sign({ server: true }, @api_secret)}"
-          headers["Stream-Auth-Type"] = "server"
-          headers["X-Stream-User-Id"] = @user_id unless @user_id.empty?
-        end
-        headers
+        said = credentials
+        said["X-Stream-User-Id"] = @acting_for unless @acting_for.empty?
+        said
       end
 
       # The WebSocket URL for a path on the router. Credentials travel as headers.
@@ -126,6 +124,28 @@ module GetStream
 
       private
 
+      def credentials
+        return { CUSTOMER_HEADER => @customer_id } if @api_key.empty?
+
+        if @authenticate
+          # jwt whoever the token is for: the proxy works out the caller from the token and
+          # refuses a request claiming to be the server.
+          return { "api_key" => @api_key, "stream-auth-type" => "jwt",
+                   "Authorization" => "Bearer #{proxy_token}" }
+        end
+
+        headers = { "X-Api-Key" => @api_key }
+        if @api_secret.empty?
+          headers["Authorization"] = "Bearer #{@token}"
+          headers["Stream-Auth-Type"] = "jwt"
+        else
+          headers["Authorization"] = "Bearer #{Backend.sign({ server: true }, @api_secret)}"
+          headers["Stream-Auth-Type"] = "server"
+          headers["X-Stream-User-Id"] = @user_id unless @user_id.empty?
+        end
+        headers
+      end
+
       def validate
         if @authenticate && @api_key.empty?
           raise ConfigurationError,
@@ -142,10 +162,10 @@ module GetStream
       end
 
       # The token the proxy is given, which names a user where there is one: the proxy has no
-      # header to read a backend's choice of user from.
+      # header to read a backend's choice of user from. Acting for a user keeps the server's.
       def proxy_token
         return @token unless @token.empty?
-        return Backend.sign({ user_id: @user_id }, @api_secret) unless @user_id.empty?
+        return Backend.sign({ user_id: @user_id }, @api_secret) unless @user_id.empty? || !@acting_for.empty?
 
         Backend.sign({ server: true }, @api_secret)
       end

@@ -119,6 +119,9 @@ type Session struct {
 
 	// Serializes persistent command acceptance/start with command-targeted interruption.
 	commandMu sync.Mutex
+	// awaiting are the commands accepted for a dispatch worker and not yet answered, which
+	// the server may still have the model answer. Guarded by commandMu.
+	awaiting map[string]struct{}
 	mu        sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
@@ -425,7 +428,12 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string)
 	}
 	s.broadcast(receipt)
 	if receipt.Duplicate {
-		return receipt, "", nil
+		// A command handed to a dispatch worker was accepted without being answered, so
+		// the server asking about it again is the one time a repeat reaches the model.
+		if _, waiting := s.awaiting[id]; !waiting {
+			return receipt, "", nil
+		}
+		delete(s.awaiting, id)
 	}
 	turnID, err := s.voiceAgent.RespondTo(ctx, text, nil)
 	if err != nil {
@@ -437,6 +445,33 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string)
 		return receipt, "", nil
 	}
 	return receipt, s.openTurn(turnID, text), nil
+}
+
+// AwaitCommand accepts a durable submission the way RespondCommand does without answering
+// it. It is for an agent that leaves text to dispatch: the end user's message is recorded
+// and shown as being answered, and the model answers once the server calls RespondCommand
+// with the same id and text.
+func (s *Session) AwaitCommand(ctx context.Context, id, text, clientID string) (persistent.CommandReceipt, error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if s.persisted == nil {
+		return persistent.CommandReceipt{}, errors.New("command IDs require a persistent text conversation")
+	}
+	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
+		return persistent.CommandReceipt{}, err
+	}
+	receipt, err := s.persisted.BeginCommand(id, text, clientID)
+	if err != nil {
+		return receipt, err
+	}
+	s.broadcast(receipt)
+	if !receipt.Duplicate {
+		if s.awaiting == nil {
+			s.awaiting = map[string]struct{}{}
+		}
+		s.awaiting[id] = struct{}{}
+	}
+	return receipt, nil
 }
 
 // Report publishes a failure the watcher should see, without ending the session.
@@ -568,6 +603,7 @@ func (s *Session) InterruptCommand(id string) (persistent.CommandReceipt, error)
 	if err != nil {
 		return persistent.CommandReceipt{}, err
 	}
+	delete(s.awaiting, id)
 	switch receipt.State {
 	case "completed", "cancelled", "interrupted", "failed":
 		return s.stopped(s.persisted.CancelCommand(id))
@@ -735,6 +771,21 @@ func (s *Session) ResolveCommandTool(id, commandID, turnID string, parts []llm.C
 		return false
 	}
 	return s.tools.Resolve(id, turnID, parts, failure)
+}
+
+// DecideCommandTool records a person's answer to a call of a durable command that waited
+// for their approval, reporting whether the call's command and turn match. The call still
+// needs its result.
+func (s *Session) DecideCommandTool(id, commandID, turnID string, allowed bool, summary string) bool {
+	if s.persisted == nil || id == "" || commandID == "" || turnID == "" {
+		return false
+	}
+	expected, bound := s.persisted.CommandForTurn(turnID)
+	if !bound || expected != commandID {
+		return false
+	}
+	s.persisted.Observe(agent.ToolApprovalDecided{ID: id, TurnID: turnID, Allowed: allowed, Summary: summary})
+	return true
 }
 
 // Close leaves the call and releases everything the session opened. It is safe to call

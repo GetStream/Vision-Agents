@@ -3,6 +3,7 @@ import type { BackendOptions } from "./backend.js";
 import { Client } from "./client.js";
 import { ConfigurationError, HostingRefusedError } from "./errors.js";
 import { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbound.js";
+import { Responses, type AgentResponse } from "./responses.js";
 import type { Session } from "./session.js";
 import { Socket, number as numberOf, text, type Frame } from "./socket.js";
 import type { Tools } from "./tools.js";
@@ -20,7 +21,7 @@ export interface DispatchOptions {
   /** The router to wait on. */
   client?: Client | BackendOptions;
   /**
-   * How many calls to hold at once.
+   * How many calls and messages to hold at once.
    *
    * The router passes over a worker that is full rather than queueing behind it, so this is
    * a promise about what this process can actually answer.
@@ -33,7 +34,10 @@ export interface DispatchOptions {
 /** What to do with an arriving call. */
 export type CallHandler = (call: InboundCall) => void | Promise<void>;
 
-/** What to do with a message written to an agent that is not running. */
+/**
+ * What to do with a message written to an agent that is not running, or to a running session
+ * whose agent leaves text to dispatch.
+ */
 export type MessageHandler = (message: InboundMessage) => void | Promise<void>;
 
 export interface HostOptions {
@@ -84,6 +88,12 @@ export class Dispatch {
   private readonly reportEveryMs: number;
   private readonly running = new Set<Promise<void>>();
   /**
+   * The calls and messages alone, which is what the router counts against this worker's
+   * capacity. A hosted tool call is not one of them: the router tracks those by the answer
+   * it is waiting for.
+   */
+  private handling = 0;
+  /**
    * Which session is answering which channel.
    *
    * A channel is one conversation, so the session that answered the last message on it is
@@ -117,14 +127,18 @@ export class Dispatch {
    * Registers what to do with an arriving call.
    *
    * The handler runs on its own, so one long call does not stop the next from being
-   * answered. What it throws is reported to the router as a call nobody took.
+   * answered. What it throws is reported to the router with the call's `done`.
    */
   onCall(handler: CallHandler): this {
     this.onCallHandler = handler;
     return this;
   }
 
-  /** Registers what to do with a message written to an agent that is not running. */
+  /**
+   * Registers what to do with a message written to an agent that is not running, or to a
+   * running session whose agent leaves text to dispatch. That one has a `sessionId`, and is
+   * answered with `answer`.
+   */
   onMessage(handler: MessageHandler): this {
     this.onMessageHandler = handler;
     return this;
@@ -155,6 +169,11 @@ export class Dispatch {
     message: InboundMessage,
     create: () => Agent | Promise<Agent>,
   ): Promise<Session> {
+    if (message.sessionId) {
+      throw new ConfigurationError(
+        "a session is already holding this conversation; answer it there with answer",
+      );
+    }
     const open = this.answering.get(message.channelId);
     if (open?.live) {
       return open;
@@ -164,6 +183,25 @@ export class Dispatch {
     const session = await agent.reply(message);
     this.answering.set(message.channelId, session);
     return session;
+  }
+
+  /**
+   * Has the model answer a message written to a running session whose agent leaves text to
+   * dispatch, which is what the person who wrote it is waiting on.
+   *
+   * The response is created with this worker's own credential, acting for whoever wrote the
+   * message, so it reaches a conversation that belongs to them and goes to the model rather
+   * than back to a worker. It carries the message's command, so the answer lands on it.
+   */
+  async answer(message: InboundMessage): Promise<AgentResponse> {
+    if (!message.sessionId) {
+      throw new ConfigurationError("no session is holding this message; open one with sessionFor");
+    }
+    const acting = new Client(this.client.backend.actingFor(message.userId));
+    return new Responses(acting, message.sessionId).create(
+      message.text,
+      message.commandId ? { commandId: message.commandId } : {},
+    );
   }
 
   /**
@@ -181,9 +219,7 @@ export class Dispatch {
       );
     }
 
-    const url = await this.client.backend.socketURL("/v1/dispatch", {
-      capacity: String(this.capacity),
-    });
+    const url = await this.client.backend.socketURL("/v1/dispatch", this.waiting());
     const socket = await Socket.open(this.client.backend, url);
     this.socket = socket;
 
@@ -205,10 +241,10 @@ export class Dispatch {
 
         switch (message.type) {
           case "call":
-            this.answer(callOf(message));
+            this.pickUp(text(message, "work_id"), callOf(message));
             break;
           case "message":
-            this.write(messageOf(message));
+            this.write(text(message, "work_id"), messageOf(message));
             break;
           case "ready":
             this.workerId = typeof message["worker_id"] === "string" ? message["worker_id"] : "";
@@ -245,49 +281,79 @@ export class Dispatch {
   }
 
   /**
+   * What this worker says about itself on the way in: how much it can hold, how much it is
+   * already holding, and which kinds of work it answers.
+   *
+   * On the handshake rather than in a frame because the router may hand this worker
+   * something before it has read anything. `handles` is said even when it is nothing: a
+   * worker that only hosts tools answers neither, and one handed a call it has no handler for
+   * leaves a caller listening to a phone.
+   */
+  private waiting(): Record<string, string> {
+    const kinds = [
+      ...(this.onCallHandler ? ["call"] : []),
+      ...(this.onMessageHandler ? ["message"] : []),
+    ];
+    return {
+      capacity: String(this.capacity),
+      active: String(this.handling),
+      handles: kinds.join(","),
+    };
+  }
+
+  /**
    * Starts handling one call.
    *
    * Not awaited, because reading the socket is also what delivers the next call: answering
    * one caller in line would leave the next listening to a ringing phone.
    */
-  private answer(call: InboundCall): void {
+  private pickUp(workId: string, call: InboundCall): void {
     const handler = this.onCallHandler;
     if (!handler) {
+      this.done(workId, "this worker answers no calls");
       return;
     }
+    this.handle(workId, () => handler(call));
+  }
 
+  /** Starts handling one message, on its own for the same reason a call is. */
+  private write(workId: string, message: InboundMessage): void {
+    const handler = this.onMessageHandler;
+    if (!handler) {
+      this.done(workId, "this worker answers no messages");
+      return;
+    }
+    this.handle(workId, () => handler(message));
+  }
+
+  /** Runs one call or message, and tells the router when it is over however it went. */
+  private handle(workId: string, run: () => void | Promise<void>): void {
+    this.handling += 1;
     this.track(
       (async () => {
         try {
-          await handler(call);
+          await run();
         } catch (cause) {
-          // The router is told, so a call nobody answered shows up there rather than only
-          // in this process's log.
-          this.tell({
-            type: "rejected",
-            call_id: call.callId,
-            reason: cause instanceof Error ? cause.message : String(cause),
-          });
+          this.done(workId, cause instanceof Error ? cause.message : String(cause));
           return;
+        } finally {
+          this.handling -= 1;
         }
-        this.tell({ type: "accepted", call_id: call.callId });
+        this.done(workId);
       })(),
     );
   }
 
   /**
-   * Starts handling one message, on its own for the same reason a call is.
+   * Tells the router one piece of work is over, which is what gives this worker its room for
+   * the next back.
    *
-   * Nothing is reported back to the router. Accepting and rejecting are about a caller
-   * waiting on a line, and there is no line here: a message nobody answered is a log line,
-   * not a silence somebody is sitting in.
+   * What went wrong goes with it, because the router is where somebody is looking when a
+   * caller says nobody picked up. It is said even for work this worker had no handler for,
+   * because the room it took is held until something says it is free.
    */
-  private write(message: InboundMessage): void {
-    const handler = this.onMessageHandler;
-    if (!handler) {
-      return;
-    }
-    this.track(Promise.resolve(handler(message)).then(() => undefined));
+  private done(workId: string, error?: string): void {
+    this.tell({ type: "done", work_id: workId, ...(error === undefined ? {} : { error }) });
   }
 
   /** Tells the router what this worker runs, every time it says it is listening. */

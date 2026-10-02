@@ -363,6 +363,7 @@ module GetStream
           plugins: settings["plugins"]&.then { |p| p unless p.empty? },
           keyterms: settings["keyterms"]&.then { |k| k unless k.empty? },
           video: video && { source: video["source"], max_frames: video["max_frames"] }.compact,
+          dispatch: settings["dispatch"],
           subagent: presence(@pipeline[:subagent].to_s) || presence(settings["subagent"]),
           sandbox: @sandbox&.provider || presence(settings["sandbox"]),
           tags: (tags unless tags.empty?)

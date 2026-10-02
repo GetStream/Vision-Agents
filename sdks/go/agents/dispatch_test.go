@@ -24,9 +24,12 @@ import (
 type worked struct {
 	*httptest.Server
 
-	mu       sync.Mutex
-	opened   []acceleration.CreateSessionRequest
-	asked    []string
+	mu     sync.Mutex
+	opened []acceleration.CreateSessionRequest
+	asked  []string
+	// answered is each command answered on a session someone else holds, as who it was
+	// answered for and the command, which is what a worker handed one has to send back.
+	answered []string
 	sessions map[string]chan stream.Frame
 	// sockets are the open session sockets, by session id, which answers are written to.
 	sockets map[string]*socket
@@ -65,10 +68,15 @@ func newWorked(t *testing.T, hand func(*websocket.Conn)) *worked {
 
 		router.mu.Lock()
 		router.asked = append(router.asked, r.PathValue("id")+": "+request.Text)
+		if request.CommandId != nil {
+			router.answered = append(router.answered, r.Header.Get(stream.UserHeader)+": "+*request.CommandId)
+		}
 		router.mu.Unlock()
 		// The answer arrives on the session's socket after the question is taken, as it does
-		// from the backend.
-		go router.respond(t, r.PathValue("id"), request.Text)
+		// from the backend. A command on a session somebody else holds is answered there.
+		if request.CommandId == nil {
+			go router.respond(t, r.PathValue("id"), request.Text)
+		}
 
 		reply(w, http.StatusAccepted, acceleration.AgentResponse{
 			Id: "response-1", SessionId: r.PathValue("id"), Said: &request.Text,
@@ -521,6 +529,47 @@ func TestAMessageWithNoChannelIsRefusedRatherThanAnsweredSomewhere(t *testing.T)
 	})
 	if err == nil {
 		t.Fatal("a message with no channel was accepted")
+	}
+}
+
+func TestAMessageWrittenToARunningSessionIsAnsweredThereForWhoeverWroteIt(t *testing.T) {
+	// The session is the person's own, and only a request acting for them reaches it. The
+	// command is what their screen is showing as being answered, so it is what the answer
+	// has to land on.
+	router := newWorked(t, nil)
+	dispatch, built := answering(t, router, nil)
+
+	err := dispatch.Answer(t.Context(), InboundMessage{
+		AgentID: "support-42", SessionID: "session-9", CommandID: "command-1", Text: "Where is my order?", UserID: "sam",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if !slices.Equal(router.asked, []string{"session-9: Where is my order?"}) {
+		t.Errorf("the router was asked %v", router.asked)
+	}
+	if !slices.Equal(router.answered, []string{"sam: command-1"}) {
+		t.Errorf("the command answered was %v, want command-1 for sam", router.answered)
+	}
+	if built.Load() != 0 || len(router.opened) != 0 {
+		t.Error("an agent was started for a conversation a session is already holding")
+	}
+}
+
+func TestAMessageARunningSessionHoldsIsNotGivenASecondAgent(t *testing.T) {
+	router := newWorked(t, nil)
+	dispatch, _ := answering(t, router, nil)
+
+	_, err := dispatch.Conversation(t.Context(), InboundMessage{ChannelID: "support-42", SessionID: "session-9", Text: "hello"},
+		func(context.Context, InboundMessage) (*Agent, error) {
+			t.Fatal("an agent was built for a conversation a session is already holding")
+			return nil, nil
+		})
+	if err == nil {
+		t.Fatal("a message a session is holding was given a conversation of its own")
 	}
 }
 

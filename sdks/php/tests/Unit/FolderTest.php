@@ -65,6 +65,16 @@ final class FolderTest extends TestCase
         yield 'misspelt key' => ["name: jean\nlmm: openai/gpt-5.6\n"];
         yield 'too many frames' => ["video:\n  max_frames: 9\n"];
         yield 'keyterms not a list' => ["keyterms: Vision Agents\n"];
+        yield 'unknown dispatch key' => ["dispatch:\n  outgoing_call: enabled\n"];
+    }
+
+    public function testReadsDispatchAsWritten(): void
+    {
+        $this->write('agent.yaml', "dispatch:\n  incoming_call: enabled\n  text: disabled\n");
+
+        $dispatch = Folder::load($this->dir)->settings->dispatch;
+
+        self::assertSame(['incoming_call' => 'enabled', 'text' => 'disabled'], $dispatch?->toArray());
     }
 
     #[DataProvider('refused')]

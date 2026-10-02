@@ -30,6 +30,7 @@ type AgentConfigPatch struct {
 	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
 	Harness            *Harness           `json:"harness,omitempty"`
+	Dispatch           *AgentDispatch     `json:"dispatch,omitempty"`
 	Tags               *map[string]string `json:"tags,omitempty"`
 	Video              *SessionVideo      `json:"video,omitempty"`
 }
@@ -53,6 +54,11 @@ func (Sandbox) Schema(registry huma.Registry) *huma.Schema {
 func (Harness) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "Harness", "Which harness the agent's sessions run. Set on the "+
 		"agent, never on a session.", string(Default))
+}
+
+func (DispatchSetting) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "DispatchSetting", "Whether this kind of work is left to the "+
+		"customer's own dispatch worker.", string(Enabled), string(Disabled))
 }
 
 type patchAgentConfigRequest struct {
@@ -105,6 +111,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		Speed:        patch.Speed,
 		Guardrail:    patch.Guardrail,
 		VisibleTools: patch.VisibleTools,
+		Dispatch:     patch.Dispatch,
 	}); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
@@ -137,6 +144,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if patch.Harness != nil {
 		config.Harness, _ = harnessOf(patch.Harness)
 	}
+	applyDispatch(&config, patch.Dispatch)
 	config.Tags = override(config.Tags, patch.Tags)
 	if patch.Video != nil {
 		config.VideoSource = override(config.VideoSource, patch.Video.Source)

@@ -153,6 +153,8 @@ components:
         created_at:
           format: date-time
           type: string
+        dispatch:
+          $ref: '#/components/schemas/AgentDispatch'
         greeting:
           type: string
         guardrail:
@@ -230,6 +232,8 @@ components:
       additionalProperties: false
       description: What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
       properties:
+        dispatch:
+          $ref: '#/components/schemas/AgentDispatch'
         greeting:
           type: string
         guardrail:
@@ -295,6 +299,8 @@ components:
       type: object
     AgentConfigRequest:
       properties:
+        dispatch:
+          $ref: '#/components/schemas/AgentDispatch'
         greeting:
           type: string
         guardrail:
@@ -382,6 +388,19 @@ components:
           type: string
       required:
         - name
+      type: object
+    AgentDispatch:
+      description: |
+        What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+      properties:
+        incoming_call:
+          $ref: '#/components/schemas/DispatchSetting'
+          description: |
+            A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config.
+        text:
+          $ref: '#/components/schemas/DispatchSetting'
+          description: |
+            An end user's message is handed to a dispatch worker, with the session it was written to, instead of being answered by the model. The worker answers by creating a response on that session with a server-side credential, passing the message's command_id when it has one; that is the only text the model answers.
       type: object
     AgentLog:
       properties:
@@ -1515,6 +1534,12 @@ components:
         - delegate
         - settle
         - fail
+      type: string
+    DispatchSetting:
+      description: Whether this kind of work is left to the customer's own dispatch worker.
+      enum:
+        - enabled
+        - disabled
       type: string
     Endpointing:
       description: |
@@ -3215,6 +3240,8 @@ components:
       description: |
         One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
       properties:
+        approval:
+          $ref: '#/components/schemas/SessionToolApproval'
         description:
           description: |
             What the model is told the tool does, which is the whole of how it decides when to reach for one.
@@ -3243,6 +3270,34 @@ components:
       required:
         - name
         - description
+      type: object
+    SessionToolApproval:
+      description: |
+        Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+      properties:
+        allow_title:
+          description: The label of the button that allows the call.
+          maxLength: 40
+          type: string
+        decline_title:
+          description: The label of the button that declines it.
+          maxLength: 40
+          type: string
+        message:
+          description: What allowing it shares or does, such as "Only your city is shared."
+          maxLength: 240
+          type: string
+        reason_argument:
+          description: |
+            The argument, a string, in which the model says why it wants this call. Its text (at most 160 characters) is shown as the approval's reason, so it is visible to every channel member even for a server tool.
+          maxLength: 64
+          type: string
+        title:
+          description: The question, such as "Share your location?".
+          maxLength: 80
+          type: string
+      required:
+        - title
       type: object
     SessionVideo:
       properties:
@@ -3888,6 +3943,10 @@ components:
         diarize:
           description: Label each stretch of speech with who said it.
           type: boolean
+        eager_end_of_turn:
+          description: |
+            Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency.
+          type: boolean
         endpointing:
           $ref: '#/components/schemas/Endpointing'
         entities:
@@ -3976,6 +4035,8 @@ components:
     SyncAgentRequest:
       description: An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
       properties:
+        dispatch:
+          $ref: '#/components/schemas/AgentDispatch'
         greeting:
           type: string
         guardrail:
@@ -4282,6 +4343,33 @@ components:
       required:
         - turn_id
         - started_at
+      type: object
+    ToolApprovalCommand:
+      description: |
+        A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result.
+      properties:
+        allowed:
+          type: boolean
+        command_id:
+          type: string
+        summary:
+          description: Shown on the declined call, such as "Location not shared".
+          maxLength: 120
+          type: string
+        tool_call_id:
+          type: string
+        turn_id:
+          type: string
+        type:
+          enum:
+            - tool_approval
+          type: string
+      required:
+        - type
+        - tool_call_id
+        - command_id
+        - turn_id
+        - allowed
       type: object
     ToolResultCommand:
       properties:
@@ -6511,6 +6599,7 @@ paths:
         Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
         `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers should leave this disabled. Persistent text command recovery is unchanged.
         The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
+        A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`.
         `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
         `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
       operationId: watchSession
@@ -7769,11 +7858,13 @@ paths:
     get:
       description: |
         A WebSocket, which OpenAPI cannot describe past the upgrade. The worker connects here and waits, rather than being called, because the agent runs in the customer's own process and this service cannot reach into it.
-        The socket opens with a `ready` frame naming the worker, and a `call` frame arrives for each call handed to it. The worker sends `load` so the pool can rank it, `accepted` or `rejected` per call, and `ping` to time the round trip itself.
+        The socket opens with a `ready` frame naming the worker, and a `call` or `message` frame arrives for each piece of work handed to it, each carrying the `work_id` that names it. The worker answers `done` with that `work_id`, and an `error` when it could not be done, which is what frees its room for the next piece. It also sends `load` so an operator can see what each worker is under, and `ping` to time the round trip itself.
+        Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so a worker that never reports `done` is one the router cannot tell is busy.
+        A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`, and a `command_id` when it was sent as a durable command. The model has not answered it: the worker does, by creating a response on that session with a server-side credential and the same `command_id` and text.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type has no query parameter, so a browser cannot open one at all.
       operationId: dispatchCalls
       parameters:
-        - description: How many calls this worker takes at once.
+        - description: How much work this worker takes at once, calls and messages together.
           in: query
           name: capacity
           required: false
@@ -7781,6 +7872,22 @@ paths:
             default: 4
             minimum: 1
             type: integer
+        - description: |
+            How much work this worker is still running from before it reconnected, which the router counts against its capacity until each piece is reported `done`. Sending this at all, even as 0, is what says the worker reports `done`; one that leaves it out is held only to the depth of its queue.
+          in: query
+          name: active
+          required: false
+          schema:
+            minimum: 0
+            type: integer
+        - description: |
+            The kinds of work this worker accepts, comma separated. Absent is both. A worker that only answers in writing says `message`, so a caller is never left listening to a phone it would have dropped.
+          in: query
+          name: handles
+          required: false
+          schema:
+            example: call,message
+            type: string
       responses:
         "101":
           description: The socket is open

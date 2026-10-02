@@ -153,6 +153,10 @@ dispatch.onCall(async (call) => {
 });
 
 dispatch.onMessage(async (message) => {
+  if (message.sessionId) {
+    await dispatch.answer(message);
+    return;
+  }
   const session = await dispatch.sessionFor(message, () => new Agent({ name: "John" }));
   session.respond(message.text);
 });
@@ -162,12 +166,16 @@ await dispatch.run();
 
 `capacity` is a promise about what this process can answer: the router passes over a full
 worker rather than queueing behind it. Several workers can wait at once, and the work is
-shared between them.
+shared between them. Each call and message is reported `done` to the router when its handler
+returns, with the error when it throws, which is what frees the room it took.
 
-A message only arrives here when no agent is running on its channel — one written to an
-agent that is already running is answered by the router from that session, because that
+A message usually arrives here only when no agent is running on its channel — one written to
+an agent that is already running is answered by the router from that session, because that
 agent is the one that knows what has been said. `sessionFor` keeps one conversation per
-channel for the same reason.
+channel for the same reason. The exception is an agent whose agent.yaml says
+`dispatch: {text: enabled}`: what its end users write comes here with the `sessionId` it was
+written to and a `commandId`, unanswered, and `dispatch.answer(message)` has the model answer
+it, with this worker's credential acting for the user who wrote it.
 
 A worker can also host tools for every session opened under an agent id, including one a
 browser opened, where the session's own process cannot reach what the tool needs:

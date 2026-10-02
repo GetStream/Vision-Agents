@@ -143,6 +143,19 @@ class TestFolder:
         assert load(root).settings.video_source == "roboflow"
         assert load(root).settings.video_max_frames == 2
 
+    def test_dispatch_is_read_from_a_nested_block(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ndispatch:\n  text: enabled\n")
+
+        assert load(root).settings.dispatch == {"text": "enabled"}
+
+    def test_an_unknown_dispatch_setting_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ndispatch:\n  txet: enabled\n")
+
+        with pytest.raises(ValueError, match="txet"):
+            load(root)
+
     def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "name: jean\nkeyterms: Vision Agents\n")

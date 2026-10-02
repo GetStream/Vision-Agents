@@ -40,6 +40,7 @@ type SyncAgentRequest struct {
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Harness       *Harness                   `json:"harness,omitempty"`
+	Dispatch      *AgentDispatch             `json:"dispatch,omitempty"`
 	Tags          *map[string]string         `json:"tags,omitempty"`
 }
 
@@ -257,6 +258,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	if _, ok := harnessOf(body.Harness); !ok {
 		return fmt.Sprintf("there is no harness called %q", *body.Harness), false
 	}
+	if complaint, ok := dispatchComplaint(body.Dispatch); !ok {
+		return complaint, false
+	}
 	// Simulations are checked here, before anything is written, since a config stored under
 	// the new hash would make the next sync skip the simulations that failed.
 	named := map[string]bool{}
@@ -386,6 +390,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Harness != nil {
 		config.Harness, _ = harnessOf(body.Harness)
 	}
+	applyDispatch(config, body.Dispatch)
 	if body.Tags != nil {
 		config.Tags = *body.Tags
 	}

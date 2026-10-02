@@ -1730,7 +1730,9 @@ export type paths = {
         /**
          * Wait for inbound calls to answer, as a worker
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. The worker connects here and waits, rather than being called, because the agent runs in the customer's own process and this service cannot reach into it.
-         *     The socket opens with a `ready` frame naming the worker, and a `call` frame arrives for each call handed to it. The worker sends `load` so the pool can rank it, `accepted` or `rejected` per call, and `ping` to time the round trip itself.
+         *     The socket opens with a `ready` frame naming the worker, and a `call` or `message` frame arrives for each piece of work handed to it, each carrying the `work_id` that names it. The worker answers `done` with that `work_id`, and an `error` when it could not be done, which is what frees its room for the next piece. It also sends `load` so an operator can see what each worker is under, and `ping` to time the round trip itself.
+         *     Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so a worker that never reports `done` is one the router cannot tell is busy.
+         *     A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`, and a `command_id` when it was sent as a durable command. The model has not answered it: the worker does, by creating a response on that session with a server-side credential and the same `command_id` and text.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type has no query parameter, so a browser cannot open one at all.
          */
         readonly get: operations["dispatchCalls"];
@@ -2262,8 +2264,10 @@ export type components = {
         readonly AgentConfig: {
             /** Format: date-time */
             readonly created_at: string;
+            readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             readonly guardrail?: string;
+            readonly harness?: components["schemas"]["Harness"];
             readonly id: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
@@ -2295,9 +2299,11 @@ export type components = {
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
         readonly AgentConfigPatch: {
+            readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
             readonly guardrail?: string;
+            readonly harness?: components["schemas"]["Harness"];
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
@@ -2327,9 +2333,11 @@ export type components = {
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
+            readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
+            readonly harness?: components["schemas"]["Harness"];
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             readonly keyterms?: readonly string[];
@@ -2369,6 +2377,13 @@ export type components = {
             readonly visible_tools?: readonly string[];
             /** @description Provider-specific voice id. */
             readonly voice?: string;
+        };
+        /** @description What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled. */
+        readonly AgentDispatch: {
+            /** @description A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config. */
+            readonly incoming_call?: components["schemas"]["DispatchSetting"];
+            /** @description An end user's message is handed to a dispatch worker, with the session it was written to, instead of being answered by the model. The worker answers by creating a response on that session with a server-side credential, passing the message's command_id when it has one; that is the only text the model answers. */
+            readonly text?: components["schemas"]["DispatchSetting"];
         };
         readonly AgentLog: {
             readonly agent_id: string;
@@ -3012,6 +3027,11 @@ export type components = {
          */
         readonly DecisionKind: "ask" | "wait" | "ignore" | "answer" | "queue" | "interrupt" | "shorten" | "backchannel" | "supersede" | "compact" | "delegate" | "settle" | "fail";
         /**
+         * @description Whether this kind of work is left to the customer's own dispatch worker.
+         * @enum {string}
+         */
+        readonly DispatchSetting: "enabled" | "disabled";
+        /**
          * @description What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
          * @enum {string}
          */
@@ -3094,6 +3114,11 @@ export type components = {
             /** @description What to call them, for a transcript a person reads later. */
             readonly name?: string;
         };
+        /**
+         * @description Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+         * @enum {string}
+         */
+        readonly Harness: "default";
         readonly HealthStatus: {
             /**
              * @description Dependency name to "ok" or a failure description.
@@ -3279,6 +3304,8 @@ export type components = {
             readonly namespace: string;
             /** @description How many passages the page was last cut into. */
             readonly passages: number;
+            /** @description How often the page is read again on its own, in hours. Absent means never. */
+            readonly refresh_hours?: number;
             readonly state: components["schemas"]["KnowledgeUrlState"];
             /** @description What the page is called: the title it was subscribed with, or what it called itself when it was last read. */
             readonly title?: string;
@@ -3289,6 +3316,12 @@ export type components = {
         /** @description A page an agent directory declares, in the knowledge base named after it. */
         readonly KnowledgeUrlDeclaration: {
             readonly description?: string;
+            /**
+             * Format: int64
+             * @description How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule.
+             * @example 24
+             */
+            readonly refresh_hours?: number;
             /** @example Pricing */
             readonly title?: string;
             /** @example https://example.com/pricing */
@@ -3305,6 +3338,11 @@ export type components = {
              * @example docs
              */
             readonly namespace: string;
+            /**
+             * @description How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it.
+             * @example 24
+             */
+            readonly refresh_hours?: number;
             /**
              * @description What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
              * @example Pricing
@@ -4422,6 +4460,8 @@ export type components = {
             readonly detect_language?: boolean;
             /** @description Label each stretch of speech with who said it. */
             readonly diarize?: boolean;
+            /** @description Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency. */
+            readonly eager_end_of_turn?: boolean;
             readonly endpointing?: components["schemas"]["Endpointing"];
             /** @description Extract named entities from the recording. Recording only. */
             readonly entities?: boolean;
@@ -4491,9 +4531,11 @@ export type components = {
         };
         /** @description An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
+            readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
             readonly guardrail?: string;
+            readonly harness?: components["schemas"]["Harness"];
             /** @description A fingerprint of the directory. A second sync with the same hash does nothing. */
             readonly hash: string;
             readonly instructions?: string;
@@ -8101,8 +8143,12 @@ export interface operations {
     readonly dispatchCalls: {
         readonly parameters: {
             readonly query?: {
-                /** @description How many calls this worker takes at once. */
+                /** @description How much work this worker is still running from before it reconnected, which the router counts against its capacity until each piece is reported `done`. Sending this at all, even as 0, is what says the worker reports `done`; one that leaves it out is held only to the depth of its queue. */
+                readonly active?: number;
+                /** @description How much work this worker takes at once, calls and messages together. */
                 readonly capacity?: number;
+                /** @description The kinds of work this worker accepts, comma separated. Absent is both. A worker that only answers in writing says `message`, so a caller is never left listening to a phone it would have dropped. */
+                readonly handles?: string;
             };
             readonly header?: never;
             readonly path?: never;

@@ -134,6 +134,8 @@ export class Backend {
   private userIdValue: string;
   private token: TokenSource | undefined;
   private user: StreamUser | undefined;
+  /** The end user `actingFor` named, sent beside this backend's own credential. */
+  private actingForValue = "";
   private readonly fetchImpl: typeof fetch;
   private readonly webSocketImpl: WebSocketConstructor | undefined;
 
@@ -222,6 +224,21 @@ export class Backend {
   }
 
   /**
+   * This backend's own credential, speaking for one of its end users.
+   *
+   * Unlike `userId` it never mints a token for that user, so the request is still the
+   * server's: what it writes is answered by the model rather than handed back to a dispatch
+   * worker, and no daily limit is counted. The user goes in `X-Stream-User-Id`.
+   */
+  actingFor(userId: string): Backend {
+    const acting = Object.assign(Object.create(Backend.prototype) as Backend, this);
+    acting.userIdValue = "";
+    acting.user = undefined;
+    acting.actingForValue = userId;
+    return acting;
+  }
+
+  /**
    * Refuses a request there is no way to authenticate.
    *
    * Checked here rather than in the constructor because the requested shape supplies the
@@ -261,8 +278,11 @@ export class Backend {
    */
   async headers(): Promise<Record<string, string>> {
     this.assertCredentialed();
+    const acting: Record<string, string> = this.actingForValue
+      ? { "X-Stream-User-Id": this.actingForValue }
+      : {};
     if (!this.apiKey) {
-      return { "X-Customer-Id": this.customerId };
+      return { "X-Customer-Id": this.customerId, ...acting };
     }
 
     if (this.authenticate) {
@@ -273,10 +293,11 @@ export class Backend {
         api_key: this.apiKey,
         "stream-auth-type": "jwt",
         Authorization: `Bearer ${await this.proxyToken()}`,
+        ...acting,
       };
     }
 
-    const headers: Record<string, string> = { "X-Api-Key": this.apiKey };
+    const headers: Record<string, string> = { "X-Api-Key": this.apiKey, ...acting };
     if (this.apiSecret) {
       headers["Authorization"] = `Bearer ${await this.serverToken()}`;
       headers["Stream-Auth-Type"] = "server";

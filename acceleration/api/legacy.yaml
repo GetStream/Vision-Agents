@@ -3342,6 +3342,11 @@ paths:
         `command_id` and `turn_id`; their result must repeat both values so a result cannot
         be adopted by another command or turn.
 
+        A call to a tool declared with an `approval` waits for a person. The client reports
+        their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`,
+        `allowed`, and optionally a `summary` shown when they declined), before it answers
+        the call with `tool_result`.
+
         `tool_result.output` is a string, or an array of parts `[{type: text|image_url,
         ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of
         `auto`, `low` or `high`. One socket message is at most
@@ -3693,9 +3698,21 @@ paths:
         here and waits, rather than being called, because the agent runs in the customer's
         own process and this service cannot reach into it.
 
-        The socket opens with a `ready` frame naming the worker, and a `call` frame arrives
-        for each call handed to it. The worker sends `load` so the pool can rank it,
-        `accepted` or `rejected` per call, and `ping` to time the round trip itself.
+        The socket opens with a `ready` frame naming the worker, and a `call` or `message`
+        frame arrives for each piece of work handed to it, each carrying the `work_id` that
+        names it. The worker answers `done` with that `work_id`, and an `error` when it
+        could not be done, which is what frees its room for the next piece. It also sends
+        `load` so an operator can see what each worker is under, and `ping` to time the
+        round trip itself.
+
+        Work goes to whichever of a customer's workers is holding the least of what it said
+        it can hold, so a worker that never reports `done` is one the router cannot tell is
+        busy.
+
+        A `message` written to a running session whose agent sets `dispatch.text` carries
+        that `session_id`, and a `command_id` when it was sent as a durable command. The
+        model has not answered it: the worker does, by creating a response on that session
+        with a server-side credential and the same `command_id` and text.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an
         end user's device. This is the clearest case of why: a worker is offered other
@@ -3705,11 +3722,32 @@ paths:
         - name: capacity
           in: query
           required: false
-          description: How many calls this worker takes at once.
+          description: How much work this worker takes at once, calls and messages together.
           schema:
             type: integer
             minimum: 1
             default: 4
+        - name: active
+          in: query
+          required: false
+          description: >
+            How much work this worker is still running from before it reconnected, which
+            the router counts against its capacity until each piece is reported `done`.
+            Sending this at all, even as 0, is what says the worker reports `done`; one
+            that leaves it out is held only to the depth of its queue.
+          schema:
+            type: integer
+            minimum: 0
+        - name: handles
+          in: query
+          required: false
+          description: >
+            The kinds of work this worker accepts, comma separated. Absent is both. A worker
+            that only answers in writing says `message`, so a caller is never left listening
+            to a phone it would have dropped.
+          schema:
+            type: string
+            example: call,message
       responses:
         "101":
           description: The socket is open
@@ -4116,6 +4154,45 @@ components:
           description: >
             What a call is doing, in words for the people in the conversation, such as
             "Checking your location". Shown on the reply's ai_tool_call attachment.
+        approval:
+          $ref: "#/components/schemas/SessionToolApproval"
+
+    SessionToolApproval:
+      type: object
+      required: [title]
+      description: >
+        Says a person must allow each call before it runs. In a persistent conversation the
+        call's ai_tool_call attachment opens as awaiting_approval, addressed to the person
+        whose command it answers (and, for a client tool, their install), and carries this
+        question for their client to ask. The caller collects the answer and reports it over
+        the events socket with tool_approval: allowed, the call goes on as it would have
+        (awaiting_client for a client tool, running otherwise); declined, it is cancelled.
+        The caller still answers the call with tool_result either way. Every channel member
+        can read the question.
+      properties:
+        title:
+          type: string
+          maxLength: 80
+          description: The question, such as "Share your location?".
+        message:
+          type: string
+          maxLength: 240
+          description: What allowing it shares or does, such as "Only your city is shared."
+        reason_argument:
+          type: string
+          maxLength: 64
+          description: >
+            The argument, a string, in which the model says why it wants this call. Its text
+            (at most 160 characters) is shown as the approval's reason, so it is visible to
+            every channel member even for a server tool.
+        allow_title:
+          type: string
+          maxLength: 40
+          description: The label of the button that allows the call.
+        decline_title:
+          type: string
+          maxLength: 40
+          description: The label of the button that declines it.
 
     SessionMemory:
       type: object
@@ -4179,6 +4256,30 @@ components:
         Which harness the agent's sessions run: what hands work to the subagent, loads
         skills, compacts the conversation and starts the sandbox. Set on the agent, never
         on a session. Omit it for the default, the only one there is.
+
+    DispatchSetting:
+      type: string
+      enum: [enabled, disabled]
+      description: Whether this kind of work is left to the customer's own dispatch worker.
+
+    AgentDispatch:
+      type: object
+      description: >
+        What the agent leaves to the customer's own server, which waits on /v1/dispatch.
+        Omitted settings are disabled.
+      properties:
+        incoming_call:
+          $ref: "#/components/schemas/DispatchSetting"
+          description: >
+            A call to one of the customer's numbers is handed to a dispatch worker. Every
+            inbound call already is, since a number is not tied to an agent config.
+        text:
+          $ref: "#/components/schemas/DispatchSetting"
+          description: >
+            An end user's message is handed to a dispatch worker, with the session it was
+            written to, instead of being answered by the model. The worker answers by
+            creating a response on that session with a server-side credential, passing the
+            message's command_id when it has one; that is the only text the model answers.
 
     AgentConfigRequest:
       type: object
@@ -4283,6 +4384,8 @@ components:
           $ref: "#/components/schemas/Sandbox"
         harness:
           $ref: "#/components/schemas/Harness"
+        dispatch:
+          $ref: "#/components/schemas/AgentDispatch"
         tags:
           type: object
           additionalProperties:
@@ -4350,6 +4453,8 @@ components:
           $ref: "#/components/schemas/Sandbox"
         harness:
           $ref: "#/components/schemas/Harness"
+        dispatch:
+          $ref: "#/components/schemas/AgentDispatch"
         tags:
           type: object
           additionalProperties:
@@ -4460,6 +4565,13 @@ components:
         utterance_end_ms:
           type: integer
           description: How long after the last word an utterance is declared over. Live only.
+        eager_end_of_turn:
+          type: boolean
+          description: >
+            Send a transcript as soon as the model guesses the turn may be over, before it
+            is sure, so a reply can start early. Live only. A model without an eager end of
+            turn transcribes as normal rather than being refused. On by default for
+            en-low-latency and multilingual-low-latency.
         diarize:
           type: boolean
           description: Label each stretch of speech with who said it.
@@ -6999,6 +7111,28 @@ components:
           $ref: "#/components/schemas/MessageContent"
         error:
           type: string
+    ToolApprovalCommand:
+      type: object
+      required: [type, tool_call_id, command_id, turn_id, allowed]
+      description: >
+        A person's answer to a call awaiting their approval, from a persistent text
+        command. It changes only how the call is shown; the call still needs a tool_result.
+      properties:
+        type:
+          type: string
+          enum: [tool_approval]
+        tool_call_id:
+          type: string
+        command_id:
+          type: string
+        turn_id:
+          type: string
+        allowed:
+          type: boolean
+        summary:
+          type: string
+          maxLength: 120
+          description: Shown on the declined call, such as "Location not shared".
 
     Session:
       type: object

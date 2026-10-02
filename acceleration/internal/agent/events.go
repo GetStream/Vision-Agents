@@ -268,6 +268,18 @@ type ToolStarted struct {
 
 func (ToolStarted) isAgentEvent() {}
 
+// ToolApprovalDecided is a person's answer to a call that waited for their approval. It
+// changes how the call is shown; the call itself is still answered by its result.
+type ToolApprovalDecided struct {
+	ID      string
+	TurnID  string
+	Allowed bool
+	// Summary is shown on a declined call, such as "Location not shared".
+	Summary string
+}
+
+func (ToolApprovalDecided) isAgentEvent() {}
+
 type ToolRan struct {
 	ID     string
 	TurnID string

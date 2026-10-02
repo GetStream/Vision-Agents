@@ -9,15 +9,17 @@ module GetStream
     #     GetStream::VisionAgents::Agent.new(config: "support").join(call)
     #   end
     #   dispatch.wait_for_message do |message|
+    #     next dispatch.answer(message) unless message.session_id.empty?
+    #
     #     dispatch.get_or_create_agent(message) { GetStream::VisionAgents::Agent.new(config: "support") }
     #             .reply(message)
     #   end
     #   dispatch.host("support", tools)
     #   dispatch.run
     #
-    # Each call, message and hosted tool call runs on its own thread. A call handler that returns
-    # accepts the call; one that raises rejects it, so the router offers it to another worker.
-    # A message is not accepted or rejected: nothing waits on it the way a ringing caller does.
+    # Each call, message and hosted tool call runs on its own thread. When a call or message
+    # handler finishes the router is told it is done, with the error when it raised, which is
+    # what gives this worker its room back.
     #
     # The socket is not reopened when it drops: #run returns and the process decides.
     class Dispatch
@@ -40,6 +42,9 @@ module GetStream
         @agents = {}
         @hosted = []
         @threads = []
+        # The calls and messages being handled, which is what the router counts against
+        # capacity. Hosted tool calls are not.
+        @handling = 0
         @latency = nil
       end
 
@@ -65,7 +70,8 @@ module GetStream
         self
       end
 
-      # Handles every message written to an agent that is not running.
+      # Handles every message written to an agent that is not running, or to a running session
+      # whose agent leaves text to dispatch.
       def wait_for_message(&handler)
         raise ArgumentError, "wait_for_message needs a block" unless handler
 
@@ -78,12 +84,33 @@ module GetStream
       # A channel written to twice while its first answer is still being written would
       # otherwise get two agents talking over each other.
       def get_or_create_agent(message)
+        unless message.session_id.empty?
+          raise ConfigurationError, "a session is already holding this conversation; answer it there with answer"
+        end
+
         @lock.synchronize do
           agent = @agents[message.cid]
           return agent if agent&.live?
 
           @agents[message.cid] = yield
         end
+      end
+
+      # Has the model answer a message written to a running session whose agent leaves text to
+      # dispatch.
+      #
+      # The response is created with this worker's own credential acting for whoever wrote the
+      # message, so it goes to the model rather than back to a worker, and it carries the
+      # message's command so the answer lands on it.
+      #
+      # @return [AgentResponse]
+      def answer(message)
+        if message.session_id.empty?
+          raise ConfigurationError, "no session is holding this message; open one with get_or_create_agent"
+        end
+
+        acting = Client.new(backend: @client.backend.acting_for(message.user_id))
+        Responses.new(acting, message.session_id).create(message.text, command_id: message.command_id)
       end
 
       # Connects and hands out work until the socket closes or #stop is called, then waits for
@@ -95,7 +122,7 @@ module GetStream
           raise ConfigurationError, "register wait_for_call or wait_for_message, or host tools, before running"
         end
 
-        @socket = @client.socket("/v1/dispatch", query: { capacity: @capacity })
+        @socket = @client.socket("/v1/dispatch", query: waiting)
         reporter = Thread.new { report }
         @socket.each_message { |frame| received(frame) if frame.is_a?(Hash) }
       ensure
@@ -122,8 +149,8 @@ module GetStream
         when "ready"
           @worker_id = frame["worker_id"]
           offer_hosted
-        when "call" then handle("call", InboundCall.from(frame))
-        when "message" then handle("message", InboundMessage.from(frame))
+        when "call" then handle("call", frame["work_id"].to_s, InboundCall.from(frame))
+        when "message" then handle("message", frame["work_id"].to_s, InboundMessage.from(frame))
         when "tool_call" then run_hosted(frame)
         when "hosting_refused"
           # A worker whose tools were refused is one nobody will call; saying so beats sitting
@@ -146,7 +173,7 @@ module GetStream
         id = frame["id"].to_s
         name = frame["name"].to_s
         tools = @lock.synchronize { @hosted.map { |offer| offer[:tools] }.find { |set| set.include?(name) } }
-        return answer_hosted(type: "tool_result", id: id, error: "this worker does not run #{name}") unless tools
+        return tell(type: "tool_result", id: id, error: "this worker does not run #{name}") unless tools
 
         thread = Thread.new do
           result = begin
@@ -154,42 +181,55 @@ module GetStream
           rescue StandardError => e
             { error: e.message }
           end
-          answer_hosted({ type: "tool_result", id: id }.merge(result))
+          tell({ type: "tool_result", id: id }.merge(result))
         ensure
           @lock.synchronize { @threads.delete(Thread.current) }
         end
         @lock.synchronize { @threads << thread }
       end
 
-      def answer_hosted(frame)
+      def tell(frame)
         @socket.send_frame(frame)
       rescue SocketClosedError
         nil
       end
 
-      def handle(kind, work)
-        handler = @lock.synchronize { @handlers[kind] }
-        return reject(work, "this worker does not answer calls") if handler.nil? && kind == "call"
-        return if handler.nil?
-
-        thread = Thread.new do
-          handler.call(work)
-          @socket.send_frame(type: "accepted", call_id: work.call_id) if kind == "call"
-        rescue StandardError => e
-          raise unless kind == "call"
-
-          reject(work, e.message)
-        ensure
-          @lock.synchronize { @threads.delete(Thread.current) }
+      # What this worker says about itself on the handshake: how much it holds, how much it is
+      # already holding, and which kinds of work it answers. handles is sent even when empty.
+      def waiting
+        @lock.synchronize do
+          { capacity: @capacity, active: @handling,
+            handles: %w[call message].select { |kind| @handlers.key?(kind) }.join(",") }
         end
-        thread.report_on_exception = kind == "call" ? false : true
+      end
+
+      # Work with no handler is still reported done: the router holds its room until it is.
+      def handle(kind, work_id, work)
+        handler = @lock.synchronize { @handlers[kind] }
+        return finished(work_id, "this worker answers no #{kind}s") unless handler
+
+        @lock.synchronize { @handling += 1 }
+        thread = Thread.new do
+          failure = begin
+            handler.call(work)
+            nil
+          rescue StandardError => e
+            e.message
+          end
+          finished(work_id, failure)
+        ensure
+          @lock.synchronize do
+            @threads.delete(Thread.current)
+            @handling -= 1
+          end
+        end
         @lock.synchronize { @threads << thread }
       end
 
-      def reject(call, reason)
-        @socket.send_frame(type: "rejected", call_id: call.call_id, reason: reason)
-      rescue SocketClosedError
-        nil
+      def finished(work_id, failure)
+        frame = { type: "done", work_id: work_id }
+        frame[:error] = failure if failure
+        tell(frame)
       end
 
       def report

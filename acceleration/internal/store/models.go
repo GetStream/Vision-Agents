@@ -354,6 +354,11 @@ type AgentConfig struct {
 	// Harness is which harness the agent's sessions run, "default" being the one there is.
 	Harness string            `bun:"harness,notnull"`
 	Tags    map[string]string `bun:"tags,type:jsonb"`
+	// DispatchIncomingCall and DispatchText leave that work to the customer's own dispatch
+	// worker. With DispatchText an end user's message is handed to a worker instead of the
+	// model, and the model only answers when the worker asks it to.
+	DispatchIncomingCall bool `bun:"dispatch_incoming_call,notnull"`
+	DispatchText         bool `bun:"dispatch_text,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`

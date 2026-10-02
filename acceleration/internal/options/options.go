@@ -271,14 +271,18 @@ type STT struct {
 	// which is "this one, and this one after it": a shortcut ranks its members by health,
 	// and a caller who has decided that one vendor comes first wants to be asked second
 	// only when the first is down. Empty leaves the choice to Target.
-	Providers       []string `json:"providers,omitempty"`
-	Languages       []string `json:"languages,omitempty"`
-	DetectLanguage  *bool    `json:"detect_language,omitempty"`
-	SampleRate      *int     `json:"sample_rate,omitempty"`
-	Interim         *bool    `json:"interim,omitempty"`
-	Endpointing     string   `json:"endpointing,omitempty"`
-	SilenceMs       *int     `json:"silence_ms,omitempty"`
-	UtteranceEndMs  *int     `json:"utterance_end_ms,omitempty"`
+	Providers      []string `json:"providers,omitempty"`
+	Languages      []string `json:"languages,omitempty"`
+	DetectLanguage *bool    `json:"detect_language,omitempty"`
+	SampleRate     *int     `json:"sample_rate,omitempty"`
+	Interim        *bool    `json:"interim,omitempty"`
+	Endpointing    string   `json:"endpointing,omitempty"`
+	SilenceMs      *int     `json:"silence_ms,omitempty"`
+	UtteranceEndMs *int     `json:"utterance_end_ms,omitempty"`
+	// EagerEndOfTurn asks for a transcript as soon as the model guesses the turn may be
+	// over, before it is sure. It is not a term: a model without an eager end of turn
+	// transcribes as it always does rather than being routed away from.
+	EagerEndOfTurn  *bool    `json:"eager_end_of_turn,omitempty"`
 	Diarize         *bool    `json:"diarize,omitempty"`
 	MaxSpeakers     *int     `json:"max_speakers,omitempty"`
 	Keyterms        []string `json:"keyterms,omitempty"`
@@ -316,6 +320,7 @@ func (o STT) Merge(over STT) STT {
 	overwrite(&merged.Endpointing, over.Endpointing)
 	overwritePointer(&merged.SilenceMs, over.SilenceMs)
 	overwritePointer(&merged.UtteranceEndMs, over.UtteranceEndMs)
+	overwritePointer(&merged.EagerEndOfTurn, over.EagerEndOfTurn)
 	overwritePointer(&merged.Diarize, over.Diarize)
 	overwritePointer(&merged.MaxSpeakers, over.MaxSpeakers)
 	overwriteSlice(&merged.Keyterms, over.Keyterms)

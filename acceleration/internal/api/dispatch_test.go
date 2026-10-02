@@ -3,6 +3,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -48,6 +49,63 @@ func (s *DispatchSuite) TestAWorkerWithNoRoomForACallIsRefused() {
 	_, status := s.serverClient.watch("/v1/dispatch?capacity=0")
 
 	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *DispatchSuite) TestWorkAWorkerCannotAlreadyBeHoldingIsRefused() {
+	_, status := s.serverClient.watch("/v1/dispatch?active=-1")
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *DispatchSuite) TestAKindOfWorkThisServiceDoesNotHandOutIsRefused() {
+	// Taking it would leave the worker believing it had opted out of calls when it had not.
+	_, status := s.serverClient.watch("/v1/dispatch?handles=telegrams")
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *DispatchSuite) TestWorkCarriesTheIdItIsReportedFinishedUnder() {
+	worker := s.worker()
+
+	s.assign(dispatch.Call{CallID: "phone-+15125551234"})
+
+	s.NotEmpty(s.next(worker)["work_id"], "without it the worker cannot say which call it finished")
+}
+
+func (s *DispatchSuite) TestAWorkerIsHeldToTheCapacityItDeclaredUntilItReportsWorkDone() {
+	// The queue empties as the frame is written, which is not the worker finishing the
+	// call. Without the report, a worker that promised one call would be handed the next.
+	worker := s.reportingWorker(1)
+
+	s.assign(dispatch.Call{CallID: "call-1"})
+	handed := s.next(worker)
+
+	_, err := s.dispatch.Assign(s.customerID(), dispatch.Call{CallID: "call-2"})
+	s.Require().ErrorContains(err, "at capacity")
+
+	s.Require().NoError(worker.WriteJSON(frame{"type": "done", "work_id": handed["work_id"]}))
+	s.Require().Eventually(func() bool {
+		_, err := s.dispatch.Assign(s.customerID(), dispatch.Call{CallID: "call-2"})
+		return err == nil
+	}, settleFor, 10*time.Millisecond, "reporting the call finished should give the worker its room back")
+
+	s.Equal("call-2", s.next(worker)["call_id"])
+}
+
+func (s *DispatchSuite) TestAWorkerThatAnswersOnlyMessagesIsNotOfferedCalls() {
+	connection := s.serverClient.opens("/v1/dispatch?handles=message")
+	s.Equal("ready", s.next(connection)["type"])
+	s.Require().Eventually(func() bool {
+		return len(s.dispatch.Workers(s.customerID())) == 1
+	}, settleFor, 10*time.Millisecond)
+
+	_, err := s.dispatch.Assign(s.customerID(), dispatch.Call{CallID: "call-1"})
+
+	s.Require().ErrorContains(err, "handles call")
+	_, err = s.dispatch.AssignMessage(s.customerID(),
+		dispatch.Message{ChannelID: "chat-1", Text: "hello"})
+	s.Require().NoError(err)
+	s.Equal("message", s.next(connection)["type"])
 }
 
 func (s *DispatchSuite) TestAConnectedWorkerIsHandedAnArrivingCall() {
@@ -246,8 +304,18 @@ func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
 // worker opens the dispatch socket as a backend and waits until it is in the rotation, so a
 // test that assigns a call straight afterwards does not race the registration.
 func (s *DispatchSuite) worker() *websocket.Conn {
+	return s.opensWith("/v1/dispatch")
+}
+
+// reportingWorker is a worker that reports each piece of work finished, which is what holds
+// it to the capacity it declared.
+func (s *DispatchSuite) reportingWorker(capacity int) *websocket.Conn {
+	return s.opensWith(fmt.Sprintf("/v1/dispatch?capacity=%d&active=0", capacity))
+}
+
+func (s *DispatchSuite) opensWith(address string) *websocket.Conn {
 	before := len(s.dispatch.Workers(s.customerID()))
-	connection := s.serverClient.opens("/v1/dispatch")
+	connection := s.serverClient.opens(address)
 
 	ready := s.next(connection)
 	s.Equal("ready", ready["type"])

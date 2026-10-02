@@ -232,9 +232,12 @@ runs has to be publicly reachable.
   worker rather than queueing behind it.
 - Handlers run on their own, never awaited in the read loop. Answering one caller in line
   leaves the next listening to a ringing phone.
-- A call is reported `accepted` or `rejected` with the reason; **a message is not**. Accepting
-  and rejecting are about a caller waiting on a line, and there is no line for a message.
-- A message only arrives when no agent is running on its channel. `sessionFor` keeps one
+- Every call and message is reported `done` with its `work_id`, with an `error` when it failed
+  or had no handler: that is what gives the worker its room back. `active` and `handles` go on
+  the handshake.
+- A message with a `sessionId` was written to a running session whose agent leaves text to
+  dispatch; `answer` has the model reply there, as the server acting for the writer. Any other
+  message only arrives when no agent is running on its channel. `sessionFor` keeps one
   session per channel for the same reason: the session that answered the last message is the
   one that knows what has been said.
 - `load` reports only `active_agents` and a round trip this side measured. Host CPU and memory

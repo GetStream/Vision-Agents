@@ -45,16 +45,21 @@ module GetStream
     # The Python SDK's name for the same thing.
     CallContext = InboundCall
 
-    # A message written to an agent that is not running.
+    # A message written to an agent that is not running, or to a running session whose agent
+    # leaves text to dispatch.
     #
-    # One written to an agent that is already running never arrives here: the router answers
-    # it from that session, because that agent is the one that knows what has been said.
-    InboundMessage = Data.define(:channel_id, :channel_type, :agent_id, :config_id, :text, :message_id,
-                                 :user_id, :user_name, :custom, :at) do
+    # Otherwise one written to an agent that is already running never arrives here: the router
+    # answers it from that session, because that agent is the one that knows what has been said.
+    #
+    # session_id is that running session, which nothing has answered yet: Dispatch#answer has
+    # the model do so. command_id is the durable command it was sent as, empty when there is none.
+    InboundMessage = Data.define(:channel_id, :channel_type, :agent_id, :config_id, :session_id, :command_id,
+                                 :text, :message_id, :user_id, :user_name, :custom, :at) do
       def self.from(frame)
         new(channel_id: frame["channel_id"].to_s,
             channel_type: frame["channel_type"].to_s.then { |t| t.empty? ? "agent" : t },
-            agent_id: frame["agent_id"].to_s, config_id: frame["config_id"].to_s, text: frame["text"].to_s,
+            agent_id: frame["agent_id"].to_s, config_id: frame["config_id"].to_s,
+            session_id: frame["session_id"].to_s, command_id: frame["command_id"].to_s, text: frame["text"].to_s,
             message_id: frame["message_id"].to_s, user_id: frame["user_id"].to_s,
             user_name: frame["user_name"].to_s, custom: Inbound.strings(frame["custom"]),
             at: Inbound.time(frame["at"]))

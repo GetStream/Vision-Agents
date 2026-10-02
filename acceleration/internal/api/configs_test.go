@@ -92,6 +92,27 @@ func (s *ConfigsSuite) TestAConfigRunsTheDefaultHarnessUnlessItSaysOtherwise() {
 	s.Equal(Default, value(read.Harness))
 }
 
+func (s *ConfigsSuite) TestAConfigLeavesNothingToDispatchUnlessItSaysSo() {
+	unnamed := s.createConfig(map[string]any{"name": "support"})
+	s.Equal(Disabled, value(value(unnamed.Dispatch).Text))
+	s.Equal(Disabled, value(value(unnamed.Dispatch).IncomingCall))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+unnamed.Id,
+		map[string]any{"dispatch": map[string]any{"text": "enabled"}}, &patched))
+	s.Equal(Enabled, value(value(patched.Dispatch).Text))
+	s.Equal(Disabled, value(value(patched.Dispatch).IncomingCall), "a setting left out keeps what is stored")
+}
+
+func (s *ConfigsSuite) TestADispatchSettingThatIsNeitherOnNorOffIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "dispatch": map[string]any{"text": "sometimes"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "dispatch.text")
+}
+
 func (s *ConfigsSuite) TestAConfigNamingAHarnessThatDoesNotExistIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "harness": "fancy"})
