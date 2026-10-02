@@ -152,11 +152,12 @@ func (s *Store) saveAtRevision(ctx context.Context, conn bun.IConn, connection *
 // the connection's grant, and gives the lock and the connection back when fn returns.
 //
 // Session-level, not pg_advisory_xact_lock as connectors.go uses: checkpoint commits while
-// the lock must stay held, and a transaction-level lock goes with the commit. A session lock
-// is "held until explicitly released or the session ends" and "not released on transaction
-// commit or rollback" (https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS),
-// which is also why it lives on one dedicated connection: a lock taken on a pooled connection
-// and not released would stay with whoever borrows it next.
+// the lock must stay held, and a transaction-level lock goes with the commit. "Once acquired
+// at session level, an advisory lock is held until explicitly released or the session ends",
+// and session-level requests "do not honor transaction semantics"
+// (https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS). That is also
+// why it lives on one dedicated connection: a lock taken on a pooled connection and not
+// released would stay with whoever borrows it next.
 func (s *Store) withGrantLock(ctx context.Context, customerID, id string, fn func(bun.Conn) error) error {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
