@@ -52,7 +52,7 @@ func (s *StoreSuite) TestSeedingAnUnchangedManifestAddsNoRevision() {
 	s.Equal(1, stored[0].Revision)
 }
 
-func (s *StoreSuite) TestAChangedManifestIsTheNextRevisionAndTheLastOneStays() {
+func (s *StoreSuite) TestAChangedManifestAtANewRevisionIsTheLatestAndTheLastOneStays() {
 	s.seed(acmeManifest)
 	s.seed(acmeChanged)
 
@@ -65,6 +65,59 @@ func (s *StoreSuite) TestAChangedManifestIsTheNextRevisionAndTheLastOneStays() {
 	first, err := s.store.ConnectorDefinition(s.ctx, "anyone", "acme", 1)
 	s.Require().NoError(err)
 	s.Equal([]string{"read", "write"}, first.Manifest.Scopes.List, "a connection pinned to revision 1 still reads what it was made from")
+}
+
+func (s *StoreSuite) TestTwoBuildsSeedingTheirOwnFilesDoNotFlipTheLatest() {
+	// A rolling deploy, a rollback, or a branch build sharing staging's database with an
+	// accelerate build: each build restarts with its own file, in any order.
+	s.seed(acmeManifest)
+	s.seed(acmeChanged)
+	s.seed(acmeManifest)
+	s.seed(acmeChanged)
+	s.seed(acmeManifest)
+
+	stored := s.revisions("acme")
+	s.Require().Len(stored, 2, "each build finds its own revision stored")
+	latest, err := s.store.LatestConnectorDefinition(s.ctx, "anyone", "acme")
+	s.Require().NoError(err)
+	s.Equal(2, latest.Revision, "an older build starting last does not make its manifest latest")
+	s.Equal([]string{"read"}, latest.Manifest.Scopes.List)
+}
+
+func (s *StoreSuite) TestAnOlderBuildStartingAfterANewerOneLeavesTheNewerLatest() {
+	// A fresh database where the new build's pods start first.
+	s.seed(acmeChanged)
+	s.seed(acmeManifest)
+
+	latest, err := s.store.LatestConnectorDefinition(s.ctx, "anyone", "acme")
+	s.Require().NoError(err)
+	s.Equal(2, latest.Revision)
+	first, err := s.store.ConnectorDefinition(s.ctx, "anyone", "acme", 1)
+	s.Require().NoError(err, "the older build's revision is stored for the connections it makes")
+	s.Equal([]string{"read", "write"}, first.Manifest.Scopes.List)
+}
+
+func (s *StoreSuite) TestAnEditWithoutANewRevisionIsRefused() {
+	s.seed(acmeManifest)
+
+	err := s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"acme.yaml": {Data: []byte(acmeEditedInPlace)}})
+
+	s.ErrorContains(err, "acme.yaml says revision 1, which is already stored with other content")
+	stored := s.revisions("acme")
+	s.Require().Len(stored, 1)
+	s.Equal([]string{"read", "write"}, stored[0].Manifest.Scopes.List, "a connection pinned to revision 1 keeps reading what it was made from")
+}
+
+func (s *StoreSuite) TestRevertingAManifestIsANewRevision() {
+	s.seed(acmeManifest)
+	s.seed(acmeChanged)
+	s.seed(acmeReverted)
+
+	latest, err := s.store.LatestConnectorDefinition(s.ctx, "anyone", "acme")
+	s.Require().NoError(err)
+	s.Equal(3, latest.Revision)
+	s.Equal([]string{"read", "write"}, latest.Manifest.Scopes.List)
+	s.Len(s.revisions("acme"), 3)
 }
 
 func (s *StoreSuite) TestTwoRoutersSeedingAChangeAtOnceStoreOneRevision() {

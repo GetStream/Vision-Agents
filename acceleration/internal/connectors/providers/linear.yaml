@@ -9,7 +9,7 @@
 # Architecture rows cited are «Axes where providers differ» in
 # acceleration/docs/connectors/architecture.md on connectors/planning.
 id: linear
-# The database numbers revisions; see AGENTS.md.
+# A new revision for any change to what this file says; see AGENTS.md.
 revision: 1
 # [proto]:68-70
 name: Linear

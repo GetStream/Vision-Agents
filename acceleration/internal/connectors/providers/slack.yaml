@@ -10,7 +10,7 @@
 # Architecture rows cited are «Stress test: 12 awkward providers», row 5, in
 # acceleration/docs/connectors/architecture.md on connectors/planning.
 id: slack
-# The database numbers revisions; see AGENTS.md.
+# A new revision for any change to what this file says; see AGENTS.md.
 revision: 1
 # [proto]:3-5
 name: Slack

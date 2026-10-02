@@ -55,9 +55,12 @@ type ConnectorDefinition struct {
 }
 
 // SeedConnectorDefinitions stores every built-in manifest in fsys, one <id>.yaml per
-// connector, as a built-in definition. A manifest that says the same as its latest revision
-// adds nothing; one that says something else becomes the next revision, and the earlier ones
-// stay for the connections that pinned them. Every file is parsed before any is written, so
+// connector, as a built-in definition at the revision the file names. The file's author
+// numbers built-in revisions, the way a migration is numbered, because two router builds can
+// share a database at once: old and new pods in a rolling deploy, a rollback, or a branch
+// build beside an accelerate build on staging. Each start of either build then finds its own
+// revision already stored and changes nothing, rather than storing its manifest as the next
+// revision and flipping latest back and forth. Every file is parsed before any is written, so
 // one invalid manifest stores none of them.
 func (s *Store) SeedConnectorDefinitions(ctx context.Context, fsys fs.FS) error {
 	manifests, err := builtinManifests(fsys)
@@ -65,7 +68,7 @@ func (s *Store) SeedConnectorDefinitions(ctx context.Context, fsys fs.FS) error 
 		return err
 	}
 	for _, manifest := range manifests {
-		if _, err := s.saveRevision(ctx, BuiltinCustomer, manifest); err != nil {
+		if err := s.seedBuiltin(ctx, manifest); err != nil {
 			return err
 		}
 	}
@@ -142,8 +145,9 @@ func (s *Store) ListConnectorDefinitions(ctx context.Context, customerID string)
 	return definitions, nil
 }
 
-// saveRevision stores manifest as the next revision of its id under the customer, unless the
-// latest revision already says the same, in which case that one is returned.
+// saveRevision stores a custom manifest as the next revision of its id under the customer,
+// unless the latest revision already says the same, in which case that one is returned. A
+// custom definition has one writer, the customer through the API, so the store numbers it.
 //
 // It runs under a transaction-scoped advisory lock on the customer and id, so two routers
 // starting at once, or two requests creating the same custom id, take turns: the second
@@ -196,6 +200,61 @@ func (s *Store) saveRevision(ctx context.Context, customerID string, manifest co
 		return ConnectorDefinition{}, fmt.Errorf("store: save connector definition %s: %w", manifest.ID, err)
 	}
 	return saved, nil
+}
+
+// seedBuiltin stores a built-in manifest at the revision its file names, under the same lock
+// saveRevision takes, so routers starting at once take turns:
+//   - that revision is stored and says the same: nothing to do, the usual restart;
+//   - that revision is stored and says something else: the file was edited without a new
+//     revision, which is refused so a connection pinned to it never reads two manifests;
+//   - it is not stored: it is stored now.
+//
+// The latest is the highest revision, so an older build starting last, even on a database
+// that has never seen its revision, cannot make its manifest latest again. Reverting a
+// manifest is a new revision whose content is the old one.
+func (s *Store) seedBuiltin(ctx context.Context, manifest core.Manifest) error {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
+			BuiltinCustomer+"/"+manifest.ID, definitionLockSeed); err != nil {
+			return err
+		}
+
+		var stored ConnectorDefinition
+		err := tx.NewSelect().Model(&stored).
+			Where("customer_id = ?", BuiltinCustomer).
+			Where("id = ?", manifest.ID).
+			Where("revision = ?", manifest.Revision).
+			Scan(ctx)
+		switch {
+		case err == nil:
+			same, err := sameManifest(stored.Manifest, manifest)
+			if err != nil {
+				return err
+			}
+			if !same {
+				return fmt.Errorf("%s.yaml says revision %d, which is already stored with other content: give the change a new revision", manifest.ID, manifest.Revision)
+			}
+			return nil
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+
+		_, err = tx.NewInsert().Model(&ConnectorDefinition{
+			CustomerID:  BuiltinCustomer,
+			ID:          manifest.ID,
+			Revision:    manifest.Revision,
+			Name:        manifest.Name,
+			Category:    manifest.Category,
+			Description: manifest.Description,
+			Manifest:    manifest,
+			CreatedAt:   time.Now().UTC(),
+		}).Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("store: seed connector definition %s: %w", manifest.ID, err)
+	}
+	return nil
 }
 
 // latestDefinition is the newest revision of id under any of customers.

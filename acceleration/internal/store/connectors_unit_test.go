@@ -28,13 +28,13 @@ sources:
     endpoint: mcp
 `
 
-// acmeReformatted says what acmeManifest says, written differently: comments, key order,
-// block lists, quotes and a revision of its own.
+// acmeReformatted says what acmeManifest says at the same revision, written differently:
+// comments, key order, block lists and quotes.
 const acmeReformatted = `
 # The same connector, written by somebody else.
 name: "Acme"
 id: acme
-revision: 7
+revision: 1
 sources:
   - endpoint: mcp
     kind: mcp
@@ -48,8 +48,14 @@ schemes:
 endpoints: {mcp: "https://mcp.acme.example/mcp"}
 `
 
-// acmeChanged asks for one scope fewer.
-var acmeChanged = strings.Replace(acmeManifest, "list: [read, write]", "list: [read]", 1)
+// acmeEditedInPlace asks for one scope fewer without a new revision.
+var acmeEditedInPlace = strings.Replace(acmeManifest, "list: [read, write]", "list: [read]", 1)
+
+// acmeChanged is that change, given revision 2 as a built-in's author does.
+var acmeChanged = strings.Replace(acmeEditedInPlace, "revision: 1", "revision: 2", 1)
+
+// acmeReverted takes acmeManifest's content back as revision 3.
+var acmeReverted = strings.Replace(acmeManifest, "revision: 1", "revision: 3", 1)
 
 // parsed is a manifest from YAML that must be valid.
 func parsed(t require.TestingT, raw string) core.Manifest {
@@ -93,7 +99,8 @@ func TestABuiltInCannotTakeTheCustomPrefix(t *testing.T) {
 }
 
 func TestAManifestWrittenDifferentlyIsTheSameManifest(t *testing.T) {
-	same, err := sameManifest(parsed(t, acmeManifest), parsed(t, acmeReformatted))
+	renumbered := strings.Replace(acmeReformatted, "revision: 1", "revision: 7", 1)
+	same, err := sameManifest(parsed(t, acmeManifest), parsed(t, renumbered))
 	require.NoError(t, err)
 	require.True(t, same, "comments, order, quoting and the revision are not what a manifest says")
 }
