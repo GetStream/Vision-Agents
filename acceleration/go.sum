@@ -20,8 +20,8 @@ cloud.google.com/go/storage v1.61.3 h1:VS//ZfBuPGDvakfD9xyPW1RGF1Vy3BWUoVZXgW1KM
 cloud.google.com/go/storage v1.61.3/go.mod h1:JtqK8BBB7TWv0HVGHubtUdzYYrakOQIsMLffZ2Z/HWk=
 cloud.google.com/go/trace v1.11.7 h1:kDNDX8JkaAG3R2nq1lIdkb7FCSi1rCmsEtKVsty7p+U=
 cloud.google.com/go/trace v1.11.7/go.mod h1:TNn9d5V3fQVf6s4SCveVMIBS2LJUqo73GACmq/Tky0s=
-github.com/GetStream/getstream-go-webrtc v0.0.0-20261001094558-33a76ab10b5b h1:TNeFhvm1RVa5TB1+5NoW7edDQD3fekCMX0iewQI+0/0=
-github.com/GetStream/getstream-go-webrtc v0.0.0-20261001094558-33a76ab10b5b/go.mod h1:B551LMq0v7J5Dhp8vFU5p781/S2NaN58o7i2YmGbbcg=
+github.com/GetStream/getstream-go-webrtc v0.0.0-20261002062754-9f0bc192c9af h1:8PtAb+z4wAMdZsjdPeH8WCK7t+ziJ49kIOpODAOLuQE=
+github.com/GetStream/getstream-go-webrtc v0.0.0-20261002062754-9f0bc192c9af/go.mod h1:Un4FV9wMyFjhdJRTSDkoeDWWXzJ9K16xTsUrTo/0ub0=
 github.com/GetStream/getstream-go/v5 v5.2.0 h1:nrZkIL0mzHtByMeAeNFD4jpGIT5XPa0P3ItFL9bCIr8=
 github.com/GetStream/getstream-go/v5 v5.2.0/go.mod h1:qnod4MVOSwxfpqtXLpxjbMo7lDcepOlg8X2GrpBs/cw=
 github.com/GetStream/pion-dtls/v4 v4.0.0-rc.1-warp.2 h1:Y2NHnwksvIOh8UynutX8/A37H9bKQJqHgBLM6GXpsg8=
@@ -32,8 +32,8 @@ github.com/GetStream/pion-sctp v1.11.3-warp.1 h1:/PcOWTVe1jATCPIz32EP3XmKkYOUE7m
 github.com/GetStream/pion-sctp v1.11.3-warp.1/go.mod h1:7v/MXGBROc8fu9g2TVwCXRasPISCMd3j8wSH+o45uCI=
 github.com/GetStream/pion-webrtc/v4 v4.2.22-warp.4 h1:vs+kAQvcWeXbk1Tks15quYnCQKUi5dsI8TyhVG6aPcA=
 github.com/GetStream/pion-webrtc/v4 v4.2.22-warp.4/go.mod h1:VxD/9RBRchZSq1bTbLENLjRLnLygneNacyuGXdd9310=
-github.com/GetStream/protocol v1.50.0-3rtt.1 h1:kqsE1ZBf3gpO47lc2JLkyNVhVR9JNGFRYUtn83nLgIo=
-github.com/GetStream/protocol v1.50.0-3rtt.1/go.mod h1:jZALur2IoWnpcLnFzLtnFomgItt4SBHj+U1TjPYC114=
+github.com/GetStream/protocol v1.50.0-3rtt.2 h1:MOexK3ZKMg6wa9QqRWClY1BuV9FTtZuFrQKfqUfmy9I=
+github.com/GetStream/protocol v1.50.0-3rtt.2/go.mod h1:jZALur2IoWnpcLnFzLtnFomgItt4SBHj+U1TjPYC114=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 h1:l7+6kwRMJNwdCvYdDl7Eax+wzEYHSnNY7zrrfbhDdTA=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0/go.mod h1:pJTkW8hEUIIi3Pf65lPZOnn4Y81yCllX6IWk2jNXdkM=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.55.0 h1:UnDZ/zFfG1JhH/DqxIZYU/1CUAlTUScoXD/LcM2Ykk8=

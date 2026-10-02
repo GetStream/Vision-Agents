@@ -553,7 +553,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, liveClient, telephony, base, finding, judging, logger)
+	// One SDK client per agent user across sessions, so the next session's join finds its
+	// connections to Stream open. Deferred before the sessions, so closed after them.
+	edgeClients := streamedge.NewClients()
+	defer edgeClients.Close()
+	sessions, err := buildSessions(settings, streams, pgStore, liveClient, telephony, base, finding, judging, edgeClients, logger)
 	if err != nil {
 		return err
 	}
@@ -787,6 +791,7 @@ func buildSessions(
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
 	judging *lcmrouter.Router,
+	edgeClients *streamedge.Clients,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -834,6 +839,7 @@ func buildSessions(
 				CallType: spec.CallType,
 				User:     streamedge.User{ID: spec.UserID, Name: spec.UserName},
 				Logger:   logger,
+				Clients:  edgeClients,
 			})
 		},
 		Transcript: func(spec session.Spec, logger *slog.Logger) (session.Transcript, error) {
