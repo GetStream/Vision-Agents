@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -791,9 +792,11 @@ func (u testUtils) callID() string {
 	return "call-" + u.uuid()
 }
 
-// number is an E.164 number nobody else holds.
+// number is an E.164 number nobody else holds. It is random rather than read off the clock,
+// which ticks in microseconds on some machines and so repeats every ten thousand numbers,
+// and nothing a suite holds is ever released.
 func (testUtils) number() string {
-	return fmt.Sprintf("+1512%07d", time.Now().UnixNano()%10_000_000)
+	return fmt.Sprintf("+1512%07d", rand.IntN(10_000_000))
 }
 
 // testData makes what a test runs against. Nothing it makes is cleaned up.
