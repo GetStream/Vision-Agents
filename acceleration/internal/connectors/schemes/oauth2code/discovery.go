@@ -196,9 +196,10 @@ func (s *Scheme) protectedResource(ctx context.Context, endpoint string) (protec
 		case err != nil:
 			failures = append(failures, err)
 		case !found:
-		// RFC 9728 section 3.3: resource «MUST be identical» to the identifier the
-		// well-known suffix was inserted into, or the document «MUST NOT be used».
+			// 404 or 410: try the next URL.
 		case metadata.Resource != c.identifier:
+			// RFC 9728 section 3.3: resource «MUST be identical» to the identifier the
+			// well-known suffix was inserted into, or the document «MUST NOT be used».
 			failures = append(failures, fmt.Errorf("oauth2code: protected resource metadata at %s names resource %q, not %q", c.url, metadata.Resource, c.identifier))
 		case len(metadata.AuthorizationServers) == 0:
 			failures = append(failures, fmt.Errorf("oauth2code: protected resource metadata at %s names no authorization server", c.url))
@@ -251,9 +252,10 @@ func (s *Scheme) authorizationServer(ctx context.Context, issuer string) (author
 		case err != nil:
 			failures = append(failures, err)
 		case !found:
-		// RFC 8414 section 3.3 and OpenID Connect Discovery 1.0 section 4.3: the issuer
-		// «MUST be identical» to the one the URL was built from, or the metadata is not used.
+			// 404 or 410: try the next URL.
 		case metadata.Issuer != issuer:
+			// RFC 8414 section 3.3 and OpenID Connect Discovery 1.0 section 4.3: the issuer
+			// «MUST be identical» to the one the URL was built from, or the metadata is not used.
 			failures = append(failures, fmt.Errorf("oauth2code: metadata at %s names issuer %q, not %q", candidate, metadata.Issuer, issuer))
 		default:
 			return metadata, nil
