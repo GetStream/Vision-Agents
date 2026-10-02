@@ -87,9 +87,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not read that call event", http.StatusBadRequest)
 			return
 		}
-		if s.acting(r.Context(), origin, eventType, payload) {
-			s.dispatchArrivingCall(r, origin, event)
-		}
+		s.dispatchArrivingCall(r, origin, event, payload)
 
 	case getstream.EventTypeCallSessionEnded:
 		var event callEvent
@@ -106,7 +104,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 // dispatchArrivingCall works out whose call it is and hands it to one of their workers.
-func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event callEvent) {
+func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event callEvent, payload []byte) {
 	callType, callID, split := strings.Cut(event.CallCid, ":")
 	if !split {
 		s.logger.Debug("a call event named no call", "cid", event.CallCid)
@@ -130,6 +128,11 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	if err != nil {
 		s.logger.Debug("no number reaches an arriving call",
 			"call", event.CallCid, "stream_app", origin.app, "error", err)
+		return
+	}
+	// Only a call that rings a number is worth recording as delivered: every video call in
+	// the app arrives here too.
+	if !s.acting(r.Context(), origin, getstream.EventTypeCallSessionStarted, payload) {
 		return
 	}
 

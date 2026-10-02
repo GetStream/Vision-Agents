@@ -8,13 +8,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-const (
-	// unknownKeyTTL is how long an api key no app holds is remembered as no app's, so a
-	// stream of hooks naming one does not ask the database each time.
-	unknownKeyTTL = 60 * time.Second
-	// maxUnknownKeys bounds how many such keys are remembered.
-	maxUnknownKeys = 1024
-)
+// maxHookAsks bounds how many answers about hooks are kept.
+const maxHookAsks = 1024
 
 // Verifier is a secret a hook may be signed with, and the app a hook it verifies is from.
 type Verifier struct {
@@ -35,7 +30,44 @@ type Verifier struct {
 // was signed with, when an app holds that key, and the deployment's secret otherwise. An
 // api key never widens what a hook is checked against, and the deployment's secret is
 // tried only for work in the deployment's app.
+//
+// What is found is kept as an identity is, and forgotten whenever an app is written, so a
+// busy app's hooks do not each read its keys and open them again.
 func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) ([]Verifier, error) {
+	asked := hookAsk{apiKey: apiKey, pathApp: pathApp}
+	c.mu.Lock()
+	held, ok := c.hookKeys[asked]
+	c.mu.Unlock()
+	if ok && c.now().Sub(held.at) < identityTTL {
+		return held.verifiers, nil
+	}
+	verifiers, err := c.verifiers(ctx, apiKey, pathApp)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Anybody can name a key or an app on a hook, so what is kept is bounded.
+	if len(c.hookKeys) >= maxHookAsks {
+		clear(c.hookKeys)
+	}
+	c.hookKeys[asked] = heldVerifiers{verifiers: verifiers, at: c.now()}
+	return verifiers, nil
+}
+
+// hookAsk is one question about a hook: the key it named and the app its path named.
+type hookAsk struct {
+	apiKey  string
+	pathApp int64
+}
+
+// heldVerifiers is an answer to one, as of when it was found.
+type heldVerifiers struct {
+	verifiers []Verifier
+	at        time.Time
+}
+
+func (c *Clients) verifiers(ctx context.Context, apiKey string, pathApp int64) ([]Verifier, error) {
 	stored, ok := c.Stored()
 	if !ok {
 		return nil, errors.New("streamapp: hooks are checked per app only in app mode")
@@ -70,7 +102,7 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 		return verifiers, nil
 	}
 
-	if apiKey != "" && !c.unknownKey(apiKey) {
+	if apiKey != "" {
 		app, err := stored.store.StreamAppByAPIKey(ctx, apiKey)
 		switch {
 		case err == nil:
@@ -78,7 +110,6 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 		case !errors.Is(err, store.ErrNoStreamApp):
 			return nil, err
 		}
-		c.rememberUnknownKey(apiKey)
 	}
 	if deployment.pending() {
 		return nil, ErrDeploymentAppUnknown
@@ -112,27 +143,4 @@ func (s *Stored) keysOf(app store.StreamApp, apiKey string, own int64) []Verifie
 		verifiers = append(verifiers, verifier)
 	}
 	return verifiers
-}
-
-func (c *Clients) unknownKey(apiKey string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	at, ok := c.unknown[apiKey]
-	return ok && c.now().Sub(at) < unknownKeyTTL
-}
-
-func (c *Clients) rememberUnknownKey(apiKey string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.unknown) >= maxUnknownKeys {
-		for key, at := range c.unknown {
-			if c.now().Sub(at) >= unknownKeyTTL {
-				delete(c.unknown, key)
-			}
-		}
-		if len(c.unknown) >= maxUnknownKeys {
-			clear(c.unknown)
-		}
-	}
-	c.unknown[apiKey] = c.now()
 }

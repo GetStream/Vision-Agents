@@ -20,8 +20,7 @@ func TestWritesIntoSuite(t *testing.T) {
 }
 
 func (s *WritesIntoSuite) server(options streamapp.DeploymentOptions) *Server {
-	return &Server{stream: streamapp.NewClients(streamapp.NewDeployment(options), streamapp.ClientsOptions{}),
-		streamTenancy: "deployment"}
+	return &Server{stream: streamapp.NewClients(streamapp.NewDeployment(options), streamapp.ClientsOptions{})}
 }
 
 func (s *WritesIntoSuite) TestTheRoutersOwnAppIsSharedToEveryOtherApp() {

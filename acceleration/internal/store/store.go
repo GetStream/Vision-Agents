@@ -34,6 +34,8 @@ type Store struct {
 	shapes tableShapes
 	// pins says how Stream app pins cross between deployments, once the router has said.
 	pins pinsHolder
+	// deliveriesPruned is when hook deliveries were last forgotten, in Unix nanoseconds.
+	deliveriesPruned atomic.Int64
 }
 
 // Open connects to Postgres using a pgdriver DSN, for example

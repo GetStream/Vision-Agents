@@ -71,8 +71,7 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 	verifiers, err := s.stream.Verifiers(r.Context(), strings.TrimSpace(r.Header.Get(auth.APIKeyHeader)), pathApp)
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		// Stream retries, and by then the deployment will know which app is its own.
-		w.Header().Set("Retry-After", strconv.Itoa(int(streamRetryAfter.Seconds())))
-		http.Error(w, streamUnknown, http.StatusServiceUnavailable)
+		writeStreamWaiting(w)
 		return hookOrigin{}, false
 	}
 	if err != nil {
@@ -84,10 +83,8 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 		if !getstream.VerifySignature(payload, signature, verifier.Secret.Reveal()) {
 			continue
 		}
-		if !verifier.Deployment && s.store != nil {
-			if err := s.store.TouchStreamAppWebhook(r.Context(), verifier.APIKey, time.Now()); err != nil {
-				s.logger.Warn("could not record a hook a key signed", "api_key", verifier.APIKey, "error", err)
-			}
+		if !verifier.Deployment {
+			s.touchWebhook(r.Context(), verifier.APIKey)
 		}
 		return hookOrigin{customer: verifier.CustomerID, app: verifier.StreamApp, deployment: verifier.Deployment,
 			apiKey: verifier.APIKey}, true
@@ -218,4 +215,24 @@ func (s *Server) mayWrite(ctx context.Context, origin hookOrigin, customer strin
 	}
 	_, err := s.stream.ForApp(ctx, customer, origin.app)
 	return err == nil
+}
+
+// webhookTouchEvery is the least time between two records that a key signed a hook, kept
+// here as well as in the store so a busy app's hooks do not each make a round trip to say
+// what was said a moment ago.
+const webhookTouchEvery = time.Minute
+
+// touchWebhook records that a key signed a hook, at most once a minute per key.
+func (s *Server) touchWebhook(ctx context.Context, apiKey string) {
+	if s.store == nil {
+		return
+	}
+	now := time.Now()
+	if last, ok := s.touched.Load(apiKey); ok && now.Sub(last.(time.Time)) < webhookTouchEvery {
+		return
+	}
+	s.touched.Store(apiKey, now)
+	if err := s.store.TouchStreamAppWebhook(ctx, apiKey, now); err != nil {
+		s.logger.Warn("could not record a hook a key signed", "api_key", apiKey, "error", err)
+	}
 }

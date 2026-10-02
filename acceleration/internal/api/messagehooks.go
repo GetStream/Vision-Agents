@@ -87,7 +87,9 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not read that message event", http.StatusBadRequest)
 			return
 		}
-		if s.acting(r.Context(), origin, eventType, payload) {
+		// Every message in the app arrives here; only one written to an agent is worth
+		// recording as delivered.
+		if addressed(event) && s.acting(r.Context(), origin, eventType, payload) {
 			s.routeArrivingMessage(r, origin, event)
 		}
 	} else {
@@ -122,10 +124,6 @@ func addressed(event messageEvent) bool {
 // routeArrivingMessage answers a message from the session running on its channel, or hands
 // it to a worker to start one.
 func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, event messageEvent) {
-	if !addressed(event) {
-		return
-	}
-
 	if s.sessions != nil {
 		// A session running on a channel of the same name in another app is somebody
 		// else's conversation.

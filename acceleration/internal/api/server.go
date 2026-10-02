@@ -11,7 +11,6 @@ package api
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -21,6 +20,7 @@ import (
 	"net/netip"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -31,7 +31,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -105,9 +104,6 @@ type Options struct {
 	// customer: tokens, guests and the transcripts read back. Absent when the deployment
 	// has no Stream app at all, in which case those paths say so.
 	Stream *streamapp.Clients
-	// StreamTenancy is whose Stream app the router acts in, as stream.tenancy says. Empty
-	// is deployment.
-	StreamTenancy string
 	// ProxyDeclaresKind is auth.proxy_declares_kind: the proxy in front says which kind of
 	// caller it verified. Registering a Stream app behind a proxy needs it, since without
 	// it every caller passes as a backend.
@@ -187,14 +183,15 @@ type Options struct {
 
 // Server implements the generated StrictServerInterface.
 type Server struct {
-	routers       map[routing.Modality]routing.Inspector
-	store         *store.Store
-	live          *live.Client
-	phone         *phone.Service
-	sessions      *session.Manager
-	streams       *Streams
-	stream        *streamapp.Clients
-	streamTenancy string
+	routers  map[routing.Modality]routing.Inspector
+	store    *store.Store
+	live     *live.Client
+	phone    *phone.Service
+	sessions *session.Manager
+	streams  *Streams
+	stream   *streamapp.Clients
+	// touched is when each key was last recorded as signing a hook.
+	touched sync.Map
 
 	proxyDeclaresKind bool
 	trustAPIKeyHeader bool
@@ -281,14 +278,13 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		logger = slog.Default()
 	}
 	server := &Server{
-		routers:       options.Routers,
-		store:         options.Store,
-		live:          options.Live,
-		phone:         options.Phone,
-		sessions:      options.Sessions,
-		streams:       options.Streams,
-		stream:        options.Stream,
-		streamTenancy: cmp.Or(options.StreamTenancy, config.TenancyDeployment),
+		routers:  options.Routers,
+		store:    options.Store,
+		live:     options.Live,
+		phone:    options.Phone,
+		sessions: options.Sessions,
+		streams:  options.Streams,
+		stream:   options.Stream,
 
 		proxyDeclaresKind: options.ProxyDeclaresKind,
 		trustAPIKeyHeader: options.TrustAPIKeyHeader,

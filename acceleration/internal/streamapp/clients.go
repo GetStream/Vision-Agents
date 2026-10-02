@@ -58,7 +58,8 @@ type Clients struct {
 	known   map[resolution]resolved
 	refresh map[string]time.Time
 	checks  map[string]checked
-	unknown map[string]time.Time
+	// hookKeys are the secrets hooks were last checked against, by what they named.
+	hookKeys map[hookAsk]heldVerifiers
 	// generation counts each customer's invalidations, so an answer resolved across one is
 	// not kept as though it came after.
 	generation map[string]uint64
@@ -102,7 +103,7 @@ func NewClients(source Source, options ClientsOptions) *Clients {
 		source: source, http: httpClient, max: maxClients, now: now,
 		clients: map[string]*list.Element{}, order: list.New(),
 		known: map[resolution]resolved{}, refresh: map[string]time.Time{}, checks: map[string]checked{},
-		unknown: map[string]time.Time{}, generation: map[string]uint64{},
+		generation: map[string]uint64{}, hookKeys: map[hookAsk]heldVerifiers{},
 	}
 }
 
@@ -222,8 +223,8 @@ func (c *Clients) forget(customer string) {
 			delete(c.known, asked)
 		}
 	}
-	// A key registered a moment ago is no longer one no app holds.
-	clear(c.unknown)
+	// The keys a hook is checked against may have changed with the app.
+	clear(c.hookKeys)
 	// What the customer's app holds is asked again too, since whatever changed it may
 	// have changed that.
 	for key, answer := range c.checks {

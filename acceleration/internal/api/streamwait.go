@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -23,13 +22,16 @@ const streamUnknown = "the router does not know which Stream app is its own yet:
 // deployment's own app is a 503 the caller can retry; anything else is a 500, as before.
 func answerFailure(w http.ResponseWriter, _ *http.Request, err error) {
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
-		w.Header().Set("Retry-After", strconv.Itoa(int(streamRetryAfter.Seconds())))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(Error{Error: streamUnknown})
+		writeStreamWaiting(w)
 		return
 	}
 	http.Error(w, err.Error(), http.StatusInternalServerError)
+}
+
+// writeStreamWaiting answers a request waiting on the deployment's own app: try again.
+func writeStreamWaiting(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(streamRetryAfter.Seconds())))
+	writeError(w, http.StatusServiceUnavailable, streamUnknown)
 }
 
 // streamWaiting is the same answer from an operation declared in Go.

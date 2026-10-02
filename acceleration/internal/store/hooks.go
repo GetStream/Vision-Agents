@@ -122,11 +122,18 @@ func customers[T any](rows []T, of func(T) string) int {
 // deliveryKeptFor is how long a delivery is remembered, which is longer than Stream retries.
 const deliveryKeptFor = 24 * time.Hour
 
+// deliveriesPrunedEvery is how often deliveries older than a day are forgotten, which is
+// rarely enough that a busy hook does not pay for it on every delivery.
+const deliveriesPrunedEvery = time.Minute
+
 // FirstDelivery records a hook delivery and reports whether it is the first with that key.
 func (s *Store) FirstDelivery(ctx context.Context, key string) (bool, error) {
-	if _, err := s.db.ExecContext(ctx, "DELETE FROM hook_deliveries WHERE seen_at < ?",
-		time.Now().UTC().Add(-deliveryKeptFor)); err != nil {
-		return false, fmt.Errorf("store: forget hook deliveries: %w", err)
+	now := time.Now().UTC()
+	if last := s.deliveriesPruned.Load(); now.UnixNano()-last >= int64(deliveriesPrunedEvery) &&
+		s.deliveriesPruned.CompareAndSwap(last, now.UnixNano()) {
+		if _, err := s.db.ExecContext(ctx, "DELETE FROM hook_deliveries WHERE seen_at < ?", now.Add(-deliveryKeptFor)); err != nil {
+			return false, fmt.Errorf("store: forget hook deliveries: %w", err)
+		}
 	}
 	result, err := s.db.ExecContext(ctx,
 		"INSERT INTO hook_deliveries (key, seen_at) VALUES (?, now()) ON CONFLICT (key) DO NOTHING", key)

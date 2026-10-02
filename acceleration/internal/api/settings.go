@@ -133,7 +133,7 @@ func (s *Server) getAppSettings(ctx context.Context, _ *struct{}) (*appSettingsR
 		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	settings := StreamSettings{
-		Tenancy:     StreamTenancy(s.streamTenancy),
+		Tenancy:     s.tenancy(),
 		WritesInto:  WritesIntoNowhere,
 		ChannelType: StreamTypeState(streamapp.TypeUnknown),
 		CallType:    StreamTypeState(streamapp.TypeUnknown),
@@ -222,4 +222,12 @@ func oldestKey(keys []store.StreamAppKey) string {
 		}
 	}
 	return oldest.APIKey
+}
+
+// tenancy is whose Stream app the router acts in.
+func (s *Server) tenancy() StreamTenancy {
+	if s.stream != nil && s.stream.PerApp() {
+		return config.TenancyApp
+	}
+	return config.TenancyDeployment
 }
