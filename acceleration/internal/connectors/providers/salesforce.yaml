@@ -53,7 +53,8 @@ endpoints:
   # [prm]
   mcp: https://api.salesforce.com/{mcp_path}
   # The RFC 8707 resource indicator: [prm]'s resource, which is the MCP endpoint. The
-  # endpoints above are pinned, so oauth2_code discovers nothing and needs it here.
+  # endpoints above are pinned, so oauth2_code discovers nothing and needs it here. Whether
+  # Salesforce's authorization server reads it is not on any source above. # unverified
   resource: https://api.salesforce.com/{mcp_path}
 # Authorization code with PKCE S256: [oidc]. Row 1 also lists oauth2_client_credentials and
 # oauth2_jwt_bearer, which are not registered schemes yet; they join with their schemes.
