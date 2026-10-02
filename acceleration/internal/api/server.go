@@ -577,6 +577,13 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 // withQuota looks at whether the caller is server-side rather than at whether there is one.
 func (s *Server) withCustomer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Stream is not a customer, and a delivery is authenticated by its signature. Who a
+		// request to a hook claims to be is not read, so it cannot name a tenant or record
+		// one under an organization.
+		if isHook(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		principal, err := s.authenticator.Authenticate(r.Context(), r)
 		if errors.Is(err, auth.ErrLevelRefused) {
 			s.logger.Debug("refused a level of user this app turns away",

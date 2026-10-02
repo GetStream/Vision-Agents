@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"time"
 
@@ -64,16 +63,9 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "could not read that message event", http.StatusBadRequest)
-		return
-	}
-	// Deliveries may be compressed, and the signature is over what is inside.
-	payload, err := getstream.GunzipPayload(body)
-	if err != nil {
-		s.logger.Warn("rejected a message event", "error", err)
-		http.Error(w, "that is not a message event from Stream", http.StatusUnauthorized)
+	payload, ok := readHook(w, r, "message event")
+	if !ok {
+		s.logger.Warn("rejected a message event before reading its signature")
 		return
 	}
 	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.streamSecret) {
