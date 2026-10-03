@@ -126,6 +126,65 @@ func (s *ConfigsSuite) TestAConfigNamingAHarnessThatDoesNotExistIsRefused() {
 	s.Contains(failure, "harness")
 }
 
+func (s *ConfigsSuite) TestAConfigRemembersHowItsSandboxIsBuilt() {
+	created := s.createConfig(map[string]any{
+		"name": "artist", "sandbox": "daytona",
+		"sandbox_options": map[string]any{
+			"image":      "python:3.13-slim-bookworm",
+			"setup":      []string{"pip install bpy==5.2.2"},
+			"timeout_ms": 300000, "cpu": 2, "memory_gb": 4,
+		},
+	})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	options := value(read.SandboxOptions)
+	s.Equal("python:3.13-slim-bookworm", value(options.Image))
+	s.Equal([]string{"pip install bpy==5.2.2"}, value(options.Setup))
+	s.Equal(300000, value(options.TimeoutMs))
+	s.Equal(2, value(options.Cpu))
+	s.Equal(4, value(options.MemoryGb))
+}
+
+func (s *ConfigsSuite) TestASandboxLeftAloneHasNoOptions() {
+	created := s.createConfig(map[string]any{"name": "analyst", "sandbox": "daytona"})
+
+	s.Nil(created.SandboxOptions, "the provider's own sandbox has nothing to say about how it is built")
+}
+
+func (s *ConfigsSuite) TestPatchingTheSandboxOptionsReplacesThem() {
+	created := s.createConfig(map[string]any{"name": "artist", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"setup": []string{"pip install numpy"}, "timeout_ms": 60000}})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"timeout_ms": 600000}}, &patched))
+
+	s.Equal(600000, value(value(patched.SandboxOptions).TimeoutMs))
+	s.Empty(value(value(patched.SandboxOptions).Setup))
+	s.Equal(Daytona, value(patched.Sandbox), "the sandbox itself is untouched")
+}
+
+func (s *ConfigsSuite) TestARunLongerThanThirtyMinutesIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "artist", "sandbox": "daytona",
+			"sandbox_options": map[string]any{"timeout_ms": 3600000}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "timeout_ms")
+}
+
+func (s *ConfigsSuite) TestAnEmptySetupCommandIsRefused() {
+	created := s.createConfig(map[string]any{"name": "artist", "sandbox": "daytona"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"setup": []string{"  "}}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "setup")
+}
+
 func (s *ConfigsSuite) TestAConfigNamingASandboxNobodyRunsIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "sandbox": "docker"})

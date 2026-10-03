@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 )
@@ -68,8 +69,10 @@ type Message struct {
 	// ClientID is the install a person's command came from, written on their message.
 	ClientID  string               `json:"client_id,omitempty"`
 	Artifacts []ArtifactAttachment `json:"artifacts,omitempty"`
-	Saved     bool                 `json:"saved"`
-	Error     string               `json:"persistence_error,omitempty"`
+	// Files are what the agent's own code made for this reply, such as a rendered image.
+	Files []sandbox.Attachment `json:"files,omitempty"`
+	Saved bool                 `json:"saved"`
+	Error string               `json:"persistence_error,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
@@ -632,6 +635,9 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 		}
 		if err == nil {
 			msg.Artifacts = artifactsFromAttachments(m.Attachments)
+			if msg.Role == "assistant" {
+				msg.Files = filesFromAttachments(m.Attachments)
+			}
 			msg.Saved = true
 			msg.authorID = m.User.ID
 			if m.User.Name != nil {
@@ -1099,6 +1105,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !changed {
 			return
 		}
+		m.Files = mergeFiles(m.Files, e.Files)
 		c.afterTools()
 		unsaved = true
 	case agent.TaskCancelled:
@@ -1269,6 +1276,7 @@ func (c *Conversation) publish(m Message) {
 		m.Parts = append([]Part{}, m.Parts...)
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+		m.Files = append([]sandbox.Attachment{}, m.Files...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
 }
@@ -1277,6 +1285,7 @@ func (c *Conversation) enqueue(m Message, create bool) {
 	m.Parts = append([]Part{}, m.Parts...)
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+	m.Files = append([]sandbox.Attachment{}, m.Files...)
 	op := operation{Message: m, Create: create}
 	if m.Role == "user" {
 		op.Author = c.userAuthor()
@@ -1320,7 +1329,7 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 	if op.live != nil {
 		parts = liveParts(parts, *op.live)
 	}
-	if attachments := messageAttachments(parts, partialAttachments(m.Artifacts)); len(attachments) > 0 {
+	if attachments := messageAttachments(parts, append(partialAttachments(m.Artifacts), fileAttachments(m.Files)...)); len(attachments) > 0 {
 		fields["attachments"] = attachments
 	}
 	if op.Create {
@@ -1457,6 +1466,7 @@ func (c *Conversation) run() {
 				copy.Parts = append([]Part{}, m.Parts...)
 				copy.Sources = append([]Source{}, m.Sources...)
 				copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+				copy.Files = append([]sandbox.Attachment{}, m.Files...)
 				m = &copy
 			}
 			// A change not sent yet waits for the next update; a settled reply's is stored.

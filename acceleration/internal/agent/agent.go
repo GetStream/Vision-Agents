@@ -137,6 +137,9 @@ type Options struct {
 	// holding the conversation: running code takes seconds, and a conversation cannot
 	// spare them.
 	Sandbox sandbox.Sandbox
+	// Publish puts the files the subagent's code hands back where the caller can see them,
+	// which is the conversation's channel when there is one. Nil means nowhere.
+	Publish sandbox.Publisher
 	// Tasks caps how much delegated work may run at once. Zero leaves the harness's own
 	// default in place.
 	Tasks int
@@ -2150,6 +2153,7 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 					Question:  typed.Question,
 					ElapsedMs: typed.ElapsedMs,
 					Err:       typed.Err,
+					Files:     typed.Files,
 				})
 			}
 			// Asked after the report rather than instead of it: work that ran out of time

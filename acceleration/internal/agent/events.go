@@ -5,6 +5,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -241,6 +242,8 @@ type TaskSettled struct {
 	// ElapsedMs is how long the caller was kept company for.
 	ElapsedMs float64
 	Err       error
+	// Files are what the work's code handed back, published where the caller can see them.
+	Files []sandbox.Attachment
 }
 
 func (TaskSettled) isAgentEvent() {}

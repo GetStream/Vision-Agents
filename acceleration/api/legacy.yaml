@@ -3249,7 +3249,9 @@ paths:
 
         The server sends what the conversation did: `joined`, `heard`, `responding`,
         `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`,
-        `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`,
+        `task_settled` (files lists what the work's code handed back, each a name,
+        mime_type, url and size, uploaded to a persistent conversation's channel and
+        attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`,
         `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
         `conversation_compacted`, `models_changed`, `error` and `left`.
 
@@ -4208,6 +4210,53 @@ components:
         running code takes seconds, and the model holding the conversation has none to
         spare. Omit it and the subagent works everything out in its head.
 
+    SandboxOptions:
+      type: object
+      additionalProperties: false
+      description: >
+        How the sandbox is built and how long code may run in it. Only meaningful with a
+        sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+      properties:
+        image:
+          type: string
+          maxLength: 256
+          description: >
+            The container image to build on, which must have Python, such as
+            python:3.13-slim-bookworm. Empty with anything else set is a slim Python 3.13
+            image.
+        setup:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            maxLength: 2048
+          description: >
+            Shell commands run once on top of the image when it is built, such as
+            installing packages. The provider keeps the built image, so only the first
+            sandbox from a given setup waits for it.
+        timeout_ms:
+          type: integer
+          minimum: 0
+          maximum: 1800000
+          description: >
+            How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A
+            run is still bounded by the deadline of the skill it was written for.
+        cpu:
+          type: integer
+          minimum: 0
+          maximum: 16
+          description: CPUs for the sandbox. Zero is the provider's default.
+        memory_gb:
+          type: integer
+          minimum: 0
+          maximum: 64
+          description: Memory for the sandbox, in GiB. Zero is the provider's default.
+        disk_gb:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Disk for the sandbox, in GiB. Zero is the provider's default.
+
     Harness:
       type: string
       enum: [default]
@@ -4341,6 +4390,8 @@ components:
             told.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
+        sandbox_options:
+          $ref: "#/components/schemas/SandboxOptions"
         harness:
           $ref: "#/components/schemas/Harness"
         dispatch:
@@ -4410,6 +4461,8 @@ components:
           type: string
         sandbox:
           $ref: "#/components/schemas/Sandbox"
+        sandbox_options:
+          $ref: "#/components/schemas/SandboxOptions"
         harness:
           $ref: "#/components/schemas/Harness"
         dispatch:

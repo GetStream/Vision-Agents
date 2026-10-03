@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -517,6 +518,7 @@ func frameOf(event session.Event) (frame, bool) {
 			"question":   typed.Question,
 			"elapsed_ms": typed.ElapsedMs,
 			"error":      errorText(typed.Err),
+			"files":      filesOf(typed.Files),
 		}, true
 
 	case agent.TaskCancelled:
@@ -646,4 +648,13 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(Error{Error: message})
+}
+
+// filesOf is what a settled task handed back, as a frame lists it: always a list, so a
+// client reading it need not tell an absent one from an empty one.
+func filesOf(files []sandbox.Attachment) []sandbox.Attachment {
+	if files == nil {
+		return []sandbox.Attachment{}
+	}
+	return files
 }

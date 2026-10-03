@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -33,6 +35,14 @@ type chatStore struct {
 	// throttle is spent; liveAttempts counts every live update tried.
 	rateLimited  bool
 	liveAttempts int
+	// uploads are the files stored on a channel, by the endpoint that took them.
+	uploads []upload
+}
+
+// upload is one file a channel was sent.
+type upload struct {
+	endpoint, name, user string
+	data                 []byte
 }
 
 // sentEvent is a channel event as the fake received it, with the stored updates made before it.
@@ -51,6 +61,19 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 		if db.fail {
 			w.WriteHeader(503)
 			_, _ = w.Write([]byte(`{"code":1,"message":"offline"}`))
+			return
+		}
+		if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/image") || strings.HasSuffix(r.URL.Path, "/file")) {
+			file, header, err := r.FormFile("file")
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			data, _ := io.ReadAll(file)
+			name := path.Base(header.Filename)
+			endpoint := path.Base(r.URL.Path)
+			db.uploads = append(db.uploads, upload{endpoint: endpoint, name: name, user: r.FormValue("user"), data: data})
+			_ = json.NewEncoder(w).Encode(map[string]any{"file": "https://cdn.fake/" + endpoint + "/" + name})
 			return
 		}
 		var body map[string]any
