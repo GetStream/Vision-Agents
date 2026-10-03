@@ -172,6 +172,9 @@ type Spec struct {
 	SkillNames []string
 	// Plugins are hosted MCP servers this session may reach, named from the catalog.
 	Plugins []string
+	// UserPlugins are hosted MCP servers the caller reaches with their own account, named
+	// from the catalog. A session with no caller is offered none of them.
+	UserPlugins []string
 	// KnowledgeNamespace is what the agent may look things up in. Empty means it knows
 	// only what it was told.
 	KnowledgeNamespace string
@@ -256,6 +259,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Guardrail:          config.Guardrail,
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
+		UserPlugins:        config.UserPlugins,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
 		KnowledgeNamespace: config.KnowledgeNamespace,

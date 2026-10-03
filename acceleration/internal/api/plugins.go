@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"fmt"
+	"html"
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -24,8 +26,9 @@ func (s *Server) ListPlugins(ctx context.Context, request ListPluginsRequestObje
 	return ListPlugins200JSONResponse(listed), nil
 }
 
-// ListConfigPlugins returns the catalog as this agent has it: connected ones carry a
-// status, the rest are implied absent.
+// ListConfigPlugins returns the catalog as this agent has it: the app's logins with their
+// status, then every plugin the config names that has none yet, as not_connected, which is
+// what a dashboard reminds the app to finish. The rest of the catalog is implied absent.
 func (s *Server) ListConfigPlugins(ctx context.Context, request ListConfigPluginsRequestObject) (ListConfigPluginsResponseObject, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -34,7 +37,8 @@ func (s *Server) ListConfigPlugins(ctx context.Context, request ListConfigPlugin
 	if s.store == nil {
 		return ListConfigPlugins400JSONResponse{badRequest(noConfigs)}, nil
 	}
-	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
+	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
+	if err != nil {
 		return ListConfigPlugins404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
 	}
 
@@ -43,13 +47,23 @@ func (s *Server) ListConfigPlugins(ctx context.Context, request ListConfigPlugin
 		return nil, err
 	}
 
-	listed := make([]PluginConnection, 0, len(conns))
+	listed := make([]PluginConnection, 0, len(conns)+len(config.Plugins))
+	held := map[string]bool{}
 	for _, conn := range conns {
 		plugin, ok := plugins.Lookup(conn.PluginID)
 		if !ok {
 			continue
 		}
+		held[plugin.ID] = true
 		listed = append(listed, pluginConnectionOf(plugin, conn))
+	}
+	for _, id := range config.Plugins {
+		plugin, ok := plugins.Lookup(id)
+		if !ok || held[id] {
+			continue
+		}
+		held[id] = true
+		listed = append(listed, pluginConnectionOf(plugin, store.PluginConnection{Status: string(PluginConnectionStatusNotConnected)}))
 	}
 	return ListConfigPlugins200JSONResponse(listed), nil
 }
@@ -152,6 +166,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token, err := auth.Exchange(r.Context(), plugins.Pending{
+		PluginID:      conn.PluginID,
 		State:         conn.OAuthState,
 		CodeVerifier:  conn.CodeVerifier,
 		ClientID:      conn.ClientID,
@@ -176,12 +191,24 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// An end user connected their own account from a conversation: there is no editor to
+	// go back to, and the config already names the plugin for every user.
+	if conn.UserID != "" {
+		plugin, _ := plugins.Lookup(conn.PluginID)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprintf(w, connectedPage, html.EscapeString(plugin.Name))
+		return
+	}
 	if err := s.store.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, auth.DashboardRedirect(conn.ConfigID), http.StatusFound)
 }
+
+// connectedPage is what an end user's browser shows once their login is stored.
+const connectedPage = `<!doctype html><meta charset="utf-8"><title>Connected</title>` +
+	`<p>%s is connected. You can close this tab and go back to the conversation.</p>`
 
 func (s *Server) auth() *plugins.Auth {
 	if s.oauth != nil {

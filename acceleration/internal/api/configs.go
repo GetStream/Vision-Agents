@@ -463,6 +463,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Plugins != nil {
 		config.Plugins = *request.Plugins
 	}
+	if request.UserPlugins != nil {
+		config.UserPlugins = *request.UserPlugins
+	}
 	config.Keyterms = keytermsOf(request.Keyterms)
 	if request.VisibleTools != nil {
 		config.VisibleTools = *request.VisibleTools
@@ -538,6 +541,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.Plugins) > 0 {
 		named := config.Plugins
 		rendered.Plugins = &named
+	}
+	if len(config.UserPlugins) > 0 {
+		named := config.UserPlugins
+		rendered.UserPlugins = &named
 	}
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms

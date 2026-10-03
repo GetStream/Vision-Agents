@@ -213,6 +213,10 @@ components:
         updated_at:
           format: date-time
           type: string
+        user_plugins:
+          items:
+            type: string
+          type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
         visible_tools:
@@ -286,6 +290,10 @@ components:
           type: object
         tts:
           type: string
+        user_plugins:
+          items:
+            type: string
+          type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
         visible_tools:
@@ -373,6 +381,12 @@ components:
           type: object
         tts:
           type: string
+        user_plugins:
+          description: |
+            Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+          items:
+            type: string
+          type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
         visible_tools:
@@ -2653,7 +2667,8 @@ components:
         - authorize_url
       type: object
     PluginConnection:
-      description: A catalog plugin as this agent has it, including whether it is logged in.
+      description: |
+        A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish.
       properties:
         category:
           type: string
@@ -2674,6 +2689,7 @@ components:
             - pending
             - connected
             - failed
+            - not_connected
           type: string
       required:
         - plugin_id
@@ -4281,6 +4297,11 @@ components:
           type: object
         tts:
           type: string
+        user_plugins:
+          description: Plugins each end user connects with their own account, from the conversation, the first time the agent needs one.
+          items:
+            type: string
+          type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
         voice:
@@ -5908,6 +5929,8 @@ paths:
       summary: Replace an agent config
   /v1/agents/configs/{id}/plugins:
     get:
+      description: |
+        The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
       operationId: listConfigPlugins
       parameters:
         - $ref: '#/components/parameters/ResourceID'

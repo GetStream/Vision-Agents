@@ -14,14 +14,14 @@ func TestCatalogSuite(t *testing.T) {
 	suite.Run(t, new(CatalogSuite))
 }
 
-func (s *CatalogSuite) TestTheFivePluginsAreListed() {
+func (s *CatalogSuite) TestTheSevenPluginsAreListed() {
 	listed := Catalog()
-	s.Len(listed, 5)
+	s.Len(listed, 7)
 	ids := make([]string, 0, len(listed))
 	for _, plugin := range listed {
 		ids = append(ids, plugin.ID)
 	}
-	s.Equal([]string{"slack", "calendly", "calcom", "shopify", "salesforce"}, ids)
+	s.Equal([]string{"slack", "calendly", "calcom", "shopify", "salesforce", "sentry", "google_calendar"}, ids)
 }
 
 func (s *CatalogSuite) TestSearchMatchesAName() {
@@ -30,7 +30,23 @@ func (s *CatalogSuite) TestSearchMatchesAName() {
 	for _, plugin := range found {
 		ids = append(ids, plugin.ID)
 	}
-	s.Equal([]string{"calendly", "calcom"}, ids)
+	s.Equal([]string{"calendly", "calcom", "google_calendar"}, ids)
+}
+
+func (s *CatalogSuite) TestGoogleCalendarAsksOnlyToReadAndForARefreshToken() {
+	plugin, ok := Lookup("google_calendar")
+	s.Require().True(ok)
+	s.Equal([]string{"https://www.googleapis.com/auth/calendar.readonly"}, plugin.Scopes)
+	s.Equal(map[string]string{"access_type": "offline", "prompt": "consent"}, plugin.AuthorizeParams)
+}
+
+func (s *CatalogSuite) TestSentryIsReachedAtItsHostedServer() {
+	plugin, ok := Lookup("sentry")
+	s.Require().True(ok)
+	url, err := plugin.Endpoint("")
+	s.Require().NoError(err)
+	s.Equal("https://mcp.sentry.dev/mcp", url)
+	s.Empty(plugin.Scopes, "Sentry's own consent page decides what the login may do")
 }
 
 func (s *CatalogSuite) TestAnEmptyQueryIsTheWholeCatalog() {
