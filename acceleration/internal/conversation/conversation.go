@@ -72,7 +72,7 @@ type Message struct {
 	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
 	Authorizations []plugins.Authorization `json:"authorizations,omitempty"`
 	Saved          bool                    `json:"saved"`
-	Error     string               `json:"persistence_error,omitempty"`
+	Error          string                  `json:"persistence_error,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
