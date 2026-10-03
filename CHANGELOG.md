@@ -420,6 +420,30 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### The sandbox can be built, run for minutes, and hand files back to chat
+
+`sandbox_options` on an agent config, or in `agent.yaml`, says how the subagent's Daytona
+sandbox is built and how long code may run in it (#737):
+
+```yaml
+sandbox: daytona
+sandbox_options:
+  setup: [pip install --no-cache-dir bpy==5.2.2]
+  timeout: 5m      # timeout_ms on the API, at most 30 minutes
+  cpu: 2
+  memory_gb: 4
+```
+
+`image` is the base to build on (a slim Python 3.13 when left out). Daytona keeps the built
+image, so only the first sandbox from a setup waits for it.
+
+`run_code` takes `files`, paths the program wrote. On a persistent text conversation each one
+is uploaded to the channel and attached to the reply that settles the work (an image inline,
+anything else as a file), so it is still there when the conversation is reopened, and history
+returns it as the message's `files`. `task_settled` lists them as `files`, which the Go SDK
+reads into `Event.Files` and Python into `RemoteEvent.files`. `examples/text_agents/blender_artist`
+uses this to render with Blender.
+
 ### A reply starts speaking sooner
 
 The first chunk of a reply now goes to the voice at its first clause, once it has 20
