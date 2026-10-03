@@ -1321,6 +1321,14 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- `Agent.ask()` follows a reply until the tools it called have answered. It stopped at
+  the first `agent_speech`, which is the model saying it is about to call a tool, because
+  the Python SDK dropped `pending_work`. `RemoteEvent` now carries it, as the Go SDK's
+  event does. (#737)
+- An agent with an `MCPServerLocal` no longer ends in a `CancelledError` when it closes.
+  The stdio session was entered on the connecting task and exited on the closing one, which
+  anyio's cancel scopes refuse. It is now held on a task of its own, as `MCPServerRemote`
+  already was. (#737)
 - A caller who kept talking after the first part of their turn was queued is no longer
   answered twice. The whole turn was answered, and then the queued part again once the
   agent stopped, in one Voicebench call 17.9 s later.
