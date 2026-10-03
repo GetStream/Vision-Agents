@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator, Optional
+from uuid import uuid4
 
 import aiortc
 from getstream.video.rtc.track_util import PcmData
@@ -229,6 +230,9 @@ class Accelerated(OmniLLM):
         command: dict[str, Any] = {"type": "respond", "text": text}
         if images:
             command["images"] = [image.as_image_dict() for image in images]
+        elif self.backend.acting_for and self._persisted():
+            # A conversation kept for an end user takes each message once, by its id.
+            command["command_id"] = uuid4().hex
         await self._command(command)
 
     async def simple_response(
@@ -281,6 +285,10 @@ class Accelerated(OmniLLM):
 
     async def stop_watching_video_track(self) -> None:
         """Nothing was being watched."""
+
+    def _persisted(self) -> bool:
+        """Whether the router keeps this conversation, which it names when it does."""
+        return self.session is not None and bool(self.session.conversation_id)
 
     async def _config_id(self, name: str) -> str:
         """Find the id of the stored config called `name`.
@@ -601,7 +609,11 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
     if kind == "response_delta":
         return RemoteEvent(type="agent_speech_delta", text=frame.get("text", ""))
     if kind == "responded":
-        return RemoteEvent(type="agent_speech", text=frame.get("text", ""))
+        return RemoteEvent(
+            type="agent_speech",
+            text=frame.get("text", ""),
+            pending_work=bool(frame.get("pending_work")),
+        )
     if kind == "looked_up":
         return RemoteEvent(
             type="looked_up",

@@ -81,6 +81,7 @@ class Router:
                 "call_type": self.created.get("call_type", "default"),
                 "user_id": self.created.get("user_id", ""),
                 "agent_id": self.created.get("agent_id", ""),
+                "conversation_id": "agent:kept" if self.created.get("text") else "",
                 "modality": "voice",
                 "state": "live",
                 "created_at": "2026-01-01T00:00:00Z",
@@ -635,6 +636,17 @@ class TestAccelerated:
         assert delta == RemoteEvent(type="agent_speech_delta", text="Routing picks ")
         assert answer.type == "agent_speech"
         assert answer.text == "Routing picks a provider."
+        assert not answer.pending_work
+
+    async def test_a_reply_followed_by_tools_says_it_is_not_over(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send({"type": "responded", "text": "", "pending_work": True})
+
+        event = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert event == RemoteEvent(type="agent_speech", pending_work=True)
 
     async def test_work_handed_to_a_skill_is_reported_going_out_and_coming_back(
         self, router: Router, writing: stream.Accelerated
@@ -724,5 +736,13 @@ class TestAccelerated:
         )
         try:
             assert router.created_for == "alice"
+
+            # The router keeps an end user's conversation, and takes each message to it
+            # once, by its id.
+            await llm.respond_remote("when am I free?", interrupt=False)
+            command = await router.answered()
+            assert command["type"] == "respond"
+            assert command["text"] == "when am I free?"
+            assert command["command_id"]
         finally:
             await llm.leave_remote()

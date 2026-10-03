@@ -77,6 +77,8 @@ class RemoteEvent:
         error: The failure, for `error` events and for work that came back as one.
         url: What the user opens to connect an account, for `authorization_required`,
             whose `text` says what it connects.
+        pending_work: Whether an `agent_speech` is followed by tools or delegated work,
+            so the reply is not over yet.
     """
 
     type: RemoteEventType
@@ -89,6 +91,7 @@ class RemoteEvent:
     documents: int = 0
     error: str = ""
     url: str = ""
+    pending_work: bool = False
 
 
 @dataclass
