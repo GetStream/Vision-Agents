@@ -1,0 +1,4 @@
+name: blender_artist
+description: Makes 3D renders with Blender, which runs in a Daytona sandbox.
+mode: text
+llm: llm-smart

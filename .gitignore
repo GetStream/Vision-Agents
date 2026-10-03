@@ -94,6 +94,9 @@ plugins/*/example/uv.lock
 # Audio an example spoke for itself
 /examples/routers/tts_example/spoken.wav
 
+# Pictures an example rendered for itself
+/examples/text_agents/blender_artist/renders/
+
 # Compiled Go commands, which land beside the module they were built from
 /acceleration/agent
 /acceleration/chat
