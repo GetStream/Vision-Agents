@@ -79,6 +79,30 @@ func (s *MCPSuite) TestAServerThatWillNotStartIsSkipped() {
 	s.Len(failures, 1)
 }
 
+func (s *MCPSuite) TestTheSessionTheServerGivesIsSentBack() {
+	var sessions []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body rpcRequest
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&body))
+		sessions = append(sessions, r.Header.Get("Mcp-Session-Id"))
+		switch body.Method {
+		case "initialize":
+			w.Header().Set("Mcp-Session-Id", "session-1")
+			writeRPC(w, body.ID, map[string]any{"protocolVersion": "2025-03-26"})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			writeRPC(w, body.ID, toolsListResult{})
+		}
+	}))
+	defer server.Close()
+
+	_, _, failures := Open(context.Background(), []Connection{{PluginID: "sentry", Endpoint: server.URL}}, server.Client())
+
+	s.Empty(failures)
+	s.Equal([]string{"", "session-1", "session-1"}, sessions)
+}
+
 func writeRPC(w http.ResponseWriter, id int, result any) {
 	raw, _ := json.Marshal(result)
 	_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: id, Result: raw})
