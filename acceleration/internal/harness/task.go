@@ -2,6 +2,8 @@ package harness
 
 import (
 	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 // needPrefix is how a skill says it cannot finish without something only the caller can
@@ -50,6 +52,9 @@ type Result struct {
 	Err    error
 	// ElapsedMs is how long the caller was kept company for.
 	ElapsedMs float64
+	// Files are what the work's code handed back, published where the caller can see
+	// them. Only an answered task has any.
+	Files []sandbox.Attachment
 }
 
 // Answered reports whether the task produced something worth telling the caller.

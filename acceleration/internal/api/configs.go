@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/danielgtaylor/huma/v2"
@@ -279,6 +280,9 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if _, ok := sandboxOf(request.Sandbox); !ok {
 		return fmt.Sprintf("there is no sandbox provider called %q", *request.Sandbox), false
 	}
+	if complaint, ok := sandboxOptionsComplaint(request.SandboxOptions); !ok {
+		return complaint, false
+	}
 	if _, ok := harnessOf(request.Harness); !ok {
 		return fmt.Sprintf("there is no harness called %q", *request.Harness), false
 	}
@@ -383,6 +387,74 @@ func modeOf(mode *AgentMode) (string, bool) {
 	return "", false
 }
 
+// sandboxOptionsComplaint reports what is wrong with how a caller asked for the sandbox to
+// be built, if anything. The bounds are the schema's, held here as well because a config
+// written through sync or a patch never meets the generated validator.
+func sandboxOptionsComplaint(options *SandboxOptions) (string, bool) {
+	if options == nil {
+		return "", true
+	}
+	bounded := []struct {
+		name       string
+		value, max int
+	}{
+		{"timeout_ms", value(options.TimeoutMs), int(sandbox.MaxTimeout.Milliseconds())},
+		{"cpu", value(options.Cpu), 16},
+		{"memory_gb", value(options.MemoryGb), 64},
+		{"disk_gb", value(options.DiskGb), 100},
+	}
+	for _, field := range bounded {
+		if field.value < 0 || field.value > field.max {
+			return fmt.Sprintf("sandbox_options.%s is between 0 and %d", field.name, field.max), false
+		}
+	}
+	if len(value(options.Image)) > 256 {
+		return "sandbox_options.image is at most 256 characters", false
+	}
+	if len(value(options.Setup)) > 32 {
+		return "sandbox_options.setup is at most 32 commands", false
+	}
+	for _, command := range value(options.Setup) {
+		if strings.TrimSpace(command) == "" || len(command) > 2048 {
+			return "a sandbox_options.setup command is between 1 and 2048 characters", false
+		}
+	}
+	return "", true
+}
+
+// sandboxConfigOf reads how a caller asked for the sandbox to be built.
+func sandboxConfigOf(options *SandboxOptions) sandbox.Config {
+	if options == nil {
+		return sandbox.Config{}
+	}
+	return sandbox.Config{
+		Image:     strings.TrimSpace(value(options.Image)),
+		Setup:     value(options.Setup),
+		TimeoutMs: value(options.TimeoutMs),
+		CPU:       value(options.Cpu),
+		MemoryGB:  value(options.MemoryGb),
+		DiskGB:    value(options.DiskGb),
+	}
+}
+
+// sandboxOptionsOf renders how a config's sandbox is built, or nothing when it is the
+// provider's own.
+func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
+	if config.Image == "" && len(config.Setup) == 0 && config.TimeoutMs == 0 &&
+		config.CPU == 0 && config.MemoryGB == 0 && config.DiskGB == 0 {
+		return nil
+	}
+	setup := append([]string{}, config.Setup...)
+	return &SandboxOptions{
+		Image:     optional(config.Image),
+		Setup:     &setup,
+		TimeoutMs: &config.TimeoutMs,
+		Cpu:       &config.CPU,
+		MemoryGb:  &config.MemoryGB,
+		DiskGb:    &config.DiskGB,
+	}
+}
+
 // sandboxOf reads the sandbox a caller sent, which is optional. An unknown one is refused
 // rather than dropped, since a config that quietly runs no code is hard to tell from one
 // whose subagent simply chose not to.
@@ -458,6 +530,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Guardrail:          value(request.Guardrail),
 		KnowledgeNamespace: value(request.KnowledgeNamespace),
 		Sandbox:            box,
+		SandboxOptions:     sandboxConfigOf(request.SandboxOptions),
 		Harness:            named,
 	}
 	if request.Skills != nil {
@@ -531,6 +604,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		box := Sandbox(config.Sandbox)
 		rendered.Sandbox = &box
 	}
+	rendered.SandboxOptions = sandboxOptionsOf(config.SandboxOptions)
 	named := Harness(config.Harness)
 	if named == "" {
 		named = Default
@@ -782,6 +856,7 @@ type AgentConfigRequest struct {
 	Name               string             `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Plugins            *[]string          `json:"plugins,omitempty" doc:"Hosted MCP servers this agent may reach, named from the built-in catalog."`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
+	SandboxOptions     *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Search             *string            `json:"search,omitempty" doc:"What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way."`
 	Skills             *[]string          `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
 	Speed              *float64           `json:"speed,omitempty" doc:"Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused." minimum:"0" example:"0.9"`
@@ -812,6 +887,7 @@ type AgentConfig struct {
 	Name               string             `json:"name"`
 	Plugins            *[]string          `json:"plugins,omitempty"`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
+	SandboxOptions     *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Search             *string            `json:"search,omitempty"`
 	Skills             *[]string          `json:"skills,omitempty"`
 	Speed              *float64           `json:"speed,omitempty"`

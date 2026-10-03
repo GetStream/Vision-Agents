@@ -763,6 +763,20 @@ Daytona, its output comes back as a tool result, and the same task is put again,
 rounds and always inside the skill's own deadline. One sandbox is created the first time
 code actually runs and released when the session ends.
 
+`sandbox_options` on the config, or in `agent.yaml`, says how that sandbox is built and how
+long code may run in it: an `image` with Python to start from, `setup` commands run on top of
+it once, `timeout_ms` for one run (30 seconds by default, at most 30 minutes), and `cpu`,
+`memory_gb` and `disk_gb`. Any of them builds an image, which Daytona keeps, so only the
+first sandbox from a given setup waits for the build. A run is still bounded by its skill's
+deadline, so a skill that renders for minutes says so in its own.
+
+`run_code` takes `files` as well as `code`: paths the program writes that the person should
+get, at most four of up to 20 MiB each. On a persistent text conversation each file is
+uploaded to the channel as the agent, `task_settled` lists them (`name`, `mime_type`, `url`,
+`size`), and the reply that settles the work carries them as Chat attachments, an image
+inline and anything else as a file, so they are there when the conversation is reopened.
+Without a channel the subagent is told there is nowhere to show them.
+
 Long histories are compacted privately on the thinking session when the prompt is large and
 either it has filled 80% of the conversation model's `context_window` in `router.yaml`, or the
 provider's reported cached-token ratio has fallen below half. The result replaces

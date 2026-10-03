@@ -25,6 +25,7 @@ from ._generated.models import (
     Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
+    SandboxOptions,
     SimulationDeclaration,
     SimulationDeclarationMode,
     SimulationDeclarationTags,
@@ -356,6 +357,16 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.keyterms = settings.keyterms
     if settings.sandbox:
         body.sandbox = SandboxProvider(settings.sandbox)
+    if settings.sandbox_options is not None:
+        options = settings.sandbox_options
+        body.sandbox_options = SandboxOptions(
+            image=options.image,
+            setup=options.setup,
+            timeout_ms=int(options.timeout_seconds * 1000),
+            cpu=options.cpu,
+            memory_gb=options.memory_gb,
+            disk_gb=options.disk_gb,
+        )
     if settings.tags:
         tags = SyncAgentRequestTags()
         tags.additional_properties = dict(settings.tags)

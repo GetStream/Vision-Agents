@@ -297,6 +297,9 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 	for _, declaration := range []string{
 		"name: jean\nlmm: openai/gpt-5.6\n",
 		"video:\n  max_frames: 9\n",
+		"sandbox_options:\n  timeout: 2h\n",
+		"sandbox_options:\n  timeout: soon\n",
+		"sandbox_options:\n  memory: 4\n",
 		"keyterms: Vision Agents\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")

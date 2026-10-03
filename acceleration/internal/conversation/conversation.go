@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 )
@@ -69,6 +70,8 @@ type Message struct {
 	// ClientID is the install a person's command came from, written on their message.
 	ClientID  string               `json:"client_id,omitempty"`
 	Artifacts []ArtifactAttachment `json:"artifacts,omitempty"`
+	// Files are what the agent's own code made for this reply, such as a rendered image.
+	Files []sandbox.Attachment `json:"files,omitempty"`
 	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
 	Authorizations []plugins.Authorization `json:"authorizations,omitempty"`
 	Saved          bool                    `json:"saved"`
@@ -635,6 +638,9 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 		}
 		if err == nil {
 			msg.Artifacts = artifactsFromAttachments(m.Attachments)
+			if msg.Role == "assistant" {
+				msg.Files = filesFromAttachments(m.Attachments)
+			}
 			msg.Authorizations = authorizationsFromAttachments(m.Attachments)
 			msg.Saved = true
 			msg.authorID = m.User.ID
@@ -1108,6 +1114,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !changed {
 			return
 		}
+		m.Files = mergeFiles(m.Files, e.Files)
 		c.afterTools()
 		unsaved = true
 	case agent.TaskCancelled:
@@ -1278,6 +1285,7 @@ func (c *Conversation) publish(m Message) {
 		m.Parts = append([]Part{}, m.Parts...)
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+		m.Files = append([]sandbox.Attachment{}, m.Files...)
 		m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
@@ -1287,6 +1295,7 @@ func (c *Conversation) enqueue(m Message, create bool) {
 	m.Parts = append([]Part{}, m.Parts...)
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+	m.Files = append([]sandbox.Attachment{}, m.Files...)
 	m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 	op := operation{Message: m, Create: create}
 	if m.Role == "user" {
@@ -1332,6 +1341,7 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 		parts = liveParts(parts, *op.live)
 	}
 	extra := append(partialAttachments(m.Artifacts), authorizationAttachments(m.Authorizations)...)
+	extra = append(extra, fileAttachments(m.Files)...)
 	if attachments := messageAttachments(parts, extra); len(attachments) > 0 {
 		fields["attachments"] = attachments
 	}
@@ -1469,6 +1479,7 @@ func (c *Conversation) run() {
 				copy.Parts = append([]Part{}, m.Parts...)
 				copy.Sources = append([]Source{}, m.Sources...)
 				copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+				copy.Files = append([]sandbox.Attachment{}, m.Files...)
 				copy.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 				m = &copy
 			}

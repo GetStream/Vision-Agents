@@ -30,6 +30,7 @@ type AgentConfigPatch struct {
 	VisibleTools       *[]string          `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
 	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
+	SandboxOptions     *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Harness            *Harness           `json:"harness,omitempty"`
 	Dispatch           *AgentDispatch     `json:"dispatch,omitempty"`
 	Tags               *map[string]string `json:"tags,omitempty"`
@@ -111,15 +112,16 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 
 	patch := request.Body
 	if message, ok := configComplaint(AgentConfigRequest{
-		Name:         override(config.Name, patch.Name),
-		Mode:         patch.Mode,
-		Keyterms:     patch.Keyterms,
-		Sandbox:      patch.Sandbox,
-		Harness:      patch.Harness,
-		Speed:        patch.Speed,
-		Guardrail:    patch.Guardrail,
-		VisibleTools: patch.VisibleTools,
-		Dispatch:     patch.Dispatch,
+		Name:           override(config.Name, patch.Name),
+		Mode:           patch.Mode,
+		Keyterms:       patch.Keyterms,
+		Sandbox:        patch.Sandbox,
+		SandboxOptions: patch.SandboxOptions,
+		Harness:        patch.Harness,
+		Speed:          patch.Speed,
+		Guardrail:      patch.Guardrail,
+		VisibleTools:   patch.VisibleTools,
+		Dispatch:       patch.Dispatch,
 	}); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
@@ -149,6 +151,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.KnowledgeNamespace = override(config.KnowledgeNamespace, patch.KnowledgeNamespace)
 	if patch.Sandbox != nil {
 		config.Sandbox, _ = sandboxOf(patch.Sandbox)
+	}
+	if patch.SandboxOptions != nil {
+		config.SandboxOptions = sandboxConfigOf(patch.SandboxOptions)
 	}
 	if patch.Harness != nil {
 		config.Harness, _ = harnessOf(patch.Harness)

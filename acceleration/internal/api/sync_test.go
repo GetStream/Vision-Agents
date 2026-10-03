@@ -75,6 +75,27 @@ func (s *SyncSuite) TestSyncingAnAgentStoresWhatItLeavesToDispatch() {
 	s.Equal(Enabled, value(value(result.Config.Dispatch).Text))
 }
 
+func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
+	result := s.sync(map[string]any{
+		"name": "artist", "hash": "v1", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"setup": []string{"pip install bpy==5.2.2"}, "timeout_ms": 300000},
+	})
+	s.Equal([]string{"pip install bpy==5.2.2"}, value(value(result.Config.SandboxOptions).Setup))
+
+	// A directory that stops saying how is not one that wants the build thrown away.
+	again := s.sync(map[string]any{"name": "artist", "hash": "v2", "sandbox": "daytona"})
+	s.Equal(300000, value(value(again.Config.SandboxOptions).TimeoutMs))
+}
+
+func (s *SyncSuite) TestASyncAskingForTooMuchMemoryIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "artist", "hash": "v1", "sandbox": "daytona",
+			"sandbox_options": map[string]any{"memory_gb": 1024}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "memory_gb")
+}
+
 func (s *SyncSuite) TestASyncThatNamesNoModelLeavesTheOneStored() {
 	first := s.sync(map[string]any{
 		"name": "switchboard", "hash": "v1", "llm": "llm-flow", "sandbox": "daytona",

@@ -1013,7 +1013,7 @@ export type paths = {
         /**
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
-         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
          *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
          *     A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
@@ -2333,6 +2333,7 @@ export type components = {
             readonly name: string;
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
             readonly skills?: readonly string[];
             /** Format: double */
@@ -2370,6 +2371,7 @@ export type components = {
             readonly name?: string;
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
             readonly skills?: readonly string[];
             /**
@@ -2409,6 +2411,7 @@ export type components = {
             /** @description Hosted MCP servers this agent may reach, named from the built-in catalog. */
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
             readonly search?: string;
             /** @description Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set. */
@@ -3913,6 +3916,33 @@ export type components = {
          * @enum {string}
          */
         readonly Sandbox: "daytona";
+        /** @description How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run. */
+        readonly SandboxOptions: {
+            /**
+             * Format: int64
+             * @description CPUs for the sandbox. Zero is the provider's default.
+             */
+            readonly cpu?: number;
+            /**
+             * Format: int64
+             * @description Disk for the sandbox, in GiB. Zero is the provider's default.
+             */
+            readonly disk_gb?: number;
+            /** @description The container image to build on, which must have Python, such as python:3.13-slim-bookworm. Empty with anything else set is a slim Python 3.13 image. */
+            readonly image?: string;
+            /**
+             * Format: int64
+             * @description Memory for the sandbox, in GiB. Zero is the provider's default.
+             */
+            readonly memory_gb?: number;
+            /** @description Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it. */
+            readonly setup?: readonly string[];
+            /**
+             * Format: int64
+             * @description How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for.
+             */
+            readonly timeout_ms?: number;
+        };
         readonly SayRequest: {
             readonly text: string;
         };
@@ -4633,6 +4663,7 @@ export type components = {
             readonly name: string;
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
             /** @description The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone. */
             readonly simulations?: readonly components["schemas"]["SimulationDeclaration"][];

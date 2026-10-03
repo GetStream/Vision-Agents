@@ -429,6 +429,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		ToolRunner:         runner,
 		Tools:              harness.Tools{Tools: tools},
 		Sandbox:            box,
+		Publish:            publisher(conv),
 		Tasks:              spec.Tasks,
 		Duplex:             spec.duplex(),
 		VideoSource:        spec.VideoSource,
@@ -1048,7 +1049,7 @@ func (m *Manager) box(spec Spec) (sandbox.Sandbox, error) {
 	if spec.Sandbox != daytonaProvider {
 		return nil, fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox)
 	}
-	return daytona.New(daytona.Options{Logger: m.logger})
+	return daytona.New(daytona.Options{Config: spec.SandboxOptions, Logger: m.logger})
 }
 
 // reading reports whether this session has anything to look things up in, which is a
@@ -1150,4 +1151,13 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 		}
 	}
 	return m.conversations, nil
+}
+
+// publisher is where files the subagent's code hands back are shown: the conversation's
+// channel when the session is kept in one, and nowhere when it is not.
+func publisher(conv *persistent.Conversation) sandbox.Publisher {
+	if conv == nil {
+		return nil
+	}
+	return conv.Publish
 }

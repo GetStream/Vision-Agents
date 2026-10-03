@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -55,6 +56,14 @@ func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {
 	})
 
 	s.Equal(daytonaProvider, spec.Sandbox)
+}
+
+func (s *SpecSuite) TestHowAConfigsSandboxIsBuiltBecomesTheSessions() {
+	options := sandbox.Config{Setup: []string{"pip install bpy==5.2.2"}, TimeoutMs: 300_000, MemoryGB: 4}
+
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Sandbox: daytonaProvider, SandboxOptions: options})
+
+	s.Equal(options, spec.SandboxOptions)
 }
 
 func (s *SpecSuite) TestKeytermsAreTidiedOnTheWayIn() {

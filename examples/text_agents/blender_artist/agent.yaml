@@ -1,0 +1,18 @@
+name: blender_artist
+description: Makes 3D renders with Blender, which runs in the router's Daytona sandbox.
+mode: text
+llm: llm-fast
+subagent: llm-thinking
+sandbox: daytona
+sandbox_options:
+  # bpy is Blender as a Python module, for Python 3.13. The libraries are the X and GL
+  # ones its wheel links against that a slim Debian does not have.
+  setup:
+    - >-
+      apt-get update && apt-get install -y --no-install-recommends
+      libgl1 libx11-6 libxext6 libxfixes3 libxi6 libxkbcommon0 libxrender1
+      libxxf86vm1 libsm6 libice6 libxt6 && rm -rf /var/lib/apt/lists/*
+    - pip install --no-cache-dir bpy==5.2.2
+  timeout: 5m
+  cpu: 2
+  memory_gb: 4

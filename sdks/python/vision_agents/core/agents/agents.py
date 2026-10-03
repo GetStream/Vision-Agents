@@ -957,9 +957,9 @@ class Agent:
     async def ask(self, text: str) -> AsyncIterator[RemoteEvent]:
         """Ask something, following the reply until it is finished.
 
-        Work handed to a skill outlives the turn that asked for it: the model says
-        something while the work runs and answers again once it comes back, so the reply
-        is over only when nothing is still out with the subagent.
+        Work handed to a skill or a tool outlives the turn that asked for it: the model
+        says something while the work runs and answers again once it comes back, so the
+        reply is over only when nothing it started is still running.
 
         Args:
             text: The question, as though it had been said.

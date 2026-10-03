@@ -7,6 +7,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 // Request is one recorded unit of work, stored so billing, cost and health can all be
@@ -354,6 +355,8 @@ type AgentConfig struct {
 	// Sandbox is where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none.
 	Sandbox string `bun:"sandbox,notnull"`
+	// SandboxOptions is how the sandbox is built and how long code may run in it.
+	SandboxOptions sandbox.Config `bun:"sandbox_options,type:jsonb,notnull"`
 	// Harness is which harness the agent's sessions run, "default" being the one there is.
 	Harness string            `bun:"harness,notnull"`
 	Tags    map[string]string `bun:"tags,type:jsonb"`

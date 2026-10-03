@@ -34,7 +34,9 @@ func documentHandWritten(api huma.API) {
 			"carrying a `type` and the fields of that event.\n" +
 			"The server sends what the conversation did: `joined`, `heard`, `responding`, " +
 			"`response_delta`, `responded` (pending_work remains true while tools or delegated work " +
-			"are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled`, " +
+			"are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files " +
+			"lists what the work's code handed back, each a name, mime_type, url and size, uploaded " +
+			"to a persistent conversation's channel and attached to the reply), " +
 			"`task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
 			"`backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, " +
 			"`models_changed`, `error` and `left`.\n" +

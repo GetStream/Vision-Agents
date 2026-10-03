@@ -42,7 +42,9 @@ type SyncAgentRequest struct {
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Harness       *Harness                   `json:"harness,omitempty"`
 	Dispatch      *AgentDispatch             `json:"dispatch,omitempty"`
-	Tags          *map[string]string         `json:"tags,omitempty"`
+	// SandboxOptions is how the sandbox is built. Left out keeps what is stored.
+	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
+	Tags           *map[string]string `json:"tags,omitempty"`
 }
 
 func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -262,6 +264,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	if complaint, ok := dispatchComplaint(body.Dispatch); !ok {
 		return complaint, false
 	}
+	if complaint, ok := sandboxOptionsComplaint(body.SandboxOptions); !ok {
+		return complaint, false
+	}
 	// Simulations are checked here, before anything is written, since a config stored under
 	// the new hash would make the next sync skip the simulations that failed.
 	named := map[string]bool{}
@@ -395,6 +400,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 		config.Harness, _ = harnessOf(body.Harness)
 	}
 	applyDispatch(config, body.Dispatch)
+	if body.SandboxOptions != nil {
+		config.SandboxOptions = sandboxConfigOf(body.SandboxOptions)
+	}
 	if body.Tags != nil {
 		config.Tags = *body.Tags
 	}

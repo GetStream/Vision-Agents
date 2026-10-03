@@ -1604,10 +1604,13 @@ type AgentConfig struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox  `json:"sandbox,omitempty"`
-	Search  *string   `json:"search,omitempty"`
-	Skills  *[]string `json:"skills,omitempty"`
-	Speed   *float64  `json:"speed,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
+	Search         *string         `json:"search,omitempty"`
+	Skills         *[]string       `json:"skills,omitempty"`
+	Speed          *float64        `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string `json:"sts,omitempty"`
@@ -1649,9 +1652,12 @@ type AgentConfigPatch struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox  `json:"sandbox,omitempty"`
-	Search  *string   `json:"search,omitempty"`
-	Skills  *[]string `json:"skills,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
+	Search         *string         `json:"search,omitempty"`
+	Skills         *[]string       `json:"skills,omitempty"`
 
 	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
 	Speed       *float64           `json:"speed,omitempty"`
@@ -1701,6 +1707,9 @@ type AgentConfigRequest struct {
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
 	Search *string `json:"search,omitempty"`
@@ -3406,6 +3415,27 @@ type RouterConfigRequest struct {
 // Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 type Sandbox string
 
+// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+type SandboxOptions struct {
+	// Cpu CPUs for the sandbox. Zero is the provider's default.
+	Cpu *int64 `json:"cpu,omitempty"`
+
+	// DiskGb Disk for the sandbox, in GiB. Zero is the provider's default.
+	DiskGb *int64 `json:"disk_gb,omitempty"`
+
+	// Image The container image to build on, which must have Python, such as python:3.13-slim-bookworm. Empty with anything else set is a slim Python 3.13 image.
+	Image *string `json:"image,omitempty"`
+
+	// MemoryGb Memory for the sandbox, in GiB. Zero is the provider's default.
+	MemoryGb *int64 `json:"memory_gb,omitempty"`
+
+	// Setup Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
+	Setup *[]string `json:"setup,omitempty"`
+
+	// TimeoutMs How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for.
+	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
+}
+
 // SayRequest defines model for SayRequest.
 type SayRequest struct {
 	Text string `json:"text"`
@@ -4235,7 +4265,10 @@ type SyncAgentRequest struct {
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
-	Search  *string  `json:"search,omitempty"`
+
+	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
+	Search         *string         `json:"search,omitempty"`
 
 	// Simulations The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone.
 	Simulations *[]SimulationDeclaration `json:"simulations,omitempty"`
