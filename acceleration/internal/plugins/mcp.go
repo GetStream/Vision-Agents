@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,11 @@ import (
 const PrefixSeparator = "__"
 
 const sessionHeader = "Mcp-Session-Id"
+
+// ErrUnauthorized is a server refusing the token a connection was opened with: it expired
+// early, was revoked, or the account was disconnected at the provider. The login has to be
+// made again.
+var ErrUnauthorized = errors.New("plugins: the server refused the login")
 
 // Connection is what a session needs to open one MCP server.
 type Connection struct {
@@ -263,6 +269,9 @@ func (c *client) roundTrip(ctx context.Context, body []byte) ([]byte, error) {
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, fmt.Errorf("plugins: %s: %w", c.pluginID, err)
+	}
+	if response.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("%w: %s: %s", ErrUnauthorized, c.pluginID, strings.TrimSpace(string(raw)))
 	}
 	if response.StatusCode >= 300 {
 		return nil, fmt.Errorf("plugins: %s: %s", c.pluginID, strings.TrimSpace(string(raw)))

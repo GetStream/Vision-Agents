@@ -147,6 +147,9 @@ func (r *userPluginRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Co
 	}
 
 	runtime, tools, prompt, err := r.connect(ctx, plugin)
+	if errors.Is(err, plugins.ErrUnauthorized) {
+		prompt, err = r.reconnect(ctx, plugin)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +174,22 @@ func (r *userPluginRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Co
 		Name:      plugins.Prefix(plugin.ID, wanted.Tool),
 		Arguments: string(arguments),
 	})
+	if errors.Is(err, plugins.ErrUnauthorized) {
+		text, err = r.reconnect(ctx, plugin)
+	}
 	return llm.TextParts(text), err
+}
+
+// reconnect forgets a login the provider refused and asks the caller to make it again.
+func (r *userPluginRunner) reconnect(ctx context.Context, plugin plugins.Plugin) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if runtime, ok := r.open[plugin.ID]; ok {
+		runtime.Close()
+		delete(r.open, plugin.ID)
+	}
+	r.logger.Info("a plugin refused an end user's login", "plugin", plugin.ID, "config", r.configID)
+	return r.authorize(ctx, plugin)
 }
 
 // connect is the caller's MCP session with a plugin, opened on first use. Without a login

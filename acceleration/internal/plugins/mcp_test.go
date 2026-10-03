@@ -103,6 +103,18 @@ func (s *MCPSuite) TestTheSessionTheServerGivesIsSentBack() {
 	s.Equal([]string{"", "session-1", "session-1"}, sessions)
 }
 
+func (s *MCPSuite) TestALoginTheServerRefusesIsToldApart() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	_, _, failures := Open(context.Background(), []Connection{{PluginID: "sentry", Endpoint: server.URL}}, server.Client())
+
+	s.Require().Len(failures, 1)
+	s.ErrorIs(failures[0], ErrUnauthorized)
+}
+
 func writeRPC(w http.ResponseWriter, id int, result any) {
 	raw, _ := json.Marshal(result)
 	_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: id, Result: raw})
