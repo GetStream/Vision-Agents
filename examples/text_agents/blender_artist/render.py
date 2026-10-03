@@ -5,9 +5,9 @@ It runs wherever `bpy` is installed, which is the Daytona sandbox when the agent
 
     python render.py scene.py render.png 960 540 32
 
-The scene script starts from an empty file. Whatever it leaves out of a camera, a light
-and a world is added here, so a script that only builds objects still renders something
-worth looking at.
+The scene script starts from an empty file with a dark world. Whatever it leaves out of
+a camera and a light is added here, so a script that only builds objects still renders
+something worth looking at.
 """
 
 import math
@@ -19,6 +19,9 @@ from mathutils import Vector
 
 def main(scene: str, output: str, width: int, height: int, samples: int) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
+    # An empty file has no world, and scripts reach for scene.world as if it had one.
+    bpy.context.scene.world = bpy.data.worlds.new("World")
+    bpy.context.scene.world.color = (0.05, 0.05, 0.06)
     with open(scene) as source:
         exec(compile(source.read(), scene, "exec"), {"__name__": "__main__"})
 
@@ -39,9 +42,6 @@ def main(scene: str, output: str, width: int, height: int, samples: int) -> None
 
 
 def _light(scene: bpy.types.Scene) -> None:
-    if scene.world is None:
-        scene.world = bpy.data.worlds.new("World")
-        scene.world.color = (0.05, 0.05, 0.06)
     if not any(obj.type == "LIGHT" for obj in scene.objects):
         sun = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", type="SUN"))
         sun.data.energy = 3.0
