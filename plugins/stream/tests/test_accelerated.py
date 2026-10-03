@@ -633,6 +633,21 @@ class TestAccelerated:
         assert delta == RemoteEvent(type="agent_speech_delta", text="Routing picks ")
         assert answer.type == "agent_speech"
         assert answer.text == "Routing picks a provider."
+        assert not answer.pending_work
+
+    async def test_a_reply_that_left_a_tool_running_says_more_follows(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send(
+            {"type": "responded", "text": "Rendering it now.", "pending_work": True}
+        )
+
+        answer = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert answer == RemoteEvent(
+            type="agent_speech", text="Rendering it now.", pending_work=True
+        )
 
     async def test_work_handed_to_a_skill_is_reported_going_out_and_coming_back(
         self, router: Router, writing: stream.Accelerated

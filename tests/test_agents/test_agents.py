@@ -1279,6 +1279,29 @@ class TestAgent:
         ]
         assert seen[-1].text == "It retries on the next one."
 
+    async def test_a_reply_that_called_a_tool_is_followed_until_the_tool_answers(self):
+        # The model says it is starting and calls a tool in the same turn. The answer is
+        # the turn after the tool returns, so the first reply is not the end of it.
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.chat():
+            written = await asking(agent, llm, "render a teapot")
+            await llm.report(
+                RemoteEvent(
+                    type="agent_speech", text="Rendering it now.", pending_work=True
+                )
+            )
+            await llm.report(
+                RemoteEvent(type="agent_speech", text="Saved to renders/teapot.png.")
+            )
+            seen = await asyncio.wait_for(written, timeout=5)
+
+        assert [event.text for event in seen] == [
+            "Rendering it now.",
+            "Saved to renders/teapot.png.",
+        ]
+
     async def test_a_conversation_that_ends_stops_whoever_is_reading_it(self):
         # A session closed underneath the reader must not leave it waiting for an answer
         # that is never coming.

@@ -70,6 +70,8 @@ class RemoteEvent:
         user_id: Who said it, empty when it was the agent.
         participant_id: The speaker's participant id, when the pipeline knows it.
         interrupted: Whether an agent turn ended because someone spoke over it.
+        pending_work: Whether more of the answer follows an `agent_speech`, because a
+            tool or delegated work it started is still running.
         skill: Which skill was handed the work, for `delegated` and `task_settled`.
         query: What was searched for, for `looked_up`.
         documents: How many passages bore on it, for `looked_up`.
@@ -81,6 +83,7 @@ class RemoteEvent:
     user_id: str = ""
     participant_id: str = ""
     interrupted: bool = False
+    pending_work: bool = False
     skill: str = ""
     query: str = ""
     documents: int = 0

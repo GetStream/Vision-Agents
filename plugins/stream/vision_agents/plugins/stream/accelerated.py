@@ -593,7 +593,11 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
     if kind == "response_delta":
         return RemoteEvent(type="agent_speech_delta", text=frame.get("text", ""))
     if kind == "responded":
-        return RemoteEvent(type="agent_speech", text=frame.get("text", ""))
+        return RemoteEvent(
+            type="agent_speech",
+            text=frame.get("text", ""),
+            pending_work=bool(frame.get("pending_work")),
+        )
     if kind == "looked_up":
         return RemoteEvent(
             type="looked_up",
