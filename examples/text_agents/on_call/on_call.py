@@ -50,9 +50,9 @@ async def main() -> None:
                     print(event.text, end="", flush=True)
                 elif event.type == "authorization_required":
                     connect = event.url
-                    print(f"\n[{event.text}: {event.url}]")
+                    print(f"\n[{event.text}: {event.url}]", flush=True)
                 elif event.type == "error":
-                    print(f"[{event.error}]")
+                    print(f"[{event.error}]", flush=True)
             print()
 
             question = ""

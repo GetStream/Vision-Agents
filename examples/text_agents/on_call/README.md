@@ -53,7 +53,10 @@ for somebody who has not connected their calendar, the reply carries a
 
 A chat client renders it as a button. This example prints the URL, waits for you to connect,
 and asks again. A login belongs to one person on one agent and is never used for anybody
-else.
+else, so the router has to know who that person is: `api_key` mode with the app's key and
+secret naming them, or `proxy` mode. A `noauth` router treats every caller as the app's own
+backend, and an anonymous caller goes by a name nobody checked, so neither is offered the
+calendar.
 
 Google registers no client on the fly, so the router needs one of its own. In a Google Cloud
 project, enable `calendarmcp.googleapis.com`, create an OAuth client of type *Web
