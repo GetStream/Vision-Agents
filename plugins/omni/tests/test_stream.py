@@ -1,3 +1,5 @@
+import dataclasses
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -9,6 +11,7 @@ from vision_agents.plugins.omni import (
     Channel,
     OmniAttachment,
     OmniMessage,
+    Provider,
     from_stream,
     stream_channel_id,
     stream_user_id,
@@ -20,6 +23,7 @@ from vision_agents.plugins.omni import (
 def inbound() -> OmniMessage:
     return OmniMessage(
         channel=Channel.SMS,
+        provider=Provider.TWILIO,
         conversation_id="+15559876543",
         text="Here is the leak",
         attachments=[
@@ -54,7 +58,7 @@ class TestStream:
         request = to_stream(inbound)
 
         assert request.text == "Here is the leak"
-        assert request.user_id == "sms__15559876543"
+        assert request.user_id == stream_user_id(inbound)
         assert request.attachments == [
             Attachment(
                 type="image",
@@ -78,6 +82,7 @@ class TestStream:
             OMNI_KEY: {
                 "v": 1,
                 "channel": "sms",
+                "provider": "twilio",
                 "conversation_id": "+15559876543",
                 "id": "SM123",
                 "sender_id": "+15559876543",
@@ -108,6 +113,7 @@ class TestStream:
 
         assert from_stream(reply, route=inbound) == OmniMessage(
             channel=Channel.SMS,
+            provider=Provider.TWILIO,
             conversation_id="+15559876543",
             account_id="+15550001111",
             thread_id="1700000000.000100",
@@ -121,15 +127,28 @@ class TestStream:
         with pytest.raises(ValueError, match="custom.omni"):
             from_stream(MessageRequest(text="hello"))
 
-    def test_ids_are_valid_stream_ids(self):
+    def test_ids_are_short_valid_stream_ids(self):
         message = OmniMessage(
             channel=Channel.IMESSAGE,
+            provider=Provider.LINQ,
             conversation_id="8f392755-6865-4b18-880a-227f9d8b458f",
-            sender_id="person@icloud.com",
+            account_id="a-very-long-line-handle-" * 4,
+            sender_id="person.with+a.long-address@icloud.com" * 4,
         )
 
-        assert stream_user_id(message) == "imessage_person_icloud_com"
-        assert (
-            stream_channel_id(message)
-            == "imessage_8f392755-6865-4b18-880a-227f9d8b458f"
-        )
+        for stream_id in (stream_user_id(message), stream_channel_id(message)):
+            assert re.fullmatch(r"linq_[0-9a-f]{24}", stream_id)
+
+    def test_channel_id_splits_by_account_not_by_channel(self, inbound: OmniMessage):
+        other_number = dataclasses.replace(inbound, account_id="+15550002222")
+        fallen_back = dataclasses.replace(inbound, channel=Channel.RCS)
+
+        assert stream_channel_id(other_number) != stream_channel_id(inbound)
+        assert stream_channel_id(fallen_back) == stream_channel_id(inbound)
+
+    def test_user_id_is_one_per_sender(self, inbound: OmniMessage):
+        on_other_number = dataclasses.replace(inbound, account_id="+15550002222")
+        someone_else = dataclasses.replace(inbound, sender_id="+15551112222")
+
+        assert stream_user_id(on_other_number) == stream_user_id(inbound)
+        assert stream_user_id(someone_else) != stream_user_id(inbound)

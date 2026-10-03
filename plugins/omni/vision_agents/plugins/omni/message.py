@@ -73,6 +73,8 @@ class OmniMessage:
 
     Attributes:
         channel: The channel it is on.
+        provider: The name of the provider that carries it, a `Provider` for the built-in
+            ones.
         conversation_id: Where replies go: the Slack channel, the WhatsApp, RCS or SMS
             number of the person, or the Linq chat.
         text: What was written.
@@ -88,6 +90,7 @@ class OmniMessage:
     """
 
     channel: Channel
+    provider: str
     conversation_id: str
     text: str = ""
     attachments: list[OmniAttachment] = field(default_factory=list)

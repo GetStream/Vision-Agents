@@ -7,7 +7,8 @@ from vision_agents.plugins.omni import (
     Channel,
     OmniAttachment,
     OmniMessage,
-    linq,
+    Provider,
+    LinqProvider,
 )
 
 
@@ -58,11 +59,19 @@ def received() -> dict[str, object]:
     }
 
 
-class TestLinq:
-    def test_parse_reads_a_received_message(self, received: dict[str, object]):
-        assert linq.parse(received) == [
+@pytest.fixture
+def provider() -> LinqProvider:
+    return LinqProvider()
+
+
+class TestLinqProvider:
+    def test_parse_reads_a_received_message(
+        self, provider: LinqProvider, received: dict[str, object]
+    ):
+        assert provider.parse(received) == [
             OmniMessage(
                 channel=Channel.IMESSAGE,
+                provider=Provider.LINQ,
                 conversation_id="8f392755-6865-4b18-880a-227f9d8b458f",
                 text="Hello!",
                 attachments=[
@@ -83,14 +92,36 @@ class TestLinq:
             )
         ]
 
-    def test_parse_skips_other_events(self, received: dict[str, object]):
+    @pytest.mark.parametrize(
+        ("service", "channel"),
+        [("iMessage", Channel.IMESSAGE), ("RCS", Channel.RCS), ("SMS", Channel.SMS)],
+    )
+    def test_parse_reads_the_channel_from_the_service(
+        self,
+        provider: LinqProvider,
+        received: dict[str, object],
+        service: str,
+        channel: Channel,
+    ):
+        data = received["data"]
+        assert isinstance(data, dict)
+        data["service"] = service
+
+        [message] = provider.parse(received)
+
+        assert message.channel is channel
+
+    def test_parse_skips_other_events(
+        self, provider: LinqProvider, received: dict[str, object]
+    ):
         received["event_type"] = "message.delivered"
 
-        assert linq.parse(received) == []
+        assert provider.parse(received) == []
 
-    def test_render_text_part_then_media(self):
+    def test_render_text_part_then_media(self, provider: LinqProvider):
         message = OmniMessage(
             channel=Channel.IMESSAGE,
+            provider=Provider.LINQ,
             conversation_id="8f392755-6865-4b18-880a-227f9d8b458f",
             text="Here you go",
             reply_to="89e3566e-1d13-49e5-a8ee-48490d5bfeb7",
@@ -102,7 +133,7 @@ class TestLinq:
             ],
         )
 
-        assert linq.render(message) == [
+        assert provider.render(message) == [
             {
                 "message": {
                     "parts": [

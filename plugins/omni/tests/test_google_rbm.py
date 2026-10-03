@@ -9,7 +9,8 @@ from vision_agents.plugins.omni import (
     Channel,
     OmniAttachment,
     OmniMessage,
-    rcs,
+    Provider,
+    GoogleRBMProvider,
 )
 
 
@@ -31,8 +32,15 @@ def user_file() -> dict[str, object]:
     }
 
 
-class TestRcs:
-    def test_parse_reads_a_pubsub_push(self, user_file: dict[str, object]):
+@pytest.fixture
+def provider() -> GoogleRBMProvider:
+    return GoogleRBMProvider()
+
+
+class TestGoogleRBMProvider:
+    def test_parse_reads_a_pubsub_push(
+        self, provider: GoogleRBMProvider, user_file: dict[str, object]
+    ):
         push = {
             "message": {
                 "data": base64.b64encode(json.dumps(user_file).encode()).decode(),
@@ -41,9 +49,10 @@ class TestRcs:
             "subscription": "projects/p/subscriptions/rbm",
         }
 
-        assert rcs.parse(push) == [
+        assert provider.parse(push) == [
             OmniMessage(
                 channel=Channel.RCS,
+                provider=Provider.GOOGLE_RBM,
                 conversation_id="+12223334444",
                 attachments=[
                     OmniAttachment(
@@ -61,8 +70,8 @@ class TestRcs:
             )
         ]
 
-    def test_parse_reads_a_suggestion_reply(self):
-        [message] = rcs.parse(
+    def test_parse_reads_a_suggestion_reply(self, provider: GoogleRBMProvider):
+        [message] = provider.parse(
             {
                 "senderPhoneNumber": "+12223334444",
                 "messageId": "MxDEF",
@@ -72,7 +81,7 @@ class TestRcs:
 
         assert message.text == "Yes please"
 
-    def test_parse_skips_events(self):
+    def test_parse_skips_events(self, provider: GoogleRBMProvider):
         event = {
             "senderPhoneNumber": "+12223334444",
             "eventType": "READ",
@@ -80,15 +89,16 @@ class TestRcs:
             "messageId": "MxABC",
         }
 
-        assert rcs.parse(event) == []
+        assert provider.parse(event) == []
 
-    def test_parse_rejects_data_that_is_not_base64(self):
+    def test_parse_rejects_data_that_is_not_base64(self, provider: GoogleRBMProvider):
         with pytest.raises(ValueError):
-            rcs.parse({"message": {"data": "not base64!"}})
+            provider.parse({"message": {"data": "not base64!"}})
 
-    def test_render_text_then_each_file(self):
+    def test_render_text_then_each_file(self, provider: GoogleRBMProvider):
         message = OmniMessage(
             channel=Channel.RCS,
+            provider=Provider.GOOGLE_RBM,
             conversation_id="+12223334444",
             text="Booked",
             attachments=[
@@ -99,7 +109,7 @@ class TestRcs:
             ],
         )
 
-        assert rcs.render(message) == [
+        assert provider.render(message) == [
             {
                 "contentMessage": {
                     "text": "Booked\nhttps://maps.google.com/?q=52.37,4.89"

@@ -7,7 +7,8 @@ from vision_agents.plugins.omni import (
     Channel,
     OmniAttachment,
     OmniMessage,
-    whatsapp,
+    Provider,
+    WhatsAppProvider,
 )
 
 
@@ -94,17 +95,25 @@ def webhook() -> dict[str, object]:
     }
 
 
-class TestWhatsapp:
-    def test_parse_reads_messages(self, webhook: dict[str, object]):
+@pytest.fixture
+def provider() -> WhatsAppProvider:
+    return WhatsAppProvider()
+
+
+class TestWhatsAppProvider:
+    def test_parse_reads_messages(
+        self, provider: WhatsAppProvider, webhook: dict[str, object]
+    ):
         sender = {
             "channel": Channel.WHATSAPP,
+            "provider": Provider.WHATSAPP,
             "conversation_id": "16315551181",
             "sender_id": "16315551181",
             "sender_name": "Kerry",
             "account_id": "PHONE_NUMBER_ID",
         }
 
-        assert whatsapp.parse(webhook) == [
+        assert provider.parse(webhook) == [
             OmniMessage(
                 text="Hello",
                 id="wamid.TEXT",
@@ -146,7 +155,7 @@ class TestWhatsapp:
             ),
         ]
 
-    def test_parse_skips_statuses(self):
+    def test_parse_skips_statuses(self, provider: WhatsAppProvider):
         webhook = {
             "entry": [
                 {
@@ -161,11 +170,12 @@ class TestWhatsapp:
             ]
         }
 
-        assert whatsapp.parse(webhook) == []
+        assert provider.parse(webhook) == []
 
-    def test_render_one_body_per_part(self):
+    def test_render_one_body_per_part(self, provider: WhatsAppProvider):
         message = OmniMessage(
             channel=Channel.WHATSAPP,
+            provider=Provider.WHATSAPP,
             conversation_id="16315551181",
             text="Here is your quote",
             reply_to="wamid.EARLIER",
@@ -187,7 +197,7 @@ class TestWhatsapp:
             "context": {"message_id": "wamid.EARLIER"},
         }
 
-        assert whatsapp.render(message) == [
+        assert provider.render(message) == [
             {"type": "text", "text": {"body": "Here is your quote"}, **envelope},
             {
                 "type": "document",

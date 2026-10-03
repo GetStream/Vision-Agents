@@ -5,7 +5,8 @@ from vision_agents.plugins.omni import (
     Channel,
     OmniAttachment,
     OmniMessage,
-    sms,
+    Provider,
+    TwilioProvider,
 )
 
 
@@ -30,11 +31,19 @@ def mms_form() -> dict[str, str]:
     }
 
 
-class TestSms:
-    def test_parse_reads_an_mms(self, mms_form: dict[str, str]):
-        assert sms.parse(mms_form) == [
+@pytest.fixture
+def provider() -> TwilioProvider:
+    return TwilioProvider()
+
+
+class TestTwilioProvider:
+    def test_parse_reads_an_mms(
+        self, provider: TwilioProvider, mms_form: dict[str, str]
+    ):
+        assert provider.parse(mms_form) == [
             OmniMessage(
                 channel=Channel.SMS,
+                provider=Provider.TWILIO,
                 conversation_id="+15559876543",
                 text="See photos",
                 attachments=[
@@ -55,14 +64,37 @@ class TestSms:
             )
         ]
 
-    def test_parse_skips_status_callbacks(self):
+    @pytest.mark.parametrize(
+        ("sender", "channel"),
+        [
+            ("+15559876543", Channel.SMS),
+            ("whatsapp:+15559876543", Channel.WHATSAPP),
+            ("rcs:+15559876543", Channel.RCS),
+        ],
+    )
+    def test_parse_reads_the_channel_from_the_sender(
+        self,
+        provider: TwilioProvider,
+        mms_form: dict[str, str],
+        sender: str,
+        channel: Channel,
+    ):
+        mms_form["From"] = sender
+
+        [message] = provider.parse(mms_form)
+
+        assert message.channel is channel
+        assert message.conversation_id == sender
+
+    def test_parse_skips_status_callbacks(self, provider: TwilioProvider):
         callback = {"MessageSid": "SM1", "MessageStatus": "delivered", "To": "+1555"}
 
-        assert sms.parse(callback) == []
+        assert provider.parse(callback) == []
 
-    def test_render_batches_media(self):
+    def test_render_batches_media(self, provider: TwilioProvider):
         message = OmniMessage(
             channel=Channel.SMS,
+            provider=Provider.TWILIO,
             conversation_id="+15559876543",
             account_id="+15550001111",
             text="Photos",
@@ -72,7 +104,7 @@ class TestSms:
             ],
         )
 
-        assert sms.render(message) == [
+        assert provider.render(message) == [
             {
                 "To": "+15559876543",
                 "From": "+15550001111",
@@ -86,9 +118,10 @@ class TestSms:
             },
         ]
 
-    def test_render_text_with_a_place(self):
+    def test_render_text_with_a_place(self, provider: TwilioProvider):
         message = OmniMessage(
             channel=Channel.SMS,
+            provider=Provider.TWILIO,
             conversation_id="+15559876543",
             text="Meet here",
             attachments=[
@@ -98,7 +131,7 @@ class TestSms:
             ],
         )
 
-        assert sms.render(message) == [
+        assert provider.render(message) == [
             {
                 "To": "+15559876543",
                 "Body": "Meet here\nhttps://maps.google.com/?q=52.37,4.89",

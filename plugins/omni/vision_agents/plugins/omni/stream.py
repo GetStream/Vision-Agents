@@ -5,7 +5,7 @@ Everything else about it, which a reply needs to find its way back, is the messa
 `custom.omni`.
 """
 
-import re
+import hashlib
 from typing import Optional
 
 from getstream.models import Attachment, MessageRequest, MessageResponse
@@ -16,17 +16,28 @@ from .message import AttachmentKind, Channel, OmniAttachment, OmniMessage
 OMNI_KEY = "omni"
 SCHEMA_VERSION = 1
 
-_INVALID_ID = re.compile(r"[^A-Za-z0-9_-]")
+# 96 bits keeps ids unique and short: Stream channel ids are at most 64 characters.
+_DIGEST_LENGTH = 24
 
 
 def stream_user_id(message: OmniMessage) -> str:
-    """The Stream user who wrote a message: its sender, namespaced by channel."""
-    return _stream_id(message.channel, message.sender_id)
+    """The Stream user who wrote a message, one per sender per provider.
+
+    It is a digest, valid whatever the sender id. The sender id itself is in
+    `custom.omni`.
+    """
+    return _stream_id(message.provider, message.sender_id)
 
 
 def stream_channel_id(message: OmniMessage) -> str:
-    """The Stream channel a conversation is kept in, one per conversation per channel."""
-    return _stream_id(message.channel, message.conversation_id)
+    """The Stream channel a conversation is kept in.
+
+    There is one per provider, account and conversation, so a person writing to two of
+    the business's numbers has two. A Linq chat stays one channel when a message in it
+    falls back from iMessage to SMS. It is a digest, at most 64 characters whatever the
+    ids; the ids themselves are in `custom.omni`.
+    """
+    return _stream_id(message.provider, message.account_id, message.conversation_id)
 
 
 def to_stream(message: OmniMessage, user_id: Optional[str] = None) -> MessageRequest:
@@ -42,6 +53,7 @@ def to_stream(message: OmniMessage, user_id: Optional[str] = None) -> MessageReq
     omni: dict[str, object] = {
         "v": SCHEMA_VERSION,
         "channel": message.channel.value,
+        "provider": message.provider,
         "conversation_id": message.conversation_id,
         "id": message.id,
         "sender_id": message.sender_id,
@@ -87,6 +99,7 @@ def from_stream(
     if route is not None:
         return OmniMessage(
             channel=route.channel,
+            provider=route.provider,
             conversation_id=route.conversation_id,
             account_id=route.account_id,
             thread_id=route.thread_id,
@@ -100,6 +113,7 @@ def from_stream(
         )
     return OmniMessage(
         channel=Channel(string(omni.get("channel"))),
+        provider=string(omni.get("provider")),
         conversation_id=string(omni.get("conversation_id")),
         text=text,
         attachments=attachments,
@@ -113,8 +127,9 @@ def from_stream(
     )
 
 
-def _stream_id(channel: Channel, external_id: str) -> str:
-    return f"{channel.value}_{_INVALID_ID.sub('_', external_id)}"
+def _stream_id(provider: str, *ids: str) -> str:
+    digest = hashlib.sha256("\0".join(ids).encode()).hexdigest()
+    return f"{provider}_{digest[:_DIGEST_LENGTH]}"
 
 
 def _compact(values: dict[str, object]) -> dict[str, object]:

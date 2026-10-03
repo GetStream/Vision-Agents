@@ -1,3 +1,4 @@
+import copy
 from datetime import datetime, timezone
 
 import pytest
@@ -7,7 +8,8 @@ from vision_agents.plugins.omni import (
     Channel,
     OmniAttachment,
     OmniMessage,
-    slack,
+    Provider,
+    SlackProvider,
 )
 
 
@@ -42,11 +44,19 @@ def event_callback() -> dict[str, object]:
     }
 
 
-class TestSlack:
-    def test_parse_reads_a_message(self, event_callback: dict[str, object]):
-        assert slack.parse(event_callback) == [
+@pytest.fixture
+def provider() -> SlackProvider:
+    return SlackProvider()
+
+
+class TestSlackProvider:
+    def test_parse_reads_a_message(
+        self, provider: SlackProvider, event_callback: dict[str, object]
+    ):
+        assert provider.parse(event_callback) == [
             OmniMessage(
                 channel=Channel.SLACK,
+                provider=Provider.SLACK,
                 conversation_id="C0001",
                 text="Is this broken?",
                 attachments=[
@@ -76,32 +86,62 @@ class TestSlack:
         ],
     )
     def test_parse_skips_what_a_person_did_not_write(
-        self, event_callback: dict[str, object], change: dict[str, object]
+        self,
+        provider: SlackProvider,
+        event_callback: dict[str, object],
+        change: dict[str, object],
     ):
         event = event_callback["event"]
         assert isinstance(event, dict)
         event.update(change)
 
-        assert slack.parse(event_callback) == []
+        assert provider.parse(event_callback) == []
 
-    def test_parse_skips_url_verification(self):
-        assert slack.parse({"type": "url_verification", "challenge": "abc"}) == []
+    def test_parse_reads_a_message_once(
+        self, provider: SlackProvider, event_callback: dict[str, object]
+    ):
+        mention = copy.deepcopy(event_callback)
+        event = mention["event"]
+        assert isinstance(event, dict)
+        event["type"] = "app_mention"
+        del event["subtype"]
 
-    def test_render_text_in_thread(self):
+        assert len(provider.parse(event_callback)) == 1
+        assert provider.parse(mention) == []
+        assert provider.parse(event_callback) == []
+
+    def test_parse_forgets_the_oldest_messages(self, event_callback: dict[str, object]):
+        provider = SlackProvider(remembered=1)
+        later = copy.deepcopy(event_callback)
+        event = later["event"]
+        assert isinstance(event, dict)
+        event["ts"] = "1700000001.000000"
+
+        provider.parse(event_callback)
+        provider.parse(later)
+
+        assert len(provider.parse(event_callback)) == 1
+
+    def test_parse_skips_url_verification(self, provider: SlackProvider):
+        assert provider.parse({"type": "url_verification", "challenge": "abc"}) == []
+
+    def test_render_text_in_thread(self, provider: SlackProvider):
         message = OmniMessage(
             channel=Channel.SLACK,
+            provider=Provider.SLACK,
             conversation_id="C0001",
             text="On it",
             thread_id="1700000000.000100",
         )
 
-        assert slack.render(message) == [
+        assert provider.render(message) == [
             {"channel": "C0001", "text": "On it", "thread_ts": "1700000000.000100"}
         ]
 
-    def test_render_images_as_blocks_and_files_as_links(self):
+    def test_render_images_as_blocks_and_files_as_links(self, provider: SlackProvider):
         message = OmniMessage(
             channel=Channel.SLACK,
+            provider=Provider.SLACK,
             conversation_id="D0001",
             text="Your quote",
             attachments=[
@@ -114,7 +154,7 @@ class TestSlack:
         )
         text = "Your quote\n<https://cdn/q.pdf|q.pdf>"
 
-        assert slack.render(message) == [
+        assert provider.render(message) == [
             {
                 "channel": "D0001",
                 "text": text,
@@ -129,7 +169,12 @@ class TestSlack:
             }
         ]
 
-    def test_render_nothing_to_send(self):
+    def test_render_nothing_to_send(self, provider: SlackProvider):
         assert (
-            slack.render(OmniMessage(channel=Channel.SLACK, conversation_id="C1")) == []
+            provider.render(
+                OmniMessage(
+                    channel=Channel.SLACK, provider=Provider.SLACK, conversation_id="C1"
+                )
+            )
+            == []
         )

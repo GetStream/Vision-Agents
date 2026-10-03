@@ -1,20 +1,20 @@
 # Omni Plugin
 
-Slack, WhatsApp, RCS, SMS and iMessage (through [Linq](https://linqapp.com)) messages as
-Stream Chat messages, so an agent answers every channel from one Stream channel.
+Slack, WhatsApp, RCS, SMS and iMessage messages as Stream Chat messages, so an agent
+answers every channel from one Stream channel per conversation.
 
-Each channel module reads its provider's webhook body into an `OmniMessage` with
-`parse`, and turns an `OmniMessage` into the request bodies its provider's send API takes
-with `render`. `to_stream` and `from_stream` convert between an `OmniMessage` and a Stream
-message.
+A channel can be carried by more than one provider. Each provider reads its webhook bodies
+into `OmniMessage`s with `parse`, and turns an `OmniMessage` into the request bodies its
+send API takes with `render`. A `ProviderRegistry` finds the provider by name, and every
+message records the provider it came through.
 
-| Module     | `parse` reads                         | `render` bodies are sent to                          |
-| ---------- | ------------------------------------- | ---------------------------------------------------- |
-| `slack`    | Events API `event_callback`           | `chat.postMessage`                                   |
-| `whatsapp` | Cloud API webhook                     | `POST /{phone-number-id}/messages`                   |
-| `rcs`      | Google RBM webhook or Pub/Sub push    | `POST /v1/phones/{phone}/agentMessages?messageId=…`  |
-| `sms`      | Twilio incoming message webhook form  | `POST /2010-04-01/Accounts/{sid}/Messages.json` form |
-| `linq`     | Linq v3 webhook, version `2026-02-03` | `POST /api/partner/v3/chats/{chat_id}/messages`      |
+| Provider     | Channels              | `parse` reads                                | `render` bodies are sent to                          |
+| ------------ | --------------------- | -------------------------------------------- | ---------------------------------------------------- |
+| `slack`      | Slack                 | Events API `event_callback`                  | `chat.postMessage`                                   |
+| `whatsapp`   | WhatsApp              | Cloud API webhook                            | `POST /{phone-number-id}/messages`                   |
+| `google_rbm` | RCS                   | Google RBM webhook or Pub/Sub push           | `POST /v1/phones/{phone}/agentMessages?messageId=…`  |
+| `twilio`     | SMS, WhatsApp, RCS    | Twilio incoming message webhook form         | `POST /2010-04-01/Accounts/{sid}/Messages.json` form |
+| `linq`       | iMessage, RCS, SMS    | Linq v3 webhook, version `2026-02-03`        | `POST /api/partner/v3/chats/{chat_id}/messages`      |
 
 ## Installation
 
@@ -27,24 +27,41 @@ uv add "vision-agents[omni]"
 ```python
 from vision_agents.plugins import omni
 
-for message in omni.whatsapp.parse(webhook_body):
+providers = omni.ProviderRegistry()
+
+for message in providers.parse(omni.Provider.LINQ, webhook_body):
     await client.upsert_users(
         UserRequest(id=omni.stream_user_id(message), name=message.sender_name or None)
     )
     channel = client.chat.channel("messaging", omni.stream_channel_id(message))
     await channel.send_message(omni.to_stream(message))
 
-# Later, the agent's reply goes back where the message came from.
+# Later, the agent's reply goes back the way the message came.
 reply = omni.from_stream(agent_message, route=message)
-for body in omni.whatsapp.render(reply):
-    ...  # POST it with the account's token
+for body in providers.render(reply):
+    ...  # POST it with the provider's credentials
 ```
 
-In Stream a message keeps its text as the message text and its files as `image`, `video`,
-`audio` and `file` attachments, with `mime_type`, `file_size` and the provider's
-`media_id` on them. A shared place is a `location` attachment with `latitude` and
-`longitude`. Who sent it, the conversation and the account it is on are in
-`custom.omni`, which `from_stream` reads back when no `route` is given.
+Keep one registry for the life of the app: the Slack provider remembers the messages it
+has read, so a message Slack delivers as both `message` and `app_mention`, or retries, is
+read once.
+
+To add a provider, subclass `OmniProvider` with a unique `name`, the `channels` it carries,
+`parse` and `render`, and `register` it.
+
+## In Stream
+
+A message keeps its text as the message text and its files as `image`, `video`, `audio`
+and `file` attachments, with `mime_type`, `file_size` and the provider's `media_id` on
+them. A shared place is a `location` attachment with `latitude` and `longitude`. Its
+channel, provider, sender, conversation and account are in `custom.omni`, which
+`from_stream` reads back when no `route` is given.
+
+Stream ids are digests, so they fit Stream's limits whatever the provider's ids are:
+
+- `stream_channel_id`: `{provider}_{digest of account and conversation}`, one Stream
+  channel per conversation with each of the business's numbers or accounts.
+- `stream_user_id`: `{provider}_{digest of sender}`.
 
 Webhook signatures are not checked here, and media URLs from Slack, Twilio and RCS need
-the account's credentials to download. WhatsApp media arrives as a `media_id` only.
+the provider's credentials to download. WhatsApp media arrives as a `media_id` only.
