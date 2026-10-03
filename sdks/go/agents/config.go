@@ -183,6 +183,13 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		sandbox := acceleration.Sandbox(settings.Sandbox)
 		body.Sandbox = &sandbox
 	}
+	if options := settings.SandboxOptions; options != nil {
+		timeout := int(options.timeout.Milliseconds())
+		body.SandboxOptions = &acceleration.SandboxOptions{
+			Image: &options.Image, Setup: &options.Setup, TimeoutMs: &timeout,
+			Cpu: &options.CPU, MemoryGb: &options.MemoryGB, DiskGb: &options.DiskGB,
+		}
+	}
 	if len(settings.Plugins) > 0 {
 		body.Plugins = &settings.Plugins
 	}

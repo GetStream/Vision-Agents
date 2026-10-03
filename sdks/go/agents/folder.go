@@ -149,20 +149,22 @@ type Settings struct {
 	STT         string `yaml:"stt"`
 	TTS         string `yaml:"tts"`
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
-	STS      *string           `yaml:"sts"`
-	Voice    string            `yaml:"voice"`
-	Speed    float64           `yaml:"speed"`
-	LLM      string            `yaml:"llm"`
-	Harness  string            `yaml:"harness"`
-	Subagent string            `yaml:"subagent"`
-	Search   string            `yaml:"search"`
-	Greeting string            `yaml:"greeting"`
-	Sandbox  string            `yaml:"sandbox"`
-	Plugins  []string          `yaml:"plugins"`
-	Keyterms []string          `yaml:"keyterms"`
-	Tags     map[string]string `yaml:"tags"`
-	Video    *VideoSettings    `yaml:"video"`
-	Dispatch *DispatchSettings `yaml:"dispatch"`
+	STS      *string `yaml:"sts"`
+	Voice    string  `yaml:"voice"`
+	Speed    float64 `yaml:"speed"`
+	LLM      string  `yaml:"llm"`
+	Harness  string  `yaml:"harness"`
+	Subagent string  `yaml:"subagent"`
+	Search   string  `yaml:"search"`
+	Greeting string  `yaml:"greeting"`
+	Sandbox  string  `yaml:"sandbox"`
+	// SandboxOptions is how the sandbox is built and how long code may run in it.
+	SandboxOptions *SandboxSettings  `yaml:"sandbox_options"`
+	Plugins        []string          `yaml:"plugins"`
+	Keyterms       []string          `yaml:"keyterms"`
+	Tags           map[string]string `yaml:"tags"`
+	Video          *VideoSettings    `yaml:"video"`
+	Dispatch       *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -173,6 +175,24 @@ type VideoSettings struct {
 	Source string `yaml:"source"`
 	// MaxFrames is how many recent frames are captured, from 1 to 8. Zero reads as one.
 	MaxFrames int `yaml:"max_frames"`
+}
+
+// SandboxSettings is how the agent's sandbox is built and how long code may run in it. Any
+// of them builds an image on top of Image, which the provider keeps.
+type SandboxSettings struct {
+	// Image is the container image to start from, which must have Python. Empty is a slim
+	// Python image.
+	Image string `yaml:"image"`
+	// Setup are shell commands run once on top of the image when it is built.
+	Setup []string `yaml:"setup"`
+	// Timeout is how long one run of code may take, such as 5m, at most 30m. Empty is 30s.
+	Timeout string `yaml:"timeout"`
+	// CPU, MemoryGB and DiskGB size the sandbox. Zero leaves the provider's default.
+	CPU      int `yaml:"cpu"`
+	MemoryGB int `yaml:"memory_gb"`
+	DiskGB   int `yaml:"disk_gb"`
+
+	timeout time.Duration
 }
 
 // DispatchSettings is what the agent leaves to this application's own dispatch worker,
@@ -435,6 +455,13 @@ func declare(raw []byte) (Settings, error) {
 		if settings.Video.MaxFrames < 1 || settings.Video.MaxFrames > 8 {
 			return Settings{}, errors.New("video.max_frames must be an integer from 1 to 8")
 		}
+	}
+	if options := settings.SandboxOptions; options != nil && options.Timeout != "" {
+		timeout, err := time.ParseDuration(options.Timeout)
+		if err != nil || timeout <= 0 || timeout > 30*time.Minute {
+			return Settings{}, fmt.Errorf("sandbox_options.timeout must be a duration up to 30m, not %q", options.Timeout)
+		}
+		options.timeout = timeout
 	}
 	return settings, nil
 }
