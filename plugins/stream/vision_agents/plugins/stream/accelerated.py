@@ -659,7 +659,10 @@ def _authorization_of(result: object) -> Optional[RemoteEvent]:
         answered = json.loads(result)
     except json.JSONDecodeError:
         return None
-    if not isinstance(answered, dict) or answered.get("status") != AUTHORIZATION_REQUIRED:
+    if (
+        not isinstance(answered, dict)
+        or answered.get("status") != AUTHORIZATION_REQUIRED
+    ):
         return None
     attachment = answered.get("attachment")
     if not isinstance(attachment, dict) or not attachment.get("authorize_url"):

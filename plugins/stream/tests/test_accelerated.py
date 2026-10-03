@@ -725,9 +725,7 @@ class TestAccelerated:
             url="https://accounts.google.com/o/oauth2/v2/auth?state=1",
         )
 
-    async def test_the_end_user_is_who_the_session_is_opened_for(
-        self, router: Router
-    ):
+    async def test_the_end_user_is_who_the_session_is_opened_for(self, router: Router):
         llm = stream.Accelerated(url=router.url, customer_id="acme", user_id="alice")
         await llm.join_remote(
             RemoteCall(
