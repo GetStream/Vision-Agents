@@ -24,6 +24,7 @@ RemoteEventType = Literal[
     "looked_up",
     "delegated",
     "task_settled",
+    "authorization_required",
     "error",
     "ended",
 ]
@@ -74,6 +75,8 @@ class RemoteEvent:
         query: What was searched for, for `looked_up`.
         documents: How many passages bore on it, for `looked_up`.
         error: The failure, for `error` events and for work that came back as one.
+        url: What the user opens to connect an account, for `authorization_required`,
+            whose `text` says what it connects.
     """
 
     type: RemoteEventType
@@ -85,6 +88,7 @@ class RemoteEvent:
     query: str = ""
     documents: int = 0
     error: str = ""
+    url: str = ""
 
 
 @dataclass

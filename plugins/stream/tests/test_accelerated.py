@@ -36,6 +36,7 @@ class Router:
 
     def __init__(self):
         self.created: Optional[dict[str, Any]] = None
+        self.created_for = ""
         self.synced: Optional[dict[str, Any]] = None
         self.closed: list[str] = []
         self.commands: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -71,6 +72,7 @@ class Router:
 
     async def _create(self, request: web.Request) -> web.Response:
         self.created = await request.json()
+        self.created_for = request.headers.get("X-Stream-User-Id", "")
         return web.json_response(
             status=201,
             data={
@@ -676,3 +678,51 @@ class TestAccelerated:
         assert event == RemoteEvent(
             type="looked_up", query="delivery cost", documents=3
         )
+
+    async def test_a_login_a_plugin_asks_for_is_reported_with_where_to_make_it(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send(
+            {"type": "tool_ran", "tool": "weather", "result": "it is raining"}
+        )
+        await router.send(
+            {
+                "type": "tool_ran",
+                "tool": "google_calendar__list_tools",
+                "result": json.dumps(
+                    {
+                        "status": "authorization_required",
+                        "message": "The user has not connected Google Calendar.",
+                        "attachment": {
+                            "type": "plugin_authorization",
+                            "plugin_id": "google_calendar",
+                            "title": "Connect Google Calendar",
+                            "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=1",
+                        },
+                    }
+                ),
+            }
+        )
+
+        event = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert event == RemoteEvent(
+            type="authorization_required",
+            text="Connect Google Calendar",
+            url="https://accounts.google.com/o/oauth2/v2/auth?state=1",
+        )
+
+    async def test_the_end_user_is_who_the_session_is_opened_for(
+        self, router: Router
+    ):
+        llm = stream.Accelerated(url=router.url, customer_id="acme", user_id="alice")
+        await llm.join_remote(
+            RemoteCall(
+                call_type="default", call_id="", agent_user_id="agent", instructions=""
+            )
+        )
+        try:
+            assert router.created_for == "alice"
+        finally:
+            await llm.leave_remote()

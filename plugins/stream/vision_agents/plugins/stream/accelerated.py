@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 # the filter narrows recall; this one is what recall is keyed by.
 USER_KEY = "user_id"
 
+# AUTHORIZATION_REQUIRED is what a user plugin's tool answers while the end user has not
+# connected their account; its attachment is the button a chat client shows.
+AUTHORIZATION_REQUIRED = "authorization_required"
+
 
 class Accelerated(OmniLLM):
     """A whole voice pipeline, running in the acceleration backend.
@@ -82,6 +86,7 @@ class Accelerated(OmniLLM):
         video_source: str = "",
         video_max_frames: int = 0,
         log_latency: bool = False,
+        user_id: str = "",
     ):
         """Configure a pipeline to run remotely.
 
@@ -112,6 +117,9 @@ class Accelerated(OmniLLM):
             video_max_frames: Recent frames per task (1–8); zero uses configuration.
             log_latency: Print per-model timing and a turn DAG to agent stdout.
                 Disabled by default; metrics are still recorded by the router.
+            user_id: The end user the conversation is for. The plugins an agent names
+                as `user_plugins` sign in as them, so a session without one is offered
+                none of those.
         """
         super().__init__()
         self.provider_name = "stream"
@@ -130,7 +138,7 @@ class Accelerated(OmniLLM):
         self.video_max_frames = video_max_frames
         self.log_latency = log_latency
 
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = Backend(url=url, customer_id=customer_id, acting_for=user_id)
         # A knowledge base belongs to the stored config that reads it, so an agent
         # configured here rather than by name has none to fill.
         self.knowledge = Knowledge(config, self.backend)
@@ -620,6 +628,8 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
             user_id=participant.get("user_id", ""),
             participant_id=participant.get("id", ""),
         )
+    if kind == "tool_ran":
+        return _authorization_of(frame.get("result", ""))
     if kind == "error":
         return RemoteEvent(type="error", error=frame.get("error", ""))
     if kind == "left":
@@ -627,6 +637,26 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
 
     logger.debug("no agent event for a %s frame", kind)
     return None
+
+
+def _authorization_of(result: object) -> Optional[RemoteEvent]:
+    """The login a user plugin's tool asked the end user to make, if it asked for one."""
+    if not isinstance(result, str):
+        return None
+    try:
+        answered = json.loads(result)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(answered, dict) or answered.get("status") != AUTHORIZATION_REQUIRED:
+        return None
+    attachment = answered.get("attachment")
+    if not isinstance(attachment, dict) or not attachment.get("authorize_url"):
+        return None
+    return RemoteEvent(
+        type="authorization_required",
+        text=str(attachment.get("title", "")),
+        url=str(attachment["authorize_url"]),
+    )
 
 
 def _rendered(output: Any) -> str:
