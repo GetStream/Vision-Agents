@@ -33,7 +33,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
-	"os"
 )
 
 // EdgeFactory opens the transport a session's agent talks over.
@@ -165,11 +164,6 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 	}
 	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
-	if os.Getenv("CHAT_OUTBOX_DIR") != "" {
-		if _, err := manager.Conversations(); err != nil {
-			return nil, err
-		}
-	}
 	return manager, nil
 }
 
@@ -1097,7 +1091,7 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 	defer m.mu.Unlock()
 	if m.conversations == nil {
 		var err error
-		m.conversations, err = persistent.New(os.Getenv("CHAT_OUTBOX_DIR"))
+		m.conversations, err = persistent.New()
 		if err != nil {
 			return nil, err
 		}

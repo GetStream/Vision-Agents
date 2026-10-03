@@ -1454,14 +1454,16 @@ question so a late interruption cannot cancel its successor.
 
 The backend owns all Chat writes. Initial messages, tool starts/completions and
 final results use durable writes; intermediate cumulative snapshots use
-`EphemeralMessageUpdate`, throttled to 200 ms when changed. A local write-ahead
-outbox retains retries with stable message IDs. Set `CHAT_OUTBOX_DIR` to a private
-persistent local directory; setting it also enables eager restart reconciliation.
-Pending data stays visibly unsaved and is overlaid on resumed history. Abandoned
-work is marked interrupted on restart. Stream credentials are required; Postgres
-and Redis are not. This implementation assumes one backend process owns the local
-outbox. Closing the last client of a persisted text session ends that session;
-the saved channel remains available.
+`EphemeralMessageUpdate`, throttled to 200 ms when changed. Nothing is written to
+local disk: a held conversation retries its pending writes in memory with stable
+message IDs, and Stream Chat is the durable copy. Pending data stays visibly
+unsaved and is overlaid on resumed history. A conversation nobody holds is rebuilt
+from its channel: a user message is stored under its command ID, so a command in
+the last 100 messages is never run twice, and a reply still running there when it
+is reopened is marked interrupted. Writes not yet in Stream when the process stops
+are lost. Stream credentials are required; Postgres and Redis are not. Closing the
+last client of a persisted text session ends that session; the saved channel
+remains available.
 
 The Go SDK exposes `agents.ChatOptions{ConversationID: cid}`,
 `Session.ConversationID()`, `Session.ContextTruncated()`,

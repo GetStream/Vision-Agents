@@ -13,7 +13,6 @@ import (
 )
 
 func TestBuildSessionsSupportsAnLLMOnlyDeployment(t *testing.T) {
-	t.Setenv("CHAT_OUTBOX_DIR", "")
 	logger := slog.New(slog.DiscardHandler)
 	model, err := llmrouter.New(llmrouter.Options{Config: routing.ModalityConfig{
 		Providers: []routing.ProviderConfig{{Provider: "deepseek", Model: "DeepSeek-V4-Flash-0731", Languages: []string{"en"}}},

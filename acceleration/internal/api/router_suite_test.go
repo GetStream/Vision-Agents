@@ -143,10 +143,6 @@ type RouterSuite struct {
 	ears      *quietSTT
 	knowledge *knowledgeBase
 	memories  *keptMemories
-
-	// outbox is where the conversations service queues what it could not write down.
-	outbox string
-
 	// dispatch is the pool the hooks hand an arriving call or message to, for a test to
 	// register a worker in and read back what it was given.
 	dispatch *dispatch.Pool
@@ -390,9 +386,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // for the chat backend: what a session records is under test, what Stream does with it is
 // not.
 func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *session.Manager {
-	s.outbox = s.T().TempDir()
-	conversations, err := conversation.NewForChat(s.outbox, chattest.Client(s.T()))
-	s.Require().NoError(err)
+	conversations := conversation.NewForChat(chattest.Client(s.T()))
 	s.T().Cleanup(conversations.Close)
 	s.conversations = conversations
 
