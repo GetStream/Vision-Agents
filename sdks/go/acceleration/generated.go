@@ -1710,7 +1710,6 @@ type AgentConfigRequest struct {
 
 	// Speed Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
 	//
-	//
 	// Example: 0.9
 	Speed *float64 `json:"speed,omitempty"`
 
@@ -4781,17 +4780,11 @@ type VoiceSampleRequest struct {
 // CommandID defines model for CommandID.
 type CommandID = string
 
-// ConfigName defines model for ConfigName.
-type ConfigName = string
-
 // Cursor defines model for Cursor.
 type Cursor = string
 
 // ItemLimit defines model for ItemLimit.
 type ItemLimit = int
-
-// PluginID defines model for PluginID.
-type PluginID = string
 
 // ResourceID defines model for ResourceID.
 type ResourceID = string
@@ -4845,7 +4838,7 @@ type GetCallEventsParams struct {
 // ListAgentConfigsParams defines parameters for ListAgentConfigs.
 type ListAgentConfigsParams struct {
 	// Name Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
-	Name *ConfigName `form:"name,omitempty" json:"name,omitempty"`
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
 // ListConnectorsParams defines parameters for ListConnectors.
@@ -5694,12 +5687,12 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
-	DeleteAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteAgentConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAgentConfig One agent config
 	//
 	// Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
-	GetAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetAgentConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PatchAgentConfigWithBody Change some of an agent config
 	//
@@ -5731,7 +5724,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-	UpdateAgentConfigWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateAgentConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateAgentConfig Replace an agent config
 	//
@@ -5741,21 +5734,21 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-	UpdateAgentConfig(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateAgentConfig(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConfigPlugins The plugin logins this agent holds
 	//
 	// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-	ListConfigPlugins(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DisconnectPlugin Drop a plugin login
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-	DisconnectPlugin(ctx context.Context, id ResourceID, pluginId PluginID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizePluginWithBody Start a plugin login
 	//
@@ -5765,7 +5758,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	AuthorizePluginWithBody(ctx context.Context, id ResourceID, pluginId PluginID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizePlugin Start a plugin login
 	//
@@ -5775,7 +5768,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	AuthorizePlugin(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectors List or search connectors
 	//
@@ -7471,7 +7464,7 @@ func (c *Client) CreateAgentConfig(ctx context.Context, body CreateAgentConfigJS
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
-func (c *Client) DeleteAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeleteAgentConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteAgentConfigRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7486,7 +7479,7 @@ func (c *Client) DeleteAgentConfig(ctx context.Context, id ResourceID, reqEditor
 // GetAgentConfig One agent config
 //
 // Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
-func (c *Client) GetAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetAgentConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentConfigRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7548,7 +7541,7 @@ func (c *Client) PatchAgentConfig(ctx context.Context, id string, body PatchAgen
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-func (c *Client) UpdateAgentConfigWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateAgentConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateAgentConfigRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -7568,7 +7561,7 @@ func (c *Client) UpdateAgentConfigWithBody(ctx context.Context, id ResourceID, c
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-func (c *Client) UpdateAgentConfig(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateAgentConfig(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateAgentConfigRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -7585,7 +7578,7 @@ func (c *Client) UpdateAgentConfig(ctx context.Context, id ResourceID, body Upda
 // The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-func (c *Client) ListConfigPlugins(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListConfigPluginsRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7602,7 +7595,7 @@ func (c *Client) ListConfigPlugins(ctx context.Context, id ResourceID, reqEditor
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-func (c *Client) DisconnectPlugin(ctx context.Context, id ResourceID, pluginId PluginID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDisconnectPluginRequest(c.Server, id, pluginId)
 	if err != nil {
 		return nil, err
@@ -7622,7 +7615,7 @@ func (c *Client) DisconnectPlugin(ctx context.Context, id ResourceID, pluginId P
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-func (c *Client) AuthorizePluginWithBody(ctx context.Context, id ResourceID, pluginId PluginID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequestWithBody(c.Server, id, pluginId, contentType, body)
 	if err != nil {
 		return nil, err
@@ -7642,7 +7635,7 @@ func (c *Client) AuthorizePluginWithBody(ctx context.Context, id ResourceID, plu
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-func (c *Client) AuthorizePlugin(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequest(c.Server, id, pluginId, body)
 	if err != nil {
 		return nil, err
@@ -11083,7 +11076,7 @@ func NewListAgentConfigsRequest(server string, params *ListAgentConfigsParams) (
 
 		if params.Name != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "name", *params.Name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "name", *params.Name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -11148,7 +11141,7 @@ func NewCreateAgentConfigRequestWithBody(server string, contentType string, body
 }
 
 // NewDeleteAgentConfigRequest constructs an http.Request for the DeleteAgentConfig method
-func NewDeleteAgentConfigRequest(server string, id ResourceID) (*http.Request, error) {
+func NewDeleteAgentConfigRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11182,7 +11175,7 @@ func NewDeleteAgentConfigRequest(server string, id ResourceID) (*http.Request, e
 }
 
 // NewGetAgentConfigRequest constructs an http.Request for the GetAgentConfig method
-func NewGetAgentConfigRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetAgentConfigRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11263,7 +11256,7 @@ func NewPatchAgentConfigRequestWithBody(server string, id string, contentType st
 }
 
 // NewUpdateAgentConfigRequest calls the generic UpdateAgentConfig builder with application/json body
-func NewUpdateAgentConfigRequest(server string, id ResourceID, body UpdateAgentConfigJSONRequestBody) (*http.Request, error) {
+func NewUpdateAgentConfigRequest(server string, id string, body UpdateAgentConfigJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -11274,7 +11267,7 @@ func NewUpdateAgentConfigRequest(server string, id ResourceID, body UpdateAgentC
 }
 
 // NewUpdateAgentConfigRequestWithBody constructs an http.Request for the UpdateAgentConfig method, with any body, and a specified content type
-func NewUpdateAgentConfigRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpdateAgentConfigRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11310,7 +11303,7 @@ func NewUpdateAgentConfigRequestWithBody(server string, id ResourceID, contentTy
 }
 
 // NewListConfigPluginsRequest constructs an http.Request for the ListConfigPlugins method
-func NewListConfigPluginsRequest(server string, id ResourceID) (*http.Request, error) {
+func NewListConfigPluginsRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11344,7 +11337,7 @@ func NewListConfigPluginsRequest(server string, id ResourceID) (*http.Request, e
 }
 
 // NewDisconnectPluginRequest constructs an http.Request for the DisconnectPlugin method
-func NewDisconnectPluginRequest(server string, id ResourceID, pluginId PluginID) (*http.Request, error) {
+func NewDisconnectPluginRequest(server string, id string, pluginId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11385,7 +11378,7 @@ func NewDisconnectPluginRequest(server string, id ResourceID, pluginId PluginID)
 }
 
 // NewAuthorizePluginRequest calls the generic AuthorizePlugin builder with application/json body
-func NewAuthorizePluginRequest(server string, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody) (*http.Request, error) {
+func NewAuthorizePluginRequest(server string, id string, pluginId string, body AuthorizePluginJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -11396,7 +11389,7 @@ func NewAuthorizePluginRequest(server string, id ResourceID, pluginId PluginID, 
 }
 
 // NewAuthorizePluginRequestWithBody constructs an http.Request for the AuthorizePlugin method, with any body, and a specified content type
-func NewAuthorizePluginRequestWithBody(server string, id ResourceID, pluginId PluginID, contentType string, body io.Reader) (*http.Request, error) {
+func NewAuthorizePluginRequestWithBody(server string, id string, pluginId string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12620,7 +12613,7 @@ func NewListPluginsRequest(server string, params *ListPluginsParams) (*http.Requ
 
 		if params.Q != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -16800,14 +16793,14 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
-	DeleteAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteAgentConfigResponse, error)
+	DeleteAgentConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteAgentConfigResponse, error)
 
 	// GetAgentConfigWithResponse One agent config
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
-	GetAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error)
+	GetAgentConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error)
 
 	// PatchAgentConfigWithBodyWithResponse Change some of an agent config
 	//
@@ -16839,7 +16832,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-	UpdateAgentConfigWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
+	UpdateAgentConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
 
 	// UpdateAgentConfigWithResponse Replace an agent config
 	//
@@ -16849,7 +16842,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-	UpdateAgentConfigWithResponse(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
+	UpdateAgentConfigWithResponse(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
 
 	// ListConfigPluginsWithResponse The plugin logins this agent holds
 	//
@@ -16858,7 +16851,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-	ListConfigPluginsWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error)
+	ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error)
 
 	// DisconnectPluginWithResponse Drop a plugin login
 	//
@@ -16867,7 +16860,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-	DisconnectPluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error)
+	DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error)
 
 	// AuthorizePluginWithBodyWithResponse Start a plugin login
 	//
@@ -16877,7 +16870,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	AuthorizePluginWithBodyWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
+	AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
 	// AuthorizePluginWithResponse Start a plugin login
 	//
@@ -16887,7 +16880,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	AuthorizePluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
+	AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
 	// ListConnectorsWithResponse List or search connectors
 	//
@@ -19311,6 +19304,8 @@ type ListAgentConfigsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19331,6 +19326,11 @@ func (r ListAgentConfigsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListAgentConfigsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListAgentConfigsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19373,6 +19373,8 @@ type CreateAgentConfigResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -19393,6 +19395,11 @@ func (r CreateAgentConfigResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r CreateAgentConfigResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19435,6 +19442,8 @@ type DeleteAgentConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -19455,6 +19464,11 @@ func (r DeleteAgentConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteAgentConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19499,6 +19513,8 @@ type GetAgentConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19524,6 +19540,11 @@ func (r GetAgentConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetAgentConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19644,6 +19665,8 @@ type UpdateAgentConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19669,6 +19692,11 @@ func (r UpdateAgentConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdateAgentConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19713,6 +19741,8 @@ type ListConfigPluginsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19738,6 +19768,11 @@ func (r ListConfigPluginsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ListConfigPluginsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListConfigPluginsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19780,6 +19815,8 @@ type DisconnectPluginResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -19800,6 +19837,11 @@ func (r DisconnectPluginResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DisconnectPluginResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DisconnectPluginResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19844,6 +19886,8 @@ type AuthorizePluginResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19869,6 +19913,11 @@ func (r AuthorizePluginResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r AuthorizePluginResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AuthorizePluginResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21284,15 +21333,24 @@ type ListPluginsResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *[]Plugin
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListPluginsResponse) GetJSON200() *[]Plugin {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListPluginsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -21303,6 +21361,11 @@ func (r ListPluginsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListPluginsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListPluginsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27237,7 +27300,7 @@ func (c *ClientWithResponses) CreateAgentConfigWithResponse(ctx context.Context,
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
-func (c *ClientWithResponses) DeleteAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteAgentConfigResponse, error) {
+func (c *ClientWithResponses) DeleteAgentConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteAgentConfigResponse, error) {
 	rsp, err := c.DeleteAgentConfig(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27250,7 +27313,7 @@ func (c *ClientWithResponses) DeleteAgentConfigWithResponse(ctx context.Context,
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
-func (c *ClientWithResponses) GetAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error) {
+func (c *ClientWithResponses) GetAgentConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error) {
 	rsp, err := c.GetAgentConfig(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27300,7 +27363,7 @@ func (c *ClientWithResponses) PatchAgentConfigWithResponse(ctx context.Context, 
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-func (c *ClientWithResponses) UpdateAgentConfigWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error) {
+func (c *ClientWithResponses) UpdateAgentConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error) {
 	rsp, err := c.UpdateAgentConfigWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27316,7 +27379,7 @@ func (c *ClientWithResponses) UpdateAgentConfigWithBodyWithResponse(ctx context.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error) {
+func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error) {
 	rsp, err := c.UpdateAgentConfig(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27331,7 +27394,7 @@ func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context,
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error) {
+func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error) {
 	rsp, err := c.ListConfigPlugins(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27346,7 +27409,7 @@ func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context,
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error) {
+func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error) {
 	rsp, err := c.DisconnectPlugin(ctx, id, pluginId, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27362,7 +27425,7 @@ func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, 
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
+func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
 	rsp, err := c.AuthorizePluginWithBody(ctx, id, pluginId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27378,7 +27441,7 @@ func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Co
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
+func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
 	rsp, err := c.AuthorizePlugin(ctx, id, pluginId, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -30493,6 +30556,13 @@ func ParseListAgentConfigsResponse(rsp *http.Response) (*ListAgentConfigsRespons
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -30539,6 +30609,13 @@ func ParseCreateAgentConfigResponse(rsp *http.Response) (*CreateAgentConfigRespo
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -30589,6 +30666,13 @@ func ParseDeleteAgentConfigResponse(rsp *http.Response) (*DeleteAgentConfigRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -30643,6 +30727,13 @@ func ParseGetAgentConfigResponse(rsp *http.Response) (*GetAgentConfigResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -30759,6 +30850,13 @@ func ParseUpdateAgentConfigResponse(rsp *http.Response) (*UpdateAgentConfigRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -30813,6 +30911,13 @@ func ParseListConfigPluginsResponse(rsp *http.Response) (*ListConfigPluginsRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -30862,6 +30967,13 @@ func ParseDisconnectPluginResponse(rsp *http.Response) (*DisconnectPluginRespons
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -30916,6 +31028,13 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -32016,6 +32135,13 @@ func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) 
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -32029,6 +32155,13 @@ func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) 
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

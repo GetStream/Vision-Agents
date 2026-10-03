@@ -5227,16 +5227,12 @@ export type components = {
     parameters: {
         /** @description The client's own command id, as sent when the command was submitted. */
         readonly CommandID: string;
-        /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
-        readonly ConfigName: string;
         /** @description The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page. */
         readonly Cursor: string;
         /** @description Up to 1000. Omitted is 200. */
         readonly ItemLimit: number;
         /** @description Which kind of model to route. */
         readonly Modality: components["schemas"]["Modality"];
-        /** @description A built-in catalog id such as slack or calendly. */
-        readonly PluginID: string;
         /** @description The resource, as returned when it was created. */
         readonly ResourceID: string;
         /** @description Narrow to one turn's items. Omitted is every turn in the session. */
@@ -5872,7 +5868,7 @@ export interface operations {
         readonly parameters: {
             readonly query?: {
                 /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
-                readonly name?: components["parameters"]["ConfigName"];
+                readonly name?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -5892,6 +5888,15 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly createAgentConfig: {
@@ -5919,6 +5924,15 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly getAgentConfig: {
@@ -5927,7 +5941,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5946,6 +5960,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly updateAgentConfig: {
@@ -5954,7 +5977,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5977,6 +6000,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly deleteAgentConfig: {
@@ -5985,7 +6017,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6002,6 +6034,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly patchAgentConfig: {
@@ -6050,7 +6091,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6069,6 +6110,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly disconnectPlugin: {
@@ -6077,9 +6127,9 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
                 /** @description A built-in catalog id such as slack or calendly. */
-                readonly plugin_id: components["parameters"]["PluginID"];
+                readonly plugin_id: string;
             };
             readonly cookie?: never;
         };
@@ -6096,6 +6146,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly authorizePlugin: {
@@ -6104,9 +6163,9 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
                 /** @description A built-in catalog id such as slack or calendly. */
-                readonly plugin_id: components["parameters"]["PluginID"];
+                readonly plugin_id: string;
             };
             readonly cookie?: never;
         };
@@ -6129,6 +6188,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly listConnectors: {
@@ -6805,8 +6873,18 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["Plugin"][];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly pluginOAuthCallback: {

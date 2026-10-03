@@ -54,7 +54,7 @@ class AgentConfigRequest:
             explain. Omit for the built-in set.
         speed (float | Unset): Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that
             names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
-             Example: 0.9.
+            Example: 0.9.
         sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.
             Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
         stt (str | Unset): A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores
