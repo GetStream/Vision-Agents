@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 
 import httpx
 
@@ -33,7 +33,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | Error | GuestUser | None:
+) -> Error | GuestUser | None:
     if response.status_code == 201:
         response_201 = GuestUser.from_dict(response.json())
 
@@ -50,8 +50,14 @@ def _parse_response(
         return response_401
 
     if response.status_code == 403:
-        response_403 = cast(Any, None)
+        response_403 = Error.from_dict(response.json())
+
         return response_403
+
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -61,7 +67,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | Error | GuestUser]:
+) -> Response[Error | GuestUser]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -74,7 +80,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: GuestUserRequest | Unset = UNSET,
-) -> Response[Any | Error | GuestUser]:
+) -> Response[Error | GuestUser]:
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
@@ -93,7 +99,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Error | GuestUser]
+        Response[Error | GuestUser]
     """
 
     kwargs = _get_kwargs(
@@ -111,7 +117,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: GuestUserRequest | Unset = UNSET,
-) -> Any | Error | GuestUser | None:
+) -> Error | GuestUser | None:
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
@@ -130,7 +136,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Error | GuestUser
+        Error | GuestUser
     """
 
     return sync_detailed(
@@ -143,7 +149,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: GuestUserRequest | Unset = UNSET,
-) -> Response[Any | Error | GuestUser]:
+) -> Response[Error | GuestUser]:
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
@@ -162,7 +168,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Error | GuestUser]
+        Response[Error | GuestUser]
     """
 
     kwargs = _get_kwargs(
@@ -178,7 +184,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: GuestUserRequest | Unset = UNSET,
-) -> Any | Error | GuestUser | None:
+) -> Error | GuestUser | None:
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
@@ -197,7 +203,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Error | GuestUser
+        Error | GuestUser
     """
 
     return (

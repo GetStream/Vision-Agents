@@ -24,11 +24,10 @@ class ClassifyRequest:
         questions (ClassifyRequestQuestions): Keyed by ids of the caller's own choosing, which is how the answers come
             back. An id is not part of what is asked, so a question carries its whole meaning in its instructions.
         state (Any): What the questions are about: a string for plain text, or a JSON object whose parts a question can
-            name, such as `message`.
-             Example: I was charged twice this month and nobody has answered my email..
+            name, such as `message`. Example: I was charged twice this month and nobody has answered my email..
         tags (ClassifyRequestTags | Unset):
-        target (str | Unset): A provider/model or a capability shortcut. Empty takes classify-fast.
-             Example: classify-fast.
+        target (str | Unset): A provider/model or a capability shortcut. Empty takes classify-fast. Example: classify-
+            fast.
     """
 
     questions: ClassifyRequestQuestions

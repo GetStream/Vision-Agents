@@ -39,7 +39,6 @@ class SearchOptions:
         providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target and
             depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded
             where it stands. A search that fails is asked of the next entry that will have it.
-             Example: ['exa', 'search-fast'].
         results (int | Unset): How many hits to return.
         target (str | Unset): A provider/model or a capability shortcut. Example: search-fast.
     """

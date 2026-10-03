@@ -49,8 +49,7 @@ class CreateSessionRequest:
         incognito (bool | Unset): Hold the conversation and record nothing about it: no session row, no turns, no
             transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it
             simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork
-            from.
-             Default: False.
+            from. Default: False.
         instructions (str | Unset):
         keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong. Up to 100
             terms, and providers that cannot be told about vocabulary ignore them.
@@ -69,8 +68,8 @@ class CreateSessionRequest:
             the config, and a caller reading a session back wants to see what they changed in one place rather than diffed
             against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because
             a caller able to rewrite those could make a session impersonate a different agent.
-        navigating (bool | Unset): The agent placed this call, so let recordings finish and answer their menus.
-             Default: False.
+        navigating (bool | Unset): The agent placed this call, so let recordings finish and answer their menus. Default:
+            False.
         phone (SessionPhone | Unset): The number the session acts from, which is what turns transferring on.
         project_id (str | Unset): What the conversation belongs to. Also recorded as the "project" cost tag, so spend
             breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
@@ -82,8 +81,7 @@ class CreateSessionRequest:
         text (bool | Unset): Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing
             is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is
             unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive
-            as response_delta and responded events on the session's socket.
-             Default: False.
+            as response_delta and responded events on the session's socket. Default: False.
         title (str | Unset): What to call the conversation, for a list a person reads. Never shown to the model: what a
             conversation is called is a label on it rather than part of it.
         tool_timeout_ms (int | Unset): How long the model waits for a tool result. Zero is the default.

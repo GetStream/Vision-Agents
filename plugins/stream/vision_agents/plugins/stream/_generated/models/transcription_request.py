@@ -32,8 +32,8 @@ class TranscriptionRequest:
         inline (bool | Unset): Complete this short request synchronously without storing a recording job or audio. The
             202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database
             is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8
-            MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
-             Default: False.
+            MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs. Default:
+            False.
         options (SttOptions | Unset): How this config transcribes, live or from a recording. A field that only means
             something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to
             write subtitles from. A provider that cannot express a term refuses the request rather than dropping it

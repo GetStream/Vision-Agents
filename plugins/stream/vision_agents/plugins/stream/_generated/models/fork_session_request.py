@@ -35,8 +35,7 @@ class ForkSessionRequest:
             instructions (str | Unset):
             messages (bool | Unset): Carry the parent's history into the fork, so the new conversation continues from what
                 was already said. False starts the same configuration over from nothing, which is what comparing two answers to
-                the same opening question wants.
-                 Default: True.
+                the same opening question wants. Default: True.
             model_overwrites (ModelOverwrites | Unset): What to change about the models for one session, over whatever its
                 agent config decided.
                 It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides
