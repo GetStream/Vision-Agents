@@ -53,6 +53,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
 )
 
 // tracer records the spans this package opens around work a route pattern does not say.
@@ -105,7 +106,10 @@ type Options struct {
 	// router configs, voices -- through whatever cache is in front of Postgres. Built
 	// over Store when it is not given, in which case every read is a query.
 	Configs *appconfig.Store
-	Live    *live.Client
+	// Users writes down the end users each app is seen acting for. Built over Store when
+	// it is not given, in which case it caches in this process alone.
+	Users *users.Recorder
+	Live  *live.Client
 	// Phone serves the telephony paths. Absent when the deployment has no vendors, in
 	// which case those paths say so rather than pretending numbers can be bought.
 	Phone *phone.Service
@@ -206,6 +210,7 @@ type Server struct {
 	routers       map[routing.Modality]routing.Inspector
 	store         *store.Store
 	configs       *appconfig.Store
+	users         *users.Recorder
 	live          *live.Client
 	phone         *phone.Service
 	sessions      *session.Manager
@@ -305,10 +310,18 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			return nil, err
 		}
 	}
+	recorder := options.Users
+	if recorder == nil && options.Store != nil {
+		var err error
+		if recorder, err = users.New(users.Options{Store: options.Store, Logger: logger}); err != nil {
+			return nil, err
+		}
+	}
 	server := &Server{
 		routers:       options.Routers,
 		store:         options.Store,
 		configs:       configs,
+		users:         recorder,
 		live:          options.Live,
 		phone:         options.Phone,
 		sessions:      options.Sessions,
@@ -787,9 +800,38 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			})
 			r = r.WithContext(ctx)
 			s.policies.Join(principal.AppID, principal.OrganizationID)
+			s.recordUser(ctx, principal)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// recordUser writes down the end user a request is for, so an app can ask who its users
+// are rather than only which of them it minted as guests.
+//
+// Only a verified caller is recorded. An anonymous one goes by a name nobody checked, so
+// a table filled with those names would be a table of what callers asked to be called. A
+// backend naming one of its users is recorded as an authenticated user, because a caller
+// holding the secret could mint that user a token and so has nothing to gain by lying.
+//
+// A failure is logged rather than returned. Writing down who called is not what the
+// caller asked for, and refusing the request they did ask for because of it would be the
+// wrong trade.
+func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
+	if s.users == nil || principal.UserID == "" {
+		return
+	}
+	kind := store.UserKindAuthenticated
+	switch principal.Kind {
+	case auth.KindGuest:
+		kind = store.UserKindGuest
+	case auth.KindAnonymous:
+		return
+	}
+	if err := s.users.Seen(ctx, principal.AppID, principal.UserID, kind); err != nil {
+		s.logger.Error("could not record an end user",
+			"customer", principal.AppID, "user", principal.UserID, "error", err)
+	}
 }
 
 // corsRequestHeaders are the request headers a browser may send.

@@ -60,6 +60,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
 )
 
 // release is the version this binary was built from, set with -X main.release
@@ -396,6 +397,24 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer configs.Close()
+	}
+
+	// Who each app is acting for, written down once per user rather than once per
+	// request: an LRU of the last few thousand this process saw, a key the replicas share
+	// in Redis, and the row underneath.
+	var endUsers *users.Recorder
+	if pgStore != nil {
+		endUsers, err = users.New(users.Options{
+			Store:    pgStore,
+			Address:  settings.Redis.Addr,
+			Username: settings.Redis.Username,
+			Password: settings.Redis.Password,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer endUsers.Close()
 	}
 
 	// Budgets, data policies and prompt injection screening are stored per organization
@@ -768,6 +787,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		KnowledgeURLs:  pages,
 		Store:          pgStore,
 		Configs:        configs,
+		Users:          endUsers,
 		Live:           liveClient,
 		Phone:          telephony,
 		Sessions:       sessions,

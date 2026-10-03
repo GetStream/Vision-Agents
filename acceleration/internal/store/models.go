@@ -1296,22 +1296,33 @@ type AgentResponseItem struct {
 	At      time.Time      `bun:"at,notnull"`
 }
 
-// GuestUser is somebody who talked to an agent before they had an account.
-//
-// The row is not what makes them work -- a guest is a real Stream user with role guest, and
-// chat and video need nothing here -- it is what makes claiming them possible. Claiming
-// moves what a guest said onto a real account, so it has to be an operation only a backend
-// may ask for, and that needs a record of which ids were ever guests and which have already
-// been claimed.
-type GuestUser struct {
-	bun.BaseModel `bun:"table:guest_users,alias:gu"`
+// The kinds of end user a row records. They are the verified kinds of auth.Kind: an
+// anonymous caller goes by a name nobody checked, so recording it would be recording the
+// claim rather than the person.
+const (
+	UserKindGuest         = "guest"
+	UserKindAuthenticated = "authenticated"
+)
 
+// User is an end user an app has been seen acting for.
+//
+// The row is not what makes them work -- a user is a real Stream user, and chat and video
+// need nothing here -- it is what lets an app ask who its users are, and what makes
+// claiming a guest possible. Claiming moves what a guest said onto a real account, so it
+// has to be an operation only a backend may ask for, and that needs a record of which ids
+// were ever guests and which have already been claimed.
+type User struct {
+	bun.BaseModel `bun:"table:users,alias:u"`
+
+	CustomerID string `bun:"customer_id,pk"`
 	// ID is the Stream user id, which the caller holds and sends back to claim.
-	ID         string         `bun:"id,pk"`
-	CustomerID string         `bun:"customer_id,notnull"`
-	Name       string         `bun:"name,notnull"`
-	Custom     map[string]any `bun:"custom,type:jsonb,nullzero"`
-	CreatedAt  time.Time      `bun:"created_at,notnull"`
+	ID string `bun:"id,pk"`
+	// Kind is what the credential proved them to be, UserKindGuest or
+	// UserKindAuthenticated. Only a guest may be claimed.
+	Kind      string         `bun:"kind,notnull"`
+	Name      string         `bun:"name,notnull"`
+	Custom    map[string]any `bun:"custom,type:jsonb,nullzero"`
+	CreatedAt time.Time      `bun:"created_at,notnull"`
 	// ClaimedBy is the real user this guest turned out to be, empty while they are still a
 	// guest. A guest is claimed once: a second claim naming somebody else would move one
 	// person's conversations onto another's account.

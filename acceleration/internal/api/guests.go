@@ -113,7 +113,7 @@ func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserReq
 	// row behind. Without a store guests still work; they simply cannot be claimed later,
 	// because there is nothing that says which ids were ever guests of this app.
 	if s.store != nil {
-		guest := &store.GuestUser{
+		guest := &store.User{
 			ID: userID, CustomerID: customerID, Name: name, Custom: value(body.Custom),
 		}
 		if err := s.store.RecordGuest(ctx, guest); err != nil {
@@ -172,6 +172,13 @@ func (s *Server) ClaimGuestUser(ctx context.Context, request ClaimGuestUserReque
 	moved, err := s.store.ClaimGuest(ctx, customerID, guestID, userID)
 	if err != nil {
 		return ClaimGuestUser400JSONResponse{badRequest(err.Error())}, nil
+	}
+
+	// The guest's row has changed under every replica holding it, so the caches are told.
+	// The account they turned out to be is not recorded here: the next request they make
+	// carries their own token, and that is what says which kind of user they are.
+	if s.users != nil {
+		s.users.Forget(ctx, customerID, guestID)
 	}
 
 	// The channels come after the rows, and a failure here is logged rather than returned.

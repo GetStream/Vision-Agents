@@ -736,7 +736,8 @@ WITH seen AS (
         COALESCE(NULLIF(g.claimed_by, ''), s.user_id) AS user_id,
         s.caller_kind AS caller_kind
     FROM agent_sessions AS s
-    LEFT JOIN guest_users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+    LEFT JOIN users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+        AND g.kind = 'guest'
     WHERE s.customer_id = ? AND s.created_at >= ? AND s.created_at < ?
     UNION ALL
     SELECT
@@ -745,7 +746,8 @@ WITH seen AS (
         s.caller_kind AS caller_kind
     FROM agent_responses AS a
     JOIN agent_sessions AS s ON s.id = a.session_id
-    LEFT JOIN guest_users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+    LEFT JOIN users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+        AND g.kind = 'guest'
     WHERE a.customer_id = ? AND a.created_at >= ? AND a.created_at < ?
 ),
 user_counts AS (
