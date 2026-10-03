@@ -60,7 +60,7 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 			return nil, err
 		}
 		if !settings.GuestAllowed() {
-			return nil, huma.Error403Forbidden("forbidden")
+			return nil, huma.Error403Forbidden("this app does not admit guests")
 		}
 	}
 
