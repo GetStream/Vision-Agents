@@ -67,6 +67,8 @@ class SyncAgentRequest:
             subagent (str | Unset):
             tags (SyncAgentRequestTags | Unset):
             tts (str | Unset):
+            user_plugins (list[str] | Unset): Plugins each end user connects with their own account, from the conversation,
+                the first time the agent needs one.
             video (SessionVideo | Unset):
             voice (str | Unset):
     """
@@ -94,6 +96,7 @@ class SyncAgentRequest:
     subagent: str | Unset = UNSET
     tags: SyncAgentRequestTags | Unset = UNSET
     tts: str | Unset = UNSET
+    user_plugins: list[str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -179,6 +182,10 @@ class SyncAgentRequest:
 
         tts = self.tts
 
+        user_plugins: list[str] | Unset = UNSET
+        if not isinstance(self.user_plugins, Unset):
+            user_plugins = self.user_plugins
+
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
             video = self.video.to_dict()
@@ -235,6 +242,8 @@ class SyncAgentRequest:
             field_dict["tags"] = tags
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if user_plugins is not UNSET:
+            field_dict["user_plugins"] = user_plugins
         if video is not UNSET:
             field_dict["video"] = video
         if voice is not UNSET:
@@ -362,6 +371,8 @@ class SyncAgentRequest:
 
         tts = d.pop("tts", UNSET)
 
+        user_plugins = cast(list[str], d.pop("user_plugins", UNSET))
+
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
         if isinstance(_video, Unset):
@@ -395,6 +406,7 @@ class SyncAgentRequest:
             subagent=subagent,
             tags=tags,
             tts=tts,
+            user_plugins=user_plugins,
             video=video,
             voice=voice,
         )

@@ -54,7 +54,7 @@ class AgentConfigRequest:
             explain. Omit for the built-in set.
         speed (float | Unset): Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that
             names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
-             Example: 0.9.
+            Example: 0.9.
         sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.
             Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
         stt (str | Unset): A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores
@@ -63,6 +63,9 @@ class AgentConfigRequest:
             and skills mean nothing.
         tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes.
         tts (str | Unset):
+        user_plugins (list[str] | Unset): Hosted MCP servers each end user connects with their own account, named from
+            the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment,
+            the first time it needs one.
         video (SessionVideo | Unset):
         visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as
             tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its
@@ -92,6 +95,7 @@ class AgentConfigRequest:
     subagent: str | Unset = UNSET
     tags: AgentConfigRequestTags | Unset = UNSET
     tts: str | Unset = UNSET
+    user_plugins: list[str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
@@ -154,6 +158,10 @@ class AgentConfigRequest:
 
         tts = self.tts
 
+        user_plugins: list[str] | Unset = UNSET
+        if not isinstance(self.user_plugins, Unset):
+            user_plugins = self.user_plugins
+
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
             video = self.video.to_dict()
@@ -209,6 +217,8 @@ class AgentConfigRequest:
             field_dict["tags"] = tags
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if user_plugins is not UNSET:
+            field_dict["user_plugins"] = user_plugins
         if video is not UNSET:
             field_dict["video"] = video
         if visible_tools is not UNSET:
@@ -292,6 +302,8 @@ class AgentConfigRequest:
 
         tts = d.pop("tts", UNSET)
 
+        user_plugins = cast(list[str], d.pop("user_plugins", UNSET))
+
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
         if isinstance(_video, Unset):
@@ -324,6 +336,7 @@ class AgentConfigRequest:
             subagent=subagent,
             tags=tags,
             tts=tts,
+            user_plugins=user_plugins,
             video=video,
             visible_tools=visible_tools,
             voice=voice,

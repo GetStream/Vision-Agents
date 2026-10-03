@@ -25,6 +25,7 @@ type Auth struct {
 
 // Pending is what authorize has to remember so the callback can finish the login.
 type Pending struct {
+	PluginID      string
 	State         string
 	CodeVerifier  string
 	ClientID      string
@@ -88,14 +89,13 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 		return Pending{}, fmt.Errorf("plugins: %s did not advertise oauth endpoints", plugin.ID)
 	}
 
-	clientID, clientSecret := envClient(plugin.ID)
+	clientID, _ := envClient(plugin.ID)
 	if clientID == "" && meta.RegistrationEndpoint != "" {
 		registered, err := a.register(ctx, transport, meta.RegistrationEndpoint)
 		if err != nil {
 			return Pending{}, err
 		}
 		clientID = registered.ClientID
-		clientSecret = registered.ClientSecret
 	}
 	if clientID == "" {
 		return Pending{}, fmt.Errorf(
@@ -103,7 +103,6 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 			plugin.Name, strings.ToUpper(plugin.ID),
 		)
 	}
-	_ = clientSecret
 
 	verifier, challenge, err := pkce()
 	if err != nil {
@@ -122,8 +121,15 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 	query.Set("code_challenge", challenge)
 	query.Set("code_challenge_method", "S256")
 	query.Set("resource", endpoint)
+	if len(plugin.Scopes) > 0 {
+		query.Set("scope", strings.Join(plugin.Scopes, " "))
+	}
+	for name, value := range plugin.AuthorizeParams {
+		query.Set(name, value)
+	}
 
 	return Pending{
+		PluginID:      plugin.ID,
 		State:         state,
 		CodeVerifier:  verifier,
 		ClientID:      clientID,
@@ -140,6 +146,7 @@ func (a *Auth) Exchange(ctx context.Context, pending Pending, code string) (Toke
 	form.Set("redirect_uri", a.callbackURL())
 	form.Set("client_id", pending.ClientID)
 	form.Set("code_verifier", pending.CodeVerifier)
+	setClientSecret(form, pending.PluginID, pending.ClientID)
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, pending.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -176,7 +183,7 @@ func (a *Auth) Exchange(ctx context.Context, pending Pending, code string) (Toke
 }
 
 // Refresh renews an access token. Empty refresh token is a no-op miss.
-func (a *Auth) Refresh(ctx context.Context, tokenEndpoint, clientID, refreshToken string) (Token, error) {
+func (a *Auth) Refresh(ctx context.Context, pluginID, tokenEndpoint, clientID, refreshToken string) (Token, error) {
 	if refreshToken == "" || tokenEndpoint == "" {
 		return Token{}, fmt.Errorf("plugins: nothing to refresh")
 	}
@@ -184,6 +191,7 @@ func (a *Auth) Refresh(ctx context.Context, tokenEndpoint, clientID, refreshToke
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
 	form.Set("client_id", clientID)
+	setClientSecret(form, pluginID, clientID)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return Token{}, err
@@ -237,15 +245,23 @@ func (a *Auth) client() *http.Client {
 	return http.DefaultClient
 }
 
+// discoverResource reads RFC 9728 metadata, at the endpoint's path first (section 3.1, and
+// where Sentry and Google Calendar publish it) and then at the origin.
 func (a *Auth) discoverResource(ctx context.Context, transport *http.Client, endpoint string) (protectedResource, error) {
 	var meta protectedResource
 	wellKnown := originOf(endpoint) + "/.well-known/oauth-protected-resource"
-	if err := getJSON(ctx, transport, wellKnown, &meta); err != nil {
-		// A server that has not published metadata yet can still do DCR against its own
-		// origin, so a miss here is not fatal.
-		return meta, nil
+	candidates := []string{wellKnown}
+	if parsed, err := url.Parse(endpoint); err == nil && strings.Trim(parsed.Path, "/") != "" {
+		candidates = []string{wellKnown + "/" + strings.Trim(parsed.Path, "/"), wellKnown}
 	}
-	return meta, nil
+	for _, candidate := range candidates {
+		if err := getJSON(ctx, transport, candidate, &meta); err == nil {
+			return meta, nil
+		}
+	}
+	// A server that has not published metadata yet can still do DCR against its own
+	// origin, so a miss here is not fatal.
+	return protectedResource{}, nil
 }
 
 func (a *Auth) discoverServer(ctx context.Context, transport *http.Client, issuer string) (authServer, error) {
@@ -298,6 +314,16 @@ func (a *Auth) register(ctx context.Context, transport *http.Client, endpoint st
 func envClient(pluginID string) (id, secret string) {
 	prefix := strings.ToUpper(pluginID) + "_MCP_"
 	return os.Getenv(prefix + "CLIENT_ID"), os.Getenv(prefix + "CLIENT_SECRET")
+}
+
+// setClientSecret authenticates the deployment's own client at the token endpoint
+// (client_secret_post), which is how a provider that registers none on the fly, such as
+// Google, wants it. A client registered on the fly is public and sends none.
+func setClientSecret(form url.Values, pluginID, clientID string) {
+	envID, secret := envClient(pluginID)
+	if envID != "" && envID == clientID && secret != "" {
+		form.Set("client_secret", secret)
+	}
 }
 
 func getJSON(ctx context.Context, transport *http.Client, url string, target any) error {

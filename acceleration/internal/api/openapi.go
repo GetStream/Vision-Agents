@@ -147,6 +147,51 @@ func namedEnum(registry huma.Registry, name, description string, values ...strin
 	return &huma.Schema{Ref: "#/components/schemas/" + name}
 }
 
+// optionalParam is a query parameter a request may leave out. Huma takes no pointer for one,
+// and a handler still needs to tell absent from the zero value.
+type optionalParam[T any] struct {
+	Value T
+	Set   bool
+}
+
+func (o optionalParam[T]) Schema(registry huma.Registry) *huma.Schema {
+	return huma.SchemaFromType(registry, reflect.TypeFor[T]())
+}
+
+func (o *optionalParam[T]) Receiver() reflect.Value {
+	return reflect.ValueOf(o).Elem().Field(0)
+}
+
+func (o *optionalParam[T]) OnParamSet(set bool, _ any) {
+	o.Set = set
+}
+
+// ptr is the value when the request named one, and nil when it left it out.
+func (o optionalParam[T]) ptr() *T {
+	if !o.Set {
+		return nil
+	}
+	value := o.Value
+	return &value
+}
+
+// itemLimit is a length bound on the items of an array, which a struct tag can only put on
+// the array itself.
+func itemLimit(length int) *int {
+	return &length
+}
+
+// errorResponse is a failure an operation describes in words of its own, answered in the
+// Error shape every other failure is.
+func errorResponse(description string) *huma.Response {
+	return &huma.Response{
+		Description: description,
+		Content: map[string]*huma.MediaType{
+			"application/json": {Schema: &huma.Schema{Ref: "#/components/schemas/Error"}},
+		},
+	}
+}
+
 // newAPI registers every operation declared in Go on router, and returns the API whose
 // OpenAPI document describes them.
 func (s *Server) newAPI(router chi.Router) huma.API {
@@ -184,6 +229,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	config.AllowAdditionalPropertiesByDefault = true
 
 	api := humachi.New(router, config)
+	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
 	s.registerPolicies(api)
 	s.registerSessionQuery(api)
@@ -191,10 +237,26 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerSessionStop(api)
 	s.registerSessionDelete(api)
 	s.registerMemories(api)
+	s.registerConfigs(api)
+	s.registerPlugins(api)
 	s.registerConfigPatch(api)
 	s.registerSync(api)
 	s.registerConnectors(api)
 	return api
+}
+
+// requireCustomer answers a request nobody authenticated with a 401 before its input is
+// read, so a caller with no credential is told that rather than what is wrong with its body.
+// An operation declaring no security at all is reached before there is a caller to ask for.
+func requireCustomer(api huma.API) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		public := ctx.Operation().Security != nil && len(ctx.Operation().Security) == 0
+		if _, known := CustomerFrom(ctx.Context()); !known && !public {
+			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, missingCustomer().Error)
+			return
+		}
+		next(ctx)
+	}
 }
 
 // shareErrorResponses points an operation's error responses at the shared ones, and folds

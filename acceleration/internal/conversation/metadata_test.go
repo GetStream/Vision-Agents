@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 )
 
 // DisplaySuite covers what a conversation's Chat messages show end users: the steps of the
@@ -379,6 +380,47 @@ func (s *DisplaySuite) TestAVisibleToolsStoredArtifactIsAttachedToTheReplyAndRes
 	s.Require().NoError(err)
 	s.Require().Len(page.Messages, 2)
 	s.Equal([]ArtifactAttachment{{Type: "canvas", ArtifactID: "canvas_01", Revision: 1, Title: "Analysis"}}, page.Messages[1].Artifacts)
+}
+
+func (s *DisplaySuite) TestALoginAPluginAsksForIsAttachedToTheReplyAndRestored() {
+	c := s.open("on_call")
+	receipt, err := c.BeginCommand("command-a", "When am I free?", "")
+	s.Require().NoError(err)
+	calendar, ok := plugins.Lookup("google_calendar")
+	s.Require().True(ok)
+	asking := plugins.AuthorizationResult(calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=s1")
+
+	// Shown whether or not the tool's steps are: nobody can finish a login they never see.
+	c.Observe(agent.ToolStarted{ID: "list", Tool: "google_calendar__list_tools", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "list", Tool: "google_calendar__list_tools", Result: asking})
+	// A tool of somebody else's that answers the same is not a plugin asking for its login.
+	c.Observe(agent.ToolStarted{ID: "own", Tool: "weather", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "own", Tool: "weather", Result: strings.ReplaceAll(asking, "s1", "s2")})
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	raw := s.raw(receipt.AssistantMessageID)
+	s.NotContains(raw, "state=s2")
+	var reply struct {
+		Attachments []map[string]any `json:"attachments"`
+	}
+	s.Require().NoError(json.Unmarshal([]byte(raw), &reply))
+	s.Require().NotEmpty(reply.Attachments)
+	button := reply.Attachments[len(reply.Attachments)-1]
+	s.Equal(plugins.AuthorizationType, button["type"])
+	s.Equal("Connect Google Calendar", button["title"])
+	s.Equal(map[string]any{
+		"plugin_id":     "google_calendar",
+		"authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
+	}, button["custom"])
+	c.Release()
+	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "on_call", c.CID(), "", "employee")
+	s.Require().NoError(err)
+	s.Require().Len(page.Messages, 2)
+	s.Equal([]plugins.Authorization{{
+		Type: plugins.AuthorizationType, PluginID: "google_calendar", Title: "Connect Google Calendar",
+		AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
+	}}, page.Messages[1].Authorizations)
 }
 
 func (s *DisplaySuite) open(agentID string) *Conversation {

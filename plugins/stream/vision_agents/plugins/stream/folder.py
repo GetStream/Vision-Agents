@@ -108,6 +108,9 @@ class Settings:
     greeting: str = ""
     sandbox: str = ""
     plugins: list[str] = field(default_factory=list)
+    """Catalog MCP servers the app connects once, on the dashboard, for every session."""
+    user_plugins: list[str] = field(default_factory=list)
+    """Catalog MCP servers each end user connects with their own account, in the chat."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -346,6 +349,8 @@ def _declare(path: Path) -> Settings:
             settings.sandbox = _word(value)
         elif field_name == "plugins":
             settings.plugins = _terms(path, field_name, value)
+        elif field_name == "user_plugins":
+            settings.user_plugins = _terms(path, field_name, value)
         elif field_name == "keyterms":
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":

@@ -3,13 +3,16 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // noConfigs is what the config and skill paths say on a deployment without a database.
@@ -17,27 +20,27 @@ import (
 const noConfigs = "agent configs are not available: no database configured"
 
 // ListAgentConfigs returns the calling customer's configs, newest first.
-func (s *Server) ListAgentConfigs(ctx context.Context, request ListAgentConfigsRequestObject) (ListAgentConfigsResponseObject, error) {
+func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigsRequest) (*listAgentConfigsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListAgentConfigs401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return ListAgentConfigs400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 
 	// A name is resolved through the index rather than by reading every config and filtering
 	// here, and an empty answer is an empty list rather than a 404: this is a list endpoint,
 	// and a caller looking a name up is asking whether it is there.
-	if named := value(request.Params.Name); named != "" {
+	if named := value(request.Name.ptr()); named != "" {
 		found, exists, err := s.configs.AgentConfigByName(ctx, customerID, named)
 		if err != nil {
 			return nil, err
 		}
 		if !exists {
-			return ListAgentConfigs200JSONResponse{}, nil
+			return &listAgentConfigsResponse{Body: []AgentConfig{}}, nil
 		}
-		return ListAgentConfigs200JSONResponse{agentConfigOf(found)}, nil
+		return &listAgentConfigsResponse{Body: []AgentConfig{agentConfigOf(found)}}, nil
 	}
 
 	stored, err := s.store.CustomerAgentConfigs(ctx, customerID)
@@ -49,93 +52,93 @@ func (s *Server) ListAgentConfigs(ctx context.Context, request ListAgentConfigsR
 	for _, config := range stored {
 		listed = append(listed, agentConfigOf(config))
 	}
-	return ListAgentConfigs200JSONResponse(listed), nil
+	return &listAgentConfigsResponse{Body: listed}, nil
 }
 
 // CreateAgentConfig stores a configuration sessions can be created from.
-func (s *Server) CreateAgentConfig(ctx context.Context, request CreateAgentConfigRequestObject) (CreateAgentConfigResponseObject, error) {
+func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConfigRequest) (*createAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return CreateAgentConfig401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return CreateAgentConfig400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 	if request.Body == nil {
-		return CreateAgentConfig400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest("a request body is required")
 	}
 	if message, ok := configComplaint(*request.Body); !ok {
-		return CreateAgentConfig400JSONResponse{badRequest(message)}, nil
+		return nil, huma.Error400BadRequest(message)
 	}
 
 	config := storedConfig(*request.Body, customerID)
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
-		return CreateAgentConfig400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return CreateAgentConfig201JSONResponse(agentConfigOf(config)), nil
+	return &createAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
 
 // GetAgentConfig returns one config.
-func (s *Server) GetAgentConfig(ctx context.Context, request GetAgentConfigRequestObject) (GetAgentConfigResponseObject, error) {
+func (s *Server) getAgentConfig(ctx context.Context, request *getAgentConfigRequest) (*getAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetAgentConfig401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return GetAgentConfig400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return GetAgentConfig404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
+		return nil, huma.Error404NotFound(unknownConfig)
 	}
-	return GetAgentConfig200JSONResponse(agentConfigOf(config)), nil
+	return &getAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
 
 // UpdateAgentConfig replaces a config with what it now is.
-func (s *Server) UpdateAgentConfig(ctx context.Context, request UpdateAgentConfigRequestObject) (UpdateAgentConfigResponseObject, error) {
+func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConfigRequest) (*updateAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return UpdateAgentConfig401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return UpdateAgentConfig400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 	if request.Body == nil {
-		return UpdateAgentConfig400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest("a request body is required")
 	}
 	if message, ok := configComplaint(*request.Body); !ok {
-		return UpdateAgentConfig400JSONResponse{badRequest(message)}, nil
+		return nil, huma.Error400BadRequest(message)
 	}
 
 	existing, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return UpdateAgentConfig404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
+		return nil, huma.Error404NotFound(unknownConfig)
 	}
 
 	config := storedConfig(*request.Body, customerID)
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
-		return UpdateAgentConfig400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return UpdateAgentConfig200JSONResponse(agentConfigOf(config)), nil
+	return &updateAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
 
 // DeleteAgentConfig stops a config being usable.
-func (s *Server) DeleteAgentConfig(ctx context.Context, request DeleteAgentConfigRequestObject) (DeleteAgentConfigResponseObject, error) {
+func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConfigRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return DeleteAgentConfig401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return DeleteAgentConfig400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
-		return DeleteAgentConfig404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
+		return nil, huma.Error404NotFound(unknownConfig)
 	}
-	return DeleteAgentConfig204Response{}, nil
+	return nil, nil
 }
 
 // ListSkills returns the calling customer's skills, newest first, or only the ones
@@ -463,6 +466,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Plugins != nil {
 		config.Plugins = *request.Plugins
 	}
+	if request.UserPlugins != nil {
+		config.UserPlugins = *request.UserPlugins
+	}
 	config.Keyterms = keytermsOf(request.Keyterms)
 	if request.VisibleTools != nil {
 		config.VisibleTools = *request.VisibleTools
@@ -539,6 +545,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		named := config.Plugins
 		rendered.Plugins = &named
 	}
+	if len(config.UserPlugins) > 0 {
+		named := config.UserPlugins
+		rendered.UserPlugins = &named
+	}
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms
 		rendered.Keyterms = &keyterms
@@ -581,4 +591,182 @@ func optional(text string) *string {
 		return nil
 	}
 	return &text
+}
+
+// registerConfigs declares the operations served in configs.go.
+func (s *Server) registerConfigs(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listAgentConfigs",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/configs",
+		Summary:     "The agent configs the calling customer holds",
+		Description: "With a name this is how a name becomes a config, which is what lets a backend say " +
+			"\"docs\" instead of an id it never chose.\n" +
+			"Server-side only, as it always was: a config carries the instructions the agent runs " +
+			"under, and those are not a page's business. A page addressing an agent by name does not " +
+			"need this -- it sends the name on the create-session request and the router resolves " +
+			"it, which is the same lookup without handing the instructions over.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The customer's configs, newest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listAgentConfigs)
+	huma.Register(api, huma.Operation{
+		OperationID: "createAgentConfig",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/configs",
+		Summary:     "Store a named configuration a session can be created from",
+		Description: "A config holds what a caller would otherwise repeat on every call: the models, the " +
+			"voice, the instructions and which skills the subagent may be handed. What is about one " +
+			"conversation rather than the agent behind it, the call id above all, stays in the " +
+			"create-session request.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusCreated,
+		Responses: map[string]*huma.Response{
+			"201": {Description: "The config was stored"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.createAgentConfig)
+	huma.Register(api, huma.Operation{
+		OperationID: "getAgentConfig",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/configs/{id}",
+		Summary:     "One agent config",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The config"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getAgentConfig)
+	huma.Register(api, huma.Operation{
+		OperationID: "updateAgentConfig",
+		Method:      http.MethodPut,
+		Path:        "/v1/agents/configs/{id}",
+		Summary:     "Replace an agent config",
+		Description: "Every field is written, so the body is what the config now is rather than what changed " +
+			"about it. Sessions already running keep the configuration they started with.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The config as it now is"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.updateAgentConfig)
+	huma.Register(api, huma.Operation{
+		OperationID: "deleteAgentConfig",
+		Method:      http.MethodDelete,
+		Path:        "/v1/agents/configs/{id}",
+		Summary:     "Delete an agent config",
+		Description: "Calls that already ran under it keep naming it, so the config stops being usable rather " +
+			"than stops having existed.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The config is gone"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.deleteAgentConfig)
+}
+
+type listAgentConfigsRequest struct {
+	Name optionalParam[string] `query:"name" doc:"Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one."`
+}
+
+type listAgentConfigsResponse struct {
+	Body []AgentConfig `nullable:"false"`
+}
+
+type createAgentConfigRequest struct {
+	Body *AgentConfigRequest `required:"true"`
+}
+
+type createAgentConfigResponse struct {
+	Body AgentConfig
+}
+
+type getAgentConfigRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getAgentConfigResponse struct {
+	Body AgentConfig
+}
+
+type updateAgentConfigRequest struct {
+	Id   string              `path:"id" doc:"The resource, as returned when it was created."`
+	Body *AgentConfigRequest `required:"true"`
+}
+
+type updateAgentConfigResponse struct {
+	Body AgentConfig
+}
+
+type deleteAgentConfigRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+// AgentConfigRequest is the AgentConfigRequest schema.
+type AgentConfigRequest struct {
+	Dispatch           *AgentDispatch     `json:"dispatch,omitempty"`
+	Greeting           *string            `json:"greeting,omitempty"`
+	Guardrail          *string            `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered."`
+	Harness            *Harness           `json:"harness,omitempty"`
+	Instructions       *string            `json:"instructions,omitempty"`
+	Keyterms           *[]string          `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them."`
+	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty" doc:"What the agent may look things up in. Empty means it knows only what it was told."`
+	Llm                *string            `json:"llm,omitempty" doc:"The model holding the conversation."`
+	Mode               *AgentMode         `json:"mode,omitempty"`
+	Name               string             `json:"name" doc:"What the config is called, which is unique among the customer's own."`
+	Plugins            *[]string          `json:"plugins,omitempty" doc:"Hosted MCP servers this agent may reach, named from the built-in catalog."`
+	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
+	Search             *string            `json:"search,omitempty" doc:"What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way."`
+	Skills             *[]string          `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
+	Speed              *float64           `json:"speed,omitempty" doc:"Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused." minimum:"0" example:"0.9"`
+	Sts                *string            `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
+	Stt                *string            `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
+	Subagent           *string            `json:"subagent,omitempty" doc:"The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing."`
+	Tags               *map[string]string `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes."`
+	Tts                *string            `json:"tts,omitempty"`
+	UserPlugins        *[]string          `json:"user_plugins,omitempty" doc:"Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
+	Video              *SessionVideo      `json:"video,omitempty"`
+	VisibleTools       *[]string          `json:"visible_tools,omitempty" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[{\"id\",\"title\",\"url\",\"citation\"}]} also adds those citations to the reply's sources. Empty shows search and web_search." maxItems:"64"`
+	Voice              *string            `json:"voice,omitempty" doc:"Provider-specific voice id."`
+}
+
+// AgentConfig is the AgentConfig schema.
+type AgentConfig struct {
+	CreatedAt          time.Time          `json:"created_at"`
+	Dispatch           *AgentDispatch     `json:"dispatch,omitempty"`
+	Greeting           *string            `json:"greeting,omitempty"`
+	Guardrail          *string            `json:"guardrail,omitempty"`
+	Harness            *Harness           `json:"harness,omitempty"`
+	Id                 string             `json:"id"`
+	Instructions       *string            `json:"instructions,omitempty"`
+	Keyterms           *[]string          `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
+	Llm                *string            `json:"llm,omitempty"`
+	Mode               AgentMode          `json:"mode"`
+	Name               string             `json:"name"`
+	Plugins            *[]string          `json:"plugins,omitempty"`
+	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
+	Search             *string            `json:"search,omitempty"`
+	Skills             *[]string          `json:"skills,omitempty"`
+	Speed              *float64           `json:"speed,omitempty"`
+	Sts                *string            `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
+	Stt                *string            `json:"stt,omitempty"`
+	Subagent           *string            `json:"subagent,omitempty"`
+	SyncHash           *string            `json:"sync_hash,omitempty" doc:"Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory."`
+	Tags               *map[string]string `json:"tags,omitempty"`
+	Tts                *string            `json:"tts,omitempty"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	UserPlugins        *[]string          `json:"user_plugins,omitempty"`
+	Video              *SessionVideo      `json:"video,omitempty"`
+	VisibleTools       *[]string          `json:"visible_tools,omitempty"`
+	Voice              *string            `json:"voice,omitempty"`
+}
+
+func (*AgentConfigRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["visible_tools"].Items.MaxLength = itemLimit(128)
+	return schema
 }

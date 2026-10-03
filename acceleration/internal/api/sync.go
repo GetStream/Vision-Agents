@@ -37,6 +37,7 @@ type SyncAgentRequest struct {
 	Search        *string                    `json:"search,omitempty"`
 	Greeting      *string                    `json:"greeting,omitempty"`
 	Plugins       *[]string                  `json:"plugins,omitempty"`
+	UserPlugins   *[]string                  `json:"user_plugins,omitempty" doc:"Plugins each end user connects with their own account, from the conversation, the first time the agent needs one."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Harness       *Harness                   `json:"harness,omitempty"`
@@ -379,6 +380,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.Plugins != nil {
 		config.Plugins = *body.Plugins
+	}
+	if body.UserPlugins != nil {
+		config.UserPlugins = *body.UserPlugins
 	}
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)

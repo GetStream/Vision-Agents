@@ -341,6 +341,9 @@ type AgentConfig struct {
 	// catalog. A name here without a connected row is a plugin that was attached and then
 	// the login expired or was revoked.
 	Plugins []string `bun:"plugins,type:jsonb"`
+	// UserPlugins names catalog plugins each end user connects with their own account, from
+	// the conversation, when the model first needs one.
+	UserPlugins []string `bun:"user_plugins,type:jsonb"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
@@ -489,7 +492,8 @@ const (
 	PluginFailed = "failed"
 )
 
-// PluginConnection is one hosted MCP server authorized for one agent config.
+// PluginConnection is one hosted MCP server authorized for one agent config, by the app
+// or by one of its end users.
 type PluginConnection struct {
 	bun.BaseModel `bun:"table:agent_plugin_connections,alias:apc"`
 
@@ -497,6 +501,9 @@ type PluginConnection struct {
 	CustomerID string `bun:"customer_id,notnull"`
 	ConfigID   string `bun:"config_id,notnull"`
 	PluginID   string `bun:"plugin_id,notnull"`
+	// UserID is the end user whose account this is. Empty is the app's own login, made once
+	// on the dashboard and used by every session of the config.
+	UserID string `bun:"user_id,notnull"`
 	// InstanceURL is the shop or org hostname for plugins that have no single global URL.
 	InstanceURL  string     `bun:"instance_url,notnull"`
 	AccessToken  string     `bun:"access_token,notnull"`

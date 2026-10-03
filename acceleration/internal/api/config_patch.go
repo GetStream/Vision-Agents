@@ -25,6 +25,7 @@ type AgentConfigPatch struct {
 	Guardrail          *string            `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
 	Skills             *[]string          `json:"skills,omitempty"`
 	Plugins            *[]string          `json:"plugins,omitempty"`
+	UserPlugins        *[]string          `json:"user_plugins,omitempty"`
 	Keyterms           *[]string          `json:"keyterms,omitempty"`
 	VisibleTools       *[]string          `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
 	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
@@ -133,6 +134,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
 	config.Skills = override(config.Skills, patch.Skills)
 	config.Plugins = override(config.Plugins, patch.Plugins)
+	config.UserPlugins = override(config.UserPlugins, patch.UserPlugins)
 	if patch.Keyterms != nil {
 		config.Keyterms = keytermsOf(patch.Keyterms)
 	}
