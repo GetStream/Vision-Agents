@@ -63,6 +63,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -98,7 +103,7 @@ def sync_detailed(
     were continuing.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (ForkSessionRequest | Unset): Continue a conversation as a new one. Everything the
             parent was opened with is inherited; anything named here is written over it, which is what
             makes a fork useful rather than a copy -- the usual reason to fork is to ask the same
@@ -142,7 +147,7 @@ def sync(
     were continuing.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (ForkSessionRequest | Unset): Continue a conversation as a new one. Everything the
             parent was opened with is inherited; anything named here is written over it, which is what
             makes a fork useful rather than a copy -- the usual reason to fork is to ask the same
@@ -181,7 +186,7 @@ async def asyncio_detailed(
     were continuing.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (ForkSessionRequest | Unset): Continue a conversation as a new one. Everything the
             parent was opened with is inherited; anything named here is written over it, which is what
             makes a fork useful rather than a copy -- the usual reason to fork is to ask the same
@@ -223,7 +228,7 @@ async def asyncio(
     were continuing.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (ForkSessionRequest | Unset): Continue a conversation as a new one. Everything the
             parent was opened with is inherited; anything named here is written over it, which is what
             makes a fork useful rather than a copy -- the usual reason to fork is to ask the same

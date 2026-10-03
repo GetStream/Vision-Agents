@@ -3,21 +3,23 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-// CreateSession joins a call and returns the session running it.
-func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequestObject) (CreateSessionResponseObject, error) {
+// createSession joins a call and returns the session running it.
+func (s *Server) createSession(ctx context.Context, request *createSessionRequest) (*createSessionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return CreateSession401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.sessions == nil {
-		return CreateSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
+		return nil, huma.Error404NotFound(noSessions)
 	}
 	if request.Body == nil {
-		return CreateSession400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest("a request body is required")
 	}
 
 	// A config is read before the session is created rather than inside it, so a caller
@@ -26,9 +28,9 @@ func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequest
 	config, failure := s.configFor(ctx, customerID, request.Body.ConfigId, request.Body.Agent)
 	if failure != nil {
 		if failure.status == notFound {
-			return CreateSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+			return nil, huma.Error404NotFound(failure.message)
 		}
-		return CreateSession400JSONResponse{badRequest(failure.message)}, nil
+		return nil, huma.Error400BadRequest(failure.message)
 	}
 
 	spec := specOf(*request.Body, customerID, config)
@@ -41,13 +43,44 @@ func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequest
 	spec.CallerKind = KindFrom(ctx)
 	created, err := s.sessions.Create(ctx, spec)
 	if errors.Is(err, session.ErrSessionExists) {
-		return CreateSession409JSONResponse{Error: err.Error()}, nil
+		return nil, huma.Error409Conflict(err.Error())
 	}
 	if err != nil {
 		// Everything that can go wrong here is the caller's spec or a provider that would
 		// not start, and both are worth reading rather than a 500 with the detail in a
 		// log the caller cannot see.
-		return CreateSession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return CreateSession201JSONResponse(sessionOf(created)), nil
+	return &createSessionResponse{Body: sessionOf(created)}, nil
+}
+
+// registerSessionCreate declares the operations served in session_create.go.
+func (s *Server) registerSessionCreate(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "createSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions",
+		Summary:     "Join a call as a voice agent",
+		Description: "The whole conversation runs here: the agent joins the call, transcribes what it hears, " +
+			"answers it and speaks back, all through the routers. The caller keeps the session id " +
+			"and watches the conversation over the events socket.\n" +
+			"It returns once the agent is in the call, so a session that comes back is one that is " +
+			"already listening. Tools declared here are the caller's own: the model asks for them " +
+			"over the events socket and waits for the caller to answer.",
+		Extensions:    map[string]any{clientAccessibleExtension: true},
+		DefaultStatus: http.StatusCreated,
+		Responses: map[string]*huma.Response{
+			"201": {Description: "The agent is in the call"},
+			"409": errorResponse("A session with that id already exists"),
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
+	}, s.createSession)
+}
+
+type createSessionRequest struct {
+	Body *CreateSessionRequest `required:"true"`
+}
+
+type createSessionResponse struct {
+	Body Session
 }

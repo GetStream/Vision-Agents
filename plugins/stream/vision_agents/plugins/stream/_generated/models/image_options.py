@@ -26,7 +26,6 @@ class ImageOptions:
             providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target when
                 it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it
                 stands.
-                 Example: ['fal', 'image-quality'].
             seed (int | Unset): Draws the same picture again from the same prompt, on a model that reads one.
             size (str | Unset): Width by height in pixels, for the models that take a size. Example: 1024x1024.
             target (str | Unset): A provider/model or a capability shortcut. Defaults to image-fast. Example: image-fast.

@@ -32,32 +32,27 @@ class TtsOptions:
                 the request is refused rather than sent somewhere that does not.
             emotion (str | Unset): Affect to speak with, for the providers that take one.
             format_ (str | Unset): Codec, sample rate and bitrate as one name - pcm_16000, mp3_44100_128, ulaw_8000 for
-                telephony.
-                 Example: pcm_16000.
+                telephony. Example: pcm_16000.
             languages (list[str] | Unset):
             overwrites (TtsOptionsOverwrites | Unset): Settings for one voice provider that this vocabulary has no word for,
                 keyed by provider name, for example {"elevenlabs": {"voice_id": "21m00Tcm4TlvDq8ikWAM"}}. The provider named
                 parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather
                 than accepted and dropped. It is also the only way to steer a live voice per vendor, since a voice id from one
-                library means nothing at another.
-                 Example: {'elevenlabs': {'voice_id': '21m00Tcm4TlvDq8ikWAM'}}.
+                library means nothing at another. Example: {'elevenlabs': {'voice_id': '21m00Tcm4TlvDq8ikWAM'}}.
             pronunciations (TtsOptionsPronunciations | Unset): How to say words the voice gets wrong, keyed by the word.
             providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target when
                 it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is
                 expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to
                 the back.
-                 Example: ['elevenlabs', 'en-low-latency'].
             similarity (float | Unset): How closely a cloned voice tracks its reference.
             speed (float | Unset): Rate of delivery, 1 being the voice's own. Providers differ in the range they accept, so
-                one asked for a speed outside its own refuses.
-                 Example: 1.
+                one asked for a speed outside its own refuses. Example: 1.
             stability (float | Unset): How much the voice may vary between chunks. Higher is flatter and more consistent.
             style (str | Unset): Delivery style, for the providers that name styles rather than emotions.
             target (str | Unset): A provider/model or a capability shortcut. Example: en-low-latency.
             voice (str | Unset): A provider's own voice id, or one of your voices by id or by the name you gave it. Prefix
                 it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to
-                the provider's library, and with it a name that is not one of yours is refused.
-                 Example: custom:receptionist.
+                the provider's library, and with it a name that is not one of yours is refused. Example: custom:receptionist.
             volume (float | Unset): Loudness, 1 being the voice's own.
     """
 

@@ -19,7 +19,7 @@ import (
 // They are stored rather than computed, so there is nothing to serve without one.
 const noConfigs = "agent configs are not available: no database configured"
 
-// ListAgentConfigs returns the calling customer's configs, newest first.
+// listAgentConfigs returns the calling customer's configs, newest first.
 func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigsRequest) (*listAgentConfigsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -55,7 +55,7 @@ func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigs
 	return &listAgentConfigsResponse{Body: listed}, nil
 }
 
-// CreateAgentConfig stores a configuration sessions can be created from.
+// createAgentConfig stores a configuration sessions can be created from.
 func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConfigRequest) (*createAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -78,7 +78,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	return &createAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
 
-// GetAgentConfig returns one config.
+// getAgentConfig returns one config.
 func (s *Server) getAgentConfig(ctx context.Context, request *getAgentConfigRequest) (*getAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -95,7 +95,7 @@ func (s *Server) getAgentConfig(ctx context.Context, request *getAgentConfigRequ
 	return &getAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
 
-// UpdateAgentConfig replaces a config with what it now is.
+// updateAgentConfig replaces a config with what it now is.
 func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConfigRequest) (*updateAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -125,7 +125,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	return &updateAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
 
-// DeleteAgentConfig stops a config being usable.
+// deleteAgentConfig stops a config being usable.
 func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConfigRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -141,18 +141,18 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 	return nil, nil
 }
 
-// ListSkills returns the calling customer's skills, newest first, or only the ones
+// listSkills returns the calling customer's skills, newest first, or only the ones
 // belonging to one agent config.
-func (s *Server) ListSkills(ctx context.Context, request ListSkillsRequestObject) (ListSkillsResponseObject, error) {
+func (s *Server) listSkills(ctx context.Context, request *listSkillsRequest) (*listSkillsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListSkills401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return ListSkills400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 
-	stored, err := s.store.CustomerSkills(ctx, customerID, value(request.Params.ConfigId))
+	stored, err := s.store.CustomerSkills(ctx, customerID, value(request.ConfigId.ptr()))
 	if err != nil {
 		return nil, err
 	}
@@ -161,99 +161,99 @@ func (s *Server) ListSkills(ctx context.Context, request ListSkillsRequestObject
 	for _, skill := range stored {
 		listed = append(listed, skillOf(skill))
 	}
-	return ListSkills200JSONResponse(listed), nil
+	return &listSkillsResponse{Body: listed}, nil
 }
 
-// CreateSkill defines a kind of work worth handing to the slower model.
-func (s *Server) CreateSkill(ctx context.Context, request CreateSkillRequestObject) (CreateSkillResponseObject, error) {
+// createSkill defines a kind of work worth handing to the slower model.
+func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (*createSkillResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return CreateSkill401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return CreateSkill400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 	if request.Body == nil {
-		return CreateSkill400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest("a request body is required")
 	}
 	if message, ok := skillComplaint(*request.Body); !ok {
-		return CreateSkill400JSONResponse{badRequest(message)}, nil
+		return nil, huma.Error400BadRequest(message)
 	}
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
-		return CreateSkill400JSONResponse{badRequest(unknownConfig)}, nil
+		return nil, huma.Error400BadRequest(unknownConfig)
 	}
 
 	skill := storedSkill(*request.Body, customerID)
 	if err := s.configs.CreateSkill(ctx, &skill); err != nil {
-		return CreateSkill400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return CreateSkill201JSONResponse(skillOf(skill)), nil
+	return &createSkillResponse{Body: skillOf(skill)}, nil
 }
 
-// GetSkill returns one skill.
-func (s *Server) GetSkill(ctx context.Context, request GetSkillRequestObject) (GetSkillResponseObject, error) {
+// getSkill returns one skill.
+func (s *Server) getSkill(ctx context.Context, request *getSkillRequest) (*getSkillResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetSkill401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return GetSkill400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 
 	skill, err := s.store.Skill(ctx, customerID, request.Id)
 	if err != nil {
-		return GetSkill404JSONResponse{NotFoundJSONResponse{Error: unknownSkill}}, nil
+		return nil, huma.Error404NotFound(unknownSkill)
 	}
-	return GetSkill200JSONResponse(skillOf(skill)), nil
+	return &getSkillResponse{Body: skillOf(skill)}, nil
 }
 
-// UpdateSkill replaces a skill with what it now is.
-func (s *Server) UpdateSkill(ctx context.Context, request UpdateSkillRequestObject) (UpdateSkillResponseObject, error) {
+// updateSkill replaces a skill with what it now is.
+func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (*updateSkillResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return UpdateSkill401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return UpdateSkill400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 	if request.Body == nil {
-		return UpdateSkill400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest("a request body is required")
 	}
 	if message, ok := skillComplaint(*request.Body); !ok {
-		return UpdateSkill400JSONResponse{badRequest(message)}, nil
+		return nil, huma.Error400BadRequest(message)
 	}
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
-		return UpdateSkill400JSONResponse{badRequest(unknownConfig)}, nil
+		return nil, huma.Error400BadRequest(unknownConfig)
 	}
 
 	existing, err := s.store.Skill(ctx, customerID, request.Id)
 	if err != nil {
-		return UpdateSkill404JSONResponse{NotFoundJSONResponse{Error: unknownSkill}}, nil
+		return nil, huma.Error404NotFound(unknownSkill)
 	}
 
 	skill := storedSkill(*request.Body, customerID)
 	skill.ID = existing.ID
 	skill.CreatedAt = existing.CreatedAt
 	if err := s.configs.UpdateSkill(ctx, &skill); err != nil {
-		return UpdateSkill400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return UpdateSkill200JSONResponse(skillOf(skill)), nil
+	return &updateSkillResponse{Body: skillOf(skill)}, nil
 }
 
-// DeleteSkill stops a skill being usable.
-func (s *Server) DeleteSkill(ctx context.Context, request DeleteSkillRequestObject) (DeleteSkillResponseObject, error) {
+// deleteSkill stops a skill being usable.
+func (s *Server) deleteSkill(ctx context.Context, request *deleteSkillRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return DeleteSkill401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return DeleteSkill400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 
 	if err := s.configs.DeleteSkill(ctx, customerID, request.Id); err != nil {
-		return DeleteSkill404JSONResponse{NotFoundJSONResponse{Error: unknownSkill}}, nil
+		return nil, huma.Error404NotFound(unknownSkill)
 	}
-	return DeleteSkill204Response{}, nil
+	return nil, nil
 }
 
 // unknownConfig and unknownSkill are what a caller is told about a resource that is not
@@ -667,6 +667,68 @@ func (s *Server) registerConfigs(api huma.API) {
 		},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.deleteAgentConfig)
+	huma.Register(api, huma.Operation{
+		OperationID: "listSkills",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/skills",
+		Summary:     "The skills the calling customer has defined",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The customer's skills, newest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listSkills)
+	huma.Register(api, huma.Operation{
+		OperationID: "createSkill",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/skills",
+		Summary:     "Define a kind of work worth handing to the slower model",
+		Description: "A skill belongs to one agent config. Two agents that both need the same kind of work " +
+			"have one each, so editing what \"explain\" means for one leaves the other alone. The " +
+			"built-in think, recall and explain need no row: a config may name them without defining " +
+			"them.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusCreated,
+		Responses: map[string]*huma.Response{
+			"201": {Description: "The skill was stored"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.createSkill)
+	huma.Register(api, huma.Operation{
+		OperationID: "getSkill",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/skills/{id}",
+		Summary:     "One skill",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The skill"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getSkill)
+	huma.Register(api, huma.Operation{
+		OperationID: "updateSkill",
+		Method:      http.MethodPut,
+		Path:        "/v1/agents/skills/{id}",
+		Summary:     "Replace a skill",
+		Description: "Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The skill as it now is"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.updateSkill)
+	huma.Register(api, huma.Operation{
+		OperationID: "deleteSkill",
+		Method:      http.MethodDelete,
+		Path:        "/v1/agents/skills/{id}",
+		Summary:     "Delete a skill",
+		Description: "Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The skill is gone"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.deleteSkill)
 }
 
 type listAgentConfigsRequest struct {
@@ -769,4 +831,41 @@ type AgentConfig struct {
 func (*AgentConfigRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Properties["visible_tools"].Items.MaxLength = itemLimit(128)
 	return schema
+}
+
+type listSkillsRequest struct {
+	ConfigId optionalParam[string] `query:"config_id" doc:"Only the skills belonging to this agent config. Omit for every skill the customer has, across all of their agents."`
+}
+
+type listSkillsResponse struct {
+	Body []Skill `nullable:"false"`
+}
+
+type createSkillRequest struct {
+	Body *SkillRequest `required:"true"`
+}
+
+type createSkillResponse struct {
+	Body Skill
+}
+
+type getSkillRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getSkillResponse struct {
+	Body Skill
+}
+
+type updateSkillRequest struct {
+	Id   string        `path:"id" doc:"The resource, as returned when it was created."`
+	Body *SkillRequest `required:"true"`
+}
+
+type updateSkillResponse struct {
+	Body Skill
+}
+
+type deleteSkillRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
 }

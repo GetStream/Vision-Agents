@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // defaultChangeLimit and maxChangeLimit bound one page of changes. A page is held in
@@ -215,4 +216,19 @@ func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// DataChange One thing that happened to one row of the calling app's data.
+type DataChange struct {
+	At    time.Time               `json:"at"`
+	Key   map[string]interface{}  `json:"key" doc:"What identifies the row, which is all a delete has." nullable:"false"`
+	Op    DataChangeOp            `json:"op" enum:"insert,update,delete"`
+	Row   *map[string]interface{} `json:"row,omitempty" doc:"The row as it now reads, absent for a delete and never carrying a credential."`
+	Seq   int64                   `json:"seq" doc:"Where this sits in the order changes happened, and the cursor to resume from."`
+	Table string                  `json:"table" doc:"Which table the row is in." example:"agent_configs"`
+}
+
+func (*DataChange) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One thing that happened to one row of the calling app's data."
+	return schema
 }

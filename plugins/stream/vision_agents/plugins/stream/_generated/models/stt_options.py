@@ -46,7 +46,7 @@ class SttOptions:
             keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong. Up to 100
                 terms, and providers that cannot be told about vocabulary refuse them.
             languages (list[str] | Unset): ISO codes candidates must cover. Empty with detect_language lets the provider
-                decide. Example: ['en'].
+                decide.
             max_speakers (int | Unset): A hard cap on the speakers diarization may find, not a hint. Providers differ in
                 what they allow, so one asked for more than it supports refuses.
             mode (TranscriptionMode | Unset): How faithfully the transcript follows what was said. verbatim keeps the ums,
@@ -58,21 +58,19 @@ class SttOptions:
             overwrites (SttOptionsOverwrites | Unset): Settings for one provider that this vocabulary has no word for, keyed
                 by provider name, for example {"deepgram": {"eot_threshold": 0.6}}. The provider named parses its own block and
                 refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
-                 Example: {'deepgram': {'eot_threshold': 0.6}}.
+                Example: {'deepgram': {'eot_threshold': 0.6}}.
             profanity_filter (bool | Unset): Mask offensive words rather than writing them down. Only some providers can be
                 told to, so a request for it is routed to one of them or refused.
             providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target when
                 it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is
                 expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to
                 the back; unlike a shortcut, this does not reorder on latency, because a caller who wrote an order meant it.
-                 Example: ['deepgram', 'en-low-latency'].
             redact (bool | Unset): Remove personally identifying information from the transcript.
             sample_rate (int | Unset): Rate of the PCM sent on the socket. Zero means 16 kHz. Live only. Example: 16000.
             silence_ms (int | Unset): How long a pause ends a turn, for silence endpointing. Live only. Example: 300.
             summary (bool | Unset): Summarise the recording, where the provider offers audio intelligence. Recording only.
             target (str | Unset): A provider/model or a capability shortcut such as en-low-latency for the live path or en-
-                recorded for a recording.
-                 Example: en-low-latency.
+                recorded for a recording. Example: en-low-latency.
             utterance_end_ms (int | Unset): How long after the last word an utterance is declared over. Live only.
             words (bool | Unset): Word-level timestamps. Recording only.
     """

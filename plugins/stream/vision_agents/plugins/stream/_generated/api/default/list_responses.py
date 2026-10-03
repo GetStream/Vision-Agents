@@ -65,6 +65,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -96,9 +101,10 @@ def sync_detailed(
     carries what happened inside each one.
 
     Args:
-        id (str):
-        limit (int | Unset):
-        cursor (str | Unset):
+        id (str): The session, as returned when it was created.
+        limit (int | Unset): Up to 200. Omitted is 25.
+        cursor (str | Unset): The `next_cursor` of the previous page, sent with the same filters.
+            Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,9 +141,10 @@ def sync(
     carries what happened inside each one.
 
     Args:
-        id (str):
-        limit (int | Unset):
-        cursor (str | Unset):
+        id (str): The session, as returned when it was created.
+        limit (int | Unset): Up to 200. Omitted is 25.
+        cursor (str | Unset): The `next_cursor` of the previous page, sent with the same filters.
+            Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,9 +176,10 @@ async def asyncio_detailed(
     carries what happened inside each one.
 
     Args:
-        id (str):
-        limit (int | Unset):
-        cursor (str | Unset):
+        id (str): The session, as returned when it was created.
+        limit (int | Unset): Up to 200. Omitted is 25.
+        cursor (str | Unset): The `next_cursor` of the previous page, sent with the same filters.
+            Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -206,9 +214,10 @@ async def asyncio(
     carries what happened inside each one.
 
     Args:
-        id (str):
-        limit (int | Unset):
-        cursor (str | Unset):
+        id (str): The session, as returned when it was created.
+        limit (int | Unset): Up to 200. Omitted is 25.
+        cursor (str | Unset): The `next_cursor` of the previous page, sent with the same filters.
+            Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -33,6 +33,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 400:
+        response_400 = Error.from_dict(response.json())
+
+        return response_400
+
     if response.status_code == 401:
         response_401 = Error.from_dict(response.json())
 
@@ -47,6 +52,11 @@ def _parse_response(
         response_404 = Error.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -77,7 +87,7 @@ def sync_detailed(
     found rather than refused, so this is not a way to find out whose an id is.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -110,7 +120,7 @@ def sync(
     found rather than refused, so this is not a way to find out whose an id is.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,7 +148,7 @@ async def asyncio_detailed(
     found rather than refused, so this is not a way to find out whose an id is.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,7 +179,7 @@ async def asyncio(
     found rather than refused, so this is not a way to find out whose an id is.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

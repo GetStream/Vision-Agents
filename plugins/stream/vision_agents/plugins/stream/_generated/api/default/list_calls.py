@@ -13,21 +13,23 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
+    params["running"] = running
+
+    params["limit"] = limit
+
     params["agent_id"] = agent_id
 
     params["campaign_id"] = campaign_id
-
-    params["running"] = running
 
     json_from_: str | Unset = UNSET
     if not isinstance(from_, Unset):
@@ -38,8 +40,6 @@ def _get_kwargs(
     if not isinstance(to, Unset):
         json_to = to.isoformat()
     params["to"] = json_to
-
-    params["limit"] = limit
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -80,6 +80,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -100,12 +105,12 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
 ) -> Response[Error | list[Call]]:
     """The calls the calling customer has run
 
@@ -114,12 +119,12 @@ def sync_detailed(
     restart.
 
     Args:
-        agent_id (str | Unset):
-        campaign_id (str | Unset):
         running (bool | Unset):  Default: False.
-        from_ (datetime.datetime | Unset):
-        to (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
+        agent_id (str | Unset): Narrow to one agent.
+        campaign_id (str | Unset): Narrow to the calls one campaign placed.
+        from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
+        to (datetime.datetime | Unset): Only calls that started before this, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,12 +135,12 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
+        running=running,
+        limit=limit,
         agent_id=agent_id,
         campaign_id=campaign_id,
-        running=running,
         from_=from_,
         to=to,
-        limit=limit,
     )
 
     response = client.get_httpx_client().request(
@@ -148,12 +153,12 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
 ) -> Error | list[Call] | None:
     """The calls the calling customer has run
 
@@ -162,12 +167,12 @@ def sync(
     restart.
 
     Args:
-        agent_id (str | Unset):
-        campaign_id (str | Unset):
         running (bool | Unset):  Default: False.
-        from_ (datetime.datetime | Unset):
-        to (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
+        agent_id (str | Unset): Narrow to one agent.
+        campaign_id (str | Unset): Narrow to the calls one campaign placed.
+        from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
+        to (datetime.datetime | Unset): Only calls that started before this, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -179,24 +184,24 @@ def sync(
 
     return sync_detailed(
         client=client,
+        running=running,
+        limit=limit,
         agent_id=agent_id,
         campaign_id=campaign_id,
-        running=running,
         from_=from_,
         to=to,
-        limit=limit,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
 ) -> Response[Error | list[Call]]:
     """The calls the calling customer has run
 
@@ -205,12 +210,12 @@ async def asyncio_detailed(
     restart.
 
     Args:
-        agent_id (str | Unset):
-        campaign_id (str | Unset):
         running (bool | Unset):  Default: False.
-        from_ (datetime.datetime | Unset):
-        to (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
+        agent_id (str | Unset): Narrow to one agent.
+        campaign_id (str | Unset): Narrow to the calls one campaign placed.
+        from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
+        to (datetime.datetime | Unset): Only calls that started before this, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,12 +226,12 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
+        running=running,
+        limit=limit,
         agent_id=agent_id,
         campaign_id=campaign_id,
-        running=running,
         from_=from_,
         to=to,
-        limit=limit,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -237,12 +242,12 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
 ) -> Error | list[Call] | None:
     """The calls the calling customer has run
 
@@ -251,12 +256,12 @@ async def asyncio(
     restart.
 
     Args:
-        agent_id (str | Unset):
-        campaign_id (str | Unset):
         running (bool | Unset):  Default: False.
-        from_ (datetime.datetime | Unset):
-        to (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
+        agent_id (str | Unset): Narrow to one agent.
+        campaign_id (str | Unset): Narrow to the calls one campaign placed.
+        from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
+        to (datetime.datetime | Unset): Only calls that started before this, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -269,11 +274,11 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            running=running,
+            limit=limit,
             agent_id=agent_id,
             campaign_id=campaign_id,
-            running=running,
             from_=from_,
             to=to,
-            limit=limit,
         )
     ).parsed
