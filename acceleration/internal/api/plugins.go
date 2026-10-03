@@ -13,7 +13,7 @@ import (
 
 const unknownPlugin = "no such plugin"
 
-// ListPlugins returns the built-in catalog, optionally filtered.
+// listPlugins returns the built-in catalog, optionally filtered.
 func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (*listPluginsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
 		return nil, huma.Error401Unauthorized(missingCustomer().Error)
@@ -27,7 +27,7 @@ func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (
 	return &listPluginsResponse{Body: listed}, nil
 }
 
-// ListConfigPlugins returns the catalog as this agent has it: the app's logins with their
+// listConfigPlugins returns the catalog as this agent has it: the app's logins with their
 // status, then every plugin the config names that has none yet, as not_connected, which is
 // what a dashboard reminds the app to finish. The rest of the catalog is implied absent.
 func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPluginsRequest) (*listConfigPluginsResponse, error) {
@@ -69,7 +69,7 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 	return &listConfigPluginsResponse{Body: listed}, nil
 }
 
-// AuthorizePlugin starts a plugin login and returns the URL the browser should open.
+// authorizePlugin starts a plugin login and returns the URL the browser should open.
 func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRequest) (*authorizePluginResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -117,7 +117,7 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 	return &authorizePluginResponse{Body: PluginAuthorization{AuthorizeUrl: pending.AuthorizeURL}}, nil
 }
 
-// DisconnectPlugin drops a login and unnames the plugin on the config.
+// disconnectPlugin drops a login and unnames the plugin on the config.
 func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPluginRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {

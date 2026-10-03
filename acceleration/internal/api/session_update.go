@@ -30,7 +30,7 @@ func (*UpdateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schem
 	schema.Description = "What to change about one session. A field left out is left as it is. " +
 		"Title, description and custom can change on a session that ended, and are all an end " +
 		"user's device may change; everything else needs the session running and a server-side caller."
-	// Rendered as a plain integer, as legacy.yaml declared it, so the clients keep the type they had.
+	// Rendered as a plain integer, as it was always declared, so the clients keep the type they had.
 	schema.Properties["max_output_tokens"].Format = ""
 	return schema
 }

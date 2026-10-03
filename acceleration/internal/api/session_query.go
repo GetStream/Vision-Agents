@@ -262,3 +262,10 @@ func sessionPageOf(found []session.Found, limit int, sort SessionSortField) Sess
 	}
 	return rendered
 }
+
+// SessionPage is the SessionPage schema.
+type SessionPage struct {
+	HasMore    bool      `json:"has_more"`
+	Items      []Session `json:"items" nullable:"false"`
+	NextCursor *string   "json:\"next_cursor,omitempty\" doc:\"Pass as `cursor` for the next page. Absent on the last one.\""
+}

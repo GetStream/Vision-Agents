@@ -3,17 +3,15 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
-
-	specs "github.com/GetStream/Vision-Agents/acceleration/api"
 )
 
 const specDescription = `Routes speech-to-text and text-to-speech traffic across providers and reports what it cost. Every path is scoped by modality, so the same provider serving two modalities is reported on separately. Who the caller is depends on ROUTER_AUTH_MODE: ` + "`api_key`" + `, the default, wants an API key and a token signed with its secret; ` + "`proxy`" + ` believes the X-Stream- headers something in front of the router set; ` + "`noauth`" + ` reads a trusted X-Customer-Id header and takes every caller for that customer's own backend.
@@ -155,7 +153,14 @@ type optionalParam[T any] struct {
 }
 
 func (o optionalParam[T]) Schema(registry huma.Registry) *huma.Schema {
-	return huma.SchemaFromType(registry, reflect.TypeFor[T]())
+	schema := huma.SchemaFromType(registry, reflect.TypeFor[T]())
+	schema.Nullable = false
+	// A Go int is documented as a plain integer, which clients have always been generated
+	// from; int64 says so itself.
+	if reflect.TypeFor[T]().Kind() == reflect.Int {
+		schema.Format = ""
+	}
+	return schema
 }
 
 func (o *optionalParam[T]) Receiver() reflect.Value {
@@ -238,6 +243,25 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerSessionDelete(api)
 	s.registerMemories(api)
 	s.registerConfigs(api)
+	s.registerServer(api)
+	s.registerRouterconfigs(api)
+	s.registerVoices(api)
+	s.registerKnowledge(api)
+	s.registerKnowledgeurls(api)
+	s.registerPhone(api)
+	s.registerConversations(api)
+	s.registerCampaigns(api)
+	s.registerSimulations(api)
+	s.registerCalls(api)
+	s.registerSessionCreate(api)
+	s.registerGuests(api)
+	s.registerSessions(api)
+	s.registerResponses(api)
+	s.registerSearch(api)
+	s.registerClassify(api)
+	s.registerRecordings(api)
+	s.registerImages(api)
+	documentHandWritten(api)
 	s.registerPlugins(api)
 	s.registerConfigPatch(api)
 	s.registerSync(api)
@@ -267,7 +291,13 @@ func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 		operation.Responses["400"] = &huma.Response{}
 	}
 	for code, name := range sharedResponses {
-		if _, ok := operation.Responses[code]; ok {
+		// A failure the operation describes in words of its own keeps them.
+		response, ok := operation.Responses[code]
+		if !ok {
+			continue
+		}
+		status, _ := strconv.Atoi(code)
+		if response.Description == "" || response.Description == http.StatusText(status) {
 			operation.Responses[code] = &huma.Response{Ref: "#/components/responses/" + name}
 		}
 	}
@@ -284,25 +314,9 @@ type operationSummary struct {
 	open bool
 }
 
-// specifiedOperations lists every operation document declares in Go and every one
-// generated from api/legacy.yaml, leaving out what oapi-codegen was told to skip.
-func specifiedOperations(document *huma.OpenAPI) ([]operationSummary, error) {
-	legacy, err := GetSpec()
-	if err != nil {
-		return nil, fmt.Errorf("api: could not read the embedded spec: %w", err)
-	}
+// specifiedOperations lists every operation document declares.
+func specifiedOperations(document *huma.OpenAPI) []operationSummary {
 	var operations []operationSummary
-	for path, item := range legacy.Paths.Map() {
-		for method, operation := range item.Operations() {
-			open, _ := operation.Extensions[clientAccessibleExtension].(bool)
-			operations = append(operations, operationSummary{
-				method: method,
-				path:   path,
-				public: operation.Security != nil && len(*operation.Security) == 0,
-				open:   open,
-			})
-		}
-	}
 	for path, item := range document.Paths {
 		for method, operation := range map[string]*huma.Operation{
 			http.MethodGet: item.Get, http.MethodPost: item.Post, http.MethodPut: item.Put,
@@ -320,14 +334,10 @@ func specifiedOperations(document *huma.OpenAPI) ([]operationSummary, error) {
 			})
 		}
 	}
-	return operations, nil
+	return operations
 }
 
-// Spec renders the router's whole OpenAPI document, which is what api/openapi.yaml holds:
-// the operations declared in Go, and the ones api/legacy.yaml still describes by hand.
-//
-// A component both declare is taken from api/legacy.yaml. The Go type behind it is the one
-// oapi-codegen generated from there, which renders the same schema without its words.
+// Spec renders the router's whole OpenAPI document, which is what api/openapi.yaml holds.
 func Spec() ([]byte, error) {
 	rendered, err := (&Server{}).newAPI(chi.NewRouter()).OpenAPI().Downgrade()
 	if err != nil {
@@ -341,32 +351,9 @@ func Spec() ([]byte, error) {
 		return nil, err
 	}
 	tidy(document)
-	var legacy map[string]any
-	if err := yaml.Unmarshal(specs.Legacy, &legacy); err != nil {
-		return nil, fmt.Errorf("api: could not read api/legacy.yaml: %w", err)
-	}
-
-	paths := object(document, "paths")
-	for path, item := range object(legacy, "paths") {
-		declared := object(paths, path)
-		for method, operation := range item.(map[string]any) {
-			if _, taken := declared[method]; taken {
-				return nil, fmt.Errorf("api: %s %s is declared in Go and in api/legacy.yaml",
-					strings.ToUpper(method), path)
-			}
-			declared[method] = operation
-		}
-	}
-	components := object(document, "components")
-	for section, entries := range object(legacy, "components") {
-		declared := object(components, section)
-		for name, entry := range entries.(map[string]any) {
-			declared[name] = entry
-		}
-	}
 
 	var out bytes.Buffer
-	out.WriteString("# Generated by cmd/openapi from the operations in internal/api and api/legacy.yaml. Do not edit.\n")
+	out.WriteString("# Generated by cmd/openapi from the operations in internal/api. Do not edit.\n")
 	encoder := yaml.NewEncoder(&out)
 	encoder.SetIndent(2)
 	if err := encoder.Encode(document); err != nil {
@@ -378,10 +365,10 @@ func Spec() ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// tidy rewrites what Huma rendered into what the hand-written half says: a number as a
+// tidy rewrites what Huma rendered into what clients are generated from: a number as a
 // number rather than the json.Number yaml would quote, and no additionalProperties: true.
 // Huma writes that on every object, and client generators turn it into a catch-all map
-// on the type; a schema that means it says so in api/legacy.yaml.
+// on the type; a schema that means it says so with a schema of its own.
 func tidy(value any) any {
 	switch value := value.(type) {
 	case map[string]any:
@@ -394,6 +381,12 @@ func tidy(value any) any {
 	case []any:
 		for i, child := range value {
 			value[i] = tidy(child)
+		}
+	case string:
+		// Huma writes a base64 string's encoding as the 3.1 contentEncoding, which the
+		// downgrade spells base64. OpenAPI 3.0, which clients are generated from, says byte.
+		if value == "base64" {
+			return "byte"
 		}
 	case json.Number:
 		if integer, err := value.Int64(); err == nil {

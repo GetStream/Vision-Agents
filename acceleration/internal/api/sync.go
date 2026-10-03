@@ -452,3 +452,24 @@ func (s *Server) upsertSkills(ctx context.Context, customerID, configID string, 
 	}
 	return nil
 }
+
+// SimulationRequestMode is the SimulationRequestMode schema.
+type SimulationRequestMode string
+
+// Defines values for SimulationRequestMode.
+const (
+	SimulationRequestModeAudio SimulationRequestMode = "audio"
+	SimulationRequestModeText  SimulationRequestMode = "text"
+)
+
+// Valid indicates whether the value is a known member of the SimulationRequestMode enum.
+func (e SimulationRequestMode) Valid() bool {
+	switch e {
+	case SimulationRequestModeAudio:
+		return true
+	case SimulationRequestModeText:
+		return true
+	default:
+		return false
+	}
+}
