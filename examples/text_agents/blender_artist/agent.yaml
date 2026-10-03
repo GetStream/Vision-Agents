@@ -1,7 +1,7 @@
 name: blender_artist
 description: Makes 3D renders with Blender, which runs in the router's Daytona sandbox.
 mode: text
-llm: llm-smart
+llm: llm-fast
 subagent: llm-thinking
 sandbox: daytona
 sandbox_options:

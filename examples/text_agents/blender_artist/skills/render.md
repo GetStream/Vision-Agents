@@ -41,16 +41,22 @@ def frame(aspect=960 / 540):
     """Point a camera at everything that is not flat, such as a floor or a sea."""
     boxes = [[o.matrix_world @ Vector(c) for c in o.bound_box]
              for o in scene.objects if o.type in {"MESH", "CURVE", "FONT"}]
-    solid = [b for b in boxes if max(c.z for c in b) - min(c.z for c in b) > 1e-3]
+
+    def flat(box):
+        width = max(max(c[i] for c in box) - min(c[i] for c in box) for i in (0, 1))
+        return max(c.z for c in box) - min(c.z for c in box) < 0.1 * width
+
+    solid = [b for b in boxes if not flat(b)]
     corners = [c for b in solid or boxes for c in b] or [Vector((0, 0, 0))]
     low = Vector([min(c[i] for c in corners) for i in range(3)])
     high = Vector([max(c[i] for c in corners) for i in range(3)])
     centre, radius = (low + high) / 2, max((high - low).length / 2, 0.5)
     camera = bpy.data.objects.new("Camera", bpy.data.cameras.new("Camera"))
     scene.collection.objects.link(camera)
-    fov = camera.data.angle if aspect >= 1 else camera.data.angle * aspect
+    # The lens angle spans the longer side of the frame; the subject has to fit the shorter.
+    half = math.atan(math.tan(camera.data.angle / 2) / max(aspect, 1 / aspect))
     direction = Vector((1.0, -1.2, 0.7)).normalized()
-    camera.location = centre + direction * (radius / math.sin(fov / 2)) * 1.25
+    camera.location = centre + direction * (radius / math.sin(half)) * 1.1
     camera.rotation_euler = (-direction).to_track_quat("-Z", "Y").to_euler()
     camera.data.clip_end = max(100.0, radius * 20)
     scene.camera = camera
