@@ -136,17 +136,3 @@ func (s *RelayedSessionSuite) respond(id, text string) {
 	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
 		"/v1/agents/sessions/"+id+"/respond", SayRequest{Text: text}, nil))
 }
-
-// await reads frames until one of the wanted type arrives.
-func (s *RelayedSessionSuite) await(connection *websocket.Conn, wanted string) map[string]any {
-	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
-	for {
-		var received map[string]any
-		if err := connection.ReadJSON(&received); err != nil {
-			s.Require().FailNow("the socket closed before " + wanted + " arrived: " + err.Error())
-		}
-		if received["type"] == wanted {
-			return received
-		}
-	}
-}

@@ -43,6 +43,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
@@ -120,9 +121,10 @@ type RouterSuite struct {
 	streams       *Streams
 	modalities    map[routing.Modality]routing.Inspector
 	conversations *conversation.Service
-	// relayPrefix names this suite's relay channels. Pub/sub ignores the database number
-	// the rest of a suite's keys are kept apart by, so this is the only thing stopping
-	// one suite's nodes from reading another's sessions.
+	// relayPrefix names this suite's relay channels and the keys saying which of its
+	// nodes runs what. Pub/sub ignores the database number the rest of a suite's keys are
+	// kept apart by, so this is the only thing stopping one suite's nodes from reading
+	// another's sessions.
 	relayPrefix string
 
 	// unauthenticatedClient sends no credentials. The rest hold the app's key:
@@ -228,7 +230,11 @@ func (s *RouterSuite) SetupSuite() {
 	limiter := s.quota(liveClient, logger)
 	policies := s.policies(logger)
 	streams := s.routers(limiter, policies, logger)
-	sessions := s.sessionManager(streams, logger)
+	// Built before it is served on, because a node says where it is before it has
+	// anything to say it is running.
+	listener := httptest.NewUnstartedServer(nil)
+	directory := s.nodeDirectory(listener, logger)
+	sessions := s.sessionManager(streams, directory, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
 	s.modalities = map[routing.Modality]routing.Inspector{
@@ -245,6 +251,7 @@ func (s *RouterSuite) SetupSuite() {
 		Routers:       s.modalities,
 		Streams:       streams,
 		Relay:         s.relayBus(logger),
+		Directory:     directory,
 		Sessions:      sessions,
 		Store:         pgStore,
 		Configs:       s.configs,
@@ -268,7 +275,9 @@ func (s *RouterSuite) SetupSuite() {
 		Logger:        logger,
 	})
 	s.Require().NoError(err)
-	s.server = httptest.NewServer(server.Handler())
+	listener.Config.Handler = server.Handler()
+	listener.Start()
+	s.server = listener
 	s.T().Cleanup(s.server.Close)
 }
 
@@ -385,7 +394,11 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // sessionManager runs conversations, writing them down in Stream Chat through a stand-in
 // for the chat backend: what a session records is under test, what Stream does with it is
 // not.
-func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *session.Manager {
+func (s *RouterSuite) sessionManager(
+	streams *Streams,
+	directory *node.Directory,
+	logger *slog.Logger,
+) *session.Manager {
 	conversations := conversation.NewForChat(chattest.Client(s.T()))
 	s.T().Cleanup(conversations.Close)
 	s.conversations = conversations
@@ -403,6 +416,7 @@ func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *ses
 		Conversations: conversations,
 		Store:         s.store,
 		Configs:       s.configs,
+		Directory:     directory,
 		Logger:        logger,
 		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
@@ -512,10 +526,13 @@ func (s *RouterSuite) voiceService() *voices.Service {
 //
 // It is what a deployment of more than one process looks like: a session opened on one
 // node is in the other's memory nowhere, so a socket that lands on the wrong one has to
-// be served over the relay or not at all. The routing is shared because what differs
-// between two nodes is which conversations they are holding, not what they route to.
+// be served over the relay, and anything else asked of it carried to the node running it.
+// The routing is shared because what differs between two nodes is which conversations
+// they are holding, not what they route to.
 func (s *RouterSuite) otherNode() *httptest.Server {
 	logger := slog.New(slog.DiscardHandler)
+	other := httptest.NewUnstartedServer(nil)
+	directory := s.nodeDirectory(other, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
 		LLM:           s.streams.LLM,
 		STT:           s.streams.STT,
@@ -524,6 +541,7 @@ func (s *RouterSuite) otherNode() *httptest.Server {
 		Conversations: s.conversations,
 		Store:         s.store,
 		Configs:       s.configs,
+		Directory:     directory,
 		Logger:        logger,
 		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
@@ -533,21 +551,41 @@ func (s *RouterSuite) otherNode() *httptest.Server {
 	s.T().Cleanup(func() { _ = sessions.Shutdown() })
 
 	server, err := NewServer(Options{
-		Routers:  s.modalities,
-		Streams:  s.streams,
-		Sessions: sessions,
-		Relay:    s.relayBus(logger),
-		Store:    s.store,
-		Configs:  s.configs,
-		Live:     s.live,
-		Auth:     s.authenticator(),
-		AuthMode: auth.APIKey,
-		Logger:   logger,
+		Routers:      s.modalities,
+		Streams:      s.streams,
+		Sessions:     sessions,
+		Relay:        s.relayBus(logger),
+		Directory:    directory,
+		Store:        s.store,
+		Configs:      s.configs,
+		Live:         s.live,
+		Auth:         s.authenticator(),
+		AuthMode:     auth.APIKey,
+		StreamSecret: suiteStreamSecret,
+		Logger:       logger,
 	})
 	s.Require().NoError(err)
-	node := httptest.NewServer(server.Handler())
-	s.T().Cleanup(node.Close)
-	return node
+	other.Config.Handler = server.Handler()
+	other.Start()
+	s.T().Cleanup(other.Close)
+	return other
+}
+
+// nodeDirectory is one node's end of the register of which node is running which session.
+//
+// The address is the listener's, which is known before anything is served on it, and the
+// prefix is the suite's, because every suite in the run shares one Redis and a node of
+// another suite is a node that is not there.
+func (s *RouterSuite) nodeDirectory(listener *httptest.Server, logger *slog.Logger) *node.Directory {
+	directory, err := node.NewDirectory(node.DirectoryOptions{
+		Redis:   s.live.Redis(),
+		Address: listener.Listener.Addr().String(),
+		Prefix:  s.relayPrefix,
+		Logger:  logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(directory.Close)
+	return directory
 }
 
 // relayBus is one node's end of the suite's relay.
@@ -649,10 +687,10 @@ func (c *testClient) actingFor(user *testClient) *testClient {
 
 // on is the same caller sending to another node of the same deployment, for a test about
 // what a caller reaches when their request did not land where the session is.
-func (c *testClient) on(node *httptest.Server) *testClient {
+func (c *testClient) on(other *httptest.Server) *testClient {
 	elsewhere := *c
 	elsewhere.header = c.header.Clone()
-	elsewhere.address = node.URL
+	elsewhere.address = other.URL
 	return &elsewhere
 }
 
@@ -743,6 +781,20 @@ func (c *testClient) opens(path string) *websocket.Conn {
 	connection, status := c.watch(path)
 	c.suite.Require().NotNil(connection, "the handshake for %s answered %d", path, status)
 	return connection
+}
+
+// await reads frames off a socket until one of the wanted type arrives.
+func (s *RouterSuite) await(connection *websocket.Conn, wanted string) map[string]any {
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
+	for {
+		var received map[string]any
+		if err := connection.ReadJSON(&received); err != nil {
+			s.Require().FailNow("the socket closed before " + wanted + " arrived: " + err.Error())
+		}
+		if received["type"] == wanted {
+			return received
+		}
+	}
 }
 
 // createSession opens a session the router must accept.

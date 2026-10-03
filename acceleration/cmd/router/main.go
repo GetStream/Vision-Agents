@@ -39,6 +39,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
@@ -627,9 +628,20 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer base.Close()
 	}
 
+	// Which node is running which session. A socket is reached by the relay below, and
+	// everything else a session is asked over HTTP is carried to the node that can answer
+	// it, which first has to be findable.
+	directory, err := newDirectory(settings, liveClient, logger)
+	if err != nil {
+		return err
+	}
+	if directory != nil {
+		defer directory.Close()
+	}
+
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, telephony, base, finding, judging, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, logger)
 	if err != nil {
 		return err
 	}
@@ -745,7 +757,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 	} else {
-		logger.Warn("no redis configured, so a session socket only reaches the node running it",
+		logger.Warn("no redis configured, so a session is only reachable on the node running it",
 			"setting", "redis.addr")
 	}
 
@@ -760,6 +772,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Phone:          telephony,
 		Sessions:       sessions,
 		Relay:          sessionRelay,
+		Directory:      directory,
 		Streams:        streams,
 		Transcripts:    transcripts,
 		Campaigns:      campaigns,
@@ -871,6 +884,47 @@ func openStore(ctx context.Context, settings config.Config) (*store.Store, error
 	return pgStore, nil
 }
 
+// newDirectory wires the register of which node of this deployment is running which
+// session, which is what lets a request about a session land on any of them.
+//
+// It needs Redis to keep the register in and an address this node's peers reach it at.
+// Without either it returns nil, and the deployment behaves as a single node did: a
+// session is only reachable through the process running it.
+//
+// The address is not asked for in the ordinary case. A node listens on every interface
+// and is reached on one of them, so the port it listens on and the address this host
+// answers at are enough to work it out; node.advertise is for the deployment where that
+// is not what a peer can reach, which is any of them behind network address translation.
+func newDirectory(
+	settings config.Config,
+	liveClient *live.Client,
+	logger *slog.Logger,
+) (*node.Directory, error) {
+	// The absence is already reported where the relay is built, which is missing for the
+	// same reason.
+	if liveClient == nil {
+		return nil, nil
+	}
+
+	address := settings.Node.Advertise
+	if address == "" {
+		found, err := node.Address(settings.Addr)
+		if err != nil {
+			return nil, fmt.Errorf("could not work out the address this node's peers reach it at, "+
+				"so set node.advertise: %w", err)
+		}
+		address = found
+	}
+	logger.Info("reachable by this deployment's other nodes", "address", address,
+		"setting", "node.advertise")
+
+	return node.NewDirectory(node.DirectoryOptions{
+		Redis:   liveClient.Redis(),
+		Address: address,
+		Logger:  logger,
+	})
+}
+
 // buildSessions wires the part of the router that holds conversations rather than
 // describing them.
 //
@@ -883,6 +937,7 @@ func buildSessions(
 	pgStore *store.Store,
 	configs *appconfig.Store,
 	liveClient *live.Client,
+	directory *node.Directory,
 	telephony *phone.Service,
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
@@ -928,6 +983,7 @@ func buildSessions(
 		Store:         pgStore,
 		Configs:       configs,
 		Live:          liveClient,
+		Directory:     directory,
 		Logger:        logger,
 		Edge: func(spec session.Spec, logger *slog.Logger) (agent.Edge, error) {
 			return streamedge.New(streamedge.Options{

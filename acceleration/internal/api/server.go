@@ -41,6 +41,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
@@ -116,6 +117,10 @@ type Options struct {
 	// there is no Redis to carry it, in which case this node is the whole deployment as
 	// far as a socket is concerned.
 	Relay *relay.Bus
+	// Directory says which node of this deployment is running which session, so a request
+	// only that node can answer is carried to it rather than answered with a 404. Absent
+	// when there is no Redis to keep it in, or no address this node's peers reach it at.
+	Directory *node.Directory
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
@@ -205,6 +210,8 @@ type Server struct {
 	phone         *phone.Service
 	sessions      *session.Manager
 	relayed       *relayed
+	directory     *node.Directory
+	forwarder     *node.Forwarder
 	streams       *Streams
 	transcripts   *chatlog.Reader
 	campaigns     *campaign.Runner
@@ -305,6 +312,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		live:          options.Live,
 		phone:         options.Phone,
 		sessions:      options.Sessions,
+		directory:     options.Directory,
 		streams:       options.Streams,
 		transcripts:   options.Transcripts,
 		campaigns:     options.Campaigns,
@@ -347,6 +355,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		if server.relayed, err = server.newRelayed(context.Background(), options.Relay); err != nil {
 			return nil, fmt.Errorf("api: subscribe to the session relay: %w", err)
 		}
+	}
+	if options.Directory != nil {
+		server.forwarder = node.NewForwarder(logger)
 	}
 	return server, nil
 }
@@ -397,8 +408,14 @@ func (s *Server) Handler() http.Handler {
 		Repanic:         false,
 		WaitForDelivery: false,
 	})
-	return instrumented.Handle(withTrace(withTiming(withCORS(s.corsOrigins,
-		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))
+	served := instrumented.Handle(withTrace(withTiming(withCORS(s.corsOrigins,
+		s.onOwningNode(s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))))))
+	if s.directory == nil {
+		return served
+	}
+	// Peers reach this node on the same port its callers do, so what they forward is
+	// served beside everything else rather than on a listener of its own.
+	return node.Serve(served)
 }
 
 // withTiming reports how long the server itself spent, so a caller timing a call can tell

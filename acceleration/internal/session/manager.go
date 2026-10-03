@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -104,7 +105,11 @@ type ManagerOptions struct {
 	// which case every read is a query, which is what a deployment without Redis does.
 	Configs *appconfig.Store
 	Live    *live.Client
-	Logger  *slog.Logger
+	// Directory is where this node says which sessions it is running, so the deployment's
+	// other nodes can forward what only this one can answer. Nil keeps a session
+	// reachable on this node alone.
+	Directory *node.Directory
+	Logger    *slog.Logger
 }
 
 // Manager owns the sessions this process is running.
@@ -552,6 +557,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.sessions[created.id] = created
 	m.mu.Unlock()
 
+	// Said after the session is here to be found, so a peer that forwards a request on
+	// the strength of it has somewhere to forward it to.
+	if m.options.Directory != nil {
+		m.options.Directory.Hold(ctx, created.id, spec.AgentID)
+	}
+
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
 	opened = true
@@ -575,6 +586,10 @@ func (m *Manager) supersede(spec Spec) {
 		}
 	}
 	m.mu.Unlock()
+
+	for _, found := range left {
+		m.release(found.id)
+	}
 
 	for _, found := range left {
 		m.logger.Info("ending the session this agent left behind in the call",
@@ -902,8 +917,37 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	m.mu.Lock()
 	delete(m.sessions, id)
 	m.mu.Unlock()
+	m.release(id)
 
 	return true, found.Close()
+}
+
+// releaseTimeout bounds taking back this node's claim on a session. Short, because a
+// claim that is not taken back expires on its own.
+const releaseTimeout = 2 * time.Second
+
+// release stops telling this deployment's other nodes that a session is here.
+func (m *Manager) release(id string) {
+	if m.options.Directory == nil {
+		return
+	}
+	// Not the caller's context: a session is let go of on paths that have none, and one
+	// cancelled the moment the answer is written would leave the claim behind.
+	ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+	defer cancel()
+	m.options.Directory.Release(ctx, id)
+}
+
+// Running reports whether this process is running a session, whoever it belongs to.
+//
+// No owner is asked for, unlike Get, because which node holds a session is not a question
+// about who may see it: the node that answers checks that for itself.
+func (m *Manager) Running(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, running := m.sessions[id]
+	return running
 }
 
 // Delete stops a session if it is running and deletes it: its row, its turns, and what it
