@@ -11,7 +11,7 @@ from typing import Protocol, runtime_checkable
 
 from vision_agents.core.llm.llm import LLM
 from vision_agents.testing import ChatMessageEvent
-from vision_agents.testing._utils import collect_simple_response
+from vision_agents.testing._utils import collect_simple_response, strip_code_fences
 
 logger = logging.getLogger(__name__)
 
@@ -89,37 +89,32 @@ class LLMJudge:
                     success=False, reason="LLM returned an empty response."
                 )
 
-            return self._parse_verdict(response.text)
+            return parse_verdict(response.text)
 
         except (OSError, ValueError, RuntimeError) as exc:
             logger.exception("Judge evaluation failed")
             return JudgeVerdict(success=False, reason=f"Judge evaluation error: {exc}")
 
-    @staticmethod
-    def _parse_verdict(text: str) -> JudgeVerdict:
-        """Parse a JSON verdict from the LLM response text."""
-        cleaned = text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-        try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError:
-            logger.exception("Could not parse JSON from LLM response")
-            return JudgeVerdict(
-                success=False,
-                reason=f"Could not parse JSON from LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}",
-            )
+def parse_verdict(text: str) -> JudgeVerdict:
+    """Parse a pass/fail JSON verdict from LLM output.
 
-        verdict = data.get("verdict", "").lower()
-        reason = data.get("reason", "")
+    Raises:
+        ValueError: if ``text`` is not a JSON object with a ``pass`` or ``fail`` verdict.
+    """
+    preview = text[:_RESPONSE_PREVIEW_MAX_LEN]
+    try:
+        data = json.loads(strip_code_fences(text))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Could not parse JSON from LLM response: {preview}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected a JSON object in LLM response: {preview}")
 
-        if verdict == "pass":
-            return JudgeVerdict(success=True, reason=reason or "Passed.")
-        if verdict == "fail":
-            return JudgeVerdict(success=False, reason=reason or "Failed.")
+    verdict = str(data.get("verdict", "")).lower()
+    reason = data.get("reason", "")
 
-        return JudgeVerdict(
-            success=False,
-            reason=f"Unknown verdict '{verdict}' in LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}",
-        )
+    if verdict == "pass":
+        return JudgeVerdict(success=True, reason=reason or "Passed.")
+    if verdict == "fail":
+        return JudgeVerdict(success=False, reason=reason or "Failed.")
+    raise ValueError(f"Unknown verdict '{verdict}' in LLM response: {preview}")
