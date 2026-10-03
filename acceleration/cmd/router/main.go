@@ -42,6 +42,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
@@ -1004,6 +1005,7 @@ func buildSessions(
 		Configs:       configs,
 		Live:          liveClient,
 		Directory:     directory,
+		PluginAuth:    &plugins.Auth{PublicURL: settings.PublicURL, DashboardURL: settings.DashboardURL},
 		Logger:        logger,
 		Edge: func(spec session.Spec, logger *slog.Logger) (agent.Edge, error) {
 			return streamedge.New(streamedge.Options{

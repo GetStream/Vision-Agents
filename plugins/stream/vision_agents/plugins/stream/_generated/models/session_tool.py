@@ -11,6 +11,7 @@ from ..models.session_tool_executor import SessionToolExecutor
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.session_tool_approval import SessionToolApproval
     from ..models.session_tool_parameters import SessionToolParameters
 
 
@@ -26,6 +27,12 @@ class SessionTool:
             description (str): What the model is told the tool does, which is the whole of how it decides when to reach for
                 one.
             name (str):
+            approval (SessionToolApproval | Unset): Says a person must allow each call before it runs. In a persistent
+                conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose
+                command it answers (and, for a client tool, their install), and carries this question for their client to ask.
+                The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes
+                on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The
+                caller still answers the call with tool_result either way. Every channel member can read the question.
             display_title (str | Unset): What a call is doing, in words for the people in the conversation, such as
                 "Checking your location". Shown on the reply's ai_tool_call attachment.
             executor (SessionToolExecutor | Unset): Who runs it. A client tool runs on a person's device: in a persistent
@@ -37,6 +44,7 @@ class SessionTool:
 
     description: str
     name: str
+    approval: SessionToolApproval | Unset = UNSET
     display_title: str | Unset = UNSET
     executor: SessionToolExecutor | Unset = UNSET
     parameters: SessionToolParameters | Unset = UNSET
@@ -46,6 +54,10 @@ class SessionTool:
         description = self.description
 
         name = self.name
+
+        approval: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.approval, Unset):
+            approval = self.approval.to_dict()
 
         display_title = self.display_title
 
@@ -65,6 +77,8 @@ class SessionTool:
                 "name": name,
             }
         )
+        if approval is not UNSET:
+            field_dict["approval"] = approval
         if display_title is not UNSET:
             field_dict["display_title"] = display_title
         if executor is not UNSET:
@@ -76,6 +90,7 @@ class SessionTool:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.session_tool_approval import SessionToolApproval
         from ..models.session_tool_parameters import (
             SessionToolParameters,
         )
@@ -84,6 +99,13 @@ class SessionTool:
         description = d.pop("description")
 
         name = d.pop("name")
+
+        _approval = d.pop("approval", UNSET)
+        approval: SessionToolApproval | Unset
+        if isinstance(_approval, Unset):
+            approval = UNSET
+        else:
+            approval = SessionToolApproval.from_dict(_approval)
 
         display_title = d.pop("display_title", UNSET)
 
@@ -104,6 +126,7 @@ class SessionTool:
         session_tool = cls(
             description=description,
             name=name,
+            approval=approval,
             display_title=display_title,
             executor=executor,
             parameters=parameters,

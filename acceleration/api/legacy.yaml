@@ -1118,6 +1118,9 @@ paths:
     get:
       operationId: listConfigPlugins
       summary: The plugin logins this agent holds
+      description: >
+        The app's own logins, then every plugin the config names that has none yet, as
+        not_connected. An end user's logins, made for user_plugins, are never listed.
       parameters:
         - $ref: "#/components/parameters/ResourceID"
       responses:
@@ -4313,6 +4316,14 @@ components:
             type: string
           description: >
             Hosted MCP servers this agent may reach, named from the built-in catalog.
+        user_plugins:
+          type: array
+          items:
+            type: string
+          description: >
+            Hosted MCP servers each end user connects with their own account, named from
+            the built-in catalog. The agent asks for the login in the conversation, as a
+            plugin_authorization attachment, the first time it needs one.
         keyterms:
           type: array
           items:
@@ -4395,6 +4406,10 @@ components:
           items:
             type: string
         plugins:
+          type: array
+          items:
+            type: string
+        user_plugins:
           type: array
           items:
             type: string
@@ -5565,7 +5580,10 @@ components:
     PluginConnection:
       type: object
       required: [plugin_id, name, status]
-      description: A catalog plugin as this agent has it, including whether it is logged in.
+      description: >
+        A catalog plugin as this agent has it, including whether it is logged in. A plugin
+        the config names that nobody has logged into yet is not_connected, which is what a
+        dashboard reminds the app to finish.
       properties:
         plugin_id:
           type: string
@@ -5583,7 +5601,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, connected, failed]
+          enum: [pending, connected, failed, not_connected]
 
     AuthorizePluginRequest:
       type: object

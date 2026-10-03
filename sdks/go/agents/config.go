@@ -186,6 +186,9 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	if len(settings.Plugins) > 0 {
 		body.Plugins = &settings.Plugins
 	}
+	if len(settings.UserPlugins) > 0 {
+		body.UserPlugins = &settings.UserPlugins
+	}
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
 	}

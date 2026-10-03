@@ -82,6 +82,9 @@ def sync_detailed(
 ) -> Response[Error | list[PluginConnection]]:
     """The plugin logins this agent holds
 
+     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
+    user's logins, made for user_plugins, are never listed.
+
     Args:
         id (str):
 
@@ -111,6 +114,9 @@ def sync(
 ) -> Error | list[PluginConnection] | None:
     """The plugin logins this agent holds
 
+     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
+    user's logins, made for user_plugins, are never listed.
+
     Args:
         id (str):
 
@@ -134,6 +140,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[Error | list[PluginConnection]]:
     """The plugin logins this agent holds
+
+     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
+    user's logins, made for user_plugins, are never listed.
 
     Args:
         id (str):
@@ -161,6 +170,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
 ) -> Error | list[PluginConnection] | None:
     """The plugin logins this agent holds
+
+     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
+    user's logins, made for user_plugins, are never listed.
 
     Args:
         id (str):

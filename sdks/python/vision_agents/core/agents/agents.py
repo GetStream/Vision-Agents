@@ -991,7 +991,11 @@ class Agent:
                     pending += 1
                 elif event.type == "task_settled":
                     pending -= 1
-                elif event.type == "agent_speech" and pending <= 0:
+                elif (
+                    event.type == "agent_speech"
+                    and pending <= 0
+                    and not event.pending_work
+                ):
                     return
         finally:
             self._following = None

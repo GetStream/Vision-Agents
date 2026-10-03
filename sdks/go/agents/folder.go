@@ -149,20 +149,23 @@ type Settings struct {
 	STT         string `yaml:"stt"`
 	TTS         string `yaml:"tts"`
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
-	STS      *string           `yaml:"sts"`
-	Voice    string            `yaml:"voice"`
-	Speed    float64           `yaml:"speed"`
-	LLM      string            `yaml:"llm"`
-	Harness  string            `yaml:"harness"`
-	Subagent string            `yaml:"subagent"`
-	Search   string            `yaml:"search"`
-	Greeting string            `yaml:"greeting"`
-	Sandbox  string            `yaml:"sandbox"`
-	Plugins  []string          `yaml:"plugins"`
-	Keyterms []string          `yaml:"keyterms"`
-	Tags     map[string]string `yaml:"tags"`
-	Video    *VideoSettings    `yaml:"video"`
-	Dispatch *DispatchSettings `yaml:"dispatch"`
+	STS      *string  `yaml:"sts"`
+	Voice    string   `yaml:"voice"`
+	Speed    float64  `yaml:"speed"`
+	LLM      string   `yaml:"llm"`
+	Harness  string   `yaml:"harness"`
+	Subagent string   `yaml:"subagent"`
+	Search   string   `yaml:"search"`
+	Greeting string   `yaml:"greeting"`
+	Sandbox  string   `yaml:"sandbox"`
+	Plugins  []string `yaml:"plugins"`
+	// UserPlugins are the plugins each end user connects with their own account, in the
+	// conversation, rather than the app once for everybody.
+	UserPlugins []string          `yaml:"user_plugins"`
+	Keyterms    []string          `yaml:"keyterms"`
+	Tags        map[string]string `yaml:"tags"`
+	Video       *VideoSettings    `yaml:"video"`
+	Dispatch    *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`

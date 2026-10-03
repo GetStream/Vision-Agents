@@ -16,6 +16,8 @@ import (
 // PrefixSeparator keeps a plugin's tools from colliding with lookup, search or transfer.
 const PrefixSeparator = "__"
 
+const sessionHeader = "Mcp-Session-Id"
+
 // Connection is what a session needs to open one MCP server.
 type Connection struct {
 	PluginID    string
@@ -35,6 +37,9 @@ type client struct {
 	token    string
 	http     *http.Client
 	nextID   int
+	// session is the Mcp-Session-Id the server gave at initialize, sent back on every
+	// request after it (MCP 2025-03-26, Streamable HTTP, «Session Management»).
+	session string
 }
 
 type rpcRequest struct {
@@ -244,11 +249,17 @@ func (c *client) roundTrip(ctx context.Context, body []byte) ([]byte, error) {
 	if c.token != "" {
 		request.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	if c.session != "" {
+		request.Header.Set(sessionHeader, c.session)
+	}
 	response, err := c.http.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("plugins: %s: %w", c.pluginID, err)
 	}
 	defer response.Body.Close()
+	if session := response.Header.Get(sessionHeader); session != "" {
+		c.session = session
+	}
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, fmt.Errorf("plugins: %s: %w", c.pluginID, err)
