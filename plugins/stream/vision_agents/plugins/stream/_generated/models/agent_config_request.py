@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_config_request_tags import AgentConfigRequestTags
     from ..models.agent_dispatch import AgentDispatch
+    from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
 
 
@@ -48,6 +49,8 @@ class AgentConfigRequest:
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
+        sandbox_options (SandboxOptions | Unset): How the sandbox is built and how long code may run in it. Only
+            meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
         search (str | Unset): What the agent finds out today's answers with, as a provider/model or a capability
             shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
         skills (list[str] | Unset): Skill names, either the customer's own or one of the built-in think, recall and
@@ -84,6 +87,7 @@ class AgentConfigRequest:
     mode: AgentMode | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
+    sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
     speed: float | Unset = UNSET
@@ -133,6 +137,10 @@ class AgentConfigRequest:
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
             sandbox = self.sandbox.value
+
+        sandbox_options: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sandbox_options, Unset):
+            sandbox_options = self.sandbox_options.to_dict()
 
         search = self.search
 
@@ -193,6 +201,8 @@ class AgentConfigRequest:
             field_dict["plugins"] = plugins
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
+        if sandbox_options is not UNSET:
+            field_dict["sandbox_options"] = sandbox_options
         if search is not UNSET:
             field_dict["search"] = search
         if skills is not UNSET:
@@ -224,6 +234,7 @@ class AgentConfigRequest:
             AgentConfigRequestTags,
         )
         from ..models.agent_dispatch import AgentDispatch
+        from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
@@ -271,6 +282,13 @@ class AgentConfigRequest:
         else:
             sandbox = Sandbox(_sandbox)
 
+        _sandbox_options = d.pop("sandbox_options", UNSET)
+        sandbox_options: SandboxOptions | Unset
+        if isinstance(_sandbox_options, Unset):
+            sandbox_options = UNSET
+        else:
+            sandbox_options = SandboxOptions.from_dict(_sandbox_options)
+
         search = d.pop("search", UNSET)
 
         skills = cast(list[str], d.pop("skills", UNSET))
@@ -316,6 +334,7 @@ class AgentConfigRequest:
             mode=mode,
             plugins=plugins,
             sandbox=sandbox,
+            sandbox_options=sandbox_options,
             search=search,
             skills=skills,
             speed=speed,

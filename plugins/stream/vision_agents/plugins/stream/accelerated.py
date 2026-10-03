@@ -15,6 +15,7 @@ from vision_agents.core.llm.llm import (
 from vision_agents.core.llm.remote import (
     RemoteCall,
     RemoteEvent,
+    RemoteFile,
     RemotePipelineError,
 )
 from vision_agents.core.utils.utils import cancel_and_wait
@@ -616,6 +617,16 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
             skill=frame.get("skill", ""),
             text=frame.get("text", ""),
             error=frame.get("error", ""),
+            files=[
+                RemoteFile(
+                    name=str(file.get("name", "")),
+                    url=str(file.get("url", "")),
+                    mime_type=str(file.get("mime_type", "")),
+                    size=int(file.get("size") or 0),
+                )
+                for file in frame.get("files") or []
+                if isinstance(file, dict) and file.get("url")
+            ],
         )
     if kind == "turn":
         return RemoteEvent(

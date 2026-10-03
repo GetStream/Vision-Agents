@@ -164,6 +164,7 @@ from .route import Route
 from .router_config import RouterConfig
 from .router_config_request import RouterConfigRequest
 from .sandbox import Sandbox
+from .sandbox_options import SandboxOptions
 from .say_request import SayRequest
 from .search_answer import SearchAnswer
 from .search_depth import SearchDepth
@@ -432,6 +433,7 @@ __all__ = (
     "RouterConfig",
     "RouterConfigRequest",
     "Sandbox",
+    "SandboxOptions",
     "SayRequest",
     "SearchAnswer",
     "SearchDepth",

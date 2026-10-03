@@ -12,7 +12,12 @@ from PIL import Image
 from vision_agents.core import Agent, User
 from vision_agents.core.harness import Daytona, DefaultHarness
 from vision_agents.core.llm.llm import ImageContent
-from vision_agents.core.llm.remote import RemoteCall, RemoteEvent, RemotePipelineError
+from vision_agents.core.llm.remote import (
+    RemoteCall,
+    RemoteEvent,
+    RemoteFile,
+    RemotePipelineError,
+)
 from vision_agents.plugins import stream, getstream
 
 SETTLE = 2.0
@@ -677,6 +682,38 @@ class TestAccelerated:
         assert back == RemoteEvent(
             type="task_settled", skill="explain", text="It retries."
         )
+
+    async def test_work_that_made_a_file_says_where_it_was_put(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send(
+            {
+                "type": "task_settled",
+                "task_id": "task-1",
+                "skill": "render",
+                "text": "A teapot.",
+                "files": [
+                    {
+                        "name": "teapot.png",
+                        "mime_type": "image/png",
+                        "url": "https://cdn.example/teapot.png",
+                        "size": 3,
+                    }
+                ],
+            }
+        )
+
+        back = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert back.files == [
+            RemoteFile(
+                name="teapot.png",
+                url="https://cdn.example/teapot.png",
+                mime_type="image/png",
+                size=3,
+            )
+        ]
 
     async def test_what_was_looked_up_is_reported_with_what_it_found(
         self, router: Router, writing: stream.Accelerated

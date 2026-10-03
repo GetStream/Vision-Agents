@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     AsyncIterator,
     Literal,
@@ -61,6 +61,23 @@ class RemoteCall:
 
 
 @dataclass
+class RemoteFile:
+    """Something the agent's code made, at a URL the person can reach.
+
+    Attributes:
+        name: The file's name.
+        url: Where it was uploaded.
+        mime_type: What kind of file it is.
+        size: How large it is, in bytes.
+    """
+
+    name: str
+    url: str
+    mime_type: str = ""
+    size: int = 0
+
+
+@dataclass
 class RemoteEvent:
     """Something a remote pipeline did, in the terms the agent thinks in.
 
@@ -76,6 +93,8 @@ class RemoteEvent:
         query: What was searched for, for `looked_up`.
         documents: How many passages bore on it, for `looked_up`.
         error: The failure, for `error` events and for work that came back as one.
+        files: What the work's code made, for `task_settled`, uploaded where the person
+            sees the reply.
     """
 
     type: RemoteEventType
@@ -88,6 +107,7 @@ class RemoteEvent:
     query: str = ""
     documents: int = 0
     error: str = ""
+    files: list[RemoteFile] = field(default_factory=list)
 
 
 @dataclass
