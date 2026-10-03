@@ -8,38 +8,39 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 const unknownPlugin = "no such plugin"
 
 // ListPlugins returns the built-in catalog, optionally filtered.
-func (s *Server) ListPlugins(ctx context.Context, request ListPluginsRequestObject) (ListPluginsResponseObject, error) {
+func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (*listPluginsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return ListPlugins401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 
-	found := plugins.Search(value(request.Params.Q))
+	found := plugins.Search(value(request.Q.ptr()))
 	listed := make([]Plugin, 0, len(found))
 	for _, plugin := range found {
 		listed = append(listed, pluginOf(plugin))
 	}
-	return ListPlugins200JSONResponse(listed), nil
+	return &listPluginsResponse{Body: listed}, nil
 }
 
 // ListConfigPlugins returns the catalog as this agent has it: the app's logins with their
 // status, then every plugin the config names that has none yet, as not_connected, which is
 // what a dashboard reminds the app to finish. The rest of the catalog is implied absent.
-func (s *Server) ListConfigPlugins(ctx context.Context, request ListConfigPluginsRequestObject) (ListConfigPluginsResponseObject, error) {
+func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPluginsRequest) (*listConfigPluginsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListConfigPlugins401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return ListConfigPlugins400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return ListConfigPlugins404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
+		return nil, huma.Error404NotFound(unknownConfig)
 	}
 
 	conns, err := s.store.PluginConnections(ctx, customerID, request.Id)
@@ -65,19 +66,19 @@ func (s *Server) ListConfigPlugins(ctx context.Context, request ListConfigPlugin
 		held[id] = true
 		listed = append(listed, pluginConnectionOf(plugin, store.PluginConnection{Status: string(PluginConnectionStatusNotConnected)}))
 	}
-	return ListConfigPlugins200JSONResponse(listed), nil
+	return &listConfigPluginsResponse{Body: listed}, nil
 }
 
 // AuthorizePlugin starts a plugin login and returns the URL the browser should open.
-func (s *Server) AuthorizePlugin(ctx context.Context, request AuthorizePluginRequestObject) (AuthorizePluginResponseObject, error) {
+func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRequest) (*authorizePluginResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return AuthorizePlugin401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 
 	plugin, ok := plugins.Lookup(string(request.PluginId))
 	if !ok {
-		return AuthorizePlugin400JSONResponse{badRequest(unknownPlugin)}, nil
+		return nil, huma.Error400BadRequest(unknownPlugin)
 	}
 
 	instance := ""
@@ -85,18 +86,18 @@ func (s *Server) AuthorizePlugin(ctx context.Context, request AuthorizePluginReq
 		instance = value(request.Body.InstanceUrl)
 	}
 	if _, err := plugin.Endpoint(instance); err != nil {
-		return AuthorizePlugin400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 	if s.store == nil {
-		return AuthorizePlugin400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
-		return AuthorizePlugin404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
+		return nil, huma.Error404NotFound(unknownConfig)
 	}
 
 	pending, err := s.auth().StartAuthorize(ctx, plugin, instance)
 	if err != nil {
-		return AuthorizePlugin400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	conn := store.PluginConnection{
@@ -111,33 +112,33 @@ func (s *Server) AuthorizePlugin(ctx context.Context, request AuthorizePluginReq
 		TokenEndpoint: pending.TokenEndpoint,
 	}
 	if err := s.store.UpsertPluginConnection(ctx, &conn); err != nil {
-		return AuthorizePlugin400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	return AuthorizePlugin200JSONResponse{AuthorizeUrl: pending.AuthorizeURL}, nil
+	return &authorizePluginResponse{Body: PluginAuthorization{AuthorizeUrl: pending.AuthorizeURL}}, nil
 }
 
 // DisconnectPlugin drops a login and unnames the plugin on the config.
-func (s *Server) DisconnectPlugin(ctx context.Context, request DisconnectPluginRequestObject) (DisconnectPluginResponseObject, error) {
+func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPluginRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return DisconnectPlugin401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return DisconnectPlugin400JSONResponse{badRequest(noConfigs)}, nil
+		return nil, huma.Error400BadRequest(noConfigs)
 	}
 	if _, ok := plugins.Lookup(string(request.PluginId)); !ok {
-		return DisconnectPlugin400JSONResponse{badRequest(unknownPlugin)}, nil
+		return nil, huma.Error400BadRequest(unknownPlugin)
 	}
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
-		return DisconnectPlugin404JSONResponse{NotFoundJSONResponse{Error: unknownConfig}}, nil
+		return nil, huma.Error404NotFound(unknownConfig)
 	}
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
-		return DisconnectPlugin404JSONResponse{NotFoundJSONResponse{Error: unknownPlugin}}, nil
+		return nil, huma.Error404NotFound(unknownPlugin)
 	}
 	if err := s.store.RemoveConfigPlugin(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
 		return nil, err
 	}
-	return DisconnectPlugin204Response{}, nil
+	return nil, nil
 }
 
 // finishPluginLogin is the unauthenticated callback the provider redirects to.
@@ -250,4 +251,159 @@ func pluginConnectionOf(plugin plugins.Plugin, conn store.PluginConnection) Plug
 		rendered.InstanceRequired = &required
 	}
 	return rendered
+}
+
+// registerPlugins declares the operations served in plugins.go.
+func (s *Server) registerPlugins(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listPlugins",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/plugins",
+		Summary:     "The hosted MCP servers an agent may attach",
+		Description: "A built-in catalog, not the customer's own rows. q filters by name, category or " +
+			"description. Connecting one is a login on a config, not a change to this list.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Matching plugins, in catalog order"},
+		},
+		Errors: []int{http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listPlugins)
+	huma.Register(api, huma.Operation{
+		OperationID: "listConfigPlugins",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/configs/{id}/plugins",
+		Summary:     "The plugin logins this agent holds",
+		Description: "The app's own logins, then every plugin the config names that has none yet, as " +
+			"not_connected. An end user's logins, made for user_plugins, are never listed.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The config's connections"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.listConfigPlugins)
+	huma.Register(api, huma.Operation{
+		OperationID: "authorizePlugin",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize",
+		Summary:     "Start a plugin login",
+		Description: "Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. " +
+			"Shopify and Salesforce need an instance url, because they have no single global host.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The URL the browser should open"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.authorizePlugin)
+	huma.Register(api, huma.Operation{
+		OperationID: "disconnectPlugin",
+		Method:      http.MethodDelete,
+		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}",
+		Summary:     "Drop a plugin login",
+		Description: "Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The login is gone"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.disconnectPlugin)
+}
+
+type listPluginsRequest struct {
+	Q optionalParam[string] `query:"q" doc:"Filter by name, category or description."`
+}
+
+type listPluginsResponse struct {
+	Body []Plugin `nullable:"false"`
+}
+
+type listConfigPluginsRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type listConfigPluginsResponse struct {
+	Body []PluginConnection `nullable:"false"`
+}
+
+type authorizePluginRequest struct {
+	Id       string `path:"id" doc:"The resource, as returned when it was created."`
+	PluginId string `path:"plugin_id" doc:"A built-in catalog id such as slack or calendly."`
+	Body     *AuthorizePluginRequest
+}
+
+type authorizePluginResponse struct {
+	Body PluginAuthorization
+}
+
+type disconnectPluginRequest struct {
+	Id       string `path:"id" doc:"The resource, as returned when it was created."`
+	PluginId string `path:"plugin_id" doc:"A built-in catalog id such as slack or calendly."`
+}
+
+// Plugin One hosted MCP server from the built-in catalog.
+type Plugin struct {
+	Category         string  `json:"category"`
+	Description      string  `json:"description"`
+	Id               string  `json:"id"`
+	InstanceHint     *string `json:"instance_hint,omitempty"`
+	InstanceRequired *bool   `json:"instance_required,omitempty"`
+	Name             string  `json:"name"`
+}
+
+func (*Plugin) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One hosted MCP server from the built-in catalog."
+	return schema
+}
+
+// PluginConnection A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish.
+type PluginConnection struct {
+	Category         *string                `json:"category,omitempty"`
+	Description      *string                `json:"description,omitempty"`
+	InstanceHint     *string                `json:"instance_hint,omitempty"`
+	InstanceRequired *bool                  `json:"instance_required,omitempty"`
+	InstanceUrl      *string                `json:"instance_url,omitempty"`
+	Name             string                 `json:"name"`
+	PluginId         string                 `json:"plugin_id"`
+	Status           PluginConnectionStatus `json:"status" enum:"pending,connected,failed,not_connected"`
+}
+
+func (*PluginConnection) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish."
+	return schema
+}
+
+// PluginConnectionStatus is the PluginConnectionStatus schema.
+type PluginConnectionStatus string
+
+// Defines values for PluginConnectionStatus.
+const (
+	PluginConnectionStatusConnected    PluginConnectionStatus = "connected"
+	PluginConnectionStatusFailed       PluginConnectionStatus = "failed"
+	PluginConnectionStatusNotConnected PluginConnectionStatus = "not_connected"
+	PluginConnectionStatusPending      PluginConnectionStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the PluginConnectionStatus enum.
+func (e PluginConnectionStatus) Valid() bool {
+	switch e {
+	case PluginConnectionStatusConnected:
+		return true
+	case PluginConnectionStatusFailed:
+		return true
+	case PluginConnectionStatusNotConnected:
+		return true
+	case PluginConnectionStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// AuthorizePluginRequest is the AuthorizePluginRequest schema.
+type AuthorizePluginRequest struct {
+	InstanceUrl *string `json:"instance_url,omitempty" doc:"The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL."`
+}
+
+// PluginAuthorization is the PluginAuthorization schema.
+type PluginAuthorization struct {
+	AuthorizeUrl string `json:"authorize_url" doc:"The URL the browser should open to finish the login."`
 }

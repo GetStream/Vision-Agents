@@ -8,14 +8,6 @@ components:
       required: true
       schema:
         type: string
-    ConfigName:
-      description: |
-        Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
-      in: query
-      name: name
-      required: false
-      schema:
-        type: string
     Cursor:
       description: The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
       in: query
@@ -39,13 +31,6 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/Modality'
-    PluginID:
-      description: A built-in catalog id such as slack or calendly.
-      in: path
-      name: plugin_id
-      required: true
-      schema:
-        type: string
     ResourceID:
       description: The resource, as returned when it was created.
       in: path
@@ -193,16 +178,14 @@ components:
           format: double
           type: number
         sts:
-          description: |
-            A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
+          description: 'A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.'
           type: string
         stt:
           type: string
         subagent:
           type: string
         sync_hash:
-          description: |
-            Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
+          description: Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
           type: string
         tags:
           additionalProperties:
@@ -226,10 +209,10 @@ components:
         voice:
           type: string
       required:
-        - id
-        - name
-        - mode
         - created_at
+        - id
+        - mode
+        - name
         - updated_at
       type: object
     AgentConfigPatch:
@@ -312,22 +295,19 @@ components:
         greeting:
           type: string
         guardrail:
-          description: |
-            A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
+          description: 'A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.'
           type: string
         harness:
           $ref: '#/components/schemas/Harness'
         instructions:
           type: string
         keyterms:
-          description: |
-            Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
+          description: Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
           items:
             type: string
           type: array
         knowledge_namespace:
-          description: |
-            What the agent may look things up in. Empty means it knows only what it was told.
+          description: What the agent may look things up in. Empty means it knows only what it was told.
           type: string
         llm:
           description: The model holding the conversation.
@@ -338,41 +318,34 @@ components:
           description: What the config is called, which is unique among the customer's own.
           type: string
         plugins:
-          description: |
-            Hosted MCP servers this agent may reach, named from the built-in catalog.
+          description: Hosted MCP servers this agent may reach, named from the built-in catalog.
           items:
             type: string
           type: array
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         search:
-          description: |
-            What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
+          description: What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
           type: string
         skills:
-          description: |
-            Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
+          description: Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
           items:
             type: string
           type: array
         speed:
-          description: |
-            Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
+          description: Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
           example: 0.9
           format: double
           minimum: 0
           type: number
         sts:
-          description: |
-            A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
+          description: 'A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.'
           type: string
         stt:
-          description: |
-            A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
+          description: A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
           type: string
         subagent:
-          description: |
-            The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
+          description: The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
           type: string
         tags:
           additionalProperties:
@@ -382,16 +355,14 @@ components:
         tts:
           type: string
         user_plugins:
-          description: |
-            Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+          description: Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
           items:
             type: string
           type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
         visible_tools:
-          description: |
-            Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
+          description: Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
           items:
             maxLength: 128
             type: string
@@ -632,8 +603,7 @@ components:
     AuthorizePluginRequest:
       properties:
         instance_url:
-          description: |
-            The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL.
+          description: The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL.
           type: string
       type: object
     AvailableNumber:
@@ -2653,10 +2623,10 @@ components:
         name:
           type: string
       required:
-        - id
-        - name
         - category
         - description
+        - id
+        - name
       type: object
     PluginAuthorization:
       properties:
@@ -2667,8 +2637,7 @@ components:
         - authorize_url
       type: object
     PluginConnection:
-      description: |
-        A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish.
+      description: A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish.
       properties:
         category:
           type: string
@@ -2692,8 +2661,8 @@ components:
             - not_connected
           type: string
       required:
-        - plugin_id
         - name
+        - plugin_id
         - status
       type: object
     Policy:
@@ -5769,12 +5738,18 @@ paths:
       summary: What a browser needs to read an agent's conversation
   /v1/agents/configs:
     get:
-      description: |
+      description: |-
         With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of an id it never chose.
         Server-side only, as it always was: a config carries the instructions the agent runs under, and those are not a page's business. A page addressing an agent by name does not need this -- it sends the name on the create-session request and the router resolves it, which is the same lookup without handing the instructions over.
       operationId: listAgentConfigs
       parameters:
-        - $ref: '#/components/parameters/ConfigName'
+        - description: Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
+          explode: false
+          in: query
+          name: name
+          schema:
+            description: Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
+            type: string
       responses:
         "200":
           content:
@@ -5790,9 +5765,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: The agent configs the calling customer holds
     post:
-      description: |
+      description: |-
         A config holds what a caller would otherwise repeat on every call: the models, the voice, the instructions and which skills the subagent may be handed. What is about one conversation rather than the agent behind it, the call id above all, stays in the create-session request.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: createAgentConfig
@@ -5815,15 +5796,27 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: Store a named configuration a session can be created from
   /v1/agents/configs/{id}:
     delete:
-      description: |
+      description: |-
         Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: deleteAgentConfig
       parameters:
-        - $ref: '#/components/parameters/ResourceID'
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
       responses:
         "204":
           description: The config is gone
@@ -5835,11 +5828,23 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: Delete an agent config
     get:
       operationId: getAgentConfig
       parameters:
-        - $ref: '#/components/parameters/ResourceID'
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
       responses:
         "200":
           content:
@@ -5855,6 +5860,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: One agent config
     patch:
       description: |-
@@ -5899,12 +5910,18 @@ paths:
           description: Internal Server Error
       summary: Change some of an agent config
     put:
-      description: |
+      description: |-
         Every field is written, so the body is what the config now is rather than what changed about it. Sessions already running keep the configuration they started with.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: updateAgentConfig
       parameters:
-        - $ref: '#/components/parameters/ResourceID'
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
       requestBody:
         content:
           application/json:
@@ -5926,14 +5943,25 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: Replace an agent config
   /v1/agents/configs/{id}/plugins:
     get:
-      description: |
-        The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
+      description: The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
       operationId: listConfigPlugins
       parameters:
-        - $ref: '#/components/parameters/ResourceID'
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
       responses:
         "200":
           content:
@@ -5951,14 +5979,32 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: The plugin logins this agent holds
   /v1/agents/configs/{id}/plugins/{plugin_id}:
     delete:
       description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
       operationId: disconnectPlugin
       parameters:
-        - $ref: '#/components/parameters/ResourceID'
-        - $ref: '#/components/parameters/PluginID'
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+        - description: A built-in catalog id such as slack or calendly.
+          in: path
+          name: plugin_id
+          required: true
+          schema:
+            description: A built-in catalog id such as slack or calendly.
+            type: string
       responses:
         "204":
           description: The login is gone
@@ -5970,22 +6016,39 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: Drop a plugin login
   /v1/agents/configs/{id}/plugins/{plugin_id}/authorize:
     post:
-      description: |
+      description: |-
         Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: authorizePlugin
       parameters:
-        - $ref: '#/components/parameters/ResourceID'
-        - $ref: '#/components/parameters/PluginID'
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+        - description: A built-in catalog id such as slack or calendly.
+          in: path
+          name: plugin_id
+          required: true
+          schema:
+            description: A built-in catalog id such as slack or calendly.
+            type: string
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/AuthorizePluginRequest'
-        required: false
       responses:
         "200":
           content:
@@ -6001,6 +6064,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: Start a plugin login
   /v1/agents/connectors:
     get:
@@ -6691,15 +6760,15 @@ paths:
       summary: Read-only SSE of durable logs with replay
   /v1/agents/plugins:
     get:
-      description: |
-        A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+      description: A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
       operationId: listPlugins
       parameters:
         - description: Filter by name, category or description.
+          explode: false
           in: query
           name: q
-          required: false
           schema:
+            description: Filter by name, category or description.
             type: string
       responses:
         "200":
@@ -6710,10 +6779,18 @@ paths:
                   $ref: '#/components/schemas/Plugin'
                 type: array
           description: Matching plugins, in catalog order
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
       summary: The hosted MCP servers an agent may attach
   /v1/agents/plugins/callback:
     get:
