@@ -54,6 +54,7 @@ class AgentConfigPatch:
             subagent (str | Unset):
             tags (AgentConfigPatchTags | Unset):
             tts (str | Unset):
+            user_plugins (list[str] | Unset):
             video (SessionVideo | Unset):
             visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as
                 tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its
@@ -82,6 +83,7 @@ class AgentConfigPatch:
     subagent: str | Unset = UNSET
     tags: AgentConfigPatchTags | Unset = UNSET
     tts: str | Unset = UNSET
+    user_plugins: list[str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
@@ -143,6 +145,10 @@ class AgentConfigPatch:
 
         tts = self.tts
 
+        user_plugins: list[str] | Unset = UNSET
+        if not isinstance(self.user_plugins, Unset):
+            user_plugins = self.user_plugins
+
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
             video = self.video.to_dict()
@@ -196,6 +202,8 @@ class AgentConfigPatch:
             field_dict["tags"] = tags
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if user_plugins is not UNSET:
+            field_dict["user_plugins"] = user_plugins
         if video is not UNSET:
             field_dict["video"] = video
         if visible_tools is not UNSET:
@@ -279,6 +287,8 @@ class AgentConfigPatch:
 
         tts = d.pop("tts", UNSET)
 
+        user_plugins = cast(list[str], d.pop("user_plugins", UNSET))
+
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
         if isinstance(_video, Unset):
@@ -311,6 +321,7 @@ class AgentConfigPatch:
             subagent=subagent,
             tags=tags,
             tts=tts,
+            user_plugins=user_plugins,
             video=video,
             visible_tools=visible_tools,
             voice=voice,

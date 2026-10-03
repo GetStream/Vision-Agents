@@ -123,6 +123,9 @@ def sync_detailed(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -209,6 +212,9 @@ def sync(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -290,6 +296,9 @@ async def asyncio_detailed(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -374,6 +383,9 @@ async def asyncio(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.

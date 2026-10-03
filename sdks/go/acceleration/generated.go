@@ -871,9 +871,10 @@ func (e PhoneOperation) Valid() bool {
 
 // Defines values for PluginConnectionStatus.
 const (
-	PluginConnectionStatusConnected PluginConnectionStatus = "connected"
-	PluginConnectionStatusFailed    PluginConnectionStatus = "failed"
-	PluginConnectionStatusPending   PluginConnectionStatus = "pending"
+	PluginConnectionStatusConnected    PluginConnectionStatus = "connected"
+	PluginConnectionStatusFailed       PluginConnectionStatus = "failed"
+	PluginConnectionStatusNotConnected PluginConnectionStatus = "not_connected"
+	PluginConnectionStatusPending      PluginConnectionStatus = "pending"
 )
 
 // Valid indicates whether the value is a known member of the PluginConnectionStatus enum.
@@ -882,6 +883,8 @@ func (e PluginConnectionStatus) Valid() bool {
 	case PluginConnectionStatusConnected:
 		return true
 	case PluginConnectionStatusFailed:
+		return true
+	case PluginConnectionStatusNotConnected:
 		return true
 	case PluginConnectionStatusPending:
 		return true
@@ -1616,6 +1619,7 @@ type AgentConfig struct {
 	Tags         *map[string]string `json:"tags,omitempty"`
 	Tts          *string            `json:"tts,omitempty"`
 	UpdatedAt    time.Time          `json:"updated_at"`
+	UserPlugins  *[]string          `json:"user_plugins,omitempty"`
 	Video        *SessionVideo      `json:"video,omitempty"`
 	VisibleTools *[]string          `json:"visible_tools,omitempty"`
 	Voice        *string            `json:"voice,omitempty"`
@@ -1650,13 +1654,14 @@ type AgentConfigPatch struct {
 	Skills  *[]string `json:"skills,omitempty"`
 
 	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
-	Speed    *float64           `json:"speed,omitempty"`
-	Sts      *string            `json:"sts,omitempty"`
-	Stt      *string            `json:"stt,omitempty"`
-	Subagent *string            `json:"subagent,omitempty"`
-	Tags     *map[string]string `json:"tags,omitempty"`
-	Tts      *string            `json:"tts,omitempty"`
-	Video    *SessionVideo      `json:"video,omitempty"`
+	Speed       *float64           `json:"speed,omitempty"`
+	Sts         *string            `json:"sts,omitempty"`
+	Stt         *string            `json:"stt,omitempty"`
+	Subagent    *string            `json:"subagent,omitempty"`
+	Tags        *map[string]string `json:"tags,omitempty"`
+	Tts         *string            `json:"tts,omitempty"`
+	UserPlugins *[]string          `json:"user_plugins,omitempty"`
+	Video       *SessionVideo      `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -1719,9 +1724,12 @@ type AgentConfigRequest struct {
 	Subagent *string `json:"subagent,omitempty"`
 
 	// Tags Cost labels, carried onto every request a session using it makes.
-	Tags  *map[string]string `json:"tags,omitempty"`
-	Tts   *string            `json:"tts,omitempty"`
-	Video *SessionVideo      `json:"video,omitempty"`
+	Tags *map[string]string `json:"tags,omitempty"`
+	Tts  *string            `json:"tts,omitempty"`
+
+	// UserPlugins Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+	UserPlugins *[]string     `json:"user_plugins,omitempty"`
+	Video       *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -3172,7 +3180,7 @@ type PluginAuthorization struct {
 	AuthorizeUrl string `json:"authorize_url"`
 }
 
-// PluginConnection A catalog plugin as this agent has it, including whether it is logged in.
+// PluginConnection A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish.
 type PluginConnection struct {
 	Category         *string                `json:"category,omitempty"`
 	Description      *string                `json:"description,omitempty"`
@@ -4278,8 +4286,11 @@ type SyncAgentRequest struct {
 	Subagent *string            `json:"subagent,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 	Tts      *string            `json:"tts,omitempty"`
-	Video    *SessionVideo      `json:"video,omitempty"`
-	Voice    *string            `json:"voice,omitempty"`
+
+	// UserPlugins Plugins each end user connects with their own account, from the conversation, the first time the agent needs one.
+	UserPlugins *[]string     `json:"user_plugins,omitempty"`
+	Video       *SessionVideo `json:"video,omitempty"`
+	Voice       *string       `json:"voice,omitempty"`
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -5733,6 +5744,8 @@ type ClientInterface interface {
 	UpdateAgentConfig(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConfigPlugins The plugin logins this agent holds
+	//
+	// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
 	ListConfigPlugins(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7568,6 +7581,8 @@ func (c *Client) UpdateAgentConfig(ctx context.Context, id ResourceID, body Upda
 }
 
 // ListConfigPlugins The plugin logins this agent holds
+//
+// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
 func (c *Client) ListConfigPlugins(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16837,6 +16852,8 @@ type ClientWithResponsesInterface interface {
 	UpdateAgentConfigWithResponse(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
 
 	// ListConfigPluginsWithResponse The plugin logins this agent holds
+	//
+	// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27308,6 +27325,8 @@ func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context,
 }
 
 // ListConfigPluginsWithResponse The plugin logins this agent holds
+//
+// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
 //
 // Returns a wrapper object for the known response body format(s).
 //

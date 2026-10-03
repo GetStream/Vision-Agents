@@ -60,6 +60,13 @@ from .classify_result import ClassifyResult
 from .classify_result_answers import ClassifyResultAnswers
 from .classify_usage import ClassifyUsage
 from .command_receipt import CommandReceipt
+from .connector_client import ConnectorClient
+from .connector_client_alg import ConnectorClientAlg
+from .connector_client_auth_method import ConnectorClientAuthMethod
+from .connector_client_owner import ConnectorClientOwner
+from .connector_definition import ConnectorDefinition
+from .connector_definition_page import ConnectorDefinitionPage
+from .connector_input import ConnectorInput
 from .contact import Contact
 from .contact_state import ContactState
 from .contacts_request import ContactsRequest
@@ -68,6 +75,7 @@ from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_tags import CreateSessionRequestTags
+from .custom_connector_request import CustomConnectorRequest
 from .data_change import DataChange
 from .data_change_key import DataChangeKey
 from .data_change_op import DataChangeOp
@@ -193,6 +201,7 @@ from .session_sort_direction import SessionSortDirection
 from .session_sort_field import SessionSortField
 from .session_state import SessionState
 from .session_tool import SessionTool
+from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
@@ -236,6 +245,8 @@ from .text_content_part_type import TextContentPartType
 from .text_match import TextMatch
 from .tier import Tier
 from .timeline_entry import TimelineEntry
+from .tool_approval_command import ToolApprovalCommand
+from .tool_approval_command_type import ToolApprovalCommandType
 from .tool_result_command import ToolResultCommand
 from .tool_result_command_type import ToolResultCommandType
 from .transcript_entity import TranscriptEntity
@@ -328,6 +339,13 @@ __all__ = (
     "ClassifyResultAnswers",
     "ClassifyUsage",
     "CommandReceipt",
+    "ConnectorClient",
+    "ConnectorClientAlg",
+    "ConnectorClientAuthMethod",
+    "ConnectorClientOwner",
+    "ConnectorDefinition",
+    "ConnectorDefinitionPage",
+    "ConnectorInput",
     "Contact",
     "ContactState",
     "ContactsRequest",
@@ -336,6 +354,7 @@ __all__ = (
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
     "CreateSessionRequestTags",
+    "CustomConnectorRequest",
     "DataChange",
     "DataChangeKey",
     "DataChangeOp",
@@ -461,6 +480,7 @@ __all__ = (
     "SessionSortField",
     "SessionState",
     "SessionTool",
+    "SessionToolApproval",
     "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
@@ -504,6 +524,8 @@ __all__ = (
     "TextMatch",
     "Tier",
     "TimelineEntry",
+    "ToolApprovalCommand",
+    "ToolApprovalCommandType",
     "ToolResultCommand",
     "ToolResultCommandType",
     "TranscriptEntity",

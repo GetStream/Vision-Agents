@@ -6,8 +6,8 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.connector_definition import ConnectorDefinition
 from ...models.error import Error
-from ...models.plugin_connection import PluginConnection
 from ...types import Response
 
 
@@ -17,7 +17,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/agents/configs/{id}/plugins".format(
+        "url": "/v1/agents/connectors/{id}".format(
             id=quote(str(id), safe=""),
         ),
     }
@@ -27,14 +27,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[PluginConnection] | None:
+) -> ConnectorDefinition | Error | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for response_200_item_data in _response_200:
-            response_200_item = PluginConnection.from_dict(response_200_item_data)
-
-            response_200.append(response_200_item)
+        response_200 = ConnectorDefinition.from_dict(response.json())
 
         return response_200
 
@@ -58,6 +53,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -66,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[PluginConnection]]:
+) -> Response[ConnectorDefinition | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,21 +79,23 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+) -> Response[ConnectorDefinition | Error]:
+    """Read a connector
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
-    user's logins, made for user_plugins, are never listed.
+     A built-in or one of the app's own, at its newest revision. Another app's custom connector is not
+    found.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The connector, such as slack or custom_crm.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[ConnectorDefinition | Error]
     """
 
     kwargs = _get_kwargs(
@@ -111,21 +113,23 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+) -> ConnectorDefinition | Error | None:
+    """Read a connector
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
-    user's logins, made for user_plugins, are never listed.
+     A built-in or one of the app's own, at its newest revision. Another app's custom connector is not
+    found.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The connector, such as slack or custom_crm.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        ConnectorDefinition | Error
     """
 
     return sync_detailed(
@@ -138,21 +142,23 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+) -> Response[ConnectorDefinition | Error]:
+    """Read a connector
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
-    user's logins, made for user_plugins, are never listed.
+     A built-in or one of the app's own, at its newest revision. Another app's custom connector is not
+    found.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The connector, such as slack or custom_crm.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[ConnectorDefinition | Error]
     """
 
     kwargs = _get_kwargs(
@@ -168,21 +174,23 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+) -> ConnectorDefinition | Error | None:
+    """Read a connector
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
-    user's logins, made for user_plugins, are never listed.
+     A built-in or one of the app's own, at its newest revision. Another app's custom connector is not
+    found.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The connector, such as slack or custom_crm.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        ConnectorDefinition | Error
     """
 
     return (
