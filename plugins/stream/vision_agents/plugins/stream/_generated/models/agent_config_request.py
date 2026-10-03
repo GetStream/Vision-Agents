@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_config_request_tags import AgentConfigRequestTags
     from ..models.agent_dispatch import AgentDispatch
+    from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
 
 
@@ -48,13 +49,15 @@ class AgentConfigRequest:
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
+        sandbox_options (SandboxOptions | Unset): How the sandbox is built and how long code may run in it. Only
+            meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
         search (str | Unset): What the agent finds out today's answers with, as a provider/model or a capability
             shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
         skills (list[str] | Unset): Skill names, either the customer's own or one of the built-in think, recall and
             explain. Omit for the built-in set.
         speed (float | Unset): Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that
             names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
-             Example: 0.9.
+            Example: 0.9.
         sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.
             Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
         stt (str | Unset): A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores
@@ -63,6 +66,9 @@ class AgentConfigRequest:
             and skills mean nothing.
         tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes.
         tts (str | Unset):
+        user_plugins (list[str] | Unset): Hosted MCP servers each end user connects with their own account, named from
+            the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment,
+            the first time it needs one.
         video (SessionVideo | Unset):
         visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as
             tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its
@@ -84,6 +90,7 @@ class AgentConfigRequest:
     mode: AgentMode | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
+    sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
     speed: float | Unset = UNSET
@@ -92,6 +99,7 @@ class AgentConfigRequest:
     subagent: str | Unset = UNSET
     tags: AgentConfigRequestTags | Unset = UNSET
     tts: str | Unset = UNSET
+    user_plugins: list[str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
@@ -134,6 +142,10 @@ class AgentConfigRequest:
         if not isinstance(self.sandbox, Unset):
             sandbox = self.sandbox.value
 
+        sandbox_options: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sandbox_options, Unset):
+            sandbox_options = self.sandbox_options.to_dict()
+
         search = self.search
 
         skills: list[str] | Unset = UNSET
@@ -153,6 +165,10 @@ class AgentConfigRequest:
             tags = self.tags.to_dict()
 
         tts = self.tts
+
+        user_plugins: list[str] | Unset = UNSET
+        if not isinstance(self.user_plugins, Unset):
+            user_plugins = self.user_plugins
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
@@ -193,6 +209,8 @@ class AgentConfigRequest:
             field_dict["plugins"] = plugins
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
+        if sandbox_options is not UNSET:
+            field_dict["sandbox_options"] = sandbox_options
         if search is not UNSET:
             field_dict["search"] = search
         if skills is not UNSET:
@@ -209,6 +227,8 @@ class AgentConfigRequest:
             field_dict["tags"] = tags
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if user_plugins is not UNSET:
+            field_dict["user_plugins"] = user_plugins
         if video is not UNSET:
             field_dict["video"] = video
         if visible_tools is not UNSET:
@@ -224,6 +244,7 @@ class AgentConfigRequest:
             AgentConfigRequestTags,
         )
         from ..models.agent_dispatch import AgentDispatch
+        from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
@@ -271,6 +292,13 @@ class AgentConfigRequest:
         else:
             sandbox = Sandbox(_sandbox)
 
+        _sandbox_options = d.pop("sandbox_options", UNSET)
+        sandbox_options: SandboxOptions | Unset
+        if isinstance(_sandbox_options, Unset):
+            sandbox_options = UNSET
+        else:
+            sandbox_options = SandboxOptions.from_dict(_sandbox_options)
+
         search = d.pop("search", UNSET)
 
         skills = cast(list[str], d.pop("skills", UNSET))
@@ -291,6 +319,8 @@ class AgentConfigRequest:
             tags = AgentConfigRequestTags.from_dict(_tags)
 
         tts = d.pop("tts", UNSET)
+
+        user_plugins = cast(list[str], d.pop("user_plugins", UNSET))
 
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
@@ -316,6 +346,7 @@ class AgentConfigRequest:
             mode=mode,
             plugins=plugins,
             sandbox=sandbox,
+            sandbox_options=sandbox_options,
             search=search,
             skills=skills,
             speed=speed,
@@ -324,6 +355,7 @@ class AgentConfigRequest:
             subagent=subagent,
             tags=tags,
             tts=tts,
+            user_plugins=user_plugins,
             video=video,
             visible_tools=visible_tools,
             voice=voice,

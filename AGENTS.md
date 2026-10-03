@@ -90,9 +90,12 @@ is never edited by hand.
   clients (see [acceleration/README.md](acceleration/README.md)). A test fails if the committed
   `openapi.yaml` is out of date.
 
-`acceleration/api/legacy.yaml` holds the operations not yet moved to Go, which oapi-codegen still
-generates. Do not add to it. Move an operation by registering it with Huma and deleting it from
-`legacy.yaml`, along with any component nothing left there refers to.
+- A query parameter a request may leave out is an `optionalParam[T]`; `ptr()` is nil when it was
+  left out. Huma takes no pointer for one.
+- A route served by hand (a socket, a stream) is still declared, in `internal/api/handwritten.go`,
+  so readers and client generators see it and the server-side check reads its marks.
+
+There is no hand-written spec any more: every operation, socket included, is declared in Go.
 
 The JavaScript SDK is its own npm package, checked with node 22 and no runtime dependencies:
 

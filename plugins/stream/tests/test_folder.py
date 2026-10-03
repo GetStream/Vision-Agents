@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from vision_agents.plugins.stream.folder import find, load, resolve
+from vision_agents.plugins.stream.folder import SandboxSettings, find, load, resolve
 
 
 def write(root: Path, name: str, content: str) -> None:
@@ -106,6 +106,19 @@ class TestFolder:
         assert settings.keyterms == ["Vision Agents"]
         assert settings.tags == {"team": "support"}
 
+    def test_the_declaration_says_who_connects_each_plugin(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nplugins:\n  - sentry\nuser_plugins:\n  - google_calendar\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.plugins == ["sentry"]
+        assert settings.user_plugins == ["google_calendar"]
+
     def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "name: jean\ndescription: the receptionist\n")
@@ -115,6 +128,7 @@ class TestFolder:
         assert settings.llm == ""
         assert settings.sandbox == ""
         assert settings.plugins == []
+        assert settings.user_plugins == []
         assert settings.tags == {}
 
     def test_a_key_nobody_knows_is_refused(self, tmp_path: Path):
@@ -154,6 +168,46 @@ class TestFolder:
         write(root, "agent.yaml", "name: jean\ndispatch:\n  txet: enabled\n")
 
         with pytest.raises(ValueError, match="txet"):
+            load(root)
+
+    def test_how_the_sandbox_is_built_is_read_from_a_nested_block(self, tmp_path: Path):
+        root = tmp_path / "artist"
+        write(
+            root,
+            "agent.yaml",
+            "name: artist\nsandbox: daytona\nsandbox_options:\n"
+            "  image: python:3.13-slim-bookworm\n"
+            "  setup:\n    - pip install bpy==5.2.2\n"
+            "  timeout: 5m\n  cpu: 2\n  memory_gb: 4\n",
+        )
+
+        options = load(root).settings.sandbox_options
+
+        assert options == SandboxSettings(
+            image="python:3.13-slim-bookworm",
+            setup=["pip install bpy==5.2.2"],
+            timeout_seconds=300,
+            cpu=2,
+            memory_gb=4,
+        )
+
+    def test_a_declaration_without_sandbox_options_has_none(self, tmp_path: Path):
+        root = tmp_path / "analyst"
+        write(root, "agent.yaml", "name: analyst\nsandbox: daytona\n")
+
+        assert load(root).settings.sandbox_options is None
+
+    @pytest.mark.parametrize(
+        "options",
+        ["  timeout: 2h\n", "  timeout: soon\n", "  memory: 4\n", "  cpu: two\n"],
+    )
+    def test_sandbox_options_nobody_can_honour_are_refused(
+        self, tmp_path: Path, options: str
+    ):
+        root = tmp_path / "artist"
+        write(root, "agent.yaml", "name: artist\nsandbox_options:\n" + options)
+
+        with pytest.raises(ValueError, match="sandbox_options"):
             load(root)
 
     def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):

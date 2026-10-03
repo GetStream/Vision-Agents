@@ -277,10 +277,29 @@ dispatch:
 	}
 }
 
+func TestTheDeclarationSaysWhoConnectsEachPlugin(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nplugins: [sentry]\nuser_plugins: [google_calendar]\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := folder.Settings.Plugins; len(got) != 1 || got[0] != "sentry" {
+		t.Errorf("the app's plugins read as %v", got)
+	}
+	if got := folder.Settings.UserPlugins; len(got) != 1 || got[0] != "google_calendar" {
+		t.Errorf("each user's plugins read as %v", got)
+	}
+}
+
 func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 	for _, declaration := range []string{
 		"name: jean\nlmm: openai/gpt-5.6\n",
 		"video:\n  max_frames: 9\n",
+		"sandbox_options:\n  timeout: 2h\n",
+		"sandbox_options:\n  timeout: soon\n",
+		"sandbox_options:\n  memory: 4\n",
 		"keyterms: Vision Agents\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")

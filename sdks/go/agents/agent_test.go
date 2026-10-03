@@ -357,6 +357,46 @@ func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	}
 }
 
+func TestSyncSendsHowTheSandboxIsBuilt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artist")
+	write(t, root, "agent.yaml", `sandbox: daytona
+sandbox_options:
+  setup: [pip install bpy==5.2.2]
+  timeout: 5m
+  memory_gb: 4
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	options := router.syncs[0].SandboxOptions
+	if options == nil || (*options.Setup)[0] != "pip install bpy==5.2.2" || *options.TimeoutMs != 300000 || *options.MemoryGb != 4 {
+		t.Errorf("how the sandbox is built went as %+v", options)
+	}
+}
+
+func TestSyncSaysNothingOfTheSandboxWhenTheDeclarationDoesNot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "analyst")
+	write(t, root, "agent.yaml", "sandbox: daytona\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if router.syncs[0].SandboxOptions != nil {
+		t.Errorf("options nobody declared were sent: %+v", router.syncs[0].SandboxOptions)
+	}
+}
+
 func TestAnUnchangedDirectoryIsNotSyncedAgain(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "agent.yaml", "name: jean\n")

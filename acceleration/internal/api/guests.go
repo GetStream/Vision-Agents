@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -28,20 +30,20 @@ const guestPrefix = "guest-"
 // does not admit guests, so naming it here is what makes that switch mean anything.
 const guestRole = "guest"
 
-// CreateGuestUser mints a guest so somebody can talk to an agent before they sign up.
+// createGuestUser mints a guest so somebody can talk to an agent before they sign up.
 //
 // Open to a page on purpose. A guest a backend had to mint is a guest that costs every
 // anonymous visitor a round trip through the customer's own servers, which is exactly the
 // integration this is meant to remove. What keeps it safe is that a guest id is not evidence
 // of who anybody is: their sessions are their own, and the kind recorded beside the name is
 // what stops one guest reaching another's by naming their id.
-func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserRequestObject) (CreateGuestUserResponseObject, error) {
+func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRequest) (*createGuestUserResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return CreateGuestUser401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.streamKey == "" || s.streamSecret == "" {
-		return CreateGuestUser400JSONResponse{badRequest(noStreamKeys)}, nil
+		return nil, huma.Error400BadRequest(noStreamKeys)
 	}
 
 	body := GuestUserRequest{}
@@ -58,7 +60,7 @@ func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserReq
 			return nil, err
 		}
 		if !settings.GuestAllowed() {
-			return CreateGuestUser403Response{}, nil
+			return nil, huma.Error403Forbidden("this app does not admit guests")
 		}
 	}
 
@@ -81,11 +83,11 @@ func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserReq
 			// Not a guest of this customer. It may be nobody at all, which is fine, or it
 			// may be a real user, which is not something this can tell apart -- so the
 			// name is refused rather than guessed at.
-			return CreateGuestUser400JSONResponse{badRequest(
-				"that id is not a guest of this app, so a token cannot be minted for it")}, nil
+			return nil, huma.Error400BadRequest(
+				"that id is not a guest of this app, so a token cannot be minted for it")
 		case held.ClaimedBy != "":
-			return CreateGuestUser400JSONResponse{badRequest(
-				"that guest has been claimed, so they have an account to sign in with")}, nil
+			return nil, huma.Error400BadRequest(
+				"that guest has been claimed, so they have an account to sign in with")
 		}
 	}
 
@@ -125,53 +127,49 @@ func (s *Server) CreateGuestUser(ctx context.Context, request CreateGuestUserReq
 	if body.Custom != nil {
 		rendered.Custom = body.Custom
 	}
-	return CreateGuestUser201JSONResponse(rendered), nil
+	return &createGuestUserResponse{Body: rendered}, nil
 }
 
-// ClaimGuestUser moves a guest's conversations onto the account they turned out to be.
+// claimGuestUser moves a guest's conversations onto the account they turned out to be.
 //
 // Server-side only, and the one operation here that most needs to be: only the customer's
 // own backend knows that a given guest is a given account, because it is the thing that just
 // authenticated them. A page allowed to ask this could claim anybody's conversations by
 // guessing a guest id, which is the whole attack.
-func (s *Server) ClaimGuestUser(ctx context.Context, request ClaimGuestUserRequestObject) (ClaimGuestUserResponseObject, error) {
+func (s *Server) claimGuestUser(ctx context.Context, request *claimGuestUserRequest) (*claimGuestUserResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ClaimGuestUser401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return ClaimGuestUser404JSONResponse{NotFoundJSONResponse{
-			Error: "this deployment records no guests, so there is nothing to claim"}}, nil
+		return nil, huma.Error404NotFound("this deployment records no guests, so there is nothing to claim")
 	}
 	if request.Body == nil {
-		return ClaimGuestUser400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest("a request body is required")
 	}
 
 	guestID := strings.TrimSpace(request.Body.GuestId)
 	userID := strings.TrimSpace(request.Body.UserId)
 	if guestID == "" || userID == "" {
-		return ClaimGuestUser400JSONResponse{badRequest("a guest id and a user id are required")}, nil
+		return nil, huma.Error400BadRequest("a guest id and a user id are required")
 	}
 
 	guest, err := s.store.Guest(ctx, customerID, guestID)
 	if err != nil {
-		return ClaimGuestUser404JSONResponse{NotFoundJSONResponse{
-			Error: "no such guest"}}, nil
+		return nil, huma.Error404NotFound("no such guest")
 	}
 	if guest.ClaimedBy != "" {
 		// A second claim naming the same account is the same claim arriving twice, which is
 		// not a conflict: a retried request must not read as somebody else's.
 		if guest.ClaimedBy == userID {
-			return ClaimGuestUser200JSONResponse{
-				GuestId: guestID, UserId: userID, SessionsMoved: 0,
-			}, nil
+			return &claimGuestUserResponse{Body: ClaimGuestResult{GuestId: guestID, UserId: userID, SessionsMoved: 0}}, nil
 		}
-		return ClaimGuestUser409JSONResponse{Error: "that guest was already claimed"}, nil
+		return nil, huma.Error409Conflict("that guest was already claimed")
 	}
 
 	moved, err := s.store.ClaimGuest(ctx, customerID, guestID, userID)
 	if err != nil {
-		return ClaimGuestUser400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	// The guest's row has changed under every replica holding it, so the caches are told.
@@ -190,9 +188,7 @@ func (s *Server) ClaimGuestUser(ctx context.Context, request ClaimGuestUserReque
 			"guest", guestID, "user", userID, "error", err)
 	}
 
-	return ClaimGuestUser200JSONResponse{
-		GuestId: guestID, UserId: userID, SessionsMoved: int(moved),
-	}, nil
+	return &claimGuestUserResponse{Body: ClaimGuestResult{GuestId: guestID, UserId: userID, SessionsMoved: int(moved)}}, nil
 }
 
 // addToGuestChannels puts the real account into the transcripts the guest was talking in, so
@@ -248,4 +244,101 @@ func transcriptChannel(one store.AgentSession) string {
 		return strings.TrimPrefix(one.ConversationID, chatlog.ChannelType+":")
 	}
 	return one.AgentID
+}
+
+// registerGuests declares the operations served in guests.go.
+func (s *Server) registerGuests(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "createGuestUser",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/guests",
+		Summary:     "Mint a guest so somebody can talk to an agent before signing up",
+		Description: "Returns a user id and a Stream token with role guest, which is what the chat and video " +
+			"SDKs connect with. From the router's point of view a guest is an ordinary end user " +
+			"whose name is worth less: their sessions are their own and nobody else's, but a guest " +
+			"id is not evidence of who anybody is, so a guest cannot be handed another guest's " +
+			"conversations by naming their id.\n" +
+			"Open to a page on purpose. A guest that a backend had to mint is a guest every " +
+			"anonymous visitor costs a round trip through the customer's own servers, which is " +
+			"exactly the integration this is meant to remove. An app that has turned guests off " +
+			"refuses it.",
+		Extensions:    map[string]any{clientAccessibleExtension: true},
+		DefaultStatus: http.StatusCreated,
+		Responses: map[string]*huma.Response{
+			"201": {Description: "The guest and a token for them"},
+			"403": errorResponse("This app does not admit guests"),
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized},
+	}, s.createGuestUser)
+	huma.Register(api, huma.Operation{
+		OperationID: "claimGuestUser",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/guests/claim",
+		Summary:     "Move a guest's conversations onto the account they turned out to be",
+		Description: "For somebody who talked to an agent and then signed up. Their sessions are rewritten to " +
+			"the real user and the guest is marked claimed, in one transaction: a guest marked " +
+			"claimed whose sessions still say the guest owns them is a person who signed up and lost " +
+			"their history, and sessions moved without the guest being marked is a guest that can be " +
+			"claimed again, by somebody else.\n" +
+			"Server-side only, and the one operation here that most needs to be. Only the customer's " +
+			"own backend knows that a given guest is a given account -- it is the thing that just " +
+			"authenticated them. A page allowed to ask this could claim anybody's conversations by " +
+			"guessing a guest id, which is the whole attack.\n" +
+			"A guest already claimed is refused rather than moved again.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The conversations were moved"},
+			"409": errorResponse("That guest was already claimed"),
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.claimGuestUser)
+}
+
+type createGuestUserRequest struct {
+	Body *GuestUserRequest
+}
+
+type createGuestUserResponse struct {
+	Body GuestUser
+}
+
+type claimGuestUserRequest struct {
+	Body *ClaimGuestRequest `required:"true"`
+}
+
+type claimGuestUserResponse struct {
+	Body ClaimGuestResult
+}
+
+// ClaimGuestRequest is the ClaimGuestRequest schema.
+type ClaimGuestRequest struct {
+	GuestId string `json:"guest_id"`
+	UserId  string `json:"user_id" doc:"The account the guest turned out to be."`
+}
+
+// ClaimGuestResult is the ClaimGuestResult schema.
+type ClaimGuestResult struct {
+	GuestId       string `json:"guest_id"`
+	SessionsMoved int    `json:"sessions_moved" doc:"How many conversations moved onto the account."`
+	UserId        string `json:"user_id"`
+}
+
+func (*ClaimGuestResult) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["sessions_moved"].Format = ""
+	return schema
+}
+
+// GuestUser is the GuestUser schema.
+type GuestUser struct {
+	Custom    *map[string]interface{} `json:"custom,omitempty"`
+	ExpiresAt *time.Time              `json:"expires_at,omitempty" doc:"When the token stops working. A guest coming back after it asks for another."`
+	Id        string                  `json:"id"`
+	Name      *string                 `json:"name,omitempty"`
+	Token     string                  `json:"token" doc:"A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it."`
+}
+
+// GuestUserRequest is the GuestUserRequest schema.
+type GuestUserRequest struct {
+	Custom *map[string]interface{} `json:"custom,omitempty"`
+	Id     *string                 `json:"id,omitempty" doc:"A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person."`
+	Name   *string                 `json:"name,omitempty" doc:"What to call them, for a transcript a person reads later."`
 }

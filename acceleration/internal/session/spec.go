@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -172,12 +173,17 @@ type Spec struct {
 	SkillNames []string
 	// Plugins are hosted MCP servers this session may reach, named from the catalog.
 	Plugins []string
+	// UserPlugins are hosted MCP servers the caller reaches with their own account, named
+	// from the catalog. A session with no caller is offered none of them.
+	UserPlugins []string
 	// KnowledgeNamespace is what the agent may look things up in. Empty means it knows
 	// only what it was told.
 	KnowledgeNamespace string
 	// Sandbox names where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none, and works everything out in its head.
 	Sandbox string
+	// SandboxOptions is how the sandbox is built and how long code may run in it.
+	SandboxOptions sandbox.Config
 	// Tools are what the voice model may do rather than say. These are the caller's own
 	// functions: the session carries the request out to whoever asked for the session
 	// and waits for them to answer it.
@@ -256,10 +262,12 @@ func FromConfig(config store.AgentConfig) Spec {
 		Guardrail:          config.Guardrail,
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
+		UserPlugins:        config.UserPlugins,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Sandbox:            config.Sandbox,
+		SandboxOptions:     config.SandboxOptions,
 		Harness:            config.Harness,
 		DispatchText:       config.DispatchText,
 		Tags:               routing.Tags(config.Tags),

@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
@@ -109,7 +110,10 @@ type ManagerOptions struct {
 	// other nodes can forward what only this one can answer. Nil keeps a session
 	// reachable on this node alone.
 	Directory *node.Directory
-	Logger    *slog.Logger
+	// PluginAuth signs an end user into the plugins an agent names per user, sending the
+	// provider back to this deployment's public URL. Nil sends it to localhost.
+	PluginAuth *plugins.Auth
+	Logger     *slog.Logger
 }
 
 // Manager owns the sessions this process is running.
@@ -375,6 +379,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		runner = &pluginRunner{mcp: mcp, next: runner}
 		created.closers = append(created.closers, mcp.Close)
 	}
+	if own := m.userPlugins(spec, runner); own != nil {
+		tools = append(tools, plugins.UserTools(spec.UserPlugins)...)
+		runner = own
+		created.closers = append(created.closers, own.Close)
+	}
 
 	var toolStarted func(agent.ToolStarted)
 	if conv != nil {
@@ -420,6 +429,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		ToolRunner:         runner,
 		Tools:              harness.Tools{Tools: tools},
 		Sandbox:            box,
+		Publish:            publisher(conv),
 		Tasks:              spec.Tasks,
 		Duplex:             spec.duplex(),
 		VideoSource:        spec.VideoSource,
@@ -1039,7 +1049,7 @@ func (m *Manager) box(spec Spec) (sandbox.Sandbox, error) {
 	if spec.Sandbox != daytonaProvider {
 		return nil, fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox)
 	}
-	return daytona.New(daytona.Options{Logger: m.logger})
+	return daytona.New(daytona.Options{Config: spec.SandboxOptions, Logger: m.logger})
 }
 
 // reading reports whether this session has anything to look things up in, which is a
@@ -1141,4 +1151,13 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 		}
 	}
 	return m.conversations, nil
+}
+
+// publisher is where files the subagent's code hands back are shown: the conversation's
+// channel when the session is kept in one, and nowhere when it is not.
+func publisher(conv *persistent.Conversation) sandbox.Publisher {
+	if conv == nil {
+		return nil
+	}
+	return conv.Publish
 }

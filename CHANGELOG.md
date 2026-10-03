@@ -420,6 +420,42 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### Sentry and Google Calendar plugins, and plugins each user connects in the chat
+
+The plugin catalog has `sentry` and `google_calendar`. `agent.yaml` names `user_plugins`
+beside `plugins`: a plugin under `plugins` is connected once by the app, and one under
+`user_plugins` by each end user with their own account. The agent gets `<id>__list_tools`
+and `<id>__call_tool` for those, and the first call for somebody who has not connected asks
+them to, as a `plugin_authorization` attachment on the reply (an `authorization_required`
+event in Python). `GET /v1/agents/configs/{id}/plugins` now lists a plugin the config names
+that the app has not connected as `not_connected`, for the dashboard to remind about. Google
+Calendar needs `GOOGLE_CALENDAR_MCP_CLIENT_ID` and `GOOGLE_CALENDAR_MCP_CLIENT_SECRET` on the
+router. See `examples/text_agents/on_call`.
+
+### The sandbox can be built, run for minutes, and hand files back to chat
+
+`sandbox_options` on an agent config, or in `agent.yaml`, says how the subagent's Daytona
+sandbox is built and how long code may run in it (#737):
+
+```yaml
+sandbox: daytona
+sandbox_options:
+  setup: [pip install --no-cache-dir bpy==5.2.2]
+  timeout: 5m      # timeout_ms on the API, at most 30 minutes
+  cpu: 2
+  memory_gb: 4
+```
+
+`image` is the base to build on (a slim Python 3.13 when left out). Daytona keeps the built
+image, so only the first sandbox from a setup waits for it.
+
+`run_code` takes `files`, paths the program wrote. On a persistent text conversation each one
+is uploaded to the channel and attached to the reply that settles the work (an image inline,
+anything else as a file), so it is still there when the conversation is reopened, and history
+returns it as the message's `files`. `task_settled` lists them as `files`, which the Go SDK
+reads into `Event.Files` and Python into `RemoteEvent.files`. `examples/text_agents/blender_artist`
+uses this to render with Blender.
+
 ### A reply starts speaking sooner
 
 The first chunk of a reply now goes to the voice at its first clause, once it has 20
@@ -1321,6 +1357,14 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- `Agent.ask()` follows a reply until the tools it called have answered. It stopped at
+  the first `agent_speech`, which is the model saying it is about to call a tool, because
+  the Python SDK dropped `pending_work`. `RemoteEvent` now carries it, as the Go SDK's
+  event does. (#737)
+- An agent with an `MCPServerLocal` no longer ends in a `CancelledError` when it closes.
+  The stdio session was entered on the connecting task and exited on the closing one, which
+  anyio's cancel scopes refuse. It is now held on a task of its own, as `MCPServerRemote`
+  already was. (#737)
 - A caller who kept talking after the first part of their turn was queued is no longer
   answered twice. The whole turn was answered, and then the queued part again once the
   agent stopped, in one Voicebench call 17.9 s later.

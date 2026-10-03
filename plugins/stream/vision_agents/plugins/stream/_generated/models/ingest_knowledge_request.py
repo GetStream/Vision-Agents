@@ -22,8 +22,7 @@ class IngestKnowledgeRequest:
     Attributes:
         documents (list[KnowledgeDocument]):
         namespace (str): The knowledge base to write into, which is what a config's knowledge_namespace names. Knowledge
-            is never shared, so there is no default.
-             Example: docs.
+            is never shared, so there is no default. Example: docs.
         chunk_size (int | Unset): Characters per passage. Zero is the default, which is small enough that several
             passages fit in front of a model and large enough that one still answers the question on its own.
     """

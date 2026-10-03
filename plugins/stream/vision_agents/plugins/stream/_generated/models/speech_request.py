@@ -28,8 +28,8 @@ class SpeechRequest:
         inline (bool | Unset): Complete this short request synchronously without storing a recording job or audio. The
             202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database
             is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8
-            MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
-             Default: False.
+            MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs. Default:
+            False.
         options (TtsOptions | Unset): How this config speaks. A provider that cannot express a term refuses the request
             rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that
             says it cannot.

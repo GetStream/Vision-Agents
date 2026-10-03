@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.agent_dispatch import AgentDispatch
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
+    from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
     from ..models.simulation_declaration import SimulationDeclaration
     from ..models.skill_request import SkillRequest
@@ -55,6 +56,8 @@ class SyncAgentRequest:
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
                 everything out in its head.
+            sandbox_options (SandboxOptions | Unset): How the sandbox is built and how long code may run in it. Only
+                meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
             search (str | Unset):
             simulations (list[SimulationDeclaration] | Unset): The simulations the directory's simulations/*.yaml declare.
                 Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is
@@ -67,6 +70,8 @@ class SyncAgentRequest:
             subagent (str | Unset):
             tags (SyncAgentRequestTags | Unset):
             tts (str | Unset):
+            user_plugins (list[str] | Unset): Plugins each end user connects with their own account, from the conversation,
+                the first time the agent needs one.
             video (SessionVideo | Unset):
             voice (str | Unset):
     """
@@ -85,6 +90,7 @@ class SyncAgentRequest:
     mode: AgentMode | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
+    sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
     simulations: list[SimulationDeclaration] | Unset = UNSET
     skills: list[SkillRequest] | Unset = UNSET
@@ -94,6 +100,7 @@ class SyncAgentRequest:
     subagent: str | Unset = UNSET
     tags: SyncAgentRequestTags | Unset = UNSET
     tts: str | Unset = UNSET
+    user_plugins: list[str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -149,6 +156,10 @@ class SyncAgentRequest:
         if not isinstance(self.sandbox, Unset):
             sandbox = self.sandbox.value
 
+        sandbox_options: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sandbox_options, Unset):
+            sandbox_options = self.sandbox_options.to_dict()
+
         search = self.search
 
         simulations: list[dict[str, Any]] | Unset = UNSET
@@ -178,6 +189,10 @@ class SyncAgentRequest:
             tags = self.tags.to_dict()
 
         tts = self.tts
+
+        user_plugins: list[str] | Unset = UNSET
+        if not isinstance(self.user_plugins, Unset):
+            user_plugins = self.user_plugins
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
@@ -217,6 +232,8 @@ class SyncAgentRequest:
             field_dict["plugins"] = plugins
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
+        if sandbox_options is not UNSET:
+            field_dict["sandbox_options"] = sandbox_options
         if search is not UNSET:
             field_dict["search"] = search
         if simulations is not UNSET:
@@ -235,6 +252,8 @@ class SyncAgentRequest:
             field_dict["tags"] = tags
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if user_plugins is not UNSET:
+            field_dict["user_plugins"] = user_plugins
         if video is not UNSET:
             field_dict["video"] = video
         if voice is not UNSET:
@@ -249,6 +268,7 @@ class SyncAgentRequest:
         from ..models.knowledge_url_declaration import (
             KnowledgeUrlDeclaration,
         )
+        from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
         from ..models.simulation_declaration import (
             SimulationDeclaration,
@@ -323,6 +343,13 @@ class SyncAgentRequest:
         else:
             sandbox = Sandbox(_sandbox)
 
+        _sandbox_options = d.pop("sandbox_options", UNSET)
+        sandbox_options: SandboxOptions | Unset
+        if isinstance(_sandbox_options, Unset):
+            sandbox_options = UNSET
+        else:
+            sandbox_options = SandboxOptions.from_dict(_sandbox_options)
+
         search = d.pop("search", UNSET)
 
         _simulations = d.pop("simulations", UNSET)
@@ -362,6 +389,8 @@ class SyncAgentRequest:
 
         tts = d.pop("tts", UNSET)
 
+        user_plugins = cast(list[str], d.pop("user_plugins", UNSET))
+
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
         if isinstance(_video, Unset):
@@ -386,6 +415,7 @@ class SyncAgentRequest:
             mode=mode,
             plugins=plugins,
             sandbox=sandbox,
+            sandbox_options=sandbox_options,
             search=search,
             simulations=simulations,
             skills=skills,
@@ -395,6 +425,7 @@ class SyncAgentRequest:
             subagent=subagent,
             tags=tags,
             tts=tts,
+            user_plugins=user_plugins,
             video=video,
             voice=voice,
         )

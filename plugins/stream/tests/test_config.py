@@ -528,6 +528,7 @@ class TestSyncAgent:
             "greeting: Hello.\n"
             "sandbox: daytona\n"
             "plugins:\n  - gmail\n"
+            "user_plugins:\n  - google_calendar\n"
             "keyterms:\n  - Vision Agents\n"
             "tags:\n  team: support\n"
         )
@@ -549,6 +550,7 @@ class TestSyncAgent:
         assert stored["greeting"] == "Hello."
         assert stored["sandbox"] == "daytona"
         assert stored["plugins"] == ["gmail"]
+        assert stored["user_plugins"] == ["google_calendar"]
         assert stored["keyterms"] == ["Vision Agents"]
         assert stored["tags"] == {"team": "support"}
 
@@ -566,6 +568,27 @@ class TestSyncAgent:
         assert router.configs[result.config.id]["dispatch"] == {
             "incoming_call": "disabled",
             "text": "enabled",
+        }
+
+    async def test_a_declaration_says_how_its_sandbox_is_built(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nsandbox: daytona\nsandbox_options:\n"
+            "  setup: [pip install bpy==5.2.2]\n  timeout: 5m\n  memory_gb: 4\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["sandbox_options"] == {
+            "image": "",
+            "setup": ["pip install bpy==5.2.2"],
+            "timeout_ms": 300000,
+            "cpu": 0,
+            "memory_gb": 4,
+            "disk_gb": 0,
         }
 
     async def test_sts_can_be_selected_and_cleared(self, router: Router, support_dir):

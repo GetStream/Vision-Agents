@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     AsyncIterator,
     Literal,
@@ -24,6 +24,7 @@ RemoteEventType = Literal[
     "looked_up",
     "delegated",
     "task_settled",
+    "authorization_required",
     "error",
     "ended",
 ]
@@ -61,6 +62,23 @@ class RemoteCall:
 
 
 @dataclass
+class RemoteFile:
+    """Something the agent's code made, at a URL the person can reach.
+
+    Attributes:
+        name: The file's name.
+        url: Where it was uploaded.
+        mime_type: What kind of file it is.
+        size: How large it is, in bytes.
+    """
+
+    name: str
+    url: str
+    mime_type: str = ""
+    size: int = 0
+
+
+@dataclass
 class RemoteEvent:
     """Something a remote pipeline did, in the terms the agent thinks in.
 
@@ -70,10 +88,16 @@ class RemoteEvent:
         user_id: Who said it, empty when it was the agent.
         participant_id: The speaker's participant id, when the pipeline knows it.
         interrupted: Whether an agent turn ended because someone spoke over it.
+        pending_work: Whether more of the answer follows an `agent_speech`, because a
+            tool or delegated work it started is still running.
         skill: Which skill was handed the work, for `delegated` and `task_settled`.
         query: What was searched for, for `looked_up`.
         documents: How many passages bore on it, for `looked_up`.
         error: The failure, for `error` events and for work that came back as one.
+        files: What the work's code made, for `task_settled`, uploaded where the person
+            sees the reply.
+        url: What the user opens to connect an account, for `authorization_required`,
+            whose `text` says what it connects.
     """
 
     type: RemoteEventType
@@ -81,10 +105,13 @@ class RemoteEvent:
     user_id: str = ""
     participant_id: str = ""
     interrupted: bool = False
+    pending_work: bool = False
     skill: str = ""
     query: str = ""
     documents: int = 0
     error: str = ""
+    files: list[RemoteFile] = field(default_factory=list)
+    url: str = ""
 
 
 @dataclass

@@ -143,7 +143,18 @@ type Event struct {
 	PendingWork bool
 	Interrupted bool
 	Error       string
-	Frame       Frame
+	// Files are what a task_settled's code handed back, uploaded where the person can see
+	// them.
+	Files []Attachment
+	Frame Frame
+}
+
+// Attachment is something the agent's code made, at a URL the person can reach.
+type Attachment struct {
+	Name     string `json:"name"`
+	MIMEType string `json:"mime_type"`
+	URL      string `json:"url"`
+	Size     int    `json:"size"`
 }
 
 // Pipeline is a whole voice or text pipeline, running in the acceleration backend.
@@ -589,6 +600,17 @@ func eventOf(frame Frame) Event {
 		PendingWork: frame.Bool("pending_work"),
 		Error:       frame.String("error"),
 		Frame:       frame,
+	}
+	files, _ := frame["files"].([]any)
+	for _, listed := range files {
+		file, ok := listed.(map[string]any)
+		if !ok {
+			continue
+		}
+		event.Files = append(event.Files, Attachment{
+			Name: Frame(file).String("name"), MIMEType: Frame(file).String("mime_type"),
+			URL: Frame(file).String("url"), Size: Frame(file).Int("size"),
+		})
 	}
 	if participant := frame.Frame("participant"); participant != nil {
 		event.Participant = Participant{

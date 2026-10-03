@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator, Optional
+from uuid import uuid4
 
 import aiortc
 from getstream.video.rtc.track_util import PcmData
@@ -15,6 +16,7 @@ from vision_agents.core.llm.llm import (
 from vision_agents.core.llm.remote import (
     RemoteCall,
     RemoteEvent,
+    RemoteFile,
     RemotePipelineError,
 )
 from vision_agents.core.utils.utils import cancel_and_wait
@@ -43,6 +45,10 @@ logger = logging.getLogger(__name__)
 # USER_KEY is the memory filter key naming who the memories are about. Everything else in
 # the filter narrows recall; this one is what recall is keyed by.
 USER_KEY = "user_id"
+
+# AUTHORIZATION_REQUIRED is what a user plugin's tool answers while the end user has not
+# connected their account; its attachment is the button a chat client shows.
+AUTHORIZATION_REQUIRED = "authorization_required"
 
 
 class Accelerated(OmniLLM):
@@ -82,6 +88,7 @@ class Accelerated(OmniLLM):
         video_source: str = "",
         video_max_frames: int = 0,
         log_latency: bool = False,
+        user_id: str = "",
     ):
         """Configure a pipeline to run remotely.
 
@@ -112,6 +119,9 @@ class Accelerated(OmniLLM):
             video_max_frames: Recent frames per task (1–8); zero uses configuration.
             log_latency: Print per-model timing and a turn DAG to agent stdout.
                 Disabled by default; metrics are still recorded by the router.
+            user_id: The end user the conversation is for. The plugins an agent names
+                as `user_plugins` sign in as them, so a session without one is offered
+                none of those.
         """
         super().__init__()
         self.provider_name = "stream"
@@ -130,7 +140,7 @@ class Accelerated(OmniLLM):
         self.video_max_frames = video_max_frames
         self.log_latency = log_latency
 
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = Backend(url=url, customer_id=customer_id, acting_for=user_id)
         # A knowledge base belongs to the stored config that reads it, so an agent
         # configured here rather than by name has none to fill.
         self.knowledge = Knowledge(config, self.backend)
@@ -221,6 +231,9 @@ class Accelerated(OmniLLM):
         command: dict[str, Any] = {"type": "respond", "text": text}
         if images:
             command["images"] = [image.as_image_dict() for image in images]
+        elif self.backend.acting_for and self._persisted():
+            # A conversation kept for an end user takes each message once, by its id.
+            command["command_id"] = uuid4().hex
         await self._command(command)
 
     async def simple_response(
@@ -273,6 +286,10 @@ class Accelerated(OmniLLM):
 
     async def stop_watching_video_track(self) -> None:
         """Nothing was being watched."""
+
+    def _persisted(self) -> bool:
+        """Whether the router keeps this conversation, which it names when it does."""
+        return self.session is not None and bool(self.session.conversation_id)
 
     async def _config_id(self, name: str) -> str:
         """Find the id of the stored config called `name`.
@@ -593,7 +610,11 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
     if kind == "response_delta":
         return RemoteEvent(type="agent_speech_delta", text=frame.get("text", ""))
     if kind == "responded":
-        return RemoteEvent(type="agent_speech", text=frame.get("text", ""))
+        return RemoteEvent(
+            type="agent_speech",
+            text=frame.get("text", ""),
+            pending_work=bool(frame.get("pending_work")),
+        )
     if kind == "looked_up":
         return RemoteEvent(
             type="looked_up",
@@ -612,6 +633,16 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
             skill=frame.get("skill", ""),
             text=frame.get("text", ""),
             error=frame.get("error", ""),
+            files=[
+                RemoteFile(
+                    name=str(file.get("name", "")),
+                    url=str(file.get("url", "")),
+                    mime_type=str(file.get("mime_type", "")),
+                    size=int(file.get("size") or 0),
+                )
+                for file in frame.get("files") or []
+                if isinstance(file, dict) and file.get("url")
+            ],
         )
     if kind == "turn":
         return RemoteEvent(
@@ -620,6 +651,8 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
             user_id=participant.get("user_id", ""),
             participant_id=participant.get("id", ""),
         )
+    if kind == "tool_ran":
+        return _authorization_of(frame.get("result", ""))
     if kind == "error":
         return RemoteEvent(type="error", error=frame.get("error", ""))
     if kind == "left":
@@ -627,6 +660,29 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
 
     logger.debug("no agent event for a %s frame", kind)
     return None
+
+
+def _authorization_of(result: object) -> Optional[RemoteEvent]:
+    """The login a user plugin's tool asked the end user to make, if it asked for one."""
+    if not isinstance(result, str):
+        return None
+    try:
+        answered = json.loads(result)
+    except json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(answered, dict)
+        or answered.get("status") != AUTHORIZATION_REQUIRED
+    ):
+        return None
+    attachment = answered.get("attachment")
+    if not isinstance(attachment, dict) or not attachment.get("authorize_url"):
+        return None
+    return RemoteEvent(
+        type="authorization_required",
+        text=str(attachment.get("title", "")),
+        url=str(attachment["authorize_url"]),
+    )
 
 
 def _rendered(output: Any) -> str:

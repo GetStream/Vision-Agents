@@ -37,11 +37,14 @@ type SyncAgentRequest struct {
 	Search        *string                    `json:"search,omitempty"`
 	Greeting      *string                    `json:"greeting,omitempty"`
 	Plugins       *[]string                  `json:"plugins,omitempty"`
+	UserPlugins   *[]string                  `json:"user_plugins,omitempty" doc:"Plugins each end user connects with their own account, from the conversation, the first time the agent needs one."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Harness       *Harness                   `json:"harness,omitempty"`
 	Dispatch      *AgentDispatch             `json:"dispatch,omitempty"`
-	Tags          *map[string]string         `json:"tags,omitempty"`
+	// SandboxOptions is how the sandbox is built. Left out keeps what is stored.
+	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
+	Tags           *map[string]string `json:"tags,omitempty"`
 }
 
 func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -261,6 +264,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	if complaint, ok := dispatchComplaint(body.Dispatch); !ok {
 		return complaint, false
 	}
+	if complaint, ok := sandboxOptionsComplaint(body.SandboxOptions); !ok {
+		return complaint, false
+	}
 	// Simulations are checked here, before anything is written, since a config stored under
 	// the new hash would make the next sync skip the simulations that failed.
 	named := map[string]bool{}
@@ -380,6 +386,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Plugins != nil {
 		config.Plugins = *body.Plugins
 	}
+	if body.UserPlugins != nil {
+		config.UserPlugins = *body.UserPlugins
+	}
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)
 	}
@@ -391,6 +400,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 		config.Harness, _ = harnessOf(body.Harness)
 	}
 	applyDispatch(config, body.Dispatch)
+	if body.SandboxOptions != nil {
+		config.SandboxOptions = sandboxConfigOf(body.SandboxOptions)
+	}
 	if body.Tags != nil {
 		config.Tags = *body.Tags
 	}
@@ -447,4 +459,25 @@ func (s *Server) upsertSkills(ctx context.Context, customerID, configID string, 
 		}
 	}
 	return nil
+}
+
+// SimulationRequestMode is the SimulationRequestMode schema.
+type SimulationRequestMode string
+
+// Defines values for SimulationRequestMode.
+const (
+	SimulationRequestModeAudio SimulationRequestMode = "audio"
+	SimulationRequestModeText  SimulationRequestMode = "text"
+)
+
+// Valid indicates whether the value is a known member of the SimulationRequestMode enum.
+func (e SimulationRequestMode) Valid() bool {
+	switch e {
+	case SimulationRequestModeAudio:
+		return true
+	case SimulationRequestModeText:
+		return true
+	default:
+		return false
+	}
 }

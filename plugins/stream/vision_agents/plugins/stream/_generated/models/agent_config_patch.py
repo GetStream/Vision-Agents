@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_config_patch_tags import AgentConfigPatchTags
     from ..models.agent_dispatch import AgentDispatch
+    from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
 
 
@@ -46,6 +47,8 @@ class AgentConfigPatch:
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
                 everything out in its head.
+            sandbox_options (SandboxOptions | Unset): How the sandbox is built and how long code may run in it. Only
+                meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
             search (str | Unset):
             skills (list[str] | Unset):
             speed (float | Unset): The voice's rate of delivery, 1 being its own. Zero leaves it there.
@@ -54,6 +57,7 @@ class AgentConfigPatch:
             subagent (str | Unset):
             tags (AgentConfigPatchTags | Unset):
             tts (str | Unset):
+            user_plugins (list[str] | Unset):
             video (SessionVideo | Unset):
             visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as
                 tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its
@@ -74,6 +78,7 @@ class AgentConfigPatch:
     name: str | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
+    sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
     speed: float | Unset = UNSET
@@ -82,6 +87,7 @@ class AgentConfigPatch:
     subagent: str | Unset = UNSET
     tags: AgentConfigPatchTags | Unset = UNSET
     tts: str | Unset = UNSET
+    user_plugins: list[str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
@@ -123,6 +129,10 @@ class AgentConfigPatch:
         if not isinstance(self.sandbox, Unset):
             sandbox = self.sandbox.value
 
+        sandbox_options: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sandbox_options, Unset):
+            sandbox_options = self.sandbox_options.to_dict()
+
         search = self.search
 
         skills: list[str] | Unset = UNSET
@@ -142,6 +152,10 @@ class AgentConfigPatch:
             tags = self.tags.to_dict()
 
         tts = self.tts
+
+        user_plugins: list[str] | Unset = UNSET
+        if not isinstance(self.user_plugins, Unset):
+            user_plugins = self.user_plugins
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
@@ -180,6 +194,8 @@ class AgentConfigPatch:
             field_dict["plugins"] = plugins
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
+        if sandbox_options is not UNSET:
+            field_dict["sandbox_options"] = sandbox_options
         if search is not UNSET:
             field_dict["search"] = search
         if skills is not UNSET:
@@ -196,6 +212,8 @@ class AgentConfigPatch:
             field_dict["tags"] = tags
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if user_plugins is not UNSET:
+            field_dict["user_plugins"] = user_plugins
         if video is not UNSET:
             field_dict["video"] = video
         if visible_tools is not UNSET:
@@ -211,6 +229,7 @@ class AgentConfigPatch:
             AgentConfigPatchTags,
         )
         from ..models.agent_dispatch import AgentDispatch
+        from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
@@ -258,6 +277,13 @@ class AgentConfigPatch:
         else:
             sandbox = Sandbox(_sandbox)
 
+        _sandbox_options = d.pop("sandbox_options", UNSET)
+        sandbox_options: SandboxOptions | Unset
+        if isinstance(_sandbox_options, Unset):
+            sandbox_options = UNSET
+        else:
+            sandbox_options = SandboxOptions.from_dict(_sandbox_options)
+
         search = d.pop("search", UNSET)
 
         skills = cast(list[str], d.pop("skills", UNSET))
@@ -278,6 +304,8 @@ class AgentConfigPatch:
             tags = AgentConfigPatchTags.from_dict(_tags)
 
         tts = d.pop("tts", UNSET)
+
+        user_plugins = cast(list[str], d.pop("user_plugins", UNSET))
 
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
@@ -303,6 +331,7 @@ class AgentConfigPatch:
             name=name,
             plugins=plugins,
             sandbox=sandbox,
+            sandbox_options=sandbox_options,
             search=search,
             skills=skills,
             speed=speed,
@@ -311,6 +340,7 @@ class AgentConfigPatch:
             subagent=subagent,
             tags=tags,
             tts=tts,
+            user_plugins=user_plugins,
             video=video,
             visible_tools=visible_tools,
             voice=voice,

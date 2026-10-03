@@ -33,3 +33,28 @@ plugins:
     auth: oauth
     instance_required: true
     instance_hint: The org my-domain, such as mycompany.my.salesforce.com
+  # https://mcp.sentry.dev, opened October 3, 2026. OAuth with dynamic client registration,
+  # advertised at /.well-known/oauth-protected-resource/mcp.
+  - id: sentry
+    name: Sentry
+    category: Engineering
+    description: Search issues and errors, read their events, and triage them.
+    url: https://mcp.sentry.dev/mcp
+    auth: oauth
+  # https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server, opened
+  # October 3, 2026. Google registers no client on the fly, so the deployment sets
+  # GOOGLE_CALENDAR_MCP_CLIENT_ID and GOOGLE_CALENDAR_MCP_CLIENT_SECRET from a web client in
+  # its own Cloud project, with calendarmcp.googleapis.com enabled.
+  - id: google_calendar
+    name: Google Calendar
+    category: Scheduling
+    description: Read calendars, events and free time.
+    url: https://calendarmcp.googleapis.com/mcp/v1
+    auth: oauth
+    # Read only: one of the four scopes every Calendar MCP tool accepts.
+    scopes:
+      - https://www.googleapis.com/auth/calendar.readonly
+    # Google returns a refresh token only for offline access, and again only on consent.
+    authorize_params:
+      access_type: offline
+      prompt: consent

@@ -71,6 +71,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -105,9 +110,10 @@ def sync_detailed(
     context rather than a breakdown, and value_count says so.
 
     Args:
-        from_ (datetime.datetime):
-        to (datetime.datetime):
-        tag (list[str] | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only consider requests carrying every one of these cost labels,
+            each written "key:value". Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,9 +153,10 @@ def sync(
     context rather than a breakdown, and value_count says so.
 
     Args:
-        from_ (datetime.datetime):
-        to (datetime.datetime):
-        tag (list[str] | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only consider requests carrying every one of these cost labels,
+            each written "key:value". Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,9 +191,10 @@ async def asyncio_detailed(
     context rather than a breakdown, and value_count says so.
 
     Args:
-        from_ (datetime.datetime):
-        to (datetime.datetime):
-        tag (list[str] | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only consider requests carrying every one of these cost labels,
+            each written "key:value". Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -224,9 +232,10 @@ async def asyncio(
     context rather than a breakdown, and value_count says so.
 
     Args:
-        from_ (datetime.datetime):
-        to (datetime.datetime):
-        tag (list[str] | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only consider requests carrying every one of these cost labels,
+            each written "key:value". Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

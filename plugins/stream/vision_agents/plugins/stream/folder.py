@@ -84,6 +84,25 @@ class Simulation:
 
 
 @dataclass
+class SandboxSettings:
+    """How the agent's sandbox is built and how long code may run in it.
+
+    Any of them builds an image on top of `image`, which the provider keeps, so only the
+    first sandbox from a given setup waits for the build.
+    """
+
+    image: str = ""
+    """The container image to start from, which must have Python. Empty is slim Python."""
+    setup: list[str] = field(default_factory=list)
+    """Shell commands run once on top of the image when it is built."""
+    timeout_seconds: float = 0.0
+    """How long one run of code may take, at most 30 minutes. Zero is 30 seconds."""
+    cpu: int = 0
+    memory_gb: int = 0
+    disk_gb: int = 0
+
+
+@dataclass
 class Settings:
     """What `agent.yaml` declares.
 
@@ -107,7 +126,12 @@ class Settings:
     search: str = ""
     greeting: str = ""
     sandbox: str = ""
+    sandbox_options: SandboxSettings | None = None
+    """How the sandbox is built. None when the file says nothing about it."""
     plugins: list[str] = field(default_factory=list)
+    """Catalog MCP servers the app connects once, on the dashboard, for every session."""
+    user_plugins: list[str] = field(default_factory=list)
+    """Catalog MCP servers each end user connects with their own account, in the chat."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -344,8 +368,12 @@ def _declare(path: Path) -> Settings:
             settings.greeting = _word(value)
         elif field_name == "sandbox":
             settings.sandbox = _word(value)
+        elif field_name == "sandbox_options":
+            settings.sandbox_options = _sandbox_options(path, value)
         elif field_name == "plugins":
             settings.plugins = _terms(path, field_name, value)
+        elif field_name == "user_plugins":
+            settings.user_plugins = _terms(path, field_name, value)
         elif field_name == "keyterms":
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":
@@ -415,6 +443,39 @@ def _dispatch(path: Path, value: object) -> dict[str, str]:
     if extra:
         raise ValueError(f"{path} unknown dispatch setting: {sorted(extra)[0]}")
     return {str(key): _word(item) for key, item in value.items() if _word(item)}
+
+
+def _sandbox_options(path: Path, value: object) -> SandboxSettings:
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give sandbox_options as a mapping")
+    extra = set(value) - {"image", "setup", "timeout", "cpu", "memory_gb", "disk_gb"}
+    if extra:
+        raise ValueError(f"{path} unknown sandbox_options setting: {sorted(extra)[0]}")
+    options = SandboxSettings(
+        image=_word(value.get("image")),
+        setup=_terms(path, "sandbox_options.setup", value.get("setup")),
+    )
+    timeout = value.get("timeout")
+    if timeout is not None:
+        matched = _DURATION.fullmatch(str(timeout).strip())
+        seconds = (
+            float(matched.group(1)) * _DURATION_UNITS[matched.group(2)]
+            if matched
+            else 0.0
+        )
+        if not 0 < seconds <= 30 * 60:
+            raise ValueError(
+                f"sandbox_options.timeout must be a duration up to 30m, not {timeout!r}"
+            )
+        options.timeout_seconds = seconds
+    for size in ("cpu", "memory_gb", "disk_gb"):
+        given = value.get(size, 0)
+        if type(given) is not int or given < 0:
+            raise ValueError(f"sandbox_options.{size} must be a whole number")
+    options.cpu = value.get("cpu", 0)
+    options.memory_gb = value.get("memory_gb", 0)
+    options.disk_gb = value.get("disk_gb", 0)
+    return options
 
 
 def _looks_like_agent(path: Path) -> bool:

@@ -34,7 +34,6 @@ class LlmOptions:
             providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target when
                 it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it
                 stands. A response that fails is answered by the next entry that will have it.
-                 Example: ['openai/gpt-5-mini', 'llm-fast'].
             reasoning_effort (LlmOptionsReasoningEffort | Unset): How long the model may think before answering, on the
                 models that think.
             store (bool | Unset): Keep the response on the provider so a later one can continue from it.

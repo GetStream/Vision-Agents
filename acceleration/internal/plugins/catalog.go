@@ -22,6 +22,10 @@ type Plugin struct {
 	// InstanceRequired means the URL is a template that needs a shop or org hostname.
 	InstanceRequired bool   `yaml:"instance_required"`
 	InstanceHint     string `yaml:"instance_hint"`
+	// Scopes are asked for at consent. Empty asks for none and takes the server's default.
+	Scopes []string `yaml:"scopes"`
+	// AuthorizeParams go on the authorize URL as well, for a provider that needs them.
+	AuthorizeParams map[string]string `yaml:"authorize_params"`
 }
 
 type catalogFile struct {

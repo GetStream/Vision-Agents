@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 func logCursor(id int64) string {
