@@ -106,6 +106,19 @@ class TestFolder:
         assert settings.keyterms == ["Vision Agents"]
         assert settings.tags == {"team": "support"}
 
+    def test_the_declaration_says_who_connects_each_plugin(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nplugins:\n  - sentry\nuser_plugins:\n  - google_calendar\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.plugins == ["sentry"]
+        assert settings.user_plugins == ["google_calendar"]
+
     def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "name: jean\ndescription: the receptionist\n")
@@ -115,6 +128,7 @@ class TestFolder:
         assert settings.llm == ""
         assert settings.sandbox == ""
         assert settings.plugins == []
+        assert settings.user_plugins == []
         assert settings.tags == {}
 
     def test_a_key_nobody_knows_is_refused(self, tmp_path: Path):

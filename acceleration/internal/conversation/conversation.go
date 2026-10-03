@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
@@ -71,8 +72,10 @@ type Message struct {
 	Artifacts []ArtifactAttachment `json:"artifacts,omitempty"`
 	// Files are what the agent's own code made for this reply, such as a rendered image.
 	Files []sandbox.Attachment `json:"files,omitempty"`
-	Saved bool                 `json:"saved"`
-	Error string               `json:"persistence_error,omitempty"`
+	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
+	Authorizations []plugins.Authorization `json:"authorizations,omitempty"`
+	Saved          bool                    `json:"saved"`
+	Error          string                  `json:"persistence_error,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
@@ -638,6 +641,7 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 			if msg.Role == "assistant" {
 				msg.Files = filesFromAttachments(m.Attachments)
 			}
+			msg.Authorizations = authorizationsFromAttachments(m.Attachments)
 			msg.Saved = true
 			msg.authorID = m.User.ID
 			if m.User.Name != nil {
@@ -1056,6 +1060,11 @@ func (c *Conversation) Observe(event agent.Event) {
 				m.Sources = mergeSources(m.Sources, sourcesOf(e.Result))
 				m.Artifacts = mergeArtifacts(m.Artifacts, StoredArtifacts(e.Result))
 			}
+			// Asked of whoever is in the conversation, whether or not the tool's steps are
+			// shown: a login nobody sees is one nobody can finish.
+			if found, ok := plugins.RequestedAuthorization(t.Name, e.Result); ok && e.Err == nil {
+				m.Authorizations = mergeAuthorizations(m.Authorizations, found)
+			}
 			failure := ""
 			if e.Err != nil {
 				failure = e.Err.Error()
@@ -1277,6 +1286,7 @@ func (c *Conversation) publish(m Message) {
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 		m.Files = append([]sandbox.Attachment{}, m.Files...)
+		m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
 }
@@ -1286,6 +1296,7 @@ func (c *Conversation) enqueue(m Message, create bool) {
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	m.Files = append([]sandbox.Attachment{}, m.Files...)
+	m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 	op := operation{Message: m, Create: create}
 	if m.Role == "user" {
 		op.Author = c.userAuthor()
@@ -1329,7 +1340,9 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 	if op.live != nil {
 		parts = liveParts(parts, *op.live)
 	}
-	if attachments := messageAttachments(parts, append(partialAttachments(m.Artifacts), fileAttachments(m.Files)...)); len(attachments) > 0 {
+	extra := append(partialAttachments(m.Artifacts), authorizationAttachments(m.Authorizations)...)
+	extra = append(extra, fileAttachments(m.Files)...)
+	if attachments := messageAttachments(parts, extra); len(attachments) > 0 {
 		fields["attachments"] = attachments
 	}
 	if op.Create {
@@ -1467,6 +1480,7 @@ func (c *Conversation) run() {
 				copy.Sources = append([]Source{}, m.Sources...)
 				copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 				copy.Files = append([]sandbox.Attachment{}, m.Files...)
+				copy.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 				m = &copy
 			}
 			// A change not sent yet waits for the next update; a settled reply's is stored.

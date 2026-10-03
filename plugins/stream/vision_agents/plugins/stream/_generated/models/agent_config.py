@@ -62,6 +62,7 @@ class AgentConfig:
             from a directory.
         tags (AgentConfigTags | Unset):
         tts (str | Unset):
+        user_plugins (list[str] | Unset):
         video (SessionVideo | Unset):
         visible_tools (list[str] | Unset):
         voice (str | Unset):
@@ -92,6 +93,7 @@ class AgentConfig:
     sync_hash: str | Unset = UNSET
     tags: AgentConfigTags | Unset = UNSET
     tts: str | Unset = UNSET
+    user_plugins: list[str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
@@ -164,6 +166,10 @@ class AgentConfig:
 
         tts = self.tts
 
+        user_plugins: list[str] | Unset = UNSET
+        if not isinstance(self.user_plugins, Unset):
+            user_plugins = self.user_plugins
+
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
             video = self.video.to_dict()
@@ -225,6 +231,8 @@ class AgentConfig:
             field_dict["tags"] = tags
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if user_plugins is not UNSET:
+            field_dict["user_plugins"] = user_plugins
         if video is not UNSET:
             field_dict["video"] = video
         if visible_tools is not UNSET:
@@ -317,6 +325,8 @@ class AgentConfig:
 
         tts = d.pop("tts", UNSET)
 
+        user_plugins = cast(list[str], d.pop("user_plugins", UNSET))
+
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
         if isinstance(_video, Unset):
@@ -354,6 +364,7 @@ class AgentConfig:
             sync_hash=sync_hash,
             tags=tags,
             tts=tts,
+            user_plugins=user_plugins,
             video=video,
             visible_tools=visible_tools,
             voice=voice,

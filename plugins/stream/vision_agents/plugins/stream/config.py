@@ -351,6 +351,8 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.greeting = settings.greeting
     if settings.plugins:
         body.plugins = settings.plugins
+    if settings.user_plugins:
+        body.user_plugins = settings.user_plugins
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:

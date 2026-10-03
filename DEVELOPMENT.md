@@ -74,7 +74,7 @@ across providers behind one API, plus an agent that joins a call and talks.
 | `internal/<modality>router` | Registers the providers of that modality and runs sessions |
 | `internal/agent` | The conversation loop: transcribe, answer, speak, barge-in. `streamedge/` is the WebRTC transport |
 | `internal/harness`, `internal/session` | Skills, delegation and tools around the model; agent session lifecycle |
-| `internal/api` | HTTP handlers (`generated.go` from the spec) |
+| `internal/api` | HTTP handlers, declared in Go with Huma; `api/openapi.yaml` is rendered from them |
 | `internal/store`, `migrations/` | Postgres via bun, goose migrations |
 | `internal/live` | Redis: provider health and live counters |
 | `internal/phone`, `knowledge`, `memory`, `chatlog` | Telephony, knowledge bases, memory, chat transcripts |

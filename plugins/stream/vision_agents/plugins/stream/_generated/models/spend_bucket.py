@@ -20,8 +20,7 @@ class SpendBucket:
         request_count (int):
         value (str): The modality or label value this row is for. "other" is everything outside the biggest few, and the
             empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see
-            which part.
-             Example: support.
+            which part. Example: support.
     """
 
     bucket: datetime.datetime

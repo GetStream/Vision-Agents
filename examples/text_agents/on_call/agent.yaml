@@ -1,0 +1,10 @@
+name: on_call
+description: Reads the team's Sentry issues and your own calendar, in writing.
+mode: text
+llm: llm-fast
+# The company's Sentry: connected once, on the dashboard, for every conversation.
+plugins:
+  - sentry
+# Each person's own Google Calendar: the agent asks for it in the chat when it needs it.
+user_plugins:
+  - google_calendar

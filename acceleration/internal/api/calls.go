@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // noCalls and noTranscripts are what the call paths say on a deployment that cannot
@@ -29,27 +31,27 @@ const listenerTokenValidity = time.Hour
 // session default, which is what created the call in the first place.
 const defaultCallType = "agent"
 
-// ListCalls returns the calling customer's calls, newest first.
-func (s *Server) ListCalls(ctx context.Context, request ListCallsRequestObject) (ListCallsResponseObject, error) {
+// listCalls returns the calling customer's calls, newest first.
+func (s *Server) listCalls(ctx context.Context, request *listCallsRequest) (*listCallsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListCalls401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return ListCalls400JSONResponse{badRequest(noCalls)}, nil
+		return nil, huma.Error400BadRequest(noCalls)
 	}
 
 	filter := store.CallFilter{
-		AgentID:    value(request.Params.AgentId),
-		CampaignID: value(request.Params.CampaignId),
-		Running:    value(request.Params.Running),
-		Limit:      value(request.Params.Limit),
+		AgentID:    value(request.AgentId.ptr()),
+		CampaignID: value(request.CampaignId.ptr()),
+		Running:    value(request.Running.ptr()),
+		Limit:      value(request.Limit.ptr()),
 	}
-	if request.Params.From != nil {
-		filter.From = *request.Params.From
+	if request.From.ptr() != nil {
+		filter.From = *request.From.ptr()
 	}
-	if request.Params.To != nil {
-		filter.To = *request.Params.To
+	if request.To.ptr() != nil {
+		filter.To = *request.To.ptr()
 	}
 
 	stored, err := s.store.CustomerCalls(ctx, customerID, filter)
@@ -61,27 +63,27 @@ func (s *Server) ListCalls(ctx context.Context, request ListCallsRequestObject) 
 	for _, call := range stored {
 		listed = append(listed, callOf(call))
 	}
-	return ListCalls200JSONResponse(listed), nil
+	return &listCallsResponse{Body: listed}, nil
 }
 
-// GetCall returns one call and whatever was made of it afterwards.
-func (s *Server) GetCall(ctx context.Context, request GetCallRequestObject) (GetCallResponseObject, error) {
+// getCall returns one call and whatever was made of it afterwards.
+func (s *Server) getCall(ctx context.Context, request *getCallRequest) (*getCallResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetCall401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return GetCall400JSONResponse{badRequest(noCalls)}, nil
+		return nil, huma.Error400BadRequest(noCalls)
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return GetCall404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
+		return nil, huma.Error404NotFound(unknownCall)
 	}
 	rendered := callOf(call)
 	s.attachUsed(ctx, customerID, call, &rendered)
 	s.attachUsage(ctx, customerID, call, &rendered)
-	return GetCall200JSONResponse(rendered), nil
+	return &getCallResponse{Body: rendered}, nil
 }
 
 // attachUsage totals what the call spent, once there is a total to give. A running call is
@@ -106,27 +108,27 @@ func (s *Server) attachUsage(ctx context.Context, customerID string, call store.
 	}
 }
 
-// CreateCallToken mints what a browser needs to join a call and talk to the agent.
+// createCallToken mints what a browser needs to join a call and talk to the agent.
 //
 // The token is signed here rather than fetched, so this makes no network calls, and the
 // user is not registered either: the coordinator does that when the browser connects. The
 // call type comes from the running session when there is one, because only the session
 // knows what it joined as.
-func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenRequestObject) (CreateCallTokenResponseObject, error) {
+func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRequest) (*createCallTokenResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return CreateCallToken401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return CreateCallToken400JSONResponse{badRequest(noCalls)}, nil
+		return nil, huma.Error400BadRequest(noCalls)
 	}
 	if s.streamKey == "" || s.streamSecret == "" {
-		return CreateCallToken400JSONResponse{badRequest(noStreamKeys)}, nil
+		return nil, huma.Error400BadRequest(noStreamKeys)
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return CreateCallToken404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
+		return nil, huma.Error404NotFound(unknownCall)
 	}
 
 	var wanted CallTokenRequest
@@ -159,37 +161,35 @@ func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenReq
 		return nil, err
 	}
 
-	return CreateCallToken200JSONResponse{
-		ApiKey:    s.streamKey,
+	return &createCallTokenResponse{Body: CallToken{ApiKey: s.streamKey,
 		Token:     token,
 		UserId:    userID,
 		UserName:  userName,
 		CallId:    call.CallID,
 		CallType:  callType,
-		ExpiresAt: expiresAt,
-	}, nil
+		ExpiresAt: expiresAt}}, nil
 }
 
-// CreateChatToken mints what a browser needs to read an agent's conversation.
+// createChatToken mints what a browser needs to read an agent's conversation.
 //
 // The transcript is already a Stream Chat channel, so a client that can reach it needs no
 // transcript API and sees a reply while it is still being written. Reading it means being
 // in it: the reader is added to the channel here, because a token alone opens nothing.
-func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenRequestObject) (CreateChatTokenResponseObject, error) {
+func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRequest) (*createChatTokenResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return CreateChatToken401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.streamKey == "" || s.streamSecret == "" {
-		return CreateChatToken400JSONResponse{badRequest(noStreamKeys)}, nil
+		return nil, huma.Error400BadRequest(noStreamKeys)
 	}
 	if request.Body == nil {
-		return CreateChatToken400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest("a request body is required")
 	}
 
 	agentID := strings.TrimSpace(request.Body.AgentId)
 	if agentID == "" {
-		return CreateChatToken400JSONResponse{badRequest("an agent id is required, since it names the channel")}, nil
+		return nil, huma.Error400BadRequest("an agent id is required, since it names the channel")
 	}
 
 	userID := value(request.Body.UserId)
@@ -243,34 +243,32 @@ func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenReq
 		return nil, err
 	}
 
-	return CreateChatToken200JSONResponse{
-		ApiKey:      s.streamKey,
+	return &createChatTokenResponse{Body: ChatToken{ApiKey: s.streamKey,
 		Token:       token,
 		UserId:      userID,
 		UserName:    userName,
 		ChannelType: chatlog.ChannelType,
 		ChannelId:   agentID,
-		ExpiresAt:   expiresAt,
-	}, nil
+		ExpiresAt:   expiresAt}}, nil
 }
 
-// GetCallTranscript returns what was said, read back out of the channel it was written to
+// getCallTranscript returns what was said, read back out of the channel it was written to
 // while the call was happening.
-func (s *Server) GetCallTranscript(ctx context.Context, request GetCallTranscriptRequestObject) (GetCallTranscriptResponseObject, error) {
+func (s *Server) getCallTranscript(ctx context.Context, request *getCallTranscriptRequest) (*getCallTranscriptResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetCallTranscript401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return GetCallTranscript400JSONResponse{badRequest(noCalls)}, nil
+		return nil, huma.Error400BadRequest(noCalls)
 	}
 	if s.transcripts == nil {
-		return GetCallTranscript400JSONResponse{badRequest(noTranscripts)}, nil
+		return nil, huma.Error400BadRequest(noTranscripts)
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return GetCallTranscript404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
+		return nil, huma.Error404NotFound(unknownCall)
 	}
 
 	said, err := s.transcripts.Transcript(ctx, call.AgentID)
@@ -288,26 +286,26 @@ func (s *Server) GetCallTranscript(ctx context.Context, request GetCallTranscrip
 			CreatedAt: line.At,
 		})
 	}
-	return GetCallTranscript200JSONResponse(messages), nil
+	return &getCallTranscriptResponse{Body: messages}, nil
 }
 
-// GetCallEvents returns what the conversation decided on one call, oldest first.
-func (s *Server) GetCallEvents(ctx context.Context, request GetCallEventsRequestObject) (GetCallEventsResponseObject, error) {
+// getCallEvents returns what the conversation decided on one call, oldest first.
+func (s *Server) getCallEvents(ctx context.Context, request *getCallEventsRequest) (*getCallEventsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetCallEvents401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return GetCallEvents400JSONResponse{badRequest(noCalls)}, nil
+		return nil, huma.Error400BadRequest(noCalls)
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return GetCallEvents404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
+		return nil, huma.Error404NotFound(unknownCall)
 	}
 
 	stored, err := s.store.CallEvents(
-		ctx, customerID, call.CallID, call.StartedAt, call.EndedAt, value(request.Params.Limit))
+		ctx, customerID, call.CallID, call.StartedAt, call.EndedAt, value(request.Limit.ptr()))
 	if err != nil {
 		return nil, err
 	}
@@ -324,23 +322,23 @@ func (s *Server) GetCallEvents(ctx context.Context, request GetCallEventsRequest
 			LatencyMs:   decided.LatencyMs,
 		})
 	}
-	return GetCallEvents200JSONResponse(decisions), nil
+	return &getCallEventsResponse{Body: decisions}, nil
 }
 
-// GetCallTimeline returns the call as it unfolded: each exchange with what was said in it
+// getCallTimeline returns the call as it unfolded: each exchange with what was said in it
 // and what the caller waited for it.
-func (s *Server) GetCallTimeline(ctx context.Context, request GetCallTimelineRequestObject) (GetCallTimelineResponseObject, error) {
+func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRequest) (*getCallTimelineResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetCallTimeline401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.store == nil {
-		return GetCallTimeline400JSONResponse{badRequest(noCalls)}, nil
+		return nil, huma.Error400BadRequest(noCalls)
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return GetCallTimeline404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
+		return nil, huma.Error404NotFound(unknownCall)
 	}
 
 	turns, err := s.store.CallTurns(ctx, customerID, call.AgentID, call.StartedAt, call.EndedAt)
@@ -363,7 +361,7 @@ func (s *Server) GetCallTimeline(ctx context.Context, request GetCallTimelineReq
 		}
 	}
 
-	return GetCallTimeline200JSONResponse(timelineOf(turns, said, models)), nil
+	return &getCallTimelineResponse{Body: timelineOf(turns, said, models)}, nil
 }
 
 // timelineOf pairs each exchange with the lines said during it.
@@ -608,4 +606,345 @@ func (s *Server) candidateNames(ctx context.Context, modality routing.Modality, 
 		names = append(names, candidate.Config.Name())
 	}
 	return names
+}
+
+// registerCalls declares the operations served in calls.go.
+func (s *Server) registerCalls(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listCalls",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/calls",
+		Summary:     "The calls the calling customer has run",
+		Description: "A session lives in memory and is gone when the process is, so a call is recorded as it " +
+			"starts and again as it ends. This is what answers what happened yesterday, and what is " +
+			"happening now after a restart.",
+		// Declared rather than read off the input, so the default is documented without
+		// being filled in: the handler tells a parameter left out from one sent.
+		Parameters: []*huma.Param{
+			{Name: "running", In: "query", Description: "Only calls that have not ended.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
+			{Name: "limit", In: "query", Schema: &huma.Schema{Type: huma.TypeInteger, Default: 50}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The customer's calls, newest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listCalls)
+	huma.Register(api, huma.Operation{
+		OperationID: "getCall",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/calls/{id}",
+		Summary:     "One call, with whatever was made of it afterwards",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The call"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getCall)
+	huma.Register(api, huma.Operation{
+		OperationID: "getCallTranscript",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/calls/{id}/transcript",
+		Summary:     "What was said on a call",
+		Description: "Read back from the chat channel the conversation was written to as it happened, rather " +
+			"than copied into a second place that could disagree with it.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The conversation, oldest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getCallTranscript)
+	huma.Register(api, huma.Operation{
+		OperationID: "getCallTimeline",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/calls/{id}/timeline",
+		Summary:     "The call as it unfolded, said and measured together",
+		Description: "Each exchange with what was said in it and what it cost the caller in waiting: how long " +
+			"the answer took to start, how much the agent spoke, and whether it was talked over.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The exchanges, oldest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getCallTimeline)
+	huma.Register(api, huma.Operation{
+		OperationID: "getCallEvents",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/calls/{id}/events",
+		Summary:     "What the conversation decided, and why",
+		Description: "A timeline says what a call cost the caller in waiting. This says why the call went the " +
+			"way it did: why the agent waited rather than answering, why it read something as not " +
+			"meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind " +
+			"the conversation, which is the only thing that explains a call that surprised somebody. " +
+			"A call still running reports the same decisions live on the session socket.",
+		// Declared rather than read off the input, so the default is documented without
+		// being filled in: the handler tells a parameter left out from one sent.
+		Parameters: []*huma.Param{
+			{Name: "limit", In: "query", Description: "How many to return, oldest first.", Schema: &huma.Schema{Type: huma.TypeInteger, Default: 1000}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The judgements, oldest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getCallEvents)
+	huma.Register(api, huma.Operation{
+		OperationID: "createCallToken",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/calls/{id}/token",
+		Summary:     "What a browser needs to join this call",
+		Description: "Mints a Stream token so a person can join the call from a browser and talk to the " +
+			"agent, and says which call to join with it. The secret stays here: the browser is " +
+			"handed a token that expires, never the key that signs one.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The credentials, and the call they are for"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.createCallToken)
+	huma.Register(api, huma.Operation{
+		OperationID: "createChatToken",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/chat-token",
+		Summary:     "What a browser needs to read an agent's conversation",
+		Description: "An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a " +
+			"client that can read that channel needs no transcript API. This mints the token to read " +
+			"it with, and adds the reader to the channel, since a conversation they are not a member " +
+			"of is one they cannot watch.\n" +
+			"The secret stays here, the same as for a call token: the browser is handed something " +
+			"that expires.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The credentials, and the channel they are for"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.createChatToken)
+}
+
+type listCallsRequest struct {
+	AgentId    optionalParam[string]    `query:"agent_id" doc:"Narrow to one agent."`
+	CampaignId optionalParam[string]    `query:"campaign_id" doc:"Narrow to the calls one campaign placed."`
+	Running    optionalParam[bool]      `query:"running" doc:"Only calls that have not ended."`
+	From       optionalParam[time.Time] `query:"from" doc:"Only calls that started at or after this, inclusive."`
+	To         optionalParam[time.Time] `query:"to" doc:"Only calls that started before this, exclusive."`
+	Limit      optionalParam[int]       `query:"limit"`
+}
+
+type listCallsResponse struct {
+	Body []Call `nullable:"false"`
+}
+
+type getCallRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getCallResponse struct {
+	Body Call
+}
+
+type getCallTranscriptRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getCallTranscriptResponse struct {
+	Body []TranscriptMessage `nullable:"false"`
+}
+
+type getCallTimelineRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getCallTimelineResponse struct {
+	Body []TimelineEntry `nullable:"false"`
+}
+
+type getCallEventsRequest struct {
+	Id    string             `path:"id" doc:"The resource, as returned when it was created."`
+	Limit optionalParam[int] `query:"limit" doc:"How many to return, oldest first."`
+}
+
+type getCallEventsResponse struct {
+	Body []CallEvent `nullable:"false"`
+}
+
+type createCallTokenRequest struct {
+	Id   string `path:"id" doc:"The resource, as returned when it was created."`
+	Body *CallTokenRequest
+}
+
+type createCallTokenResponse struct {
+	Body CallToken
+}
+
+type createChatTokenRequest struct {
+	Body *ChatTokenRequest `required:"true"`
+}
+
+type createChatTokenResponse struct {
+	Body ChatToken
+}
+
+// CallDirection is the CallDirection schema.
+type CallDirection string
+
+// Defines values for CallDirection.
+const (
+	Inbound  CallDirection = "inbound"
+	Outbound CallDirection = "outbound"
+)
+
+// Valid indicates whether the value is a known member of the CallDirection enum.
+func (e CallDirection) Valid() bool {
+	switch e {
+	case Inbound:
+		return true
+	case Outbound:
+		return true
+	default:
+		return false
+	}
+}
+
+// CallToken is the CallToken schema.
+type CallToken struct {
+	ApiKey    string    `json:"api_key" doc:"The Stream app the call is in, which the browser SDK joins against."`
+	CallId    string    `json:"call_id" doc:"The Stream call to join, which is not the id this call is held by here."`
+	CallType  string    `json:"call_type"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Token     string    `json:"token"`
+	UserId    string    `json:"user_id"`
+	UserName  string    `json:"user_name"`
+}
+
+// CallTokenRequest is the CallTokenRequest schema.
+type CallTokenRequest struct {
+	UserId   *string `json:"user_id,omitempty" doc:"Who the browser joins as. Somebody watching a call is not the agent, so this defaults to a listener of its own rather than to the agent's user."`
+	UserName *string `json:"user_name,omitempty" doc:"The name the other participants see. Defaults to the user id."`
+}
+
+// CallUsage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
+type CallUsage struct {
+	CachedInputTokens int64 `json:"cached_input_tokens" doc:"The part of those prompts a provider served from its own cache."`
+	CostMicros        int64 `json:"cost_micros" doc:"Millionths of a dollar, priced from the providers' configured rates."`
+	InputTokens       int64 `json:"input_tokens" doc:"Every prompt the models read, the cached part included."`
+	OutputTokens      int64 `json:"output_tokens" doc:"Everything the models generated, reasoning included."`
+	Requests          int64 `json:"requests" doc:"How many calls to a model it took, transcription and speech included."`
+}
+
+func (*CallUsage) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it."
+	return schema
+}
+
+// ChatToken is the ChatToken schema.
+type ChatToken struct {
+	ApiKey      string    `json:"api_key" doc:"The Stream app the channel is in, which the browser SDK connects to."`
+	ChannelId   string    `json:"channel_id" doc:"The channel holding the conversation, which is the agent id."`
+	ChannelType string    `json:"channel_type" doc:"Always agent, which is the type a conversation is written to."`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Token       string    `json:"token"`
+	UserId      string    `json:"user_id"`
+	UserName    string    `json:"user_name"`
+}
+
+// ChatTokenRequest is the ChatTokenRequest schema.
+type ChatTokenRequest struct {
+	AgentId  string  `json:"agent_id" doc:"Whose conversation to read. This is the session's agent id, which is what names the channel it is written to."`
+	UserId   *string `json:"user_id,omitempty" doc:"Who the browser reads as. Somebody watching is not the agent, so this defaults to a reader of its own rather than to the agent's user."`
+	UserName *string `json:"user_name,omitempty" doc:"The name shown against anything they write. Defaults to the user id."`
+}
+
+// DecisionKind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
+type DecisionKind string
+
+// Defines values for DecisionKind.
+const (
+	DecisionKindAnswer      DecisionKind = "answer"
+	DecisionKindAsk         DecisionKind = "ask"
+	DecisionKindBackchannel DecisionKind = "backchannel"
+	DecisionKindCompact     DecisionKind = "compact"
+	DecisionKindDelegate    DecisionKind = "delegate"
+	DecisionKindFail        DecisionKind = "fail"
+	DecisionKindIgnore      DecisionKind = "ignore"
+	DecisionKindInterrupt   DecisionKind = "interrupt"
+	DecisionKindQueue       DecisionKind = "queue"
+	DecisionKindSettle      DecisionKind = "settle"
+	DecisionKindShorten     DecisionKind = "shorten"
+	DecisionKindSupersede   DecisionKind = "supersede"
+	DecisionKindWait        DecisionKind = "wait"
+)
+
+// Valid indicates whether the value is a known member of the DecisionKind enum.
+func (e DecisionKind) Valid() bool {
+	switch e {
+	case DecisionKindAnswer:
+		return true
+	case DecisionKindAsk:
+		return true
+	case DecisionKindBackchannel:
+		return true
+	case DecisionKindCompact:
+		return true
+	case DecisionKindDelegate:
+		return true
+	case DecisionKindFail:
+		return true
+	case DecisionKindIgnore:
+		return true
+	case DecisionKindInterrupt:
+		return true
+	case DecisionKindQueue:
+		return true
+	case DecisionKindSettle:
+		return true
+	case DecisionKindShorten:
+		return true
+	case DecisionKindSupersede:
+		return true
+	case DecisionKindWait:
+		return true
+	default:
+		return false
+	}
+}
+
+func (DecisionKind) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "DecisionKind", "What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.", "ask", "wait", "ignore", "answer", "queue", "interrupt", "shorten", "backchannel", "supersede", "compact", "delegate", "settle", "fail")
+}
+
+// ModelCallTiming is the ModelCallTiming schema.
+type ModelCallTiming struct {
+	DurationMs   *float64  `json:"duration_ms,omitempty" doc:"Request to completed response or failed create."`
+	InputTokens  *int64    `json:"input_tokens,omitempty"`
+	Model        string    `json:"model"`
+	OperationId  *string   `json:"operation_id,omitempty" doc:"Response ID for this operation; retries can share an ID."`
+	OutputTokens *int64    `json:"output_tokens,omitempty"`
+	Provider     string    `json:"provider"`
+	Purpose      *string   `json:"purpose,omitempty" doc:"reply, flow or subagent."`
+	StartedAt    time.Time `json:"started_at"`
+	Success      bool      `json:"success"`
+	TtftMs       *float64  `json:"ttft_ms,omitempty" doc:"Request to first token."`
+}
+
+// TimelineEntry is the TimelineEntry schema.
+type TimelineEntry struct {
+	AudioOutMs         *float64           `json:"audio_out_ms,omitempty" doc:"How much the agent spoke."`
+	CadenceMs          *float64           `json:"cadence_ms,omitempty" doc:"Last transcript revision to a stable turn ready for the flow controller."`
+	DecisionMs         *float64           `json:"decision_ms,omitempty" doc:"Stable turn to the main model request, including flow and queueing."`
+	Heard              *string            `json:"heard,omitempty" doc:"What the caller said, when it can be matched to this exchange."`
+	Interrupted        *bool              `json:"interrupted,omitempty" doc:"Whether the caller talked over the answer."`
+	LlmTtftMs          *float64           `json:"llm_ttft_ms,omitempty" doc:"The wait between asking the model and its first token." nullable:"true"`
+	ModelCalls         *[]ModelCallTiming `json:"model_calls,omitempty" doc:"Individual model requests for this turn, including flow and delegated work."`
+	ModelToFirstTextMs *float64           `json:"model_to_first_text_ms,omitempty" doc:"Main model request to the first text delta admitted to the voice pipeline."`
+	RoundtripMs        *float64           `json:"roundtrip_ms,omitempty" doc:"Last transcript revision to first audio published; includes cadence settling."`
+	Said               *string            `json:"said,omitempty" doc:"What the agent answered."`
+	SpeechEndToAudioMs *float64           `json:"speech_end_to_audio_ms,omitempty" doc:"Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback." nullable:"true"`
+	StartedAt          time.Time          `json:"started_at"`
+	SttLatencyMs       *float64           `json:"stt_latency_ms,omitempty" doc:"The provider's decode time for the transcript that settled the turn." nullable:"true"`
+	TextToTtsMs        *float64           `json:"text_to_tts_ms,omitempty" doc:"First text delta to the first TTS request."`
+	TtsToAudioMs       *float64           `json:"tts_to_audio_ms,omitempty" doc:"First TTS request to the first audio chunk published to the edge."`
+	TtsTtfbMs          *float64           `json:"tts_ttfb_ms,omitempty" doc:"The wait between sending the first sentence and the first audio." nullable:"true"`
+	TurnId             string             `json:"turn_id"`
+}
+
+// TranscriptMessage is the TranscriptMessage schema.
+type TranscriptMessage struct {
+	Agent     *bool     `json:"agent,omitempty" doc:"Whether the agent said it rather than somebody it was talking to. It is what the line was stored as, so it holds however the agent was named."`
+	CreatedAt time.Time `json:"created_at"`
+	Name      *string   `json:"name,omitempty" doc:"That speaker's display name, when they have one."`
+	Speaker   string    `json:"speaker" doc:"Who said it, the agent under its own user id."`
+	Text      string    `json:"text"`
 }

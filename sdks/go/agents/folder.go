@@ -159,12 +159,15 @@ type Settings struct {
 	Greeting string  `yaml:"greeting"`
 	Sandbox  string  `yaml:"sandbox"`
 	// SandboxOptions is how the sandbox is built and how long code may run in it.
-	SandboxOptions *SandboxSettings  `yaml:"sandbox_options"`
-	Plugins        []string          `yaml:"plugins"`
-	Keyterms       []string          `yaml:"keyterms"`
-	Tags           map[string]string `yaml:"tags"`
-	Video          *VideoSettings    `yaml:"video"`
-	Dispatch       *DispatchSettings `yaml:"dispatch"`
+	SandboxOptions *SandboxSettings `yaml:"sandbox_options"`
+	Plugins        []string         `yaml:"plugins"`
+	// UserPlugins are the plugins each end user connects with their own account, in the
+	// conversation, rather than the app once for everybody.
+	UserPlugins []string          `yaml:"user_plugins"`
+	Keyterms    []string          `yaml:"keyterms"`
+	Tags        map[string]string `yaml:"tags"`
+	Video       *VideoSettings    `yaml:"video"`
+	Dispatch    *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`

@@ -16,21 +16,17 @@ T = TypeVar("T", bound="KnowledgeUrlRequest")
 class KnowledgeUrlRequest:
     """
     Attributes:
-        namespace (str): The knowledge base to fill, which is what a config's knowledge_namespace names.
-             Example: docs.
+        namespace (str): The knowledge base to fill, which is what a config's knowledge_namespace names. Example: docs.
         url (str): The page to read. It must be http or https: this is handed to a crawler and then used to key the
-            passages it becomes.
-             Example: https://example.com/pricing.
+            passages it becomes. Example: https://example.com/pricing.
         description (str | Unset): What the page is, for a reader of the subscription. Optional, and kept as written: it
-            says why this page is subscribed to, which a crawler cannot know.
-             Example: What each plan includes and where the limits are..
+            says why this page is subscribed to, which a crawler cannot know. Example: What each plan includes and where the
+            limits are..
         refresh_hours (int | Unset): How often the page is read again on its own, in hours. Omit it, or send zero, and
             the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces
-            it.
-             Example: 24.
+            it. Example: 24.
         title (str | Unset): What to call the page, for a reader of the subscription. Optional: a page that is not named
-            here is named by what it called itself when it was last read.
-             Example: Pricing.
+            here is named by what it called itself when it was last read. Example: Pricing.
     """
 
     namespace: str

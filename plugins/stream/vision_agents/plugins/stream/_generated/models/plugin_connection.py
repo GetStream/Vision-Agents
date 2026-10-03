@@ -15,17 +15,18 @@ T = TypeVar("T", bound="PluginConnection")
 
 @_attrs_define
 class PluginConnection:
-    """A catalog plugin as this agent has it, including whether it is logged in.
+    """A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has
+    logged into yet is not_connected, which is what a dashboard reminds the app to finish.
 
-    Attributes:
-        name (str):
-        plugin_id (str):
-        status (PluginConnectionStatus):
-        category (str | Unset):
-        description (str | Unset):
-        instance_hint (str | Unset):
-        instance_required (bool | Unset):
-        instance_url (str | Unset):
+        Attributes:
+            name (str):
+            plugin_id (str):
+            status (PluginConnectionStatus):
+            category (str | Unset):
+            description (str | Unset):
+            instance_hint (str | Unset):
+            instance_required (bool | Unset):
+            instance_url (str | Unset):
     """
 
     name: str

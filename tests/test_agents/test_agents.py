@@ -1302,6 +1302,22 @@ class TestAgent:
             "Saved to renders/teapot.png.",
         ]
 
+    async def test_a_reply_that_runs_tools_is_followed_until_it_answers(self):
+        # A model that calls a tool first replies with nothing but the call. Ending there
+        # would close the conversation before the tool's answer came back.
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.chat():
+            written = await asking(agent, llm, "what is broken")
+            await llm.report(RemoteEvent(type="agent_speech", pending_work=True))
+            await llm.report(
+                RemoteEvent(type="agent_speech", text="Two issues are new.")
+            )
+            seen = await asyncio.wait_for(written, timeout=5)
+
+        assert [event.text for event in seen] == ["", "Two issues are new."]
+
     async def test_a_conversation_that_ends_stops_whoever_is_reading_it(self):
         # A session closed underneath the reader must not leave it waiting for an answer
         # that is never coming.

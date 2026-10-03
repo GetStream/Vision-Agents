@@ -24,8 +24,7 @@ class BuyNumberRequest:
         vendor (str):  Example: twilio.
         country (str | Unset): The country the number was offered from, as the search reported it. Most vendors buy by
             number alone; the few that buy out of a country's inventory need this, and it cannot be guessed back out of the
-            number.
-             Example: US.
+            number. Example: US.
         tags (BuyNumberRequestTags | Unset): Cost labels carried onto the purchase's request row.
     """
 

@@ -43,12 +43,11 @@ class StsOptions:
             overwrites (StsOptionsOverwrites | Unset): Settings for one provider that this vocabulary has no word for, keyed
                 by provider name, for example {"openai": {"eagerness": "high"}}. The provider named parses its own block and
                 refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
-                 Example: {'openai': {'eagerness': 'high'}}.
+                Example: {'openai': {'eagerness': 'high'}}.
             prefix_padding_ms (int | Unset): How much audio before the detected speech is kept, for a silence timer.
             providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target when
                 it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it
                 stands.
-                 Example: ['openai', 'sts-fast'].
             silence_ms (int | Unset): How long a pause ends the turn, for a silence timer.
             target (str | Unset): A provider/model or a capability shortcut. Example: sts-fast.
             text (bool | Unset): The session will inject typed turns.
@@ -57,8 +56,7 @@ class StsOptions:
                 reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default.
                 Only some models read the words, so semantic is a term.
             voice (str | Unset): The vendor's own name for a voice, such as marin at OpenAI or Kore at Google. None of these
-                models takes one of your own voices, so the name is passed on as given rather than looked up.
-                 Example: marin.
+                models takes one of your own voices, so the name is passed on as given rather than looked up. Example: marin.
     """
 
     data_policy: DataPolicy | Unset = UNSET

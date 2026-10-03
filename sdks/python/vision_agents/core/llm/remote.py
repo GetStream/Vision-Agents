@@ -24,6 +24,7 @@ RemoteEventType = Literal[
     "looked_up",
     "delegated",
     "task_settled",
+    "authorization_required",
     "error",
     "ended",
 ]
@@ -95,6 +96,8 @@ class RemoteEvent:
         error: The failure, for `error` events and for work that came back as one.
         files: What the work's code made, for `task_settled`, uploaded where the person
             sees the reply.
+        url: What the user opens to connect an account, for `authorization_required`,
+            whose `text` says what it connects.
     """
 
     type: RemoteEventType
@@ -108,6 +111,7 @@ class RemoteEvent:
     documents: int = 0
     error: str = ""
     files: list[RemoteFile] = field(default_factory=list)
+    url: str = ""
 
 
 @dataclass

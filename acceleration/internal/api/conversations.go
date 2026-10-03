@@ -3,46 +3,98 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+
+	"github.com/danielgtaylor/huma/v2"
 )
 
-func (s *Server) GetConversationMessages(ctx context.Context, req GetConversationMessagesRequestObject) (GetConversationMessagesResponseObject, error) {
+func (s *Server) getConversationMessages(ctx context.Context, req *getConversationMessagesRequest) (*getConversationMessagesResponse, error) {
 	owner, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetConversationMessages401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.sessions == nil {
-		return GetConversationMessages400JSONResponse{badRequest(noSessions)}, nil
+		return nil, huma.Error400BadRequest(noSessions)
 	}
 	service, err := s.sessions.Conversations()
 	if err != nil {
-		return GetConversationMessages400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
-	page, err := service.HistoryForCaller(ctx, owner, req.Params.AgentId, req.Cid, value(req.Params.Before), CallerFrom(ctx).UserID)
+	page, err := service.HistoryForCaller(ctx, owner, req.AgentId, req.Cid, value(req.Before.ptr()), CallerFrom(ctx).UserID)
 	if err != nil {
-		return GetConversationMessages400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 	b, _ := json.Marshal(page)
-	var result GetConversationMessages200JSONResponse
+	var result map[string]any
 	_ = json.Unmarshal(b, &result)
-	return result, nil
+	return &getConversationMessagesResponse{Body: result}, nil
 }
 
-// GetConversationCommand answers for a command whose session is gone, without opening one.
-func (s *Server) GetConversationCommand(ctx context.Context, req GetConversationCommandRequestObject) (GetConversationCommandResponseObject, error) {
+// getConversationCommand answers for a command whose session is gone, without opening one.
+func (s *Server) getConversationCommand(ctx context.Context, req *getConversationCommandRequest) (*getConversationCommandResponse, error) {
 	owner, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetConversationCommand401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if s.sessions == nil {
-		return GetConversationCommand404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
+		return nil, huma.Error404NotFound(noSessions)
 	}
 	service, err := s.sessions.Conversations()
 	if err != nil {
-		return GetConversationCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+		return nil, huma.Error404NotFound(unknownCommand)
 	}
-	receipt, err := service.CommandForCaller(ctx, owner, req.Params.AgentId, req.Cid, CallerFrom(ctx).UserID, req.CommandId)
+	receipt, err := service.CommandForCaller(ctx, owner, req.AgentId, req.Cid, CallerFrom(ctx).UserID, req.CommandId)
 	if err != nil {
-		return GetConversationCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+		return nil, huma.Error404NotFound(unknownCommand)
 	}
-	return GetConversationCommand200JSONResponse(receiptOf(receipt)), nil
+	return &getConversationCommandResponse{Body: receiptOf(receipt)}, nil
+}
+
+// registerConversations declares the operations served in conversations.go.
+func (s *Server) registerConversations(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getConversationMessages",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/conversations/{cid}/messages",
+		Summary:     "Read a persistent text conversation",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Conversation messages, oldest first, with an older-page cursor"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.getConversationMessages)
+	huma.Register(api, huma.Operation{
+		OperationID: "getConversationCommand",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/conversations/{cid}/commands/{command_id}",
+		Summary:     "What a command in this conversation ended as",
+		Description: "Reads one command's receipt from the conversation's own durable record. It opens " +
+			"nothing and starts nothing, so a client whose stop found no session left to reach " +
+			"reconciles that command here rather than reopening a session to ask about it.\n" +
+			"A command still running is reported as it stands; the session holding it is where it " +
+			"can be stopped.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The command's current receipt"},
+		},
+		Errors: []int{http.StatusUnauthorized, http.StatusNotFound},
+	}, s.getConversationCommand)
+}
+
+type getConversationMessagesRequest struct {
+	Cid     string                `path:"cid"`
+	AgentId string                `query:"agent_id" required:"true"`
+	Before  optionalParam[string] `query:"before"`
+}
+
+type getConversationCommandRequest struct {
+	Cid       string `path:"cid"`
+	CommandId string `path:"command_id" doc:"The client's own command id, as sent when the command was submitted."`
+	AgentId   string `query:"agent_id" required:"true"`
+}
+
+type getConversationCommandResponse struct {
+	Body CommandReceipt
+}
+
+type getConversationMessagesResponse struct {
+	Body map[string]any
 }
