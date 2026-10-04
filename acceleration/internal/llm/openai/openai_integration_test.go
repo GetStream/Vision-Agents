@@ -29,7 +29,7 @@ func TestOpenAIIntegrationSuite(t *testing.T) {
 }
 
 func (s *OpenAIIntegrationSuite) TestEveryGPT6ModelAnswersAtItsDefaultEffort() {
-	for _, model := range []string{"gpt-6-luna", "gpt-6-sol", "gpt-6-astra"} {
+	for _, model := range []string{"gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"} {
 		s.Run(model, func() {
 			provider, err := New(Options{Model: model})
 			s.Require().NoError(err)
