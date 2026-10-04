@@ -600,6 +600,75 @@ stt:
       price:
         per_audio_hour: 0.39
 
+    # AssemblyAI's Universal-3.6 Pro Realtime, launched 2026-09-29 for voice agents. It
+    # switches between its 32 languages mid-sentence and decides where a turn ended from
+    # the words rather than from a silence alone. No benchmark line: Artificial Analysis
+    # have not measured it yet. Coval's streaming board put it first in October 2026, at
+    # 2.2% WER and 138 ms to the final segment.
+    #
+    # The languages are the ones the socket accepts for language_codes, which is what a
+    # request's languages are sent as. A call runs on the max_accuracy preset: the
+    # server's own ends a turn at a short pause mid-sentence more often than not, and an
+    # overwrite of mode picks another.
+    #
+    # $0.45 an hour, with keyterms included rather than an add-on. It is billed by how long
+    # the socket was open rather than by audio, which is why Close terminates the session
+    # rather than leaving it to time out.
+    - provider: assemblyai
+      model: universal-3-6-pro
+      description: "AssemblyAI's Universal-3.6 Pro: switches between 32 languages mid-sentence and finds the turn's end from the words."
+      languages:
+        [
+          af,
+          ar,
+          ca,
+          da,
+          de,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fr,
+          gl,
+          he,
+          hi,
+          it,
+          ja,
+          ko,
+          mr,
+          nl,
+          nn,
+          no,
+          pt,
+          ro,
+          ru,
+          sv,
+          tr,
+          ur,
+          vi,
+          xh,
+          yue,
+          zh,
+          zu,
+        ]
+      realtime: true
+      tier: low-latency
+      # keyterms_prompt takes a hundred terms of up to fifty characters, and
+      # max_turn_silence is the silence after which a turn ends whatever its words say,
+      # which is what asking for silence endpointing asks for. The model can also diarize
+      # (speaker_labels, capped by max_speakers at ten), detect the language, redact and
+      # filter profanity, and none of those is declared, because nothing here sends them.
+      supports: [keyterms, endpointing]
+      # Self-serve accounts are in the model improvement program until an admin on a paid
+      # plan opts out in Data Controls, and only an opted-out account gets zero retention
+      # for streaming. Opting out makes this "no" and none.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+      price:
+        per_audio_hour: 0.45
+
     # Nova-3 on the batch listen endpoint, which is the recording path rather than the
     # live one. It is not a Flux model: Flux exists to decide where a turn ended while
     # somebody is still talking, and a recording has the whole file in front of it, which

@@ -420,6 +420,15 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### AssemblyAI's Universal-3.6 Pro Realtime as a transcription model
+
+The router now streams to `assemblyai/universal-3-6-pro`, reachable by name or by any
+shortcut whose terms it satisfies. It needs `ASSEMBLYAI_API_KEY`, covers 32 languages with
+code-switching, and declares `keyterms` and `endpointing`; `silence_ms` is its
+`max_turn_silence`. A call runs on the `max_accuracy` preset, because the server's own
+`balanced` one ends a turn at a short pause mid-sentence. `overwrites` takes `mode`
+(`min_latency`, `balanced`, `max_accuracy`), `min_turn_silence` and `max_turn_silence`.
+
 ### Sentry and Google Calendar plugins, and plugins each user connects in the chat
 
 The plugin catalog has `sentry` and `google_calendar`. `agent.yaml` names `user_plugins`
