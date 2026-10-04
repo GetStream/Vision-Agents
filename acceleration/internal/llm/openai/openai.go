@@ -54,7 +54,7 @@ const cacheTTL = 30 * time.Minute
 // asked for together. Anything older is offered the smaller set it answers to, which is
 // the whole reason this is a table rather than one list. GPT-6 keeps the 5.6 ladder, except
 // Astra and GPT-6.1 Sol, which answer none with a 400, so the least thinking they can be
-// asked for is low.
+// asked for is low. GPT-6.1 Sol also stops at xhigh and answers max with a 400.
 var modelCapabilities = map[string]llm.Capabilities{
 	"gpt-6": {
 		ReasoningEfforts: []string{"none", "low", "medium", "high", "xhigh", "max"},
@@ -75,7 +75,7 @@ var modelCapabilities = map[string]llm.Capabilities{
 		CacheTTLs:        []time.Duration{cacheTTL},
 	},
 	"gpt-6.1-sol": {
-		ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+		ReasoningEfforts: []string{"low", "medium", "high", "xhigh"},
 		DefaultEffort:    "low",
 		Verbosities:      []string{"low", "medium", "high"},
 		Store:            true,

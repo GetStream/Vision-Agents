@@ -2136,9 +2136,9 @@ llm:
 
     # GPT-6.1 Sol is GPT-6 Sol's direct upgrade at the same input and output price, and what
     # llm-thinking prefers, so this is the model the skills run on unless it is down.
-    # Artificial Analysis score it 52 at max effort, 1 below GPT-6 Astra at a fifth of the
-    # price. It cannot be told not to think: none is a 400, so the provider asks for low when
-    # a request names no effort. Cache writes are $2.50 per million, and a prompt over 272k
+    # Artificial Analysis score it 51 at xhigh, 1 below GPT-6 Astra at xhigh, at a fifth of
+    # the price. Its efforts run from low to xhigh: none and max are a 400, so the provider
+    # asks for low when a request names no effort. Cache writes are $2.50 per million, and a prompt over 272k
     # input tokens is billed at twice the input and cache rates and 1.5 times the output for
     # the whole request. The same data policy as GPT-6 Luna above.
     - provider: openai
