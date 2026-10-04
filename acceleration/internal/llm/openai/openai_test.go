@@ -98,6 +98,22 @@ func (s *OpenAISuite) TestGPT6AstraCannotBeToldNotToThink() {
 		"a request naming no effort must not be sent the none Astra rejects")
 }
 
+func (s *OpenAISuite) TestGPT61SolCannotBeToldNotToThink() {
+	_, err := New(Options{APIKey: "k", Model: "gpt-6.1-sol", ReasoningEffort: "none"})
+	s.ErrorContains(err, "low, medium, high, xhigh")
+
+	provider, err := New(Options{APIKey: "k", Model: "gpt-6.1-sol"})
+	s.Require().NoError(err)
+	s.Equal("low", provider.Capabilities().DefaultEffort,
+		"a request naming no effort must not be sent the none GPT-6.1 Sol rejects")
+	s.Contains(provider.Capabilities().InputModalities, "image")
+}
+
+func (s *OpenAISuite) TestGPT61SolRefusesMax() {
+	_, err := New(Options{APIKey: "k", Model: "gpt-6.1-sol", ReasoningEffort: "max"})
+	s.ErrorContains(err, "low, medium, high, xhigh")
+}
+
 func (s *OpenAISuite) TestAnImagePartIsSentAsInputImage() {
 	provider, err := New(Options{APIKey: "k"})
 	s.Require().NoError(err)

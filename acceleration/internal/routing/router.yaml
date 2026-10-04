@@ -2180,14 +2180,15 @@ llm:
         per_million_cached_input_tokens: 0.50
         per_million_output_tokens: 6.00
 
-    # GPT-6 Sol is built for complex coding and agentic work, and what llm-thinking prefers,
-    # so this is the model the skills run on unless it is down. Artificial Analysis score it
-    # 48 at roughly half the cost per task of GPT-5.6 Sol. OpenAI default it to medium
-    # reasoning effort; the provider asks for none unless a request names one. OpenAI's
-    # account, so the same data policy as GPT-6 Luna above.
+    # GPT-6 Sol, which GPT-6.1 Sol below replaces as what llm-thinking prefers. It stays
+    # declared because callers name it outright, and because it is the Sol that can still be
+    # told not to think. Artificial Analysis score it 48 at roughly half the cost per task of
+    # GPT-5.6 Sol. OpenAI default it to medium reasoning effort; the provider asks for none
+    # unless a request names one. OpenAI's account, so the same data policy as GPT-6 Luna
+    # above.
     - provider: openai
       model: gpt-6-sol
-      description: "OpenAI's model for coding and agentic work, and what llm-thinking prefers. Reads images."
+      description: "OpenAI's previous model for coding and agentic work. Reads images, and can answer without thinking first."
       benchmark: { intelligence_index: 28, output_tokens_per_second: 86 }
       context_window: 872000
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
@@ -2200,6 +2201,30 @@ llm:
       price:
         per_million_input_tokens: 2.00
         per_million_cached_input_tokens: 0.20
+        per_million_output_tokens: 10.00
+
+    # GPT-6.1 Sol is GPT-6 Sol's direct upgrade at the same input and output price, and what
+    # llm-thinking prefers, so this is the model the skills run on unless it is down.
+    # Artificial Analysis score it 51 at xhigh, 1 below GPT-6 Astra at xhigh, at a fifth of
+    # the price. Its efforts run from low to xhigh: none and max are a 400, so the provider
+    # asks for low when a request names no effort. Cache writes are $2.50 per million, and a prompt over 272k
+    # input tokens is billed at twice the input and cache rates and 1.5 times the output for
+    # the whole request. The same data policy as GPT-6 Luna above.
+    - provider: openai
+      model: gpt-6.1-sol
+      description: "OpenAI's model for coding and agentic work, and what llm-thinking prefers. Reads images, and always thinks first."
+      benchmark: { intelligence_index: 42, output_tokens_per_second: 60 }
+      context_window: 1050000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 2.00
+        per_million_cached_input_tokens: 0.10
         per_million_output_tokens: 10.00
 
     # GPT-6 Astra is OpenAI's most capable model, for the hardest end-to-end work, and 53 on
@@ -2580,12 +2605,12 @@ llm:
     # answer itself. The conversation carries on while it thinks, so this is the shorthand
     # for quality over speed, and nothing here is chosen for how soon it starts.
     #
-    # GPT-6 Sol is preferred outright rather than left to the ranking, for the same reason
+    # GPT-6.1 Sol is preferred outright rather than left to the ranking, for the same reason
     # llm-fast pins its own: the model that does the thinking is the one this deployment
     # chose. The rest of the tier is still here to catch it being down.
     llm-thinking:
       tier: high-quality
-      prefer: openai/gpt-6-sol
+      prefer: openai/gpt-6.1-sol
 
     # What product data is analysed on: the model that reads a week of calls, tickets and
     # threads and writes what customers are asking for. That is a different intent from

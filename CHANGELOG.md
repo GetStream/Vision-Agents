@@ -429,6 +429,13 @@ code-switching, and declares `keyterms` and `endpointing`; `silence_ms` is its
 `balanced` one ends a turn at a short pause mid-sentence. `overwrites` takes `mode`
 (`min_latency`, `balanced`, `max_accuracy`), `min_turn_silence` and `max_turn_silence`.
 
+### OpenAI's GPT-6.1 Sol
+
+The router now reaches `openai/gpt-6.1-sol`, and `llm-thinking` prefers it in place of
+GPT-6 Sol, which stays declared for configs that name it. Like Astra, GPT-6.1 Sol rejects a
+reasoning effort of `none`, so a request naming no effort is sent `low` and one naming
+`none` is refused.
+
 ### Sentry and Google Calendar plugins, and plugins each user connects in the chat
 
 The plugin catalog has `sentry` and `google_calendar`. `agent.yaml` names `user_plugins`

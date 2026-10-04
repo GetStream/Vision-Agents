@@ -428,7 +428,7 @@ Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as
 LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`
 is what the skills run on: the part of a turn the talking model could not answer itself, which
 the conversation carries on without. Both name the model this deployment wants rather than
-leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6-sol` — and
+leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.1-sol` — and
 only reach the rest of their tier when that model is unavailable or fails to start.
 
 Which models those shortcuts reach for LLM, and what each is billed at per million tokens:
@@ -444,6 +444,7 @@ Which models those shortcuts reach for LLM, and what each is billed at per milli
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
 | `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
 | `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
+| `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
 | `openai/gpt-6-astra`              | high-quality | $10.00 | $1.00   | $50.00  |
 
 Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than
