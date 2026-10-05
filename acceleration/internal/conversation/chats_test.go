@@ -13,6 +13,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -229,7 +230,7 @@ func TestAnOutboxRecordInAnotherCustomersDirectoryIsLeftAlone(t *testing.T) {
 	t.Cleanup(service.Close)
 
 	service.mu.Lock()
-	_, loaded := service.all["agent:"+misfiled]
+	_, loaded := service.all[known{"globex", "agent:" + misfiled}]
 	service.mu.Unlock()
 	require.False(t, loaded)
 }
@@ -364,4 +365,57 @@ func TestRollingBackToDeploymentModeKeepsTheDeploymentAppsConversationsOpen(t *t
 	t.Cleanup(service.Close)
 
 	require.Eventually(t, func() bool { return len(deployment.Messages(id)) == 1 }, 8*time.Second, 20*time.Millisecond)
+}
+
+// AppsSuite covers conversations kept in customers' own Stream apps, side by side in one
+// service: acme's app is 77 and globex's is 99.
+type AppsSuite struct {
+	suite.Suite
+	apps    *twoApps
+	acme    *chattest.Server
+	globex  *chattest.Server
+	service *Service
+}
+
+func TestAppsSuite(t *testing.T) { suite.Run(t, new(AppsSuite)) }
+
+func (s *AppsSuite) SetupTest() {
+	s.apps = newTwoApps(s.T())
+	s.acme = s.apps.give(s.T(), "acme", 77)
+	s.globex = s.apps.give(s.T(), "globex", 99)
+	service, err := NewForChats(s.T().TempDir(), s.apps)
+	s.Require().NoError(err)
+	s.service = service
+}
+
+func (s *AppsSuite) TearDownTest() {
+	s.service.Close()
+}
+
+func (s *AppsSuite) TestTwoCustomersEachKeepTheirOwnConversationUnderTheSameChannelId() {
+	acme := replied(s.T(), s.service, 77, "acme", "acme's question")
+	id := strings.TrimPrefix(acme.CID(), "agent:")
+	// globex made a channel under the same id in its own app, which Stream allows: an id is
+	// unique only within one app.
+	_, err := s.globex.Client.Chat().GetOrCreateChannel(s.T().Context(), "agent", id, &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: ptr("agent"),
+			Members: []getstream.ChannelMemberRequest{{UserID: "agent"}, {UserID: "employee"}},
+			Custom: map[string]any{CustomerField: "globex", "support_agent_id": "agent", "support_owner_id": "employee",
+				TriggerField: SessionCommandTrigger}}})
+	s.Require().NoError(err)
+
+	globex, _, _, err := s.service.OpenInApp(s.T().Context(), 99, "globex", "agent", acme.CID(), "employee", "", nil)
+	s.Require().NoError(err, "acme holding the id first does not shut globex out of its own")
+	s.Require().NoError(globex.Begin("globex's question"))
+	globex.Observe(agent.ResponseDelta{Text: "Noted."})
+	globex.Observe(agent.Responded{})
+	saved(s.T(), globex)
+	acme.Release()
+	reopened, _, _, err := s.service.OpenInApp(s.T().Context(), 77, "acme", "agent", acme.CID(), "employee", "", nil)
+	s.Require().NoError(err)
+
+	s.Same(acme, reopened, "acme reopens its own conversation")
+	s.Equal(int64(99), globex.StreamApp())
+	s.Contains(s.globex.Messages(id), "globex's question")
+	s.NotContains(s.acme.Messages(id), "globex's question")
 }

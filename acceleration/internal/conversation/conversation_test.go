@@ -327,7 +327,7 @@ func TestOutboxFailureRestartAndDeduplication(t *testing.T) {
 	recovered, err := NewForChat(root, client)
 	require.NoError(t, err)
 	defer recovered.Close()
-	resumed := recovered.all[c.CID()]
+	resumed := recovered.all[known{"customer", c.CID()}]
 	saved(t, resumed)
 	m := current(resumed)
 	require.Equal(t, "interrupted", m.State)
@@ -376,7 +376,7 @@ func TestQueuedUserMessageKeepsItsAcceptedAuthorAfterRestart(t *testing.T) {
 			recovered, err := NewForChat(root, client)
 			require.NoError(t, err)
 			defer recovered.Close()
-			saved(t, recovered.all[c.CID()])
+			saved(t, recovered.all[known{"customer", c.CID()}])
 			db.mu.Lock()
 			defer db.mu.Unlock()
 			require.Len(t, db.order, 2)

@@ -131,7 +131,7 @@ func (s *Service) SetPins(pins Pins) {
 // its sessions. Found is false for a conversation nobody has word of.
 func (s *Service) pinOf(ctx context.Context, customer, cid string) (int64, bool, error) {
 	s.mu.Lock()
-	open, pins := s.all[cid], s.pins
+	open, pins := s.all[known{customer, cid}], s.pins
 	s.mu.Unlock()
 	if open != nil {
 		open.mu.Lock()

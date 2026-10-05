@@ -149,8 +149,15 @@ type Service struct {
 	chats  Chats
 	pins   Pins
 	root   string
-	all    map[string]*Conversation
+	all    map[known]*Conversation
 	logger *slog.Logger
+}
+
+// known is how the service finds a conversation it holds: by its customer and its channel
+// id. A channel id is unique only within one Stream app, so two customers in apps of their
+// own can each hold a conversation under the same id, and neither may shut the other out.
+type known struct {
+	customer, cid string
 }
 type Conversation struct {
 	mu       sync.Mutex
@@ -229,7 +236,7 @@ func newService(root string, chats Chats) (*Service, error) {
 		lock.Close()
 		return nil, errors.New("conversation outbox is already owned by another service")
 	}
-	s := &Service{chats: chats, root: root, lock: lock, all: map[string]*Conversation{}, logger: slog.Default()}
+	s := &Service{chats: chats, root: root, lock: lock, all: map[known]*Conversation{}, logger: slog.Default()}
 	ready := false
 	defer func() {
 		if !ready {
@@ -289,7 +296,7 @@ func (s *Service) recover(dir, customer string) error {
 }
 func (s *Service) make(d disk) *Conversation {
 	c := &Conversation{service: s, data: d, turns: map[string]string{}, created: map[string]bool{}, stopped: make(chan struct{}), done: make(chan struct{})}
-	s.all[d.CID] = c
+	s.all[known{d.Customer, d.CID}] = c
 	go c.run()
 	return c
 }
@@ -371,7 +378,7 @@ func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, c
 	if cid != "agent:"+id || !validID.MatchString(id) {
 		return nil, nil, false, errors.New("invalid conversation channel")
 	}
-	if c := s.all[cid]; c != nil {
+	if c := s.all[known{customer, cid}]; c != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.data.Customer != customer || (agentID != "" && c.data.Agent != agentID) || c.data.Owner == "" && caller != "" {
@@ -590,7 +597,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 		return CommandReceipt{}, ErrCommandNotFound
 	}
 	s.mu.Lock()
-	closed, open := s.closed, s.all[cid]
+	closed, open := s.closed, s.all[known{customer, cid}]
 	s.mu.Unlock()
 	if closed {
 		return CommandReceipt{}, errors.New("conversation service is closed")
