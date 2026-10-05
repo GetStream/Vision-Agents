@@ -12,6 +12,7 @@ from vision_agents.core import Agent, User
 from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.avatars import Avatar
 from vision_agents.core.edge import Call, EdgeTransport
+from vision_agents.core.edge.events import CallEndedEvent
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
@@ -655,6 +656,22 @@ class TestAgent:
         await agent.authenticate()
         async with agent.join(call):
             assert edge.authenticate_call_count == 1
+
+    async def test_join_exits_after_the_close_started_by_call_end(self, call: Call):
+        edge = DummyEdge()
+        edge.events.register(CallEndedEvent)
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        async with agent.join(call):
+            edge.events.send(CallEndedEvent(plugin_name="test", call=call))
+            await agent.finish()
+
+        assert agent.closed
 
     async def test_avatar_wiring(self):
         """Avatar metrics forward to agent metrics after merge, and the
