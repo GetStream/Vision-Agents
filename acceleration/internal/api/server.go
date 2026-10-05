@@ -856,7 +856,7 @@ func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
 // blocked request naming only the header, so a list covering one mode alone fails in a way
 // that looks like the origin was never allowed.
 const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth.APIKeyHeader +
-	", X-Stream-Client, " + CustomerHeader + ", Content-Type"
+	", X-Stream-Client, " + auth.UserHeader + ", " + CustomerHeader + ", Content-Type"
 
 // corsMethods are the methods this API serves. PUT belongs here because a live session's
 // instructions are replaced with one; PATCH does not, because the spec serves none.
