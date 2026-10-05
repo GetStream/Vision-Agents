@@ -157,6 +157,41 @@ func (s *PoliciesSuite) TestTheOrganizationRequirementIsNotWritableOverHTTP() {
 	s.True(*written.RequireOwnStreamApp)
 }
 
+func (s *PoliciesSuite) TestAnOrganizationPolicyReadAndWrittenBackKeepsTheOperatorsRequirement() {
+	required := true
+	s.Require().NoError(s.store.SavePolicy(context.Background(), store.ScopeOrganization,
+		s.app.organization.ID, store.PolicyDocument{RequireOwnStreamApp: &required}))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/organization",
+		map[string]any{"budget": map[string]any{"limit_micros": 1_000, "interval": "daily"}}, nil))
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &read))
+	read.Budget.LimitMicros = 2_000
+	var written Policy
+	status := s.serverClient.do(http.MethodPut, "/v1/policies/organization", read, &written)
+
+	s.Require().Equal(http.StatusOK, status, "a backend writes back what it read with only its budget changed")
+	s.Equal(int64(2_000), written.Budget.LimitMicros)
+	s.Require().NotNil(written.RequireOwnStreamApp)
+	s.True(*written.RequireOwnStreamApp)
+}
+
+func (s *PoliciesSuite) TestChangingTheOrganizationRequirementOverHTTPIsRefused() {
+	required := true
+	s.Require().NoError(s.store.SavePolicy(context.Background(), store.ScopeOrganization,
+		s.app.organization.ID, store.PolicyDocument{RequireOwnStreamApp: &required}))
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/organization",
+		map[string]any{"require_own_stream_app": false})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "operator")
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &read))
+	s.Require().NotNil(read.RequireOwnStreamApp)
+	s.True(*read.RequireOwnStreamApp)
+}
+
 func (s *PoliciesSuite) TestAnAppMayRequireItsOwnStreamApp() {
 	stored := s.put(map[string]any{"require_own_stream_app": true})
 

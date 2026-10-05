@@ -129,15 +129,24 @@ func (s *Store) Policy(ctx context.Context, scope PolicyScope, id string) (Polic
 	return policy.Document, nil
 }
 
-// SavePolicy replaces a scope's document.
+// SavePolicy replaces a scope's document. An organization's document that leaves
+// RequireOwnStreamApp out keeps the one stored.
 func (s *Store) SavePolicy(ctx context.Context, scope PolicyScope, id string, document PolicyDocument) error {
 	if id == "" {
 		return errors.New("store: a policy needs a scope id")
 	}
 	policy := &Policy{Scope: scope, ScopeID: id, Document: document, UpdatedAt: time.Now().UTC()}
+	replace := "document = EXCLUDED.document"
+	if scope == ScopeOrganization {
+		// The operator sets an organization's require_own_stream_app, and anybody else saves
+		// its document without it. The stored value is kept in the same statement that writes
+		// the rest, so a save that read the document before the operator wrote cannot undo it.
+		replace = "document = jsonb_strip_nulls(jsonb_build_object('require_own_stream_app', " +
+			"pol.document->'require_own_stream_app')) || EXCLUDED.document"
+	}
 	_, err := s.db.NewInsert().Model(policy).
 		On("CONFLICT (scope, scope_id) DO UPDATE").
-		Set("document = EXCLUDED.document").
+		Set(replace).
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	if err != nil {

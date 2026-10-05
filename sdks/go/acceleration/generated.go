@@ -3115,7 +3115,7 @@ type Policy struct {
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
-	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; writing it is refused.
+	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
 
 	// Tags Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
