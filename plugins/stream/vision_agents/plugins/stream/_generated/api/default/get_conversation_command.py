@@ -44,6 +44,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 400:
+        response_400 = Error.from_dict(response.json())
+
+        return response_400
+
     if response.status_code == 401:
         response_401 = Error.from_dict(response.json())
 
@@ -53,6 +58,11 @@ def _parse_response(
         response_404 = Error.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -87,7 +97,7 @@ def sync_detailed(
 
     Args:
         cid (str):
-        command_id (str):
+        command_id (str): The client's own command id, as sent when the command was submitted.
         agent_id (str):
 
     Raises:
@@ -127,7 +137,7 @@ def sync(
 
     Args:
         cid (str):
-        command_id (str):
+        command_id (str): The client's own command id, as sent when the command was submitted.
         agent_id (str):
 
     Raises:
@@ -162,7 +172,7 @@ async def asyncio_detailed(
 
     Args:
         cid (str):
-        command_id (str):
+        command_id (str): The client's own command id, as sent when the command was submitted.
         agent_id (str):
 
     Raises:
@@ -200,7 +210,7 @@ async def asyncio(
 
     Args:
         cid (str):
-        command_id (str):
+        command_id (str): The client's own command id, as sent when the command was submitted.
         agent_id (str):
 
     Raises:

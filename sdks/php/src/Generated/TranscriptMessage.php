@@ -11,14 +11,14 @@ use GetStream\VisionAgents\Json;
 final readonly class TranscriptMessage
 {
     public function __construct(
+        public \DateTimeImmutable $createdAt,
         // Who said it, the agent under its own user id.
         public string $speaker,
         public string $text,
-        public \DateTimeImmutable $createdAt,
-        // That speaker's display name, when they have one.
-        public ?string $name = null,
         // Whether the agent said it rather than somebody it was talking to. It is what the line was stored as, so it...
         public ?bool $agent = null,
+        // That speaker's display name, when they have one.
+        public ?string $name = null,
     ) {
     }
 
@@ -28,11 +28,11 @@ final readonly class TranscriptMessage
     public static function fromArray(array $data): self
     {
         return new self(
+            createdAt: Json::date($data, 'created_at'),
             speaker: Json::string($data, 'speaker'),
             text: Json::string($data, 'text'),
-            createdAt: Json::date($data, 'created_at'),
-            name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
             agent: array_key_exists('agent', $data) && $data['agent'] !== null ? Json::bool($data, 'agent') : null,
+            name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
         );
     }
 
@@ -44,14 +44,14 @@ final readonly class TranscriptMessage
     public function toArray(): array
     {
         $out = [];
+        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['speaker'] = $this->speaker;
         $out['text'] = $this->text;
-        $out['created_at'] = Json::dateValue($this->createdAt);
-        if ($this->name !== null) {
-            $out['name'] = $this->name;
-        }
         if ($this->agent !== null) {
             $out['agent'] = $this->agent;
+        }
+        if ($this->name !== null) {
+            $out['name'] = $this->name;
         }
         return $out;
     }

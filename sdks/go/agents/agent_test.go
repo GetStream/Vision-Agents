@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func newBackend(t *testing.T) *backend {
 		stored := acceleration.AgentConfig{
 			Id: "config-1", Name: request.Name, Instructions: request.Instructions,
 			KnowledgeNamespace: request.KnowledgeNamespace, Skills: request.Skills,
-			Subagent: request.Subagent, Tags: request.Tags,
+			ThinkingLlm: request.ThinkingLlm, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		router.configs = append(router.configs, stored)
@@ -112,7 +113,7 @@ func newBackend(t *testing.T) *backend {
 		router.syncs = append(router.syncs, request)
 		stored := acceleration.AgentConfig{
 			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
-			Subagent: request.Subagent, Llm: request.Llm, Tags: request.Tags,
+			ThinkingLlm: request.ThinkingLlm, Llm: request.Llm, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		if request.Knowledge != nil || request.KnowledgeUrls != nil {
@@ -357,6 +358,103 @@ func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	}
 }
 
+func TestSyncSendsHowTheSandboxIsBuilt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artist")
+	write(t, root, "agent.yaml", `sandbox: daytona
+sandbox_options:
+  setup: [pip install bpy==5.2.2]
+  timeout: 5m
+  memory_gb: 4
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	options := router.syncs[0].SandboxOptions
+	if options == nil || (*options.Setup)[0] != "pip install bpy==5.2.2" || *options.TimeoutMs != 300000 || *options.MemoryGb != 4 {
+		t.Errorf("how the sandbox is built went as %+v", options)
+	}
+}
+
+func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `mcp_servers:
+  - name: tablejourney
+    url: https://tablejourney.com/mcp
+    tools: [search_*]
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	servers := router.syncs[0].McpServers
+	if servers == nil || len(*servers) != 1 || (*servers)[0].Name != "tablejourney" || (*servers)[0].Url != "https://tablejourney.com/mcp" ||
+		(*servers)[0].Tools == nil || strings.Join(*(*servers)[0].Tools, ",") != "search_*" {
+		t.Errorf("the MCP servers went as %+v", servers)
+	}
+}
+
+func TestSyncSendsHowEachPluginIsReached(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", `user_plugins: [linear, calcom]
+plugin_options:
+  - plugin: linear
+    readonly: true
+    scopes: [read]
+  - plugin: calcom
+    toolsets: [bookings, availability]
+    tools: [get_bookings, get_availability]
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	options := router.syncs[0].PluginOptions
+	if options == nil || len(*options) != 2 || (*options)[0].Plugin != "linear" ||
+		(*options)[0].Readonly == nil || !*(*options)[0].Readonly ||
+		(*options)[0].Scopes == nil || len(*(*options)[0].Scopes) != 1 || (*(*options)[0].Scopes)[0] != "read" {
+		t.Fatalf("the plugin options went as %+v", options)
+	}
+	if toolsets := (*options)[1].Toolsets; toolsets == nil || strings.Join(*toolsets, ",") != "bookings,availability" {
+		t.Errorf("calcom's toolsets went as %+v", toolsets)
+	}
+	if tools := (*options)[1].Tools; tools == nil || strings.Join(*tools, ",") != "get_bookings,get_availability" {
+		t.Errorf("calcom's tools went as %+v", tools)
+	}
+}
+
+func TestSyncSaysNothingOfTheSandboxWhenTheDeclarationDoesNot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "analyst")
+	write(t, root, "agent.yaml", "sandbox: daytona\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if router.syncs[0].SandboxOptions != nil {
+		t.Errorf("options nobody declared were sent: %+v", router.syncs[0].SandboxOptions)
+	}
+}
+
 func TestAnUnchangedDirectoryIsNotSyncedAgain(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "agent.yaml", "name: jean\n")
@@ -477,8 +575,8 @@ func TestAgentYAMLNamesTheHarnessAndSandboxTheConfigIsStoredWith(t *testing.T) {
 	if synced.Sandbox == nil || *synced.Sandbox != "daytona" {
 		t.Errorf("the sandbox was stored as %v", synced.Sandbox)
 	}
-	if synced.Subagent == nil || *synced.Subagent != "openai/gpt-5.6-sol" {
-		t.Errorf("the subagent was stored as %v", synced.Subagent)
+	if synced.ThinkingLlm == nil || *synced.ThinkingLlm != "openai/gpt-5.6-sol" {
+		t.Errorf("the thinking llm was stored as %v", synced.ThinkingLlm)
 	}
 }
 

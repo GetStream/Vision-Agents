@@ -18,21 +18,26 @@ class KnowledgeUrlDeclaration:
 
     Attributes:
         url (str):  Example: https://example.com/pricing.
-        title (str | Unset):  Example: Pricing.
         description (str | Unset):
+        refresh_hours (int | Unset): How often the page is read again on its own, in hours. Omit it and the page is read
+            on every sync that changes the directory, never on a schedule. Example: 24.
+        title (str | Unset):  Example: Pricing.
     """
 
     url: str
-    title: str | Unset = UNSET
     description: str | Unset = UNSET
+    refresh_hours: int | Unset = UNSET
+    title: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         url = self.url
 
-        title = self.title
-
         description = self.description
+
+        refresh_hours = self.refresh_hours
+
+        title = self.title
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -41,10 +46,12 @@ class KnowledgeUrlDeclaration:
                 "url": url,
             }
         )
-        if title is not UNSET:
-            field_dict["title"] = title
         if description is not UNSET:
             field_dict["description"] = description
+        if refresh_hours is not UNSET:
+            field_dict["refresh_hours"] = refresh_hours
+        if title is not UNSET:
+            field_dict["title"] = title
 
         return field_dict
 
@@ -53,14 +60,17 @@ class KnowledgeUrlDeclaration:
         d = dict(src_dict)
         url = d.pop("url")
 
-        title = d.pop("title", UNSET)
-
         description = d.pop("description", UNSET)
+
+        refresh_hours = d.pop("refresh_hours", UNSET)
+
+        title = d.pop("title", UNSET)
 
         knowledge_url_declaration = cls(
             url=url,
-            title=title,
             description=description,
+            refresh_hours=refresh_hours,
+            title=title,
         )
 
         knowledge_url_declaration.additional_properties = d

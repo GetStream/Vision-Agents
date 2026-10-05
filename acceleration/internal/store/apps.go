@@ -77,6 +77,10 @@ type APIKeyOwner struct {
 	Sealed         []byte      `bun:"secret_sealed"`
 	KEKVersion     int         `bun:"kek_version"`
 	Settings       AppSettings `bun:"settings,type:jsonb"`
+	// ExpiresAt is when the key stops working, nil for one that never does. The query
+	// already leaves a lapsed key out; it is carried so that a caller holding this row
+	// for a while can tell when it stopped being true.
+	ExpiresAt *time.Time `bun:"expires_at"`
 }
 
 // AppSettingsFor returns what an app has turned on or off.
@@ -126,7 +130,7 @@ func (s *Store) LiveAPIKey(ctx context.Context, id string) (APIKeyOwner, error) 
 	var owner APIKeyOwner
 
 	err := s.db.NewSelect().Model((*APIKey)(nil)).
-		ColumnExpr("k.app_id, k.secret_sealed, k.kek_version").
+		ColumnExpr("k.app_id, k.secret_sealed, k.kek_version, k.expires_at").
 		ColumnExpr("ap.organization_id, ap.settings").
 		Join("JOIN apps AS ap ON ap.id = k.app_id").
 		Where("k.id = ?", id).

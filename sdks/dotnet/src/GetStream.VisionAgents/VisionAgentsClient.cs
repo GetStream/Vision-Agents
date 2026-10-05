@@ -65,8 +65,14 @@ public sealed class VisionAgentsClient : IDisposable
     /// </remarks>
     public bool ServerSide => Backend.ServerSide;
 
-    /// <summary>The sessions already held: listed, searched and read back.</summary>
+    /// <summary>The sessions already held: queried, searched, read back, changed and deleted.</summary>
     public Sessions Sessions => new(this);
+
+    /// <summary>Conversations to put an agent through, and their runs.</summary>
+    public Simulations Simulations => new(this);
+
+    /// <summary>What agents remember about the app's users.</summary>
+    public Memories Memories => new(this);
 
     /// <summary>
     /// Speech-to-text, text-to-speech, the language model and search, on their own, under a

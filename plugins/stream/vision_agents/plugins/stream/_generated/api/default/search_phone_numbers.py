@@ -14,6 +14,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -23,10 +24,11 @@ def _get_kwargs(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    params["limit"] = limit
 
     params["vendor"] = vendor
 
@@ -56,8 +58,6 @@ def _get_kwargs(
             json_features.append(features_item)
 
     params["features"] = json_features
-
-    params["limit"] = limit
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -98,6 +98,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -118,6 +123,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -127,7 +133,6 @@ def sync_detailed(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
 ) -> Response[Error | NumberSearchResult]:
     """Search for numbers to buy, at one vendor or all of them
 
@@ -137,17 +142,20 @@ def sync_detailed(
     without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str | Unset):
-        country (str):
+        limit (int | Unset):  Default: 10.
+        vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
+        country (str): ISO 3166-1 alpha-2 country code.
         area_code (str | Unset):
-        contains (str | Unset):
-        prefix (str | Unset):
-        locality (str | Unset):
-        administrative_area (str | Unset):
+        contains (str | Unset): Digits the number must contain, anywhere in it.
+        prefix (str | Unset): Digits the number must start with, matched after the country dial
+            code. This differs from `contains` in where the digits have to fall.
+        locality (str | Unset): A city, region or rate centre.
+        administrative_area (str | Unset): A US state or Canadian province.
         number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
             for the call.
-        features (list[PhoneCapability] | Unset):
-        limit (int | Unset):  Default: 10.
+        features (list[PhoneCapability] | Unset): Capabilities every number must have. Repeat the
+            parameter to require several. A vendor that cannot filter on one still reports what its
+            numbers carry, so these are checked on the results either way.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,6 +166,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
+        limit=limit,
         vendor=vendor,
         country=country,
         area_code=area_code,
@@ -167,7 +176,6 @@ def sync_detailed(
         administrative_area=administrative_area,
         number_type=number_type,
         features=features,
-        limit=limit,
     )
 
     response = client.get_httpx_client().request(
@@ -180,6 +188,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -189,7 +198,6 @@ def sync(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
 ) -> Error | NumberSearchResult | None:
     """Search for numbers to buy, at one vendor or all of them
 
@@ -199,17 +207,20 @@ def sync(
     without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str | Unset):
-        country (str):
+        limit (int | Unset):  Default: 10.
+        vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
+        country (str): ISO 3166-1 alpha-2 country code.
         area_code (str | Unset):
-        contains (str | Unset):
-        prefix (str | Unset):
-        locality (str | Unset):
-        administrative_area (str | Unset):
+        contains (str | Unset): Digits the number must contain, anywhere in it.
+        prefix (str | Unset): Digits the number must start with, matched after the country dial
+            code. This differs from `contains` in where the digits have to fall.
+        locality (str | Unset): A city, region or rate centre.
+        administrative_area (str | Unset): A US state or Canadian province.
         number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
             for the call.
-        features (list[PhoneCapability] | Unset):
-        limit (int | Unset):  Default: 10.
+        features (list[PhoneCapability] | Unset): Capabilities every number must have. Repeat the
+            parameter to require several. A vendor that cannot filter on one still reports what its
+            numbers carry, so these are checked on the results either way.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,6 +232,7 @@ def sync(
 
     return sync_detailed(
         client=client,
+        limit=limit,
         vendor=vendor,
         country=country,
         area_code=area_code,
@@ -230,13 +242,13 @@ def sync(
         administrative_area=administrative_area,
         number_type=number_type,
         features=features,
-        limit=limit,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -246,7 +258,6 @@ async def asyncio_detailed(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
 ) -> Response[Error | NumberSearchResult]:
     """Search for numbers to buy, at one vendor or all of them
 
@@ -256,17 +267,20 @@ async def asyncio_detailed(
     without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str | Unset):
-        country (str):
+        limit (int | Unset):  Default: 10.
+        vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
+        country (str): ISO 3166-1 alpha-2 country code.
         area_code (str | Unset):
-        contains (str | Unset):
-        prefix (str | Unset):
-        locality (str | Unset):
-        administrative_area (str | Unset):
+        contains (str | Unset): Digits the number must contain, anywhere in it.
+        prefix (str | Unset): Digits the number must start with, matched after the country dial
+            code. This differs from `contains` in where the digits have to fall.
+        locality (str | Unset): A city, region or rate centre.
+        administrative_area (str | Unset): A US state or Canadian province.
         number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
             for the call.
-        features (list[PhoneCapability] | Unset):
-        limit (int | Unset):  Default: 10.
+        features (list[PhoneCapability] | Unset): Capabilities every number must have. Repeat the
+            parameter to require several. A vendor that cannot filter on one still reports what its
+            numbers carry, so these are checked on the results either way.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -277,6 +291,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
+        limit=limit,
         vendor=vendor,
         country=country,
         area_code=area_code,
@@ -286,7 +301,6 @@ async def asyncio_detailed(
         administrative_area=administrative_area,
         number_type=number_type,
         features=features,
-        limit=limit,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -297,6 +311,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -306,7 +321,6 @@ async def asyncio(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
 ) -> Error | NumberSearchResult | None:
     """Search for numbers to buy, at one vendor or all of them
 
@@ -316,17 +330,20 @@ async def asyncio(
     without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str | Unset):
-        country (str):
+        limit (int | Unset):  Default: 10.
+        vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
+        country (str): ISO 3166-1 alpha-2 country code.
         area_code (str | Unset):
-        contains (str | Unset):
-        prefix (str | Unset):
-        locality (str | Unset):
-        administrative_area (str | Unset):
+        contains (str | Unset): Digits the number must contain, anywhere in it.
+        prefix (str | Unset): Digits the number must start with, matched after the country dial
+            code. This differs from `contains` in where the digits have to fall.
+        locality (str | Unset): A city, region or rate centre.
+        administrative_area (str | Unset): A US state or Canadian province.
         number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
             for the call.
-        features (list[PhoneCapability] | Unset):
-        limit (int | Unset):  Default: 10.
+        features (list[PhoneCapability] | Unset): Capabilities every number must have. Repeat the
+            parameter to require several. A vendor that cannot filter on one still reports what its
+            numbers carry, so these are checked on the results either way.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -339,6 +356,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            limit=limit,
             vendor=vendor,
             country=country,
             area_code=area_code,
@@ -348,6 +366,5 @@ async def asyncio(
             administrative_area=administrative_area,
             number_type=number_type,
             features=features,
-            limit=limit,
         )
     ).parsed

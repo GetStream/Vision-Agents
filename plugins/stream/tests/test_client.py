@@ -1,4 +1,3 @@
-import json
 from typing import Any, AsyncIterator
 
 import pytest
@@ -26,19 +25,21 @@ class Router:
 
         self.configs: list[dict[str, Any]] = []
         self.sessions: list[dict[str, Any]] = []
-        # pages of response items, handed out one request at a time.
+        # pages of response items, each found by the cursor it was handed out under.
         self.pages: list[list[dict[str, Any]]] = []
-        self.given = 0
 
     def app(self) -> web.Application:
         app = web.Application()
         app.router.add_get("/v1/agents/configs", self._configs)
+        app.router.add_patch("/v1/agents/configs/{id}", self._patch_config)
         app.router.add_post("/v1/agents/sessions", self._create)
-        app.router.add_get("/v1/agents/sessions", self._list)
-        app.router.add_get("/v1/agents/sessions/search", self._list)
-        app.router.add_delete("/v1/agents/sessions/{id}", self._close)
+        app.router.add_post("/v1/agents/sessions/query", self._query)
+        app.router.add_patch("/v1/agents/sessions/{id}", self._update)
+        app.router.add_delete("/v1/agents/sessions/{id}", self._no_content)
+        app.router.add_post("/v1/agents/sessions/{id}/stop", self._no_content)
+        app.router.add_delete("/v1/agents/sessions/{id}/memories", self._no_content)
+        app.router.add_delete("/v1/agents/users/{id}/memories", self._no_content)
         app.router.add_post("/v1/agents/sessions/{id}/fork", self._fork)
-        app.router.add_patch("/v1/agents/sessions/{id}/settings", self._settings)
         app.router.add_post("/v1/agents/sessions/{id}/responses", self._respond)
         app.router.add_get("/v1/agents/sessions/{id}/responses", self._responses)
         app.router.add_get("/v1/agents/sessions/{id}/responses/items", self._items)
@@ -46,23 +47,41 @@ class Router:
         app.router.add_post("/v1/agents/guests", self._guest)
         app.router.add_post("/v1/agents/guests/claim", self._claim)
         app.router.add_get("/v1/agents/sessions/{id}/events", self._events)
+        app.router.add_post("/v1/agents/simulations", self._simulation)
+        app.router.add_get("/v1/agents/simulations", self._simulations)
+        app.router.add_get("/v1/agents/simulations/{id}", self._simulation)
+        app.router.add_put("/v1/agents/simulations/{id}", self._simulation)
+        app.router.add_delete("/v1/agents/simulations/{id}", self._no_content)
+        app.router.add_post("/v1/agents/simulations/{id}/run", self._run)
+        app.router.add_get("/v1/agents/simulation-runs", self._runs)
+        app.router.add_get("/v1/agents/simulation-runs/{id}", self._run)
+        app.router.add_post("/v1/agents/simulation-runs/{id}/cancel", self._run)
         return app
 
     async def _configs(self, request: web.Request) -> web.Response:
         await self._record(request)
         return web.json_response(self.configs)
 
+    async def _patch_config(self, request: web.Request) -> web.Response:
+        await self._record(request)
+        [stored] = [c for c in self.configs if c["id"] == request.match_info["id"]]
+        return web.json_response({**stored, **self.bodies[f"PATCH {request.path}"]})
+
     async def _create(self, request: web.Request) -> web.Response:
         await self._record(request)
         return web.json_response(status=201, data=self._session("session-1"))
 
-    async def _list(self, request: web.Request) -> web.Response:
+    async def _query(self, request: web.Request) -> web.Response:
         await self._record(request)
-        return web.json_response(self.sessions)
+        return web.json_response(
+            {"items": self.sessions, "has_more": True, "next_cursor": "page-2"}
+        )
 
-    async def _close(self, request: web.Request) -> web.Response:
+    async def _no_content(self, request: web.Request) -> web.Response:
         await self._record(request)
-        return web.json_response({})
+        if request.match_info.get("id") == "missing":
+            return web.json_response(status=404, data={"error": "no such thing"})
+        return web.Response(status=204)
 
     async def _fork(self, request: web.Request) -> web.Response:
         await self._record(request)
@@ -70,11 +89,49 @@ class Router:
         forked["forked_from"] = request.match_info["id"]
         return web.json_response(status=201, data=forked)
 
-    async def _settings(self, request: web.Request) -> web.Response:
+    async def _update(self, request: web.Request) -> web.Response:
         await self._record(request)
         updated = self._session(request.match_info["id"])
-        updated["llm"] = (await request.json()).get("llm", "")
+        updated.update(self.bodies[f"PATCH {request.path}"])
         return web.json_response(updated)
+
+    async def _simulation(self, request: web.Request) -> web.Response:
+        await self._record(request)
+        sent = self.bodies.get(f"{request.method} {request.path}", {})
+        simulation = {
+            "id": request.match_info.get("id", "simulation-1"),
+            "config_id": "config-1",
+            "name": "refund",
+            "scenario": "Ask for a refund.",
+            "assertion": "No refund is promised.",
+            "mode": "text",
+            "variations": 1,
+            "max_turns": 10,
+            "created_at": WHEN,
+            **sent,
+        }
+        return web.json_response(
+            status=201 if request.method == "POST" else 200, data=simulation
+        )
+
+    async def _simulations(self, request: web.Request) -> web.Response:
+        await self._record(request)
+        return web.json_response([])
+
+    async def _run(self, request: web.Request) -> web.Response:
+        await self._record(request)
+        cancelled = request.path.endswith("/cancel")
+        return web.json_response(
+            status=202 if request.path.endswith("/run") else 200,
+            data=_run(
+                "run-1" if request.path.endswith("/run") else request.match_info["id"],
+                "cancelled" if cancelled else "running",
+            ),
+        )
+
+    async def _runs(self, request: web.Request) -> web.Response:
+        await self._record(request)
+        return web.json_response([_run("run-1", "passed")])
 
     async def _respond(self, request: web.Request) -> web.Response:
         await self._record(request)
@@ -92,23 +149,30 @@ class Router:
     async def _responses(self, request: web.Request) -> web.Response:
         await self._record(request)
         return web.json_response(
-            [
-                {
-                    "id": "response-1",
-                    "session_id": request.match_info["id"],
-                    "status": "completed",
-                    "created_at": WHEN,
-                }
-            ]
+            {
+                "items": [
+                    {
+                        "id": "response-1",
+                        "session_id": request.match_info["id"],
+                        "status": "completed",
+                        "created_at": WHEN,
+                    }
+                ],
+                "has_more": False,
+            }
         )
 
     async def _items(self, request: web.Request) -> web.Response:
         await self._record(request)
-        if self.given >= len(self.pages):
-            return web.json_response([])
-        page = self.pages[self.given]
-        self.given += 1
-        return web.json_response(page)
+        # The cursor is the index of the page asked for, so a cursor not handed out reads
+        # as the wrong page rather than the right one.
+        at = int(request.query.get("cursor", "0"))
+        page = self.pages[at] if at < len(self.pages) else []
+        more = at + 1 < len(self.pages)
+        answer: dict[str, Any] = {"items": page, "has_more": more}
+        if more:
+            answer["next_cursor"] = str(at + 1)
+        return web.json_response(answer)
 
     async def _rewind(self, request: web.Request) -> web.Response:
         await self._record(request)
@@ -157,6 +221,7 @@ class Router:
             "call_id": "",
             "call_type": "",
             "user_id": "jean",
+            "modality": "text",
             "state": "live",
             "conversation_id": "agent:" + id,
             "created_at": WHEN,
@@ -193,9 +258,10 @@ class TestSessions:
     ):
         session = await api.agent("docs").sessions.create(
             stream.SessionOptions(
+                id="0192f5c4-7d1e-7000-8000-000000000001",
                 title="Is Stream better?",
                 description="The comparison question, again",
-                project="docs",
+                project_id="docs",
                 custom={"ticket": "4721"},
                 model_overwrites=stream.ModelOverwrites(
                     thinking=stream.ModelOverwritesThinking.HIGH
@@ -208,9 +274,10 @@ class TestSessions:
             await session.close()
 
         body = router.body("POST", "/v1/agents/sessions")
+        assert body["id"] == "0192f5c4-7d1e-7000-8000-000000000001"
         assert body["agent"] == "docs"
         assert body["title"] == "Is Stream better?"
-        assert body["project"] == "docs"
+        assert body["project_id"] == "docs"
         assert body["custom"] == {"ticket": "4721"}
         assert body["model_overwrites"] == {"thinking": "high"}
         # No call was named, so the conversation is held in writing and kept.
@@ -235,41 +302,78 @@ class TestSessions:
     ):
         router.sessions = [router._session("session-1")]
 
-        listed = await api.agent("docs").sessions.query(
+        page = await api.agent("docs").sessions.query(
             stream.Query(
-                project="docs",
+                project_id="docs",
                 user_id="jean",
-                state="closed",
-                custom={"ticket": "4721"},
+                modality="text",
+                state="live",
+                agent_id="agent-1",
                 limit=50,
+                cursor="page-1",
             )
         )
 
-        assert [session.id for session in listed] == ["session-1"]
-        query = router.query("GET", "/v1/agents/sessions")
-        assert query["agent"] == "docs"
-        assert query["project"] == "docs"
-        assert query["user_id"] == "jean"
-        assert query["state"] == "closed"
-        assert json.loads(query["custom"]) == {"ticket": "4721"}
-        assert query["limit"] == "50"
-        # An unset offset leaves the router's own default rather than a zero this end
-        # invented.
-        assert "offset" not in query
+        assert [session.id for session in page.items] == ["session-1"]
+        assert page.has_more and page.next_cursor == "page-2"
+        assert router.body("POST", "/v1/agents/sessions/query") == {
+            "filter": {
+                "agent": "docs",
+                "project_id": "docs",
+                "user_id": "jean",
+                "modality": "text",
+                "state": "live",
+                "agent_id": "agent-1",
+            },
+            "limit": 50,
+            "cursor": "page-1",
+        }
+
+    async def test_an_unset_filter_is_left_to_the_router(
+        self, api: stream.Client, router: Router
+    ):
+        await api.agent("docs").sessions.query()
+
+        assert router.body("POST", "/v1/agents/sessions/query") == {
+            "filter": {"agent": "docs"}
+        }
 
     async def test_searching_carries_the_phrase_alongside_the_filters(
         self, api: stream.Client, router: Router
     ):
-        router.sessions = [router._session("session-1")]
-
         await api.agent("docs").sessions.search(
-            "sendbird comparison", stream.Query(project="docs")
+            "sendbird comparison", stream.Query(user_id="jean")
         )
 
-        query = router.query("GET", "/v1/agents/sessions/search")
-        assert query["q"] == "sendbird comparison"
-        assert query["agent"] == "docs"
-        assert query["project"] == "docs"
+        assert router.body("POST", "/v1/agents/sessions/query") == {
+            "filter": {
+                "agent": "docs",
+                "user_id": "jean",
+                "text": {"$q": "sendbird comparison"},
+            }
+        }
+
+    async def test_deleting_a_session_deletes_it(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create()
+        try:
+            await session.delete()
+        finally:
+            await session.close()
+
+        assert router.requests("DELETE", "/v1/agents/sessions/session-1") == 1
+
+    async def test_a_sessions_memories_are_deleted_by_id(
+        self, api: stream.Client, router: Router
+    ):
+        await api.agent("docs").sessions.delete_memories("session-9")
+
+        assert router.requests("DELETE", "/v1/agents/sessions/session-9/memories") == 1
+
+    async def test_a_delete_the_router_refuses_is_raised(self, api: stream.Client):
+        with pytest.raises(stream.RouterError, match="no such thing"):
+            await api.agent("docs").sessions.delete("missing")
 
 
 class TestResponses:
@@ -315,11 +419,11 @@ class TestResponses:
         query = router.query("GET", "/v1/agents/sessions/session-1/responses/items")
         assert "response_id" not in query
 
-    async def test_unwinding_pages_until_a_short_page_arrives(
+    async def test_unwinding_follows_the_cursor_until_there_is_no_more(
         self, api: stream.Client, router: Router
     ):
-        # Two full pages and a short one. The short page is the end, so a fourth request
-        # would be asking for a page it has already been told does not exist.
+        # The last page says there is no more, so a fourth request would be asking for a
+        # page it has already been told does not exist.
         router.pages = [[_item(0), _item(1)], [_item(2), _item(3)], [_item(4)]]
         session = await api.agent("docs").sessions.create()
         try:
@@ -339,7 +443,8 @@ class TestResponses:
         # socket and no session handle.
         turns = await api.agent("docs").sessions.responses("session-9").list()
 
-        assert [turn.id for turn in turns] == ["response-1"]
+        assert [turn.id for turn in turns.items] == ["response-1"]
+        assert not turns.has_more
         assert router.requests("GET", "/v1/agents/sessions/session-9/responses") == 1
 
     async def test_a_stored_text_conversation_names_every_question(
@@ -382,7 +487,7 @@ class TestResponses:
     ):
         # A stored text conversation cannot be rewound, so this is a call's, read back.
         responses = api.agent("docs").sessions.responses("session-3")
-        [turn] = await responses.list()
+        [turn] = (await responses.list()).items
 
         await responses.rewind(turn)
 
@@ -418,35 +523,114 @@ class TestResponses:
             await responses.rewind("")
 
 
-class TestSettings:
-    async def test_the_models_of_a_running_session_are_swapped(
+class TestUpdate:
+    async def test_a_running_session_is_renamed_and_its_models_swapped_at_once(
         self, api: stream.Client, router: Router
     ):
         session = await api.agent("docs").sessions.create()
         try:
-            updated = await session.update_settings(
-                stream.SessionSettings(llm="llm-thinking", thinking="high")
+            updated = await session.update(
+                title="Pricing", llm="llm-thinking", thinking="high"
             )
         finally:
             await session.close()
 
         assert updated.id == "session-1"
+        assert updated.title == "Pricing"
         assert updated.llm == "llm-thinking"
-        assert router.requests("PATCH", "/v1/agents/sessions/session-1/settings") == 1
-        body = router.body("PATCH", "/v1/agents/sessions/session-1/settings")
-        assert body == {"llm": "llm-thinking", "thinking": "high"}
+        body = router.body("PATCH", "/v1/agents/sessions/session-1")
+        assert body == {"title": "Pricing", "llm": "llm-thinking", "thinking": "high"}
 
     async def test_an_empty_voice_is_sent_since_it_means_the_default(
         self, api: stream.Client, router: Router
     ):
         session = await api.agent("docs").sessions.create()
         try:
-            await session.update_settings(stream.SessionSettings(voice=""))
+            await session.update(voice="")
         finally:
             await session.close()
 
-        body = router.body("PATCH", "/v1/agents/sessions/session-1/settings")
+        body = router.body("PATCH", "/v1/agents/sessions/session-1")
         assert body == {"voice": ""}
+
+    async def test_an_ended_session_is_renamed_without_a_handle(
+        self, api: stream.Client, router: Router
+    ):
+        updated = await api.agent("docs").sessions.update(
+            "session-9", title="Pricing", custom={"ticket": "4721"}
+        )
+
+        assert updated.title == "Pricing"
+        body = router.body("PATCH", "/v1/agents/sessions/session-9")
+        assert body == {"title": "Pricing", "custom": {"ticket": "4721"}}
+
+
+class TestMemories:
+    async def test_everything_remembered_about_a_user_is_truncated(
+        self, api: stream.Client, router: Router
+    ):
+        await api.memories.truncate("jean")
+
+        assert router.requests("DELETE", "/v1/agents/users/jean/memories") == 1
+
+    async def test_truncating_needs_a_user(self, api: stream.Client, router: Router):
+        with pytest.raises(ValueError, match="needs a user id"):
+            await api.memories.truncate("")
+        assert router.asked == []
+
+
+class TestSimulations:
+    async def test_a_simulation_is_created_run_and_read_back(
+        self, api: stream.Client, router: Router
+    ):
+        simulation = await api.simulations.create(
+            stream.SimulationRequest(
+                name="refund outside the window",
+                config_id="config-1",
+                scenario="Ask for a refund 40 days late.",
+                assertion="No refund is promised.",
+                variations=5,
+            )
+        )
+        run = await api.simulations.run(simulation.id)
+        run = await api.simulations.runs.get(run.id)
+
+        assert simulation.name == "refund outside the window"
+        assert router.body("POST", "/v1/agents/simulations")["variations"] == 5
+        assert run.id == "run-1"
+        assert run.state == "running"
+        assert router.requests("POST", "/v1/agents/simulations/simulation-1/run") == 1
+
+    async def test_a_simulation_is_replaced_and_deleted_by_id(
+        self, api: stream.Client, router: Router
+    ):
+        updated = await api.simulations.update(
+            "simulation-2",
+            stream.SimulationRequest(
+                name="renamed", config_id="config-1", scenario="s", assertion="a"
+            ),
+        )
+        await api.simulations.delete("simulation-2")
+
+        assert updated.name == "renamed"
+        assert router.requests("PUT", "/v1/agents/simulations/simulation-2") == 1
+        assert router.requests("DELETE", "/v1/agents/simulations/simulation-2") == 1
+
+    async def test_runs_are_listed_by_simulation_and_cancelled(
+        self, api: stream.Client, router: Router
+    ):
+        [listed] = await api.simulations.runs.list(
+            simulation_id="simulation-1", state="passed"
+        )
+        cancelled = await api.simulations.runs.cancel("run-3")
+
+        assert listed.state == "passed"
+        assert router.query("GET", "/v1/agents/simulation-runs") == {
+            "simulation_id": "simulation-1",
+            "state": "passed",
+        }
+        assert cancelled.id == "run-3"
+        assert cancelled.state == "cancelled"
 
 
 class TestFork:
@@ -587,6 +771,36 @@ class TestAgentConfig:
     ):
         assert await api.agent("nowhere").config() is None
 
+    async def test_updating_the_config_patches_only_what_is_given(
+        self, api: stream.Client, router: Router
+    ):
+        router.configs = [
+            {
+                "id": "config-1",
+                "name": "docs",
+                "mode": "text",
+                "instructions": "Answer about Stream.",
+                "created_at": WHEN,
+                "updated_at": WHEN,
+            }
+        ]
+
+        config = await api.agent("docs").update_config(
+            stream.AgentConfigPatch(guardrail="Never discuss pricing.")
+        )
+
+        assert config.guardrail == "Never discuss pricing."
+        assert config.instructions == "Answer about Stream."
+        assert router.body("PATCH", "/v1/agents/configs/config-1") == {
+            "guardrail": "Never discuss pricing."
+        }
+
+    async def test_updating_an_agent_nothing_is_stored_under_is_refused(
+        self, api: stream.Client, router: Router
+    ):
+        with pytest.raises(stream.RouterError, match="no agent called nowhere"):
+            await api.agent("nowhere").update_config(stream.AgentConfigPatch())
+
 
 class TestGuests:
     async def test_a_guest_is_minted_with_a_token_to_hold(
@@ -726,6 +940,18 @@ class TestBackendCredentials:
             backend.as_user("", "token")
         with pytest.raises(ValueError, match="no token for"):
             backend.as_user("jean", "")
+
+
+def _run(id: str, state: str) -> dict[str, Any]:
+    return {
+        "id": id,
+        "simulation_id": "simulation-1",
+        "state": state,
+        "cases": 1,
+        "passed": 0,
+        "failed": 0,
+        "started_at": WHEN,
+    }
 
 
 def _item(ordinal: int) -> dict[str, Any]:

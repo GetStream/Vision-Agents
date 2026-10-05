@@ -23,75 +23,61 @@ T = TypeVar("T", bound="SimulationRun")
 class SimulationRun:
     """
     Attributes:
+        cases (int): How many conversations this run is having.
+        failed (int):
         id (str):
+        passed (int):
         simulation_id (str):
+        started_at (datetime.datetime):
         state (SimulationRunState): A run passed only if every one of its conversations did. A conversation that never
             got as far as a ruling leaves the run errored rather than failed.
-        cases (int): How many conversations this run is having.
-        passed (int):
-        failed (int):
-        started_at (datetime.datetime):
-        mode (SimulationRunMode | Unset):
-        config_id (str | Unset):
-        scenario (str | Unset):
         assertion (str | Unset): What was asked of this run, copied when it started. Editing a simulation does not
             rewrite what an old run tested.
-        judge_target (str | Unset):
-        error (str | Unset):
-        finished_at (datetime.datetime | Unset):
+        config_id (str | Unset):
         conversations (list[SimulationCase] | Unset): The conversations this run had. Present when one run is asked for,
             and left out of a list so that reading the log does not mean reading every transcript.
+        error (str | Unset):
+        finished_at (datetime.datetime | Unset):
+        judge_target (str | Unset):
+        mode (SimulationRunMode | Unset):
+        scenario (str | Unset):
     """
 
-    id: str
-    simulation_id: str
-    state: SimulationRunState
     cases: int
-    passed: int
     failed: int
+    id: str
+    passed: int
+    simulation_id: str
     started_at: datetime.datetime
-    mode: SimulationRunMode | Unset = UNSET
-    config_id: str | Unset = UNSET
-    scenario: str | Unset = UNSET
+    state: SimulationRunState
     assertion: str | Unset = UNSET
-    judge_target: str | Unset = UNSET
+    config_id: str | Unset = UNSET
+    conversations: list[SimulationCase] | Unset = UNSET
     error: str | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
-    conversations: list[SimulationCase] | Unset = UNSET
+    judge_target: str | Unset = UNSET
+    mode: SimulationRunMode | Unset = UNSET
+    scenario: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
-
-        simulation_id = self.simulation_id
-
-        state = self.state.value
-
         cases = self.cases
-
-        passed = self.passed
 
         failed = self.failed
 
+        id = self.id
+
+        passed = self.passed
+
+        simulation_id = self.simulation_id
+
         started_at = self.started_at.isoformat()
 
-        mode: str | Unset = UNSET
-        if not isinstance(self.mode, Unset):
-            mode = self.mode.value
-
-        config_id = self.config_id
-
-        scenario = self.scenario
+        state = self.state.value
 
         assertion = self.assertion
 
-        judge_target = self.judge_target
-
-        error = self.error
-
-        finished_at: str | Unset = UNSET
-        if not isinstance(self.finished_at, Unset):
-            finished_at = self.finished_at.isoformat()
+        config_id = self.config_id
 
         conversations: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.conversations, Unset):
@@ -100,35 +86,49 @@ class SimulationRun:
                 conversations_item = conversations_item_data.to_dict()
                 conversations.append(conversations_item)
 
+        error = self.error
+
+        finished_at: str | Unset = UNSET
+        if not isinstance(self.finished_at, Unset):
+            finished_at = self.finished_at.isoformat()
+
+        judge_target = self.judge_target
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
+        scenario = self.scenario
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "id": id,
-                "simulation_id": simulation_id,
-                "state": state,
                 "cases": cases,
-                "passed": passed,
                 "failed": failed,
+                "id": id,
+                "passed": passed,
+                "simulation_id": simulation_id,
                 "started_at": started_at,
+                "state": state,
             }
         )
-        if mode is not UNSET:
-            field_dict["mode"] = mode
-        if config_id is not UNSET:
-            field_dict["config_id"] = config_id
-        if scenario is not UNSET:
-            field_dict["scenario"] = scenario
         if assertion is not UNSET:
             field_dict["assertion"] = assertion
-        if judge_target is not UNSET:
-            field_dict["judge_target"] = judge_target
+        if config_id is not UNSET:
+            field_dict["config_id"] = config_id
+        if conversations is not UNSET:
+            field_dict["conversations"] = conversations
         if error is not UNSET:
             field_dict["error"] = error
         if finished_at is not UNSET:
             field_dict["finished_at"] = finished_at
-        if conversations is not UNSET:
-            field_dict["conversations"] = conversations
+        if judge_target is not UNSET:
+            field_dict["judge_target"] = judge_target
+        if mode is not UNSET:
+            field_dict["mode"] = mode
+        if scenario is not UNSET:
+            field_dict["scenario"] = scenario
 
         return field_dict
 
@@ -137,43 +137,23 @@ class SimulationRun:
         from ..models.simulation_case import SimulationCase
 
         d = dict(src_dict)
-        id = d.pop("id")
-
-        simulation_id = d.pop("simulation_id")
-
-        state = SimulationRunState(d.pop("state"))
-
         cases = d.pop("cases")
-
-        passed = d.pop("passed")
 
         failed = d.pop("failed")
 
+        id = d.pop("id")
+
+        passed = d.pop("passed")
+
+        simulation_id = d.pop("simulation_id")
+
         started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
 
-        _mode = d.pop("mode", UNSET)
-        mode: SimulationRunMode | Unset
-        if isinstance(_mode, Unset):
-            mode = UNSET
-        else:
-            mode = SimulationRunMode(_mode)
-
-        config_id = d.pop("config_id", UNSET)
-
-        scenario = d.pop("scenario", UNSET)
+        state = SimulationRunState(d.pop("state"))
 
         assertion = d.pop("assertion", UNSET)
 
-        judge_target = d.pop("judge_target", UNSET)
-
-        error = d.pop("error", UNSET)
-
-        _finished_at = d.pop("finished_at", UNSET)
-        finished_at: datetime.datetime | Unset
-        if isinstance(_finished_at, Unset):
-            finished_at = UNSET
-        else:
-            finished_at = datetime.datetime.fromisoformat(_finished_at)
+        config_id = d.pop("config_id", UNSET)
 
         _conversations = d.pop("conversations", UNSET)
         conversations: list[SimulationCase] | Unset = UNSET
@@ -184,22 +164,42 @@ class SimulationRun:
 
                 conversations.append(conversations_item)
 
+        error = d.pop("error", UNSET)
+
+        _finished_at = d.pop("finished_at", UNSET)
+        finished_at: datetime.datetime | Unset
+        if isinstance(_finished_at, Unset):
+            finished_at = UNSET
+        else:
+            finished_at = datetime.datetime.fromisoformat(_finished_at)
+
+        judge_target = d.pop("judge_target", UNSET)
+
+        _mode = d.pop("mode", UNSET)
+        mode: SimulationRunMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = SimulationRunMode(_mode)
+
+        scenario = d.pop("scenario", UNSET)
+
         simulation_run = cls(
-            id=id,
-            simulation_id=simulation_id,
-            state=state,
             cases=cases,
-            passed=passed,
             failed=failed,
+            id=id,
+            passed=passed,
+            simulation_id=simulation_id,
             started_at=started_at,
-            mode=mode,
-            config_id=config_id,
-            scenario=scenario,
+            state=state,
             assertion=assertion,
-            judge_target=judge_target,
+            config_id=config_id,
+            conversations=conversations,
             error=error,
             finished_at=finished_at,
-            conversations=conversations,
+            judge_target=judge_target,
+            mode=mode,
+            scenario=scenario,
         )
 
         simulation_run.additional_properties = d

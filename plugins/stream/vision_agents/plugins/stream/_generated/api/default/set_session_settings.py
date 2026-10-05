@@ -62,6 +62,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -87,17 +92,17 @@ def sync_detailed(
 ) -> Response[Error | Session]:
     """Change the models and voice of one running session
 
-     Swaps what the agent runs on without leaving the call, for this session only: the agent config it
-    started from is untouched. The new models are opened before anything changes, so a target that does
-    not route is refused and the agent carries on as it was. They take over from the next turn; a reply
-    being spoken finishes on the models it started with.
+     Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this
+    session only: the agent config it started from is untouched. The new models are opened before
+    anything changes, so a target that does not route is refused and the agent carries on as it was.
+    They take over from the next turn; a reply being spoken finishes on the models it started with.
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
     instructions.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (SessionSettingsRequest): What to change about one running session's models. A field
             left out is left as it is. The same safe knobs as ModelOverwrites, plus the voice.
 
@@ -129,17 +134,17 @@ def sync(
 ) -> Error | Session | None:
     """Change the models and voice of one running session
 
-     Swaps what the agent runs on without leaving the call, for this session only: the agent config it
-    started from is untouched. The new models are opened before anything changes, so a target that does
-    not route is refused and the agent carries on as it was. They take over from the next turn; a reply
-    being spoken finishes on the models it started with.
+     Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this
+    session only: the agent config it started from is untouched. The new models are opened before
+    anything changes, so a target that does not route is refused and the agent carries on as it was.
+    They take over from the next turn; a reply being spoken finishes on the models it started with.
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
     instructions.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (SessionSettingsRequest): What to change about one running session's models. A field
             left out is left as it is. The same safe knobs as ModelOverwrites, plus the voice.
 
@@ -166,17 +171,17 @@ async def asyncio_detailed(
 ) -> Response[Error | Session]:
     """Change the models and voice of one running session
 
-     Swaps what the agent runs on without leaving the call, for this session only: the agent config it
-    started from is untouched. The new models are opened before anything changes, so a target that does
-    not route is refused and the agent carries on as it was. They take over from the next turn; a reply
-    being spoken finishes on the models it started with.
+     Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this
+    session only: the agent config it started from is untouched. The new models are opened before
+    anything changes, so a target that does not route is refused and the agent carries on as it was.
+    They take over from the next turn; a reply being spoken finishes on the models it started with.
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
     instructions.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (SessionSettingsRequest): What to change about one running session's models. A field
             left out is left as it is. The same safe knobs as ModelOverwrites, plus the voice.
 
@@ -206,17 +211,17 @@ async def asyncio(
 ) -> Error | Session | None:
     """Change the models and voice of one running session
 
-     Swaps what the agent runs on without leaving the call, for this session only: the agent config it
-    started from is untouched. The new models are opened before anything changes, so a target that does
-    not route is refused and the agent carries on as it was. They take over from the next turn; a reply
-    being spoken finishes on the models it started with.
+     Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this
+    session only: the agent config it started from is untouched. The new models are opened before
+    anything changes, so a target that does not route is refused and the agent carries on as it was.
+    They take over from the next turn; a reply being spoken finishes on the models it started with.
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
     instructions.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (SessionSettingsRequest): What to change about one running session's models. A field
             left out is left as it is. The same safe knobs as ModelOverwrites, plus the voice.
 

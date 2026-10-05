@@ -33,7 +33,7 @@ final class SessionTest extends TestCase
     public function testCreateNamesTheAgentAndHoldsItInWriting(): void
     {
         self::assertSame(
-            ['text' => true, 'agent' => 'jean', 'title' => 'Pricing', 'custom' => ['plan' => 'pro']],
+            ['agent' => 'jean', 'custom' => ['plan' => 'pro'], 'text' => true, 'title' => 'Pricing'],
             $this->router->to('POST', '/v1/agents/sessions')[0]->json(),
         );
         self::assertSame(SessionState::Live, $this->session->created->state);
@@ -43,7 +43,7 @@ final class SessionTest extends TestCase
     public function testResponsesCreateAndItems(): void
     {
         $this->router->answer('POST', '/v1/agents/sessions/ses_1/responses', 201, Rows::response('resp_1'));
-        $this->router->answer('GET', '/v1/agents/sessions/ses_1/responses/items', 200, [Rows::item('resp_1', 0), Rows::item('resp_1', 1, 'tool_call')]);
+        $this->router->answer('GET', '/v1/agents/sessions/ses_1/responses/items', 200, ['items' => [Rows::item('resp_1', 0), Rows::item('resp_1', 1, 'tool_call')], 'has_more' => false]);
 
         $response = $this->session->responses->create('What does it cost?');
         $items = $response->items->all();
@@ -90,58 +90,137 @@ final class SessionTest extends TestCase
         $fork = $this->session->fork(new ForkSessionRequest(responseId: 'resp_1', title: 'Take two'));
 
         self::assertSame('ses_2', $fork->id());
-        self::assertSame(['title' => 'Take two', 'response_id' => 'resp_1'], $this->router->to('POST', '/v1/agents/sessions/ses_1/fork')[0]->json());
+        self::assertSame(['response_id' => 'resp_1', 'title' => 'Take two'], $this->router->to('POST', '/v1/agents/sessions/ses_1/fork')[0]->json());
     }
 
-    public function testUpdateSettingsChangesTheModelsOfOneSession(): void
+    public function testUpdateChangesOneSessionWithOneRequest(): void
     {
-        $this->router->answer('PATCH', '/v1/agents/sessions/ses_1/settings', 200, Rows::session('ses_1', ['llm' => 'llm-thinking']));
+        $this->router->answer('PATCH', '/v1/agents/sessions/ses_1', 200, Rows::session('ses_1', ['llm' => 'llm-thinking', 'title' => 'Plans']));
 
-        $updated = $this->session->updateSettings(llm: 'llm-thinking', thinking: 'high', sts: '');
+        $updated = $this->session->update(title: 'Plans', instructions: 'Be brief.', llm: 'llm-thinking', thinking: 'high', sts: '');
 
         self::assertSame('llm-thinking', $updated->llm);
-        self::assertSame(['llm' => 'llm-thinking', 'sts' => '', 'thinking' => 'high'], $this->router->to('PATCH', '/v1/agents/sessions/ses_1/settings')[0]->json());
+        self::assertSame(
+            ['instructions' => 'Be brief.', 'llm' => 'llm-thinking', 'sts' => '', 'thinking' => 'high', 'title' => 'Plans'],
+            $this->router->to('PATCH', '/v1/agents/sessions/ses_1')[0]->json(),
+        );
     }
 
-    public function testCloseIsIdempotentAndIgnoresAGoneSession(): void
+    public function testAnEndedSessionIsRenamedById(): void
     {
-        $this->router->answer('DELETE', '/v1/agents/sessions/ses_1', 404, ['error' => 'gone']);
+        $this->router->answer('PATCH', '/v1/agents/sessions/ses_9', 200, Rows::session('ses_9', ['state' => 'ended', 'title' => 'Pricing']));
+
+        $updated = $this->router->client()->agent('jean')->sessions->update('ses_9', title: 'Pricing');
+
+        self::assertSame('Pricing', $updated->title);
+        self::assertSame(['title' => 'Pricing'], $this->router->to('PATCH', '/v1/agents/sessions/ses_9')[0]->json());
+    }
+
+    public function testCloseStopsIsIdempotentAndIgnoresAGoneSession(): void
+    {
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/stop', 404, ['error' => 'gone']);
 
         $this->session->close();
         $this->session->close();
 
         self::assertTrue($this->session->closed());
+        self::assertCount(1, $this->router->to('POST', '/v1/agents/sessions/ses_1/stop'));
+        self::assertSame([], $this->router->to('DELETE', '/v1/agents/sessions/ses_1'), 'closing keeps the conversation');
+    }
+
+    public function testDeleteDeletesTheSession(): void
+    {
+        $this->router->answer('DELETE', '/v1/agents/sessions/ses_1', 204);
+
+        $this->session->delete();
+        $this->session->close();
+
         self::assertCount(1, $this->router->to('DELETE', '/v1/agents/sessions/ses_1'));
+        self::assertSame([], $this->router->to('POST', '/v1/agents/sessions/ses_1/stop'), 'a deleted session has nothing left to stop');
+    }
+
+    public function testDeleteMemoriesOfOneSession(): void
+    {
+        $this->router->answer('DELETE', '/v1/agents/sessions/ses_1/memories', 204);
+        $this->router->answer('DELETE', '/v1/agents/sessions/ses_2/memories', 204);
+
+        $this->session->deleteMemories();
+        $this->router->client()->agent('jean')->sessions->deleteMemories('ses_2');
+
+        self::assertCount(1, $this->router->to('DELETE', '/v1/agents/sessions/ses_1/memories'));
+        self::assertCount(1, $this->router->to('DELETE', '/v1/agents/sessions/ses_2/memories'));
     }
 
     public function testActions(): void
     {
-        foreach (['say', 'respond', 'interrupt'] as $action) {
+        foreach (['say', 'interrupt'] as $action) {
             $this->router->answer('POST', "/v1/agents/sessions/ses_1/{$action}", 204);
         }
-        $this->router->answer('PUT', '/v1/agents/sessions/ses_1/instructions', 204);
 
         $this->session->say('Hello.');
-        $this->session->respond('Tell them the price.');
         $this->session->interrupt();
-        $this->session->setInstructions('Be brief.');
 
         self::assertSame(['text' => 'Hello.'], $this->router->to('POST', '/v1/agents/sessions/ses_1/say')[0]->json());
-        self::assertSame(['text' => 'Tell them the price.'], $this->router->to('POST', '/v1/agents/sessions/ses_1/respond')[0]->json());
         self::assertCount(1, $this->router->to('POST', '/v1/agents/sessions/ses_1/interrupt'));
-        self::assertSame(['instructions' => 'Be brief.'], $this->router->to('PUT', '/v1/agents/sessions/ses_1/instructions')[0]->json());
     }
 
-    public function testQueryFiltersByAgentAndLabels(): void
+    public function testQueryPostsTheFilterAndReadsAPage(): void
     {
-        $this->router->answer('GET', '/v1/agents/sessions', 200, [Rows::session('ses_1', ['state' => 'something-new'])]);
+        $this->router->answer('POST', '/v1/agents/sessions/query', 200, ['items' => [Rows::session('ses_1', ['state' => 'something-new'])], 'has_more' => true, 'next_cursor' => 'cur_2']);
 
-        $rows = $this->router->client()->agent('jean')->sessions->query(state: 'running', custom: ['plan' => 'pro'], limit: 10);
+        $page = $this->router->client()->agent('jean')->sessions->query(userId: 'u1', state: 'live', agentId: 'jean-7', limit: 10, cursor: 'cur_1');
 
-        self::assertSame('something-new', $rows[0]->state, 'a state this SDK does not know is kept, not refused');
+        self::assertSame('something-new', $page->items[0]->state, 'a state this SDK does not know is kept, not refused');
+        self::assertTrue($page->hasMore);
+        self::assertSame('cur_2', $page->nextCursor);
         self::assertSame(
-            ['agent' => 'jean', 'state' => 'running', 'custom' => '{"plan":"pro"}', 'limit' => '10'],
-            $this->router->to('GET', '/v1/agents/sessions')[0]->params(),
+            ['cursor' => 'cur_1', 'filter' => ['agent' => 'jean', 'agent_id' => 'jean-7', 'state' => 'live', 'user_id' => 'u1'], 'limit' => 10],
+            $this->router->to('POST', '/v1/agents/sessions/query')[0]->json(),
         );
+    }
+
+    public function testSearchIsAQueryWithText(): void
+    {
+        $this->router->answer('POST', '/v1/agents/sessions/query', 200, ['items' => [], 'has_more' => false]);
+
+        $page = $this->router->client()->agent('jean')->sessions->search('pricing', modality: 'voice');
+
+        self::assertSame([], $page->items);
+        self::assertSame(
+            ['filter' => ['agent' => 'jean', 'modality' => 'voice', 'text' => ['$q' => 'pricing']]],
+            $this->router->to('POST', '/v1/agents/sessions/query')[0]->json(),
+        );
+    }
+
+    public function testCreateTakesAnIdAndAProject(): void
+    {
+        $this->router->client()->agent('jean')->sessions->create(projectId: 'health', id: '0192f0c0-0000-7000-8000-000000000001');
+
+        $sent = $this->router->to('POST', '/v1/agents/sessions')[1]->json();
+        self::assertSame('0192f0c0-0000-7000-8000-000000000001', $sent['id']);
+        self::assertSame('health', $sent['project_id']);
+        self::assertArrayNotHasKey('project', $sent);
+    }
+
+    public function testResponsesAndItemsPageByCursor(): void
+    {
+        $this->router->answer('GET', '/v1/agents/sessions/ses_1/responses', 200, ['items' => [Rows::response('resp_1')], 'has_more' => false]);
+        $this->router->answer(
+            'GET',
+            '/v1/agents/sessions/ses_1/responses/items',
+            200,
+            ['items' => [Rows::item('resp_1', 0)], 'has_more' => true, 'next_cursor' => 'cur_2'],
+            ['items' => [Rows::item('resp_1', 1)], 'has_more' => false],
+        );
+
+        $page = $this->session->responses->list(limit: 5);
+        $items = $this->session->responses->items->all();
+
+        self::assertSame('resp_1', $page->items[0]->id);
+        self::assertSame(['limit' => '5'], $this->router->to('GET', '/v1/agents/sessions/ses_1/responses')[0]->params());
+        self::assertSame([0, 1], array_map(static fn ($item) => $item->ordinal, $items));
+        $asked = $this->router->to('GET', '/v1/agents/sessions/ses_1/responses/items');
+        self::assertArrayNotHasKey('cursor', $asked[0]->params());
+        self::assertSame('cur_2', $asked[1]->params()['cursor']);
     }
 }

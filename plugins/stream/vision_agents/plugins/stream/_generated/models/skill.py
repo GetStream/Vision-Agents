@@ -17,40 +17,40 @@ T = TypeVar("T", bound="Skill")
 class Skill:
     """
     Attributes:
-        id (str):
         config_id (str):
-        name (str):
-        description (str):
-        instructions (str):
         created_at (datetime.datetime):
+        description (str):
+        id (str):
+        instructions (str):
+        name (str):
         updated_at (datetime.datetime):
         capture_video (bool | Unset): Capture task-scoped visual evidence before reasoning.
         deadline_ms (int | Unset):
     """
 
-    id: str
     config_id: str
-    name: str
-    description: str
-    instructions: str
     created_at: datetime.datetime
+    description: str
+    id: str
+    instructions: str
+    name: str
     updated_at: datetime.datetime
     capture_video: bool | Unset = UNSET
     deadline_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
-
         config_id = self.config_id
 
-        name = self.name
+        created_at = self.created_at.isoformat()
 
         description = self.description
 
+        id = self.id
+
         instructions = self.instructions
 
-        created_at = self.created_at.isoformat()
+        name = self.name
 
         updated_at = self.updated_at.isoformat()
 
@@ -62,12 +62,12 @@ class Skill:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "id": id,
                 "config_id": config_id,
-                "name": name,
-                "description": description,
-                "instructions": instructions,
                 "created_at": created_at,
+                "description": description,
+                "id": id,
+                "instructions": instructions,
+                "name": name,
                 "updated_at": updated_at,
             }
         )
@@ -81,17 +81,17 @@ class Skill:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        id = d.pop("id")
-
         config_id = d.pop("config_id")
 
-        name = d.pop("name")
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         description = d.pop("description")
 
+        id = d.pop("id")
+
         instructions = d.pop("instructions")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+        name = d.pop("name")
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
@@ -100,12 +100,12 @@ class Skill:
         deadline_ms = d.pop("deadline_ms", UNSET)
 
         skill = cls(
-            id=id,
             config_id=config_id,
-            name=name,
-            description=description,
-            instructions=instructions,
             created_at=created_at,
+            description=description,
+            id=id,
+            instructions=instructions,
+            name=name,
             updated_at=updated_at,
             capture_video=capture_video,
             deadline_ms=deadline_ms,

@@ -21,58 +21,58 @@ T = TypeVar("T", bound="ClassifyQuestion")
 class ClassifyQuestion:
     """
     Attributes:
+        instructions (str):  Example: Is the customer asking for a refund?.
         type_ (ClassifyQuestionType): noul is yes or no, answered as the probability of yes. choice picks one of named
             options. score places the state along ordered levels.
-        instructions (str):  Example: Is the customer asking for a refund?.
+        levels (list[str] | Unset): A score's levels, in order, each describing a concrete situation.
+        no (str | Unset): What no means for a noul, where the instructions do not say it.
         options (ClassifyQuestionOptions | Unset): A choice's options, each with a description of what it covers or an
             empty string where the name says it. Include one for "none of these" whenever the options may not cover an
             input.
-        levels (list[str] | Unset): A score's levels, in order, each describing a concrete situation.
         yes (str | Unset): What yes means for a noul, where the instructions do not say it.
-        no (str | Unset): What no means for a noul, where the instructions do not say it.
     """
 
-    type_: ClassifyQuestionType
     instructions: str
-    options: ClassifyQuestionOptions | Unset = UNSET
+    type_: ClassifyQuestionType
     levels: list[str] | Unset = UNSET
-    yes: str | Unset = UNSET
     no: str | Unset = UNSET
+    options: ClassifyQuestionOptions | Unset = UNSET
+    yes: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        type_ = self.type_.value
-
         instructions = self.instructions
 
-        options: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.options, Unset):
-            options = self.options.to_dict()
+        type_ = self.type_.value
 
         levels: list[str] | Unset = UNSET
         if not isinstance(self.levels, Unset):
             levels = self.levels
 
-        yes = self.yes
-
         no = self.no
+
+        options: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.options, Unset):
+            options = self.options.to_dict()
+
+        yes = self.yes
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "type": type_,
                 "instructions": instructions,
+                "type": type_,
             }
         )
-        if options is not UNSET:
-            field_dict["options"] = options
         if levels is not UNSET:
             field_dict["levels"] = levels
-        if yes is not UNSET:
-            field_dict["yes"] = yes
         if no is not UNSET:
             field_dict["no"] = no
+        if options is not UNSET:
+            field_dict["options"] = options
+        if yes is not UNSET:
+            field_dict["yes"] = yes
 
         return field_dict
 
@@ -83,9 +83,13 @@ class ClassifyQuestion:
         )
 
         d = dict(src_dict)
+        instructions = d.pop("instructions")
+
         type_ = ClassifyQuestionType(d.pop("type"))
 
-        instructions = d.pop("instructions")
+        levels = cast(list[str], d.pop("levels", UNSET))
+
+        no = d.pop("no", UNSET)
 
         _options = d.pop("options", UNSET)
         options: ClassifyQuestionOptions | Unset
@@ -94,19 +98,15 @@ class ClassifyQuestion:
         else:
             options = ClassifyQuestionOptions.from_dict(_options)
 
-        levels = cast(list[str], d.pop("levels", UNSET))
-
         yes = d.pop("yes", UNSET)
 
-        no = d.pop("no", UNSET)
-
         classify_question = cls(
-            type_=type_,
             instructions=instructions,
-            options=options,
+            type_=type_,
             levels=levels,
-            yes=yes,
             no=no,
+            options=options,
+            yes=yes,
         )
 
         classify_question.additional_properties = d

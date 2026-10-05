@@ -58,21 +58,30 @@ final class Disconnected extends Connection {
 /// listening to anything.
 final class AgentSession {
   AgentSession(
-    this.session, {
+    Session session, {
     required Backend backend,
     required Sessions sessions,
     List<AgentTool> tools = const [],
     this.interim = false,
-  }) : _backend = backend,
+  }) : _session = session,
+       _backend = backend,
        _sessions = sessions,
-       _tools = {for (final tool in tools.reversed) tool.name: tool},
-       responses = sessions.responses(session.id);
+       _tools = {for (final tool in tools.reversed) tool.name: tool};
 
-  /// The session the router opened.
-  final Session session;
+  /// The session the router opened, as of the last [update].
+  Session get session => _session;
+  Session _session;
 
-  /// This conversation's turns as the router wrote them down, and rewinding to one.
-  final Responses responses;
+  /// Asking the agent something, this conversation's turns as the router wrote them down,
+  /// and rewinding to one.
+  ///
+  /// What is asked here shows in [conversation] at once, before the router has answered.
+  late final Responses responses = heldResponses(
+    _sessions,
+    session.id,
+    kept: session.conversationId.isNotEmpty,
+    asking: _asked,
+  );
 
   /// Also report what somebody is part way through saying, as `hearing` events.
   final bool interim;
@@ -158,16 +167,6 @@ final class AgentSession {
     });
   }
 
-  /// Says this to the agent, as though it had been heard, and shows it at once.
-  void send(String text, {List<AgentImage> images = const []}) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) {
-      return;
-    }
-    _held().send(RespondCommand(trimmed, images: images));
-    _conversation.value = _conversation.value.said(trimmed);
-  }
-
   /// Speaks this without going through the model.
   void say(String text) => _held().send(SayCommand(text));
 
@@ -183,6 +182,17 @@ final class AgentSession {
   /// after this if it should not.
   Future<void> rewind(String responseId) => responses.rewind(responseId);
 
+  /// Renames or relabels this conversation, and returns [session] as it now is.
+  ///
+  /// A field left null is left as it is. [custom] replaces the labels whole, and an empty map
+  /// clears them.
+  Future<Session> update({
+    String? title,
+    String? description,
+    Map<String, Object?>? custom,
+  }) async =>
+      _session = await _sessions.update(id, title: title, description: description, custom: custom);
+
   /// Continues this conversation as a new session, leaving this one as it was.
   ///
   /// The fork keeps this session's tools, since they are here in this process and a
@@ -196,7 +206,9 @@ final class AgentSession {
     interim: interim,
   );
 
-  /// Ends the session and closes the socket. Safe to call more than once.
+  /// Stops the session and closes the socket. Safe to call more than once.
+  ///
+  /// What the conversation recorded and remembered is kept; [delete] takes it away.
   Future<void> close() async {
     final socket = _socket;
     if (isConnected && socket != null) {
@@ -206,11 +218,26 @@ final class AgentSession {
         // Gone already, which leaves the router to notice.
       }
     } else if (_connection.value is NotStarted) {
-      await _sessions.close(id);
+      await _sessions.stop(id);
     }
-    await socket?.close();
+    await _hangUp();
+  }
+
+  /// Deletes this conversation, stopping it if it is running: its turns and what it taught
+  /// memory go with it.
+  Future<void> delete() async {
+    await _sessions.delete(id);
+    await _hangUp();
+  }
+
+  Future<void> _hangUp() async {
+    await _socket?.close();
     await _pump?.cancel();
     _stopped(null);
+  }
+
+  void _asked(String text) {
+    _conversation.value = _conversation.value.said(text.trim());
   }
 
   SessionSocket _held() {

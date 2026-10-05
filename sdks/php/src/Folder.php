@@ -9,6 +9,7 @@ use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Folder\Declaration;
 use GetStream\VisionAgents\Folder\Document;
 use GetStream\VisionAgents\Folder\KnowledgeUrl;
+use GetStream\VisionAgents\Folder\Simulation;
 use JsonException;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -26,6 +27,7 @@ use Symfony\Component\Yaml\Yaml;
  *       skills/think.md    frontmatter naming what the fast model sees, then the prompt
  *       knowledge/pricing.md
  *       knowledge/urls.yaml
+ *       simulations/lunch.yaml
  *
  * The fingerprint is taken the way the Go and Python SDKs take it, so an `.agent_sync` any of
  * them wrote is understood by the others.
@@ -39,6 +41,7 @@ final readonly class Folder
     public const string SKILLS_DIR = 'skills';
     public const string KNOWLEDGE_DIR = 'knowledge';
     public const string KNOWLEDGE_URLS_FILE = 'urls.yaml';
+    public const string SIMULATIONS_DIR = 'simulations';
 
     /** What a knowledge directory is read from. A model looks things up in prose, not in a binary. */
     private const array READABLE = ['md', 'mdx', 'txt', 'rst', 'yaml', 'yml'];
@@ -48,6 +51,9 @@ final readonly class Folder
      * @param list<Skill> $skills in name order
      * @param list<Document> $knowledge in path order
      * @param list<KnowledgeUrl> $knowledgeUrls in the order urls.yaml lists them
+     * @param ?list<Simulation> $simulations by file name and then as listed; null when there is
+     *     no simulations/, which leaves the stored ones alone, empty when it has none, which
+     *     deletes them
      */
     public function __construct(
         public string $path,
@@ -59,6 +65,7 @@ final readonly class Folder
         public array $skills = [],
         public array $knowledge = [],
         public array $knowledgeUrls = [],
+        public ?array $simulations = null,
     ) {
     }
 
@@ -95,6 +102,7 @@ final readonly class Folder
             skills: self::loadSkills($path . '/' . self::SKILLS_DIR),
             knowledge: self::loadKnowledge($path . '/' . self::KNOWLEDGE_DIR),
             knowledgeUrls: self::loadKnowledgeUrls($path . '/' . self::KNOWLEDGE_DIR . '/' . self::KNOWLEDGE_URLS_FILE),
+            simulations: self::loadSimulations($path . '/' . self::SIMULATIONS_DIR),
         );
     }
 
@@ -104,7 +112,7 @@ final readonly class Folder
      */
     public function hash(): string
     {
-        return self::fingerprint($this->declaration, $this->instructions, $this->guardrail, $this->skills, $this->knowledge, $this->knowledgeUrls);
+        return self::fingerprint($this->declaration, $this->instructions, $this->guardrail, $this->skills, $this->knowledge, $this->knowledgeUrls, $this->simulations);
     }
 
     /**
@@ -142,8 +150,9 @@ final readonly class Folder
      * @param list<Skill> $skills
      * @param list<Document> $knowledge
      * @param list<KnowledgeUrl> $pages
+     * @param ?list<Simulation> $simulations
      */
-    public static function fingerprint(string $declaration, string $instructions, string $guardrail, array $skills = [], array $knowledge = [], array $pages = []): string
+    public static function fingerprint(string $declaration, string $instructions, string $guardrail, array $skills = [], array $knowledge = [], array $pages = [], ?array $simulations = null): string
     {
         $hasher = hash_init('md5');
         hash_update($hasher, $declaration . "\n" . $instructions . "\n" . $guardrail);
@@ -164,6 +173,17 @@ final readonly class Folder
         }
         foreach ($pages as $page) {
             hash_update($hasher, "\nurl:{$page->url}\n{$page->title}\n{$page->description}");
+            // Only when there is one, so a page without keeps the fingerprint it had.
+            if ($page->refreshHours > 0) {
+                hash_update($hasher, "\nrefresh_hours:{$page->refreshHours}");
+            }
+        }
+        // Only when there is a simulations/, so a directory without one keeps its fingerprint.
+        if ($simulations !== null) {
+            hash_update($hasher, "\nsimulations:");
+            foreach ($simulations as $simulation) {
+                hash_update($hasher, $simulation->fingerprint());
+            }
         }
         return hash_final($hasher);
     }
@@ -328,6 +348,50 @@ final readonly class Folder
         } catch (ParseException | ConfigurationException $bad) {
             throw new ConfigurationException("{$path}: {$bad->getMessage()}", 0, $bad);
         }
+    }
+
+    /**
+     * Every .yaml and .yml file in simulations/, each a list. A name two simulations share is
+     * refused, since a sync finds a simulation by its name.
+     *
+     * @return ?list<Simulation>
+     */
+    private static function loadSimulations(string $path): ?array
+    {
+        if (!is_dir($path)) {
+            return null;
+        }
+        $files = glob($path . '/*');
+        $files = $files === false ? [] : $files;
+        sort($files, SORT_STRING);
+        $simulations = [];
+        $named = [];
+        foreach ($files as $file) {
+            $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+            if (!is_file($file) || ($extension !== 'yaml' && $extension !== 'yml')) {
+                continue;
+            }
+            try {
+                $parsed = Yaml::parse(self::read($file));
+                if ($parsed === null) {
+                    continue;
+                }
+                if (!is_array($parsed) || !array_is_list($parsed)) {
+                    throw new ConfigurationException('a simulations file is a list of simulations');
+                }
+                foreach ($parsed as $entry) {
+                    $simulation = Simulation::fromYaml($entry);
+                    if (array_key_exists($simulation->name, $named)) {
+                        throw new ConfigurationException("simulation \"{$simulation->name}\" is also declared in {$named[$simulation->name]}");
+                    }
+                    $named[$simulation->name] = basename($file);
+                    $simulations[] = $simulation;
+                }
+            } catch (ParseException | ConfigurationException $bad) {
+                throw new ConfigurationException("{$file}: {$bad->getMessage()}", 0, $bad);
+            }
+        }
+        return $simulations;
     }
 
     private static function read(string $file): string

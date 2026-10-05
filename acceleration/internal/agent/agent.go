@@ -137,6 +137,9 @@ type Options struct {
 	// holding the conversation: running code takes seconds, and a conversation cannot
 	// spare them.
 	Sandbox sandbox.Sandbox
+	// Publish puts the files the subagent's code hands back where the caller can see them,
+	// which is the conversation's channel when there is one. Nil means nowhere.
+	Publish sandbox.Publisher
 	// Tasks caps how much delegated work may run at once. Zero leaves the harness's own
 	// default in place.
 	Tasks int
@@ -331,8 +334,11 @@ type Agent struct {
 	// pendingTools is how many tool calls from the current turn have not come back yet.
 	// The spoken follow-up waits until this is zero so two results share one generate.
 	pendingTools int
-	joined       bool
-	closed       bool
+	// owedTurn is the last turn that ended with tools or delegated work outstanding, which
+	// the reply delivering that work continues.
+	owedTurn string
+	joined   bool
+	closed   bool
 
 	// lastParticipant is who the agent was last talking to, so a reply prompted by
 	// delegated work coming back is attributed to the person who is waiting for it.
@@ -1434,11 +1440,13 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolReply = false
+	continues := a.owedTurn
+	a.owedTurn = ""
 	instructions := a.instructions()
 	a.mu.Unlock()
 
 	a.turns.begin(turnID, participant, time.Now(), time.Time{}, 0)
-	a.emitter.Send(Responding{TurnID: turnID, Participant: participant})
+	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
 	return a.generate(harness.Turn{
 		ID:           turnID,
@@ -1952,8 +1960,14 @@ func (a *Agent) finish(response llm.Response) {
 		a.fail(err, "compaction")
 	}
 
+	pendingWork := len(calls) > 0 || a.Busy()
+	if pendingWork {
+		a.mu.Lock()
+		a.owedTurn = response.ID
+		a.mu.Unlock()
+	}
 	a.emitter.Send(Responded{
-		PendingWork:        len(calls) > 0 || a.Busy(),
+		PendingWork:        pendingWork,
 		TurnID:             response.ID,
 		Text:               said,
 		TimeToFirstTokenMs: response.TimeToFirstTokenMs,
@@ -2139,6 +2153,7 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 					Question:  typed.Question,
 					ElapsedMs: typed.ElapsedMs,
 					Err:       typed.Err,
+					Files:     typed.Files,
 				})
 			}
 			// Asked after the report rather than instead of it: work that ran out of time
@@ -2228,12 +2243,14 @@ func (a *Agent) follow() error {
 	a.speakingTurn = turnID
 	a.generating = true
 	participant := a.lastParticipant
+	continues := a.owedTurn
+	a.owedTurn = ""
 	instructions := a.instructions()
 	a.mu.Unlock()
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
 	// finishing a sentence and hearing the answer start, and nobody said anything here.
-	a.emitter.Send(Responding{TurnID: turnID, Participant: participant})
+	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
 	return a.generate(harness.Turn{
 		ID:           turnID,

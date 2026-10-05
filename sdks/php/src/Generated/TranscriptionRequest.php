@@ -12,13 +12,13 @@ final readonly class TranscriptionRequest
 {
     public function __construct(
         public RecordingSource $source,
-        // Complete this short request synchronously without storing a recording job or audio. The 202 response contai...
-        public ?bool $inline = null,
-        // A stored router config to take the options from. Anything named here as well overrides that one field of it.
-        public ?string $configId = null,
-        public ?SttOptions $options = null,
         // A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription...
         public ?string $callback = null,
+        // A stored router config to take the options from. Anything named here as well overrides that one field of it.
+        public ?string $configId = null,
+        // Complete this short request synchronously without storing a recording job or audio. The 202 response contai...
+        public ?bool $inline = null,
+        public ?SttOptions $options = null,
         // Cost labels for this job.
         /** @var array<string, string>|null */
         public ?array $tags = null,
@@ -32,10 +32,10 @@ final readonly class TranscriptionRequest
     {
         return new self(
             source: RecordingSource::fromArray(Json::object($data, 'source')),
-            inline: array_key_exists('inline', $data) && $data['inline'] !== null ? Json::bool($data, 'inline') : null,
-            configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
-            options: array_key_exists('options', $data) && $data['options'] !== null ? SttOptions::fromArray(Json::object($data, 'options')) : null,
             callback: array_key_exists('callback', $data) && $data['callback'] !== null ? Json::string($data, 'callback') : null,
+            configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
+            inline: array_key_exists('inline', $data) && $data['inline'] !== null ? Json::bool($data, 'inline') : null,
+            options: array_key_exists('options', $data) && $data['options'] !== null ? SttOptions::fromArray(Json::object($data, 'options')) : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
     }
@@ -49,17 +49,17 @@ final readonly class TranscriptionRequest
     {
         $out = [];
         $out['source'] = $this->source->toArray();
-        if ($this->inline !== null) {
-            $out['inline'] = $this->inline;
+        if ($this->callback !== null) {
+            $out['callback'] = $this->callback;
         }
         if ($this->configId !== null) {
             $out['config_id'] = $this->configId;
         }
+        if ($this->inline !== null) {
+            $out['inline'] = $this->inline;
+        }
         if ($this->options !== null) {
             $out['options'] = $this->options->toArray();
-        }
-        if ($this->callback !== null) {
-            $out['callback'] = $this->callback;
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;

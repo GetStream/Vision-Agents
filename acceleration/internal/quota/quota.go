@@ -20,7 +20,10 @@ import (
 	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
+
+var tracer = tracing.Tracer("quota")
 
 // retention outlives a day by enough that a counter is still there for the whole of the day
 // it belongs to, whatever the clock does at the boundary, and is gone long before it could
@@ -86,6 +89,9 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 	if l == nil {
 		return nil
 	}
+
+	ctx, span := tracer.Start(ctx, "quota.allow")
+	defer span.End()
 
 	for _, key := range l.keys(customerID, caller) {
 		spent, err := l.spent(ctx, key)

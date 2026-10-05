@@ -11,17 +11,17 @@ use GetStream\VisionAgents\Json;
 final readonly class Campaign
 {
     public function __construct(
+        public int $concurrency,
+        public string $configId,
+        public \DateTimeImmutable $createdAt,
+        public string $fromNumber,
         public string $id,
         public string $name,
-        public string $configId,
-        public string $fromNumber,
-        public int $concurrency,
         public string $state,
-        public \DateTimeImmutable $createdAt,
+        public ?\DateTimeImmutable $finishedAt = null,
+        public ?\DateTimeImmutable $startedAt = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        public ?\DateTimeImmutable $startedAt = null,
-        public ?\DateTimeImmutable $finishedAt = null,
     ) {
     }
 
@@ -31,16 +31,16 @@ final readonly class Campaign
     public static function fromArray(array $data): self
     {
         return new self(
+            concurrency: Json::int($data, 'concurrency'),
+            configId: Json::string($data, 'config_id'),
+            createdAt: Json::date($data, 'created_at'),
+            fromNumber: Json::string($data, 'from_number'),
             id: Json::string($data, 'id'),
             name: Json::string($data, 'name'),
-            configId: Json::string($data, 'config_id'),
-            fromNumber: Json::string($data, 'from_number'),
-            concurrency: Json::int($data, 'concurrency'),
             state: Json::string($data, 'state'),
-            createdAt: Json::date($data, 'created_at'),
-            tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            startedAt: array_key_exists('started_at', $data) && $data['started_at'] !== null ? Json::date($data, 'started_at') : null,
             finishedAt: array_key_exists('finished_at', $data) && $data['finished_at'] !== null ? Json::date($data, 'finished_at') : null,
+            startedAt: array_key_exists('started_at', $data) && $data['started_at'] !== null ? Json::date($data, 'started_at') : null,
+            tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
     }
 
@@ -52,21 +52,21 @@ final readonly class Campaign
     public function toArray(): array
     {
         $out = [];
+        $out['concurrency'] = $this->concurrency;
+        $out['config_id'] = $this->configId;
+        $out['created_at'] = Json::dateValue($this->createdAt);
+        $out['from_number'] = $this->fromNumber;
         $out['id'] = $this->id;
         $out['name'] = $this->name;
-        $out['config_id'] = $this->configId;
-        $out['from_number'] = $this->fromNumber;
-        $out['concurrency'] = $this->concurrency;
         $out['state'] = $this->state;
-        $out['created_at'] = Json::dateValue($this->createdAt);
-        if ($this->tags !== null) {
-            $out['tags'] = $this->tags;
+        if ($this->finishedAt !== null) {
+            $out['finished_at'] = Json::dateValue($this->finishedAt);
         }
         if ($this->startedAt !== null) {
             $out['started_at'] = Json::dateValue($this->startedAt);
         }
-        if ($this->finishedAt !== null) {
-            $out['finished_at'] = Json::dateValue($this->finishedAt);
+        if ($this->tags !== null) {
+            $out['tags'] = $this->tags;
         }
         return $out;
     }

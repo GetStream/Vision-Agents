@@ -44,6 +44,7 @@ vision-agents-plugins-tencent = { workspace = true }
 vision-agents-plugins-twelvelabs = { workspace = true }
 vision-agents-plugins-speechify = { workspace = true }
 vision-agents-plugins-stream = { workspace = true }
+vision-agents-plugins-omni = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -100,6 +101,7 @@ members = [
     "plugins/twelvelabs",
     "plugins/speechify",
     "plugins/stream",
+    "plugins/omni",
 ]
 exclude = [
     "**/__pycache__",

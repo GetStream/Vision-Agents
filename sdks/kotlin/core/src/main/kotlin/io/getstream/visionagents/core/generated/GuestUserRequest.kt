@@ -36,13 +36,16 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * 
  *
+ * @param custom 
  * @param id A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person. 
  * @param name What to call them, for a transcript a person reads later.
- * @param custom 
  */
 @Serializable
 
 internal data class GuestUserRequest (
+
+    @Contextual @SerialName(value = "custom")
+    val custom: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null,
 
     /* A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.  */
     @SerialName(value = "id")
@@ -50,10 +53,7 @@ internal data class GuestUserRequest (
 
     /* What to call them, for a transcript a person reads later. */
     @SerialName(value = "name")
-    val name: kotlin.String? = null,
-
-    @Contextual @SerialName(value = "custom")
-    val custom: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null
+    val name: kotlin.String? = null
 
 ) {
 

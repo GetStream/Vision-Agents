@@ -52,6 +52,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -77,12 +82,13 @@ def sync_detailed(
     """Replace the calling app's policy
 
      A field left out is no opinion, so the organization's setting shows through.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (Policy): What an organization or an app decided about spend, data handling and
-            prompt injection. Every field is optional, and a field left out is no opinion rather than
-            off.
+        body (Policy): What an organization or an app decided about spend, data handling, prompt
+            injection, which models may be used and how usage is labelled. Every field is optional,
+            and a field left out is no opinion rather than off.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -111,12 +117,13 @@ def sync(
     """Replace the calling app's policy
 
      A field left out is no opinion, so the organization's setting shows through.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (Policy): What an organization or an app decided about spend, data handling and
-            prompt injection. Every field is optional, and a field left out is no opinion rather than
-            off.
+        body (Policy): What an organization or an app decided about spend, data handling, prompt
+            injection, which models may be used and how usage is labelled. Every field is optional,
+            and a field left out is no opinion rather than off.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,12 +147,13 @@ async def asyncio_detailed(
     """Replace the calling app's policy
 
      A field left out is no opinion, so the organization's setting shows through.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (Policy): What an organization or an app decided about spend, data handling and
-            prompt injection. Every field is optional, and a field left out is no opinion rather than
-            off.
+        body (Policy): What an organization or an app decided about spend, data handling, prompt
+            injection, which models may be used and how usage is labelled. Every field is optional,
+            and a field left out is no opinion rather than off.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -172,12 +180,13 @@ async def asyncio(
     """Replace the calling app's policy
 
      A field left out is no opinion, so the organization's setting shows through.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (Policy): What an organization or an app decided about spend, data handling and
-            prompt injection. Every field is optional, and a field left out is no opinion rather than
-            off.
+        body (Policy): What an organization or an app decided about spend, data handling, prompt
+            injection, which models may be used and how usage is labelled. Every field is optional,
+            and a field left out is no opinion rather than off.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -18,35 +18,33 @@ T = TypeVar("T", bound="AgentResponse")
 class AgentResponse:
     """
     Attributes:
+        created_at (datetime.datetime):
         id (str):
         session_id (str):
         status (AgentResponseStatus): cancelled is a turn the caller interrupted, which is a different thing from one
             that failed: nothing went wrong, and what had already been said still counts.
-        created_at (datetime.datetime):
-        said (str | Unset): What the person asked, which is the first item of every response.
         error (str | Unset):
         finished_at (datetime.datetime | Unset):
+        said (str | Unset): What the person asked, which is the first item of every response.
     """
 
+    created_at: datetime.datetime
     id: str
     session_id: str
     status: AgentResponseStatus
-    created_at: datetime.datetime
-    said: str | Unset = UNSET
     error: str | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
+    said: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        created_at = self.created_at.isoformat()
+
         id = self.id
 
         session_id = self.session_id
 
         status = self.status.value
-
-        created_at = self.created_at.isoformat()
-
-        said = self.said
 
         error = self.error
 
@@ -54,37 +52,37 @@ class AgentResponse:
         if not isinstance(self.finished_at, Unset):
             finished_at = self.finished_at.isoformat()
 
+        said = self.said
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "created_at": created_at,
                 "id": id,
                 "session_id": session_id,
                 "status": status,
-                "created_at": created_at,
             }
         )
-        if said is not UNSET:
-            field_dict["said"] = said
         if error is not UNSET:
             field_dict["error"] = error
         if finished_at is not UNSET:
             field_dict["finished_at"] = finished_at
+        if said is not UNSET:
+            field_dict["said"] = said
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
         id = d.pop("id")
 
         session_id = d.pop("session_id")
 
         status = AgentResponseStatus(d.pop("status"))
-
-        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
-
-        said = d.pop("said", UNSET)
 
         error = d.pop("error", UNSET)
 
@@ -95,14 +93,16 @@ class AgentResponse:
         else:
             finished_at = datetime.datetime.fromisoformat(_finished_at)
 
+        said = d.pop("said", UNSET)
+
         agent_response = cls(
+            created_at=created_at,
             id=id,
             session_id=session_id,
             status=status,
-            created_at=created_at,
-            said=said,
             error=error,
             finished_at=finished_at,
+            said=said,
         )
 
         agent_response.additional_properties = d

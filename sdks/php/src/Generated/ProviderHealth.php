@@ -13,11 +13,11 @@ final readonly class ProviderHealth
     public function __construct(
         // False once the error rate crosses the configured threshold.
         public bool $available,
+        public float $errorRate,
+        public int $errors,
+        public float $latencyMsAvg,
         // Requests seen in the current health window.
         public int $requests,
-        public int $errors,
-        public float $errorRate,
-        public float $latencyMsAvg,
     ) {
     }
 
@@ -28,10 +28,10 @@ final readonly class ProviderHealth
     {
         return new self(
             available: Json::bool($data, 'available'),
-            requests: Json::int($data, 'requests'),
-            errors: Json::int($data, 'errors'),
             errorRate: Json::float($data, 'error_rate'),
+            errors: Json::int($data, 'errors'),
             latencyMsAvg: Json::float($data, 'latency_ms_avg'),
+            requests: Json::int($data, 'requests'),
         );
     }
 
@@ -44,10 +44,10 @@ final readonly class ProviderHealth
     {
         $out = [];
         $out['available'] = $this->available;
-        $out['requests'] = $this->requests;
-        $out['errors'] = $this->errors;
         $out['error_rate'] = $this->errorRate;
+        $out['errors'] = $this->errors;
         $out['latency_ms_avg'] = $this->latencyMsAvg;
+        $out['requests'] = $this->requests;
         return $out;
     }
 }

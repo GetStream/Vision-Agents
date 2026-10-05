@@ -11,10 +11,10 @@ use GetStream\VisionAgents\Json;
 final readonly class SessionVideo
 {
     public function __construct(
-        // Track or processor source. Omitted requires one unambiguous available source.
-        public ?string $source = null,
         // Number of recent frames captured for a visual task. Default one.
         public ?int $maxFrames = null,
+        // Track or processor source. Omitted requires one unambiguous available source.
+        public ?string $source = null,
     ) {
     }
 
@@ -24,8 +24,8 @@ final readonly class SessionVideo
     public static function fromArray(array $data): self
     {
         return new self(
-            source: array_key_exists('source', $data) && $data['source'] !== null ? Json::string($data, 'source') : null,
             maxFrames: array_key_exists('max_frames', $data) && $data['max_frames'] !== null ? Json::int($data, 'max_frames') : null,
+            source: array_key_exists('source', $data) && $data['source'] !== null ? Json::string($data, 'source') : null,
         );
     }
 
@@ -37,11 +37,11 @@ final readonly class SessionVideo
     public function toArray(): array
     {
         $out = [];
-        if ($this->source !== null) {
-            $out['source'] = $this->source;
-        }
         if ($this->maxFrames !== null) {
             $out['max_frames'] = $this->maxFrames;
+        }
+        if ($this->source !== null) {
+            $out['source'] = $this->source;
         }
         return $out;
     }

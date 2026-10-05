@@ -11,8 +11,8 @@ use GetStream\VisionAgents\Json;
 final readonly class BuyNumberRequest
 {
     public function __construct(
-        public string $vendor,
         public string $e164,
+        public string $vendor,
         // The country the number was offered from, as the search reported it. Most vendors buy by number alone; the f...
         public ?string $country = null,
         // Cost labels carried onto the purchase's request row.
@@ -27,8 +27,8 @@ final readonly class BuyNumberRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            vendor: Json::string($data, 'vendor'),
             e164: Json::string($data, 'e164'),
+            vendor: Json::string($data, 'vendor'),
             country: array_key_exists('country', $data) && $data['country'] !== null ? Json::string($data, 'country') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
@@ -42,8 +42,8 @@ final readonly class BuyNumberRequest
     public function toArray(): array
     {
         $out = [];
-        $out['vendor'] = $this->vendor;
         $out['e164'] = $this->e164;
+        $out['vendor'] = $this->vendor;
         if ($this->country !== null) {
             $out['country'] = $this->country;
         }

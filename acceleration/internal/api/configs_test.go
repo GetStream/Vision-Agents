@@ -27,7 +27,7 @@ func (s *ConfigsSuite) SetupTest() {
 func (s *ConfigsSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
 	created := s.createConfig(map[string]any{
 		"name": "support", "llm": "llm-flow", "tts": "en-low-latency", "voice": "aurora",
-		"subagent": "llm-flow", "instructions": "be brief", "skills": []string{"think", "refund"},
+		"thinking_llm": "llm-flow", "instructions": "be brief", "skills": []string{"think", "refund"},
 		"keyterms":            []string{"Vision Agents", "Stream"},
 		"knowledge_namespace": "handbook", "sandbox": "daytona",
 		"tags": map[string]string{"project": "support"},
@@ -39,6 +39,7 @@ func (s *ConfigsSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
 	s.Equal("llm-flow", value(read.Llm))
+	s.Equal("llm-flow", value(read.ThinkingLlm))
 	s.Equal("aurora", value(read.Voice))
 	s.Equal([]string{"think", "refund"}, value(read.Skills))
 	s.Equal([]string{"Vision Agents", "Stream"}, value(read.Keyterms))
@@ -62,6 +63,24 @@ func (s *ConfigsSuite) TestAConfigWithANegativeSpeedIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "speed")
+}
+
+func (s *ConfigsSuite) TestATextAgentNamingAThinkingLlmIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "analyst", "mode": "text", "thinking_llm": "llm-thinking"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "thinking_llm")
+}
+
+func (s *ConfigsSuite) TestSwitchingAnAgentToTextDropsItsThinkingLlm() {
+	created := s.createConfig(map[string]any{"name": "support", "thinking_llm": "llm-thinking"})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"mode": "text"}, &patched))
+	s.Equal(AgentModeText, patched.Mode)
+	s.Nil(patched.ThinkingLlm)
 }
 
 func (s *ConfigsSuite) TestPatchingASpeedKeepsTheVoice() {
@@ -124,6 +143,208 @@ func (s *ConfigsSuite) TestAConfigNamingAHarnessThatDoesNotExistIsRefused() {
 		map[string]any{"harness": "fancy"})
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "harness")
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersHowItsSandboxIsBuilt() {
+	created := s.createConfig(map[string]any{
+		"name": "artist", "sandbox": "daytona",
+		"sandbox_options": map[string]any{
+			"image":      "python:3.13-slim-bookworm",
+			"setup":      []string{"pip install bpy==5.2.2"},
+			"timeout_ms": 300000, "cpu": 2, "memory_gb": 4,
+		},
+	})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	options := value(read.SandboxOptions)
+	s.Equal("python:3.13-slim-bookworm", value(options.Image))
+	s.Equal([]string{"pip install bpy==5.2.2"}, value(options.Setup))
+	s.Equal(300000, value(options.TimeoutMs))
+	s.Equal(2, value(options.Cpu))
+	s.Equal(4, value(options.MemoryGb))
+}
+
+func (s *ConfigsSuite) TestASandboxLeftAloneHasNoOptions() {
+	created := s.createConfig(map[string]any{"name": "analyst", "sandbox": "daytona"})
+
+	s.Nil(created.SandboxOptions, "the provider's own sandbox has nothing to say about how it is built")
+}
+
+func (s *ConfigsSuite) TestPatchingTheSandboxOptionsReplacesThem() {
+	created := s.createConfig(map[string]any{"name": "artist", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"setup": []string{"pip install numpy"}, "timeout_ms": 60000}})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"timeout_ms": 600000}}, &patched))
+
+	s.Equal(600000, value(value(patched.SandboxOptions).TimeoutMs))
+	s.Empty(value(value(patched.SandboxOptions).Setup))
+	s.Equal(Daytona, value(patched.Sandbox), "the sandbox itself is untouched")
+}
+
+func (s *ConfigsSuite) TestARunLongerThanThirtyMinutesIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "artist", "sandbox": "daytona",
+			"sandbox_options": map[string]any{"timeout_ms": 3600000}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "timeout_ms")
+}
+
+func (s *ConfigsSuite) TestAnEmptySetupCommandIsRefused() {
+	created := s.createConfig(map[string]any{"name": "artist", "sandbox": "daytona"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"setup": []string{"  "}}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "setup")
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersTheMCPServersItNamesByURL() {
+	created := s.createConfig(map[string]any{"name": "concierge", "mcp_servers": []map[string]any{
+		{"name": "tablejourney", "url": "https://tablejourney.com/mcp"},
+	}})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(read.McpServers))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"mcp_servers": []map[string]any{}}, &patched))
+	s.Nil(patched.McpServers)
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersHowItReachesAPlugin() {
+	created := s.createConfig(map[string]any{
+		"name":           "triage",
+		"user_plugins":   []string{"linear"},
+		"plugin_options": []map[string]any{{"plugin": "linear", "readonly": true, "scopes": []string{"read", " "}}},
+	})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal([]PluginOptions{{Plugin: "linear", Readonly: pointerTo(true), Scopes: &[]string{"read"}}},
+		value(read.PluginOptions))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"plugin_options": []map[string]any{}}, &patched))
+	s.Nil(patched.PluginOptions)
+}
+
+func (s *ConfigsSuite) TestAReadonlyPluginWithNoReadOnlyEndpointIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":           "triage",
+		"plugins":        []string{"sentry"},
+		"plugin_options": []map[string]any{{"plugin": "sentry", "readonly": true}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "read-only")
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersWhichToolsetsAPluginIsLimitedTo() {
+	created := s.createConfig(map[string]any{
+		"name":           "scheduler",
+		"user_plugins":   []string{"calcom"},
+		"plugin_options": []map[string]any{{"plugin": "calcom", "toolsets": []string{"bookings", "availability"}}},
+	})
+
+	s.Equal([]PluginOptions{{Plugin: "calcom", Toolsets: &[]string{"bookings", "availability"}}},
+		value(created.PluginOptions))
+}
+
+func (s *ConfigsSuite) TestAToolsetThePluginDoesNotHaveIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":           "scheduler",
+		"plugin_options": []map[string]any{{"plugin": "calcom", "toolsets": []string{"invoices"}}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "invoices")
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEachServerOffers() {
+	created := s.createConfig(map[string]any{
+		"name":           "researcher",
+		"user_plugins":   []string{"google_drive"},
+		"plugin_options": []map[string]any{{"plugin": "google_drive", "tools": []string{"search_files", "read_*"}}},
+		"mcp_servers": []map[string]any{
+			{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"search_restaurants"}},
+		},
+	})
+
+	s.Equal([]PluginOptions{{Plugin: "google_drive", Tools: &[]string{"search_files", "read_*"}}},
+		value(created.PluginOptions))
+	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp", Tools: &[]string{"search_restaurants"}}},
+		value(created.McpServers))
+}
+
+func (s *ConfigsSuite) TestAToolPatternThatCannotBeReadIsRefused() {
+	for _, body := range []map[string]any{
+		{"name": "researcher", "plugin_options": []map[string]any{{"plugin": "google_drive", "tools": []string{"read_[*"}}}},
+		{"name": "researcher", "mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"read_[*"}}}},
+	} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", body)
+
+		s.Equal(http.StatusBadRequest, status)
+		s.Contains(failure, "read_[*")
+	}
+}
+
+func (s *ConfigsSuite) TestAScopeThePluginsServerDoesNotAcceptIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":           "researcher",
+		"plugin_options": []map[string]any{{"plugin": "google_drive", "scopes": []string{"https://www.googleapis.com/auth/gmail.readonly"}}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "gmail.readonly")
+}
+
+func (s *ConfigsSuite) TestOptionsForAPluginNotInTheCatalogAreRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":           "triage",
+		"plugin_options": []map[string]any{{"plugin": "jira", "readonly": true}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "jira")
+}
+
+func (s *ConfigsSuite) TestAnMCPServerThatCannotBeNamedOrReachedSafelyIsRefused() {
+	for _, refused := range []struct {
+		server  map[string]any
+		failure string
+	}{
+		{map[string]any{"name": "tablejourney", "url": "http://tablejourney.com/mcp"}, "https"},
+		{map[string]any{"name": "slack", "url": "https://mcp.slack.example/mcp"}, "catalog"},
+		{map[string]any{"name": "table__journey", "url": "https://tablejourney.com/mcp"}, "__"},
+		{map[string]any{"name": "TableJourney", "url": "https://tablejourney.com/mcp"}, "name"},
+	} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": "concierge", "mcp_servers": []map[string]any{refused.server}})
+
+		s.Equal(http.StatusBadRequest, status, refused.server)
+		s.Contains(failure, refused.failure)
+	}
+}
+
+func (s *ConfigsSuite) TestTwoMCPServersWithOneNameAreRefused() {
+	server := map[string]any{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "concierge", "mcp_servers": []map[string]any{server, server}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "twice")
 }
 
 func (s *ConfigsSuite) TestAConfigNamingASandboxNobodyRunsIsRefused() {

@@ -13,9 +13,9 @@ final readonly class VoiceSampleRequest
     public function __construct(
         // The recording, base64 encoded. Thirty seconds of clean speech is plenty, and every provider here clones fro...
         public string $audio,
+        public ?string $contentType = null,
         // What to call the file upstream. The extension is how a provider knows what it was given, so send one.
         public ?string $filename = null,
-        public ?string $contentType = null,
         // What is said in the recording. Optional, and the providers that use one clone more faithfully with it.
         public ?string $transcript = null,
     ) {
@@ -28,8 +28,8 @@ final readonly class VoiceSampleRequest
     {
         return new self(
             audio: Json::string($data, 'audio'),
-            filename: array_key_exists('filename', $data) && $data['filename'] !== null ? Json::string($data, 'filename') : null,
             contentType: array_key_exists('content_type', $data) && $data['content_type'] !== null ? Json::string($data, 'content_type') : null,
+            filename: array_key_exists('filename', $data) && $data['filename'] !== null ? Json::string($data, 'filename') : null,
             transcript: array_key_exists('transcript', $data) && $data['transcript'] !== null ? Json::string($data, 'transcript') : null,
         );
     }
@@ -43,11 +43,11 @@ final readonly class VoiceSampleRequest
     {
         $out = [];
         $out['audio'] = $this->audio;
-        if ($this->filename !== null) {
-            $out['filename'] = $this->filename;
-        }
         if ($this->contentType !== null) {
             $out['content_type'] = $this->contentType;
+        }
+        if ($this->filename !== null) {
+            $out['filename'] = $this->filename;
         }
         if ($this->transcript !== null) {
             $out['transcript'] = $this->transcript;

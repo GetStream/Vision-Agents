@@ -67,6 +67,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -99,7 +104,7 @@ def sync_detailed(
     decisions live on the session socket.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         limit (int | Unset):  Default: 1000.
 
     Raises:
@@ -137,7 +142,7 @@ def sync(
     decisions live on the session socket.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         limit (int | Unset):  Default: 1000.
 
     Raises:
@@ -170,7 +175,7 @@ async def asyncio_detailed(
     decisions live on the session socket.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         limit (int | Unset):  Default: 1000.
 
     Raises:
@@ -206,7 +211,7 @@ async def asyncio(
     decisions live on the session socket.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         limit (int | Unset):  Default: 1000.
 
     Raises:

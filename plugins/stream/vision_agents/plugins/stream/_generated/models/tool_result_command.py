@@ -22,32 +22,32 @@ T = TypeVar("T", bound="ToolResultCommand")
 class ToolResultCommand:
     """
     Attributes:
-        type_ (ToolResultCommandType):
         tool_call_id (str):
+        type_ (ToolResultCommandType):
         command_id (str | Unset):
-        turn_id (str | Unset):
-        output (list[ImageContentPart | TextContentPart] | str | Unset):
         error (str | Unset):
+        output (list[ImageContentPart | TextContentPart] | str | Unset):
+        turn_id (str | Unset):
     """
 
-    type_: ToolResultCommandType
     tool_call_id: str
+    type_: ToolResultCommandType
     command_id: str | Unset = UNSET
-    turn_id: str | Unset = UNSET
-    output: list[ImageContentPart | TextContentPart] | str | Unset = UNSET
     error: str | Unset = UNSET
+    output: list[ImageContentPart | TextContentPart] | str | Unset = UNSET
+    turn_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.text_content_part import TextContentPart
 
-        type_ = self.type_.value
-
         tool_call_id = self.tool_call_id
+
+        type_ = self.type_.value
 
         command_id = self.command_id
 
-        turn_id = self.turn_id
+        error = self.error
 
         output: list[dict[str, Any]] | str | Unset
         if isinstance(self.output, Unset):
@@ -72,24 +72,24 @@ class ToolResultCommand:
         else:
             output = self.output
 
-        error = self.error
+        turn_id = self.turn_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "type": type_,
                 "tool_call_id": tool_call_id,
+                "type": type_,
             }
         )
         if command_id is not UNSET:
             field_dict["command_id"] = command_id
-        if turn_id is not UNSET:
-            field_dict["turn_id"] = turn_id
-        if output is not UNSET:
-            field_dict["output"] = output
         if error is not UNSET:
             field_dict["error"] = error
+        if output is not UNSET:
+            field_dict["output"] = output
+        if turn_id is not UNSET:
+            field_dict["turn_id"] = turn_id
 
         return field_dict
 
@@ -99,13 +99,13 @@ class ToolResultCommand:
         from ..models.text_content_part import TextContentPart
 
         d = dict(src_dict)
-        type_ = ToolResultCommandType(d.pop("type"))
-
         tool_call_id = d.pop("tool_call_id")
+
+        type_ = ToolResultCommandType(d.pop("type"))
 
         command_id = d.pop("command_id", UNSET)
 
-        turn_id = d.pop("turn_id", UNSET)
+        error = d.pop("error", UNSET)
 
         def _parse_output(
             data: object,
@@ -159,15 +159,15 @@ class ToolResultCommand:
 
         output = _parse_output(d.pop("output", UNSET))
 
-        error = d.pop("error", UNSET)
+        turn_id = d.pop("turn_id", UNSET)
 
         tool_result_command = cls(
-            type_=type_,
             tool_call_id=tool_call_id,
+            type_=type_,
             command_id=command_id,
-            turn_id=turn_id,
-            output=output,
             error=error,
+            output=output,
+            turn_id=turn_id,
         )
 
         tool_result_command.additional_properties = d

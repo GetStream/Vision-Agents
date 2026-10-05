@@ -8,11 +8,16 @@ import (
 	"time"
 
 	"github.com/openai/openai-go/v3"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
+
+var tracer = tracing.Tracer("llmrouter")
 
 // Session is a live model attached to one customer. It hands out the provider's streams
 // untouched apart from recording a stat row per response on the way past.
@@ -58,7 +63,13 @@ func newSession(
 func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	startedAt := time.Now().UTC()
 
+	ctx, span := tracer.Start(ctx, "llm.provider.create",
+		trace.WithAttributes(
+			attribute.String("llm.provider", s.config.Provider),
+			attribute.String("llm.model", s.config.Model)))
 	stream, err := s.provider.Create(ctx, params)
+	tracing.Fail(span, err)
+	span.End()
 	if err != nil {
 		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
 		s.recorder.Record(s.config, routing.Stat{
@@ -194,6 +205,8 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if closed {
 		return nil, errors.New("llmrouter: session is closed")
 	}
+	ctx, span := tracer.Start(ctx, "llm.create")
+	defer span.End()
 	// The limit is asked here rather than only when the session was opened, because a
 	// session answers many turns: a socket goes on sending frames and a call goes on
 	// talking long after whatever opened it was let through.

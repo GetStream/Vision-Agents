@@ -38,9 +38,9 @@ import kotlinx.serialization.encoding.Encoder
  *
  * @param id 
  * @param token A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it. 
- * @param name 
  * @param custom 
  * @param expiresAt When the token stops working. A guest coming back after it asks for another.
+ * @param name 
  */
 @Serializable
 
@@ -53,15 +53,15 @@ internal data class GuestUser (
     @SerialName(value = "token")
     val token: kotlin.String,
 
-    @SerialName(value = "name")
-    val name: kotlin.String? = null,
-
     @Contextual @SerialName(value = "custom")
     val custom: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null,
 
     /* When the token stops working. A guest coming back after it asks for another. */
     @SerialName(value = "expires_at")
-    val expiresAt: kotlin.String? = null
+    val expiresAt: kotlin.String? = null,
+
+    @SerialName(value = "name")
+    val name: kotlin.String? = null
 
 ) {
 

@@ -15,10 +15,13 @@ import io.getstream.visionagents.core.generated.SearchResult
  *     val router = agents.router(config = "healthcare")
  *     val answer = router.search("what changed in the pricing page")
  *
+ * A router comes from [VisionAgents.router], which is where the URL and credentials were
+ * settled.
+ *
  * Transcription, a voice and a model are not here. Those run over the per-modality socket,
  * which the router refuses a device, so a pipeline of your own belongs to a backend.
  */
-public class Router(
+public class Router internal constructor(
     public val backend: Backend,
     /** A stored router config, by name or id. Empty means every call says what it wants. */
     public val config: String = "",

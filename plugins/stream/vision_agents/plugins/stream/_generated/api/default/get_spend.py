@@ -15,16 +15,18 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     group_by: str | Unset = "modality",
+    limit: int | Unset = 6,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-    limit: int | Unset = 6,
     tag: list[str] | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     params["group_by"] = group_by
+
+    params["limit"] = limit
 
     json_granularity: str | Unset = UNSET
     if not isinstance(granularity, Unset):
@@ -37,8 +39,6 @@ def _get_kwargs(
 
     json_to = to.isoformat()
     params["to"] = json_to
-
-    params["limit"] = limit
 
     json_tag: list[str] | Unset = UNSET
     if not isinstance(tag, Unset):
@@ -85,6 +85,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -106,10 +111,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     group_by: str | Unset = "modality",
+    limit: int | Unset = 6,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-    limit: int | Unset = 6,
     tag: list[str] | Unset = UNSET,
 ) -> Response[Error | list[SpendBucket]]:
     """What the calling customer spent, grouped
@@ -124,11 +129,12 @@ def sync_detailed(
 
     Args:
         group_by (str | Unset):  Default: 'modality'.
-        granularity (Granularity | Unset):
-        from_ (datetime.datetime):
-        to (datetime.datetime):
         limit (int | Unset):  Default: 6.
-        tag (list[str] | Unset):
+        granularity (Granularity | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
+            written "key:value". Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,10 +146,10 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         group_by=group_by,
+        limit=limit,
         granularity=granularity,
         from_=from_,
         to=to,
-        limit=limit,
         tag=tag,
     )
 
@@ -158,10 +164,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     group_by: str | Unset = "modality",
+    limit: int | Unset = 6,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-    limit: int | Unset = 6,
     tag: list[str] | Unset = UNSET,
 ) -> Error | list[SpendBucket] | None:
     """What the calling customer spent, grouped
@@ -176,11 +182,12 @@ def sync(
 
     Args:
         group_by (str | Unset):  Default: 'modality'.
-        granularity (Granularity | Unset):
-        from_ (datetime.datetime):
-        to (datetime.datetime):
         limit (int | Unset):  Default: 6.
-        tag (list[str] | Unset):
+        granularity (Granularity | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
+            written "key:value". Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,10 +200,10 @@ def sync(
     return sync_detailed(
         client=client,
         group_by=group_by,
+        limit=limit,
         granularity=granularity,
         from_=from_,
         to=to,
-        limit=limit,
         tag=tag,
     ).parsed
 
@@ -205,10 +212,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     group_by: str | Unset = "modality",
+    limit: int | Unset = 6,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-    limit: int | Unset = 6,
     tag: list[str] | Unset = UNSET,
 ) -> Response[Error | list[SpendBucket]]:
     """What the calling customer spent, grouped
@@ -223,11 +230,12 @@ async def asyncio_detailed(
 
     Args:
         group_by (str | Unset):  Default: 'modality'.
-        granularity (Granularity | Unset):
-        from_ (datetime.datetime):
-        to (datetime.datetime):
         limit (int | Unset):  Default: 6.
-        tag (list[str] | Unset):
+        granularity (Granularity | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
+            written "key:value". Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -239,10 +247,10 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         group_by=group_by,
+        limit=limit,
         granularity=granularity,
         from_=from_,
         to=to,
-        limit=limit,
         tag=tag,
     )
 
@@ -255,10 +263,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     group_by: str | Unset = "modality",
+    limit: int | Unset = 6,
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-    limit: int | Unset = 6,
     tag: list[str] | Unset = UNSET,
 ) -> Error | list[SpendBucket] | None:
     """What the calling customer spent, grouped
@@ -273,11 +281,12 @@ async def asyncio(
 
     Args:
         group_by (str | Unset):  Default: 'modality'.
-        granularity (Granularity | Unset):
-        from_ (datetime.datetime):
-        to (datetime.datetime):
         limit (int | Unset):  Default: 6.
-        tag (list[str] | Unset):
+        granularity (Granularity | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
+            written "key:value". Repeat for several.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -291,10 +300,10 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             group_by=group_by,
+            limit=limit,
             granularity=granularity,
             from_=from_,
             to=to,
-            limit=limit,
             tag=tag,
         )
     ).parsed

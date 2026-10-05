@@ -43,6 +43,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -64,11 +69,12 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Error | Policy]:
-    """The calling app's budget, data policy and prompt injection setting
+    """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt
-    injection is screened if either turns it on.
+    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
+    injection is screened if either turns it on, only a model both allow may be routed to, and the
+    organization's tags win over the app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -91,11 +97,12 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Error | Policy | None:
-    """The calling app's budget, data policy and prompt injection setting
+    """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt
-    injection is screened if either turns it on.
+    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
+    injection is screened if either turns it on, only a model both allow may be routed to, and the
+    organization's tags win over the app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -114,11 +121,12 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Error | Policy]:
-    """The calling app's budget, data policy and prompt injection setting
+    """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt
-    injection is screened if either turns it on.
+    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
+    injection is screened if either turns it on, only a model both allow may be routed to, and the
+    organization's tags win over the app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,11 +147,12 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Error | Policy | None:
-    """The calling app's budget, data policy and prompt injection setting
+    """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt
-    injection is screened if either turns it on.
+    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
+    injection is screened if either turns it on, only a model both allow may be routed to, and the
+    organization's tags win over the app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

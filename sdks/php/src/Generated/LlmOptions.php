@@ -17,27 +17,27 @@ use GetStream\VisionAgents\Json;
 final readonly class LlmOptions
 {
     public function __construct(
-        // A provider/model or a capability shortcut.
-        public ?string $target = null,
-        // A priority list of where to try, in the order given, which wins over target when it holds anything. Each en...
-        /** @var list<string>|null */
-        public ?array $providers = null,
-        public ?int $maxOutputTokens = null,
-        public ?float $temperature = null,
-        // How long the model may think before answering, on the models that think.
-        public ?string $reasoningEffort = null,
         // Whether the answer is prose or a JSON object.
         public ?string $format = null,
-        public ?string $verbosity = null,
-        // auto, none, required, or the name of a tool the model must call. Which tools exist is per-request, since th...
-        public ?string $toolChoice = null,
-        // Keep the response on the provider so a later one can continue from it.
-        public ?bool $store = null,
-        // What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are read from the cache rather...
-        public ?string $promptCacheKey = null,
+        public ?int $maxOutputTokens = null,
         // Passed to the provider untouched, for the providers that store it.
         /** @var array<string, string>|null */
         public ?array $metadata = null,
+        // What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are read from the cache rather...
+        public ?string $promptCacheKey = null,
+        // A priority list of where to try, in the order given, which wins over target when it holds anything. Each en...
+        /** @var list<string>|null */
+        public ?array $providers = null,
+        // How long the model may think before answering, on the models that think.
+        public ?string $reasoningEffort = null,
+        // Keep the response on the provider so a later one can continue from it.
+        public ?bool $store = null,
+        // A provider/model or a capability shortcut.
+        public ?string $target = null,
+        public ?float $temperature = null,
+        // auto, none, required, or the name of a tool the model must call. Which tools exist is per-request, since th...
+        public ?string $toolChoice = null,
+        public ?string $verbosity = null,
     ) {
     }
 
@@ -47,17 +47,17 @@ final readonly class LlmOptions
     public static function fromArray(array $data): self
     {
         return new self(
-            target: array_key_exists('target', $data) && $data['target'] !== null ? Json::string($data, 'target') : null,
-            providers: array_key_exists('providers', $data) && $data['providers'] !== null ? Json::strings($data, 'providers') : null,
-            maxOutputTokens: array_key_exists('max_output_tokens', $data) && $data['max_output_tokens'] !== null ? Json::int($data, 'max_output_tokens') : null,
-            temperature: array_key_exists('temperature', $data) && $data['temperature'] !== null ? Json::float($data, 'temperature') : null,
-            reasoningEffort: array_key_exists('reasoning_effort', $data) && $data['reasoning_effort'] !== null ? Json::string($data, 'reasoning_effort') : null,
             format: array_key_exists('format', $data) && $data['format'] !== null ? Json::string($data, 'format') : null,
-            verbosity: array_key_exists('verbosity', $data) && $data['verbosity'] !== null ? Json::string($data, 'verbosity') : null,
-            toolChoice: array_key_exists('tool_choice', $data) && $data['tool_choice'] !== null ? Json::string($data, 'tool_choice') : null,
-            store: array_key_exists('store', $data) && $data['store'] !== null ? Json::bool($data, 'store') : null,
-            promptCacheKey: array_key_exists('prompt_cache_key', $data) && $data['prompt_cache_key'] !== null ? Json::string($data, 'prompt_cache_key') : null,
+            maxOutputTokens: array_key_exists('max_output_tokens', $data) && $data['max_output_tokens'] !== null ? Json::int($data, 'max_output_tokens') : null,
             metadata: array_key_exists('metadata', $data) && $data['metadata'] !== null ? Json::stringMap($data, 'metadata') : null,
+            promptCacheKey: array_key_exists('prompt_cache_key', $data) && $data['prompt_cache_key'] !== null ? Json::string($data, 'prompt_cache_key') : null,
+            providers: array_key_exists('providers', $data) && $data['providers'] !== null ? Json::strings($data, 'providers') : null,
+            reasoningEffort: array_key_exists('reasoning_effort', $data) && $data['reasoning_effort'] !== null ? Json::string($data, 'reasoning_effort') : null,
+            store: array_key_exists('store', $data) && $data['store'] !== null ? Json::bool($data, 'store') : null,
+            target: array_key_exists('target', $data) && $data['target'] !== null ? Json::string($data, 'target') : null,
+            temperature: array_key_exists('temperature', $data) && $data['temperature'] !== null ? Json::float($data, 'temperature') : null,
+            toolChoice: array_key_exists('tool_choice', $data) && $data['tool_choice'] !== null ? Json::string($data, 'tool_choice') : null,
+            verbosity: array_key_exists('verbosity', $data) && $data['verbosity'] !== null ? Json::string($data, 'verbosity') : null,
         );
     }
 
@@ -69,38 +69,38 @@ final readonly class LlmOptions
     public function toArray(): array
     {
         $out = [];
-        if ($this->target !== null) {
-            $out['target'] = $this->target;
-        }
-        if ($this->providers !== null) {
-            $out['providers'] = $this->providers;
+        if ($this->format !== null) {
+            $out['format'] = $this->format;
         }
         if ($this->maxOutputTokens !== null) {
             $out['max_output_tokens'] = $this->maxOutputTokens;
         }
-        if ($this->temperature !== null) {
-            $out['temperature'] = $this->temperature;
-        }
-        if ($this->reasoningEffort !== null) {
-            $out['reasoning_effort'] = $this->reasoningEffort;
-        }
-        if ($this->format !== null) {
-            $out['format'] = $this->format;
-        }
-        if ($this->verbosity !== null) {
-            $out['verbosity'] = $this->verbosity;
-        }
-        if ($this->toolChoice !== null) {
-            $out['tool_choice'] = $this->toolChoice;
-        }
-        if ($this->store !== null) {
-            $out['store'] = $this->store;
+        if ($this->metadata !== null) {
+            $out['metadata'] = $this->metadata;
         }
         if ($this->promptCacheKey !== null) {
             $out['prompt_cache_key'] = $this->promptCacheKey;
         }
-        if ($this->metadata !== null) {
-            $out['metadata'] = $this->metadata;
+        if ($this->providers !== null) {
+            $out['providers'] = $this->providers;
+        }
+        if ($this->reasoningEffort !== null) {
+            $out['reasoning_effort'] = $this->reasoningEffort;
+        }
+        if ($this->store !== null) {
+            $out['store'] = $this->store;
+        }
+        if ($this->target !== null) {
+            $out['target'] = $this->target;
+        }
+        if ($this->temperature !== null) {
+            $out['temperature'] = $this->temperature;
+        }
+        if ($this->toolChoice !== null) {
+            $out['tool_choice'] = $this->toolChoice;
+        }
+        if ($this->verbosity !== null) {
+            $out['verbosity'] = $this->verbosity;
         }
         return $out;
     }

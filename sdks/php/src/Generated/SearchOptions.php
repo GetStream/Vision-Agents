@@ -14,31 +14,31 @@ use GetStream\VisionAgents\Json;
 final readonly class SearchOptions
 {
     public function __construct(
-        // A provider/model or a capability shortcut.
-        public ?string $target = null,
-        // A priority list of where to try, in the order given, which wins over target and depth when it holds anythin...
-        /** @var list<string>|null */
-        public ?array $providers = null,
-        public SearchDepth|string|null $depth = null,
-        // How many hits to return.
-        public ?int $results = null,
-        // Only answer from these domains.
-        /** @var list<string>|null */
-        public ?array $includeDomains = null,
-        /** @var list<string>|null */
-        public ?array $excludeDomains = null,
         // The kind of source to prefer - news, papers, company, github - for the providers that classify their index.
         public ?string $category = null,
-        // How stale a cached page may be. Zero forces a live crawl, which is slower and costs more.
-        public ?int $maxAgeHours = null,
-        // Country or region to answer from, for queries whose answer depends on where.
-        public ?string $location = null,
         // What to return alongside each hit.
         /** @var list<string>|null */
         public ?array $contents = null,
+        public SearchDepth|string|null $depth = null,
+        /** @var list<string>|null */
+        public ?array $excludeDomains = null,
+        // Only answer from these domains.
+        /** @var list<string>|null */
+        public ?array $includeDomains = null,
+        // Country or region to answer from, for queries whose answer depends on where.
+        public ?string $location = null,
+        // How stale a cached page may be. Zero forces a live crawl, which is slower and costs more.
+        public ?int $maxAgeHours = null,
         // A JSON schema the answer must fit, for the providers that can be asked to structure what they found.
         /** @var array<string, mixed>|null */
         public ?array $outputSchema = null,
+        // A priority list of where to try, in the order given, which wins over target and depth when it holds anythin...
+        /** @var list<string>|null */
+        public ?array $providers = null,
+        // How many hits to return.
+        public ?int $results = null,
+        // A provider/model or a capability shortcut.
+        public ?string $target = null,
     ) {
     }
 
@@ -48,17 +48,17 @@ final readonly class SearchOptions
     public static function fromArray(array $data): self
     {
         return new self(
-            target: array_key_exists('target', $data) && $data['target'] !== null ? Json::string($data, 'target') : null,
-            providers: array_key_exists('providers', $data) && $data['providers'] !== null ? Json::strings($data, 'providers') : null,
-            depth: array_key_exists('depth', $data) && $data['depth'] !== null ? Json::enum($data, 'depth', SearchDepth::class) : null,
-            results: array_key_exists('results', $data) && $data['results'] !== null ? Json::int($data, 'results') : null,
-            includeDomains: array_key_exists('include_domains', $data) && $data['include_domains'] !== null ? Json::strings($data, 'include_domains') : null,
-            excludeDomains: array_key_exists('exclude_domains', $data) && $data['exclude_domains'] !== null ? Json::strings($data, 'exclude_domains') : null,
             category: array_key_exists('category', $data) && $data['category'] !== null ? Json::string($data, 'category') : null,
-            maxAgeHours: array_key_exists('max_age_hours', $data) && $data['max_age_hours'] !== null ? Json::int($data, 'max_age_hours') : null,
-            location: array_key_exists('location', $data) && $data['location'] !== null ? Json::string($data, 'location') : null,
             contents: array_key_exists('contents', $data) && $data['contents'] !== null ? Json::strings($data, 'contents') : null,
+            depth: array_key_exists('depth', $data) && $data['depth'] !== null ? Json::enum($data, 'depth', SearchDepth::class) : null,
+            excludeDomains: array_key_exists('exclude_domains', $data) && $data['exclude_domains'] !== null ? Json::strings($data, 'exclude_domains') : null,
+            includeDomains: array_key_exists('include_domains', $data) && $data['include_domains'] !== null ? Json::strings($data, 'include_domains') : null,
+            location: array_key_exists('location', $data) && $data['location'] !== null ? Json::string($data, 'location') : null,
+            maxAgeHours: array_key_exists('max_age_hours', $data) && $data['max_age_hours'] !== null ? Json::int($data, 'max_age_hours') : null,
             outputSchema: array_key_exists('output_schema', $data) && $data['output_schema'] !== null ? Json::object($data, 'output_schema') : null,
+            providers: array_key_exists('providers', $data) && $data['providers'] !== null ? Json::strings($data, 'providers') : null,
+            results: array_key_exists('results', $data) && $data['results'] !== null ? Json::int($data, 'results') : null,
+            target: array_key_exists('target', $data) && $data['target'] !== null ? Json::string($data, 'target') : null,
         );
     }
 
@@ -70,38 +70,38 @@ final readonly class SearchOptions
     public function toArray(): array
     {
         $out = [];
-        if ($this->target !== null) {
-            $out['target'] = $this->target;
-        }
-        if ($this->providers !== null) {
-            $out['providers'] = $this->providers;
-        }
-        if ($this->depth !== null) {
-            $out['depth'] = Json::enumValue($this->depth);
-        }
-        if ($this->results !== null) {
-            $out['results'] = $this->results;
-        }
-        if ($this->includeDomains !== null) {
-            $out['include_domains'] = $this->includeDomains;
-        }
-        if ($this->excludeDomains !== null) {
-            $out['exclude_domains'] = $this->excludeDomains;
-        }
         if ($this->category !== null) {
             $out['category'] = $this->category;
-        }
-        if ($this->maxAgeHours !== null) {
-            $out['max_age_hours'] = $this->maxAgeHours;
-        }
-        if ($this->location !== null) {
-            $out['location'] = $this->location;
         }
         if ($this->contents !== null) {
             $out['contents'] = $this->contents;
         }
+        if ($this->depth !== null) {
+            $out['depth'] = Json::enumValue($this->depth);
+        }
+        if ($this->excludeDomains !== null) {
+            $out['exclude_domains'] = $this->excludeDomains;
+        }
+        if ($this->includeDomains !== null) {
+            $out['include_domains'] = $this->includeDomains;
+        }
+        if ($this->location !== null) {
+            $out['location'] = $this->location;
+        }
+        if ($this->maxAgeHours !== null) {
+            $out['max_age_hours'] = $this->maxAgeHours;
+        }
         if ($this->outputSchema !== null) {
             $out['output_schema'] = Json::objectValue($this->outputSchema);
+        }
+        if ($this->providers !== null) {
+            $out['providers'] = $this->providers;
+        }
+        if ($this->results !== null) {
+            $out['results'] = $this->results;
+        }
+        if ($this->target !== null) {
+            $out['target'] = $this->target;
         }
         return $out;
     }

@@ -1,23 +1,18 @@
 package io.getstream.visionagents.core
 
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
 
 /**
  * One thing a client can do to a running conversation over its socket.
  *
- * These are the six commands `readCommands` in the router accepts. Everything else a caller
- * might want is a request rather than a frame.
+ * These are the commands `readCommands` in the router accepts, but `respond`: asking is
+ * [Responses.create]. Everything else a caller might want is a request rather than a frame.
  */
 public sealed interface Command {
     /** Speak this without going through the model. */
     public data class Say(val text: String) : Command
-
-    /** Answer this as though it had been heard. */
-    public data class Respond(val text: String, val images: List<ImageSource> = emptyList()) : Command
 
     /**
      * Abandon the reply in flight, or the command named, which is how a durable command is
@@ -53,20 +48,6 @@ private fun Command.frame(): JsonObject = when (this) {
     is Command.Say -> buildJsonObject {
         put("type", "say")
         put("text", text)
-    }
-    is Command.Respond -> buildJsonObject {
-        put("type", "respond")
-        put("text", text)
-        if (images.isNotEmpty()) {
-            putJsonArray("images") {
-                images.forEach { image ->
-                    addJsonObject {
-                        put("url", image.url)
-                        image.detail?.let { put("detail", it.name.lowercase()) }
-                    }
-                }
-            }
-        }
     }
     Command.Close -> buildJsonObject { put("type", "close") }
     is Command.Interrupt -> buildJsonObject {

@@ -153,6 +153,27 @@ func (s *RecordSuite) TestATurnThatDelegatesStaysOpenUntilItComesBack() {
 		s.held.kinds())
 }
 
+func (s *RecordSuite) TestAReplyDeliveringAToolResultFinishesTheTurnThatAskedForIt() {
+	s.took(
+		agent.Responding{TurnID: "text-1", Prompt: "Where is my order?"},
+		agent.ToolStarted{TurnID: "text-1", ID: "call-1", Tool: "lookup_order"},
+		agent.Responded{TurnID: "text-1", PendingWork: true},
+		agent.ToolRan{TurnID: "text-1", ID: "call-1", Tool: "lookup_order", Result: "ships tomorrow"},
+		agent.Responding{TurnID: "tool-1", Continues: "text-1"},
+		agent.Responded{TurnID: "tool-1", Text: "It ships tomorrow."},
+	)
+
+	s.Require().Len(s.held.responses, 1, "the reply after the tool answers the same question")
+	s.Require().Len(s.held.finished, 1)
+	s.Equal(s.held.responses[0].ID, s.held.finished[0].id)
+	s.Equal(store.ResponseCompleted, s.held.finished[0].status)
+	s.Equal([]string{store.ItemSaid, store.ItemToolCall, store.ItemAnswer, store.ItemToolResult, store.ItemAnswer},
+		s.held.kinds())
+
+	s.session.abandonTurns()
+	s.Len(s.held.finished, 1, "a finished turn is not closed again when the session ends")
+}
+
 func (s *RecordSuite) TestTwoTurnsAtOnceDoNotMixTheirItems() {
 	s.took(
 		agent.Responding{TurnID: "turn-1", Prompt: "first"},

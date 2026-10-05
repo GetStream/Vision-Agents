@@ -15,14 +15,14 @@ final readonly class CallEvent
         public DecisionKind|string $kind,
         // Why the conversation chose it, in words.
         public string $reason,
-        // The exchange it was about, which lines it up against that turn's timings.
-        public ?string $turnId = null,
+        // What the flow controller took to rule, or what the subagent took to answer. Zero where nothing was asked.
+        public ?float $latencyMs = null,
         // Who it concerned.
         public ?string $participant = null,
         // What was heard, what the agent decided to say, or what the subagent came back with.
         public ?string $said = null,
-        // What the flow controller took to rule, or what the subagent took to answer. Zero where nothing was asked.
-        public ?float $latencyMs = null,
+        // The exchange it was about, which lines it up against that turn's timings.
+        public ?string $turnId = null,
     ) {
     }
 
@@ -35,10 +35,10 @@ final readonly class CallEvent
             at: Json::date($data, 'at'),
             kind: Json::enum($data, 'kind', DecisionKind::class),
             reason: Json::string($data, 'reason'),
-            turnId: array_key_exists('turn_id', $data) && $data['turn_id'] !== null ? Json::string($data, 'turn_id') : null,
+            latencyMs: array_key_exists('latency_ms', $data) && $data['latency_ms'] !== null ? Json::float($data, 'latency_ms') : null,
             participant: array_key_exists('participant', $data) && $data['participant'] !== null ? Json::string($data, 'participant') : null,
             said: array_key_exists('said', $data) && $data['said'] !== null ? Json::string($data, 'said') : null,
-            latencyMs: array_key_exists('latency_ms', $data) && $data['latency_ms'] !== null ? Json::float($data, 'latency_ms') : null,
+            turnId: array_key_exists('turn_id', $data) && $data['turn_id'] !== null ? Json::string($data, 'turn_id') : null,
         );
     }
 
@@ -53,8 +53,8 @@ final readonly class CallEvent
         $out['at'] = Json::dateValue($this->at);
         $out['kind'] = Json::enumValue($this->kind);
         $out['reason'] = $this->reason;
-        if ($this->turnId !== null) {
-            $out['turn_id'] = $this->turnId;
+        if ($this->latencyMs !== null) {
+            $out['latency_ms'] = $this->latencyMs;
         }
         if ($this->participant !== null) {
             $out['participant'] = $this->participant;
@@ -62,8 +62,8 @@ final readonly class CallEvent
         if ($this->said !== null) {
             $out['said'] = $this->said;
         }
-        if ($this->latencyMs !== null) {
-            $out['latency_ms'] = $this->latencyMs;
+        if ($this->turnId !== null) {
+            $out['turn_id'] = $this->turnId;
         }
         return $out;
     }

@@ -144,7 +144,7 @@ func (s *MemorySuite) TestDeletingASessionForgetsWhatItLearnedAndNothingElse() {
 func (s *MemorySuite) TestAClaimedGuestsMemoriesMoveToTheUserWhoClaimedThem() {
 	guest := s.data.createGuest()
 	s.Require().NoError(s.store.RecordGuest(context.Background(),
-		&store.GuestUser{ID: guest.userID, CustomerID: s.customerID()}))
+		&store.User{ID: guest.userID, CustomerID: s.customerID()}))
 	s.tell(guest, remembering(guest.userID, nil), "I am allergic to peanuts.")
 	s.learns(guest, remembering(guest.userID, nil), "peanut")
 	account := s.data.createUser()

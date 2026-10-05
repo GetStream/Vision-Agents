@@ -21,12 +21,13 @@ use GetStream\VisionAgents\Router\TextToSpeech;
 /**
  * Everything the backend routes, configured once, for a pipeline that is not an agent.
  *
- *     $router = new Router('healthcare', tags: ['team' => 'clinical']);
+ *     $router = $client->router('healthcare', tags: ['team' => 'clinical']);
  *     $answer = $router->search('perioperative antibiotic guidance');
  *     $transcript = $router->stt->recording('https://example.com/visit.mp3');
  *
- * Everything in the named config is a default, and every option on a call overrides one field
- * of it.
+ * Everything in the named config is a default, the target included, and every option on a
+ * call overrides one field of it. Built by `Client::router`, which is where the URL and
+ * credentials were settled.
  */
 final readonly class Router
 {
@@ -34,16 +35,15 @@ final readonly class Router
     public TextToSpeech $tts;
     public Completions $llm;
     public SpeechToSpeech $sts;
-    public Client $client;
 
     /**
+     * @internal use `Client::router`
      * @param string $config a stored router config, by name or id; without one every call says
      *     what it wants for itself
      * @param array<string, string> $tags cost labels carried onto everything routed here
      */
-    public function __construct(public string $config = '', public array $tags = [], ?Client $client = null)
+    public function __construct(public Client $client, public string $config = '', public array $tags = [])
     {
-        $this->client = $client ?? new Client();
         $this->stt = new SpeechToText($this);
         $this->tts = new TextToSpeech($this);
         $this->llm = new Completions($this);
@@ -55,7 +55,7 @@ final readonly class Router
      */
     public function search(string $query, ?SearchOptions $options = null): SearchAnswer
     {
-        $body = new SearchRequest($query, $this->configId(), $options, $this->labels());
+        $body = new SearchRequest(query: $query, configId: $this->configId(), options: $options, tags: $this->labels());
         return SearchAnswer::fromArray(Json::asObject($this->client->post('/v1/search', body: $body->toArray())));
     }
 
@@ -65,7 +65,7 @@ final readonly class Router
      */
     public function configureStt(SttOptions $options): RouterConfig
     {
-        return $this->store(static fn (string $name, ?RouterConfig $held) => new RouterConfigRequest($name, $options, $held?->tts, $held?->llm, $held?->sts, $held?->search));
+        return $this->store(static fn (string $name, ?RouterConfig $held) => new RouterConfigRequest(name: $name, stt: $options, tts: $held?->tts, llm: $held?->llm, sts: $held?->sts, search: $held?->search));
     }
 
     /**
@@ -73,7 +73,7 @@ final readonly class Router
      */
     public function configureTts(TtsOptions $options): RouterConfig
     {
-        return $this->store(static fn (string $name, ?RouterConfig $held) => new RouterConfigRequest($name, $held?->stt, $options, $held?->llm, $held?->sts, $held?->search));
+        return $this->store(static fn (string $name, ?RouterConfig $held) => new RouterConfigRequest(name: $name, stt: $held?->stt, tts: $options, llm: $held?->llm, sts: $held?->sts, search: $held?->search));
     }
 
     /**
@@ -81,7 +81,7 @@ final readonly class Router
      */
     public function configureSts(StsOptions $options): RouterConfig
     {
-        return $this->store(static fn (string $name, ?RouterConfig $held) => new RouterConfigRequest($name, $held?->stt, $held?->tts, $held?->llm, $options, $held?->search));
+        return $this->store(static fn (string $name, ?RouterConfig $held) => new RouterConfigRequest(name: $name, stt: $held?->stt, tts: $held?->tts, llm: $held?->llm, sts: $options, search: $held?->search));
     }
 
     /**
@@ -109,7 +109,7 @@ final readonly class Router
     private function store(callable $build): RouterConfig
     {
         if ($this->config === '') {
-            throw new ConfigurationException("configuring writes a named config, so the router needs a name: new Router('healthcare')");
+            throw new ConfigurationException("configuring writes a named config, so the router needs a name: \$client->router('healthcare')");
         }
         $held = null;
         foreach (Json::objects(['rows' => $this->client->get('/v1/router/configs')], 'rows') as $row) {

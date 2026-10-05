@@ -11,8 +11,8 @@ use GetStream\VisionAgents\Json;
 final readonly class ImageContentPart
 {
     public function __construct(
-        public string $type,
         public ImageSource $imageUrl,
+        public string $type,
     ) {
     }
 
@@ -22,8 +22,8 @@ final readonly class ImageContentPart
     public static function fromArray(array $data): self
     {
         return new self(
-            type: Json::string($data, 'type'),
             imageUrl: ImageSource::fromArray(Json::object($data, 'image_url')),
+            type: Json::string($data, 'type'),
         );
     }
 
@@ -35,8 +35,8 @@ final readonly class ImageContentPart
     public function toArray(): array
     {
         $out = [];
-        $out['type'] = $this->type;
         $out['image_url'] = $this->imageUrl->toArray();
+        $out['type'] = $this->type;
         return $out;
     }
 }
