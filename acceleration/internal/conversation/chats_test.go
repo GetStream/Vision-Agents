@@ -377,6 +377,7 @@ type AppsSuite struct {
 	acme    *chattest.Server
 	globex  *chattest.Server
 	service *Service
+	root    string
 	logs    *logged
 }
 
@@ -411,7 +412,8 @@ func (s *AppsSuite) SetupTest() {
 	s.apps = newTwoApps(s.T())
 	s.acme = s.apps.give(s.T(), "acme", 77)
 	s.globex = s.apps.give(s.T(), "globex", 99)
-	service, err := NewForChats(s.T().TempDir(), s.apps)
+	s.root = s.T().TempDir()
+	service, err := NewForChats(s.root, s.apps)
 	s.Require().NoError(err)
 	s.logs = &logged{}
 	service.logger = slog.New(slog.NewTextHandler(s.logs, nil))
@@ -485,4 +487,43 @@ func (s *AppsSuite) TestAParkedConversationIsLoggedOnceItsWritesGoThrough() {
 	s.Contains(s.globex.Messages(strings.TrimPrefix(c.CID(), "agent:")), "waiting for globex's app")
 	s.Equal(1, s.logs.count(`msg="unparked a conversation`), s.logs.String())
 	s.Contains(s.logs.String(), "customer=globex cid="+c.CID()+" stream_app=99")
+}
+
+// texts is what a page of history says, in order.
+func texts(page Page) []string {
+	var said []string
+	for _, message := range page.Messages {
+		said = append(said, message.Text)
+	}
+	return said
+}
+
+func (s *AppsSuite) TestAnUnsentTurnInACustomersOwnAppShowsInItsHistory() {
+	c := s.parkedReply()
+	// globex's app is back, but the parked turn waits out its retry, still unsent.
+	s.apps.mu.Lock()
+	s.apps.down[99] = false
+	s.apps.mu.Unlock()
+
+	page, err := s.service.HistoryForCaller(s.T().Context(), "globex", "agent", c.CID(), "", "employee")
+	s.Require().NoError(err)
+
+	s.Contains(texts(page), "waiting for globex's app")
+}
+
+func (s *AppsSuite) TestAnotherCustomersUnsentTurnsUnderTheSameIdAreNotInHistory() {
+	// initech's conversation in the deployment's app has a reply waiting to be delivered.
+	id := pendingRecord(s.T(), s.root, "initech", 0, "initech's unsent reply")
+	// acme made a channel under the same id in its own app, which Stream allows.
+	_, err := s.acme.Client.Chat().GetOrCreateChannel(s.T().Context(), "agent", id, &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: ptr("agent"),
+			Members: []getstream.ChannelMemberRequest{{UserID: "agent"}, {UserID: "employee"}},
+			Custom: map[string]any{CustomerField: "acme", "support_agent_id": "agent", "support_owner_id": "employee",
+				TriggerField: SessionCommandTrigger}}})
+	s.Require().NoError(err)
+
+	page, err := s.service.HistoryForCaller(s.T().Context(), "acme", "agent", "agent:"+id, "", "employee")
+	s.Require().NoError(err)
+
+	s.NotContains(texts(page), "initech's unsent reply")
 }

@@ -393,7 +393,7 @@ func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, c
 		if err != nil {
 			return nil, nil, false, err
 		}
-		page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, voiceAgent)
+		page, err := s.historyIn(ctx, client, c.data.StreamApp, customer, agentID, cid, "", caller, voiceAgent)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -445,7 +445,7 @@ func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, c
 			return nil, nil, false, err
 		}
 	}
-	page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, voiceAgent)
+	page, err := s.historyIn(ctx, client, pin, customer, agentID, cid, "", caller, voiceAgent)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -665,14 +665,14 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 
 // history reads a conversation back in the app it is kept in.
 func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string, voiceAgent ...string) (Page, error) {
-	client, _, err := s.readerFor(ctx, customer, cid)
+	client, app, err := s.readerFor(ctx, customer, cid)
 	if err != nil {
 		return Page{}, err
 	}
-	return s.historyIn(ctx, client, customer, agentID, cid, before, caller, voiceAgent...)
+	return s.historyIn(ctx, client, app, customer, agentID, cid, before, caller, voiceAgent...)
 }
 
-func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, voiceAgent ...string) (Page, error) {
+func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, app int64, customer, agentID, cid, before, caller string, voiceAgent ...string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
@@ -752,8 +752,10 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 	}
 	if before == "" {
 		// Overlay durable pending snapshots so a reconnect sees unfinished retries truthfully.
+		// They are read from this conversation's own record: the same id in another app is
+		// another customer's conversation, whose unsent turns are not this one's.
 		var pending disk
-		raw, err := os.ReadFile(filepath.Join(s.root, id, "state.json"))
+		raw, err := os.ReadFile(filepath.Join(s.recordDir(customer, app, id), "state.json"))
 		if err != nil && !os.IsNotExist(err) {
 			return Page{}, err
 		}
