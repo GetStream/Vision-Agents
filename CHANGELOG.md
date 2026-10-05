@@ -46,6 +46,10 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+### Agent shutdown on call end no longer cuts off the close
+
+When the call ended, the `CallEndedEvent` handler started `Agent.close()`, but the `close()` from `join()` returned at once because a close was already running. `join()` and the session then finished while components were still closing, and `asyncio.run` shut down in the middle of their cleanup. With a Realtime LLM this logged `aclose(): asynchronous generator is already running`. A concurrent `close()` now waits for the running close, and the call-end close runs in its own task, so `events.shutdown()` no longer waits on the handler that waits for the close.
+
 ### `deepgram` plugin: Flux STT handles typed `TurnInfo` from SDK 7.7 (#633)
 
 `deepgram-sdk` 7.7 delivers listen v2 `TurnInfo` as typed objects instead of dicts. The STT handler now accepts both, so transcripts and turn events are emitted and the unexpected-message warning spam is gone.
