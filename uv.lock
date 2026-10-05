@@ -1737,7 +1737,7 @@ wheels = [
 [[package]]
 name = "getstream"
 version = "6.1.1"
-source = { editable = "../stream-py" }
+source = { git = "https://github.com/GetStream/stream-py.git?rev=363b2528f6da747edec48fae843e58bc4d16c6d7#363b2528f6da747edec48fae843e58bc4d16c6d7" }
 dependencies = [
     { name = "dataclasses-json" },
     { name = "httpx" },
@@ -1765,59 +1765,6 @@ webrtc = [
     { name = "protobuf" },
     { name = "python-dateutil" },
     { name = "twirp" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.13.2,<4" },
-    { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0,<1.15.0" },
-    { name = "av", marker = "extra == 'webrtc'", specifier = ">=14.2.0,<17" },
-    { name = "dataclasses-json", specifier = ">=0.6.0,<0.7" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "ijson", specifier = ">=3.4.0" },
-    { name = "marshmallow", specifier = ">=3.21.0,<4" },
-    { name = "numpy", marker = "python_full_version >= '3.14' and extra == 'webrtc'", specifier = ">=2.3.2,<2.4" },
-    { name = "numpy", marker = "python_full_version < '3.14' and extra == 'webrtc'", specifier = ">=2.2.6,<2.3" },
-    { name = "numpy", marker = "extra == 'webrtc'", specifier = ">=2.2.6" },
-    { name = "openai", extras = ["realtime"], marker = "extra == 'openai-realtime'", specifier = ">=1.93.0" },
-    { name = "opentelemetry-api", marker = "extra == 'telemetry'", specifier = ">=1.26.0" },
-    { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.26.0" },
-    { name = "protobuf", specifier = ">=6.31.1" },
-    { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=4.25.1" },
-    { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=6.31.1" },
-    { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "pydantic-settings", specifier = ">=2.9.1" },
-    { name = "pyee", specifier = ">=13.0.0" },
-    { name = "pyjwt", specifier = ">=2.8.0,<3" },
-    { name = "python-dateutil", specifier = ">=2.8.2" },
-    { name = "python-dateutil", marker = "extra == 'webrtc'", specifier = ">=2.8.2" },
-    { name = "twirp" },
-    { name = "twirp", marker = "extra == 'webrtc'" },
-]
-provides-extras = ["openai-realtime", "webrtc", "telemetry"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "click", specifier = ">=8.1.0" },
-    { name = "grpcio-tools", specifier = "==1.76.0" },
-    { name = "hatch", specifier = ">=1.14.2" },
-    { name = "hatch-vcs", specifier = ">=0.5.0" },
-    { name = "maturin", specifier = ">=1.15.0" },
-    { name = "mypy-protobuf", specifier = "==3.5.0" },
-    { name = "opentelemetry-exporter-otlp", specifier = ">=1.37.0" },
-    { name = "opentelemetry-exporter-prometheus", specifier = ">=0.58b0" },
-    { name = "pre-commit", specifier = ">=4.2.0" },
-    { name = "prometheus-client", specifier = ">=0.23.1" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "pytest-httpserver", specifier = ">=1.1.5" },
-    { name = "pytest-timeout", specifier = ">=2.3.1" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
-    { name = "python-dateutil", specifier = ">=2.8.2,<3" },
-    { name = "python-dotenv", specifier = ">=1.1.1,<2" },
-    { name = "ruff", specifier = ">=0.12.1" },
-    { name = "torch", specifier = ">=2.7.0" },
-    { name = "torchaudio", specifier = ">=2.7.0" },
 ]
 
 [[package]]
@@ -6624,7 +6571,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], editable = "../stream-py" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=363b2528f6da747edec48fae843e58bc4d16c6d7" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=1.23.3,<2" },
     { name = "mypy", marker = "extra == 'dev'" },
@@ -6993,7 +6940,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], editable = "../stream-py" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=363b2528f6da747edec48fae843e58bc4d16c6d7" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

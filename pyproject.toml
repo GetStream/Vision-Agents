@@ -45,7 +45,7 @@ vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
 vision-agents-plugins-twelvelabs = { workspace = true }
 vision-agents-plugins-speechify = { workspace = true }
-getstream = { path = "../stream-py", editable = true }
+getstream = { git = "https://github.com/GetStream/stream-py.git", rev = "363b2528f6da747edec48fae843e58bc4d16c6d7" }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
