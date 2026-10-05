@@ -2414,6 +2414,8 @@ export type components = {
          */
         readonly ActivityGranularity: "daily" | "monthly";
         readonly AgentConfig: {
+            /** @description The bindings exactly as they were written. Absent when there are none. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             /** Format: date-time */
             readonly created_at: string;
             readonly dispatch?: components["schemas"]["AgentDispatch"];
@@ -2456,6 +2458,8 @@ export type components = {
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
         readonly AgentConfigPatch: {
+            /** @description The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
@@ -2496,6 +2500,8 @@ export type components = {
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
+            /** @description The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
@@ -2550,6 +2556,37 @@ export type components = {
             /** @description Provider-specific voice id. */
             readonly voice?: string;
         };
+        /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against. */
+        readonly AgentConnectorBinding: {
+            readonly connection: components["schemas"]["AgentConnectorSelection"];
+            /** @description A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_. */
+            readonly connector_id: string;
+            /** @description The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place. */
+            readonly name: string;
+            /**
+             * @description Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
+             * @default false
+             */
+            readonly required?: boolean;
+            /**
+             * Format: int64
+             * @description How long one tool call may take, in milliseconds. Omitted, the session's default applies.
+             */
+            readonly timeout_ms?: number;
+            /** @description The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. */
+            readonly tools: readonly components["schemas"]["ConnectorToolGrant"][];
+        };
+        /** @description Which connection a binding's tools are called through. */
+        readonly AgentConnectorSelection: {
+            /** @description Required for fixed, and refused for session. */
+            readonly connection_id?: string;
+            readonly type: components["schemas"]["AgentConnectorSelectionType"];
+        };
+        /**
+         * @description fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+         * @enum {string}
+         */
+        readonly AgentConnectorSelectionType: "fixed" | "session";
         /** @description What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled. */
         readonly AgentDispatch: {
             /** @description A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config. */
@@ -3140,6 +3177,13 @@ export type components = {
             readonly name: string;
             /** @description A regular expression the whole value must match. */
             readonly pattern?: string;
+        };
+        /** @description One tool a binding allows. */
+        readonly ConnectorToolGrant: {
+            /** @description The tool as the connector names it. */
+            readonly name: string;
+            /** @description The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. */
+            readonly schema_digest: string;
         };
         readonly Contact: {
             readonly attempts: number;
@@ -4883,6 +4927,8 @@ export type components = {
         };
         /** @description An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
+            /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */

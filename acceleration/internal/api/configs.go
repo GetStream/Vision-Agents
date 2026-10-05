@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -74,6 +75,11 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := configComplaint(*request.Body); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
+	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 
 	config := storedConfig(*request.Body, customerID)
 	if message, ok := textThinkingComplaint(&config, request.Body.ThinkingLlm); !ok {
@@ -86,6 +92,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
@@ -132,6 +141,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if err != nil {
 		return nil, huma.Error404NotFound(unknownConfig)
 	}
+	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 
 	config := storedConfig(*request.Body, customerID)
 	if message, ok := textThinkingComplaint(&config, request.Body.ThinkingLlm); !ok {
@@ -148,6 +162,15 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	}
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
+	// Unlike the rest of an update, bindings left out are kept rather than cleared: a client
+	// written before they existed saves a config without them, and saving it would otherwise
+	// take away every tool the agent was granted.
+	if request.Body.Connectors == nil {
+		config.Connectors = existing.Connectors
+	}
+	if message, ok := pluginAliasComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
@@ -324,7 +347,186 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if complaint, ok := visibleToolsComplaint(request.VisibleTools); !ok {
 		return complaint, false
 	}
+	if complaint, ok := connectorBindingsComplaint(request.Connectors); !ok {
+		return complaint, false
+	}
 	return dispatchComplaint(request.Dispatch)
+}
+
+// aliasSeparator joins an alias to its tool's name in the name the model is offered,
+// <alias>__<tool>, which is split back at the first one: Prefix and Split in
+// internal/mcp/mcp.go:413-422 on codex/connector-support at cf62af0d, handed the alias by
+// internal/session/connector_tools.go:167 there, as plugins.PrefixSeparator does for plugins
+// today. An alias holding one would be split in the wrong place.
+const aliasSeparator = "__"
+
+// connectorBindingsComplaint reports what is wrong with a config's connector bindings as
+// written that their schema cannot say, naming the binding. The alias pattern, the caps, the
+// connection type, the timeout and the digest are tags on AgentConnectorBinding, which Huma
+// checks first. Whether what they name exists is unboundConnectors', which asks the store.
+// It is the prototype's connectorBindingsComplaint (internal/api/connectors.go:1147-1192 at
+// cf62af0d).
+func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool) {
+	if bindings == nil {
+		return "", true
+	}
+	aliases := make(map[string]bool, len(*bindings))
+	for _, binding := range *bindings {
+		alias := binding.Name
+		if strings.Contains(alias, aliasSeparator) {
+			return fmt.Sprintf("connector binding %q has %s in its name, which is what separates an alias "+
+				"from its tool's name", alias, aliasSeparator), false
+		}
+		if aliases[alias] {
+			return fmt.Sprintf("two connector bindings are called %q", alias), false
+		}
+		aliases[alias] = true
+		if strings.TrimSpace(binding.ConnectorId) == "" {
+			return fmt.Sprintf("connector binding %q names no connector_id", alias), false
+		}
+		switch binding.Connection.Type {
+		case AgentConnectorSelectionTypeFixed:
+			if strings.TrimSpace(value(binding.Connection.ConnectionId)) == "" {
+				return fmt.Sprintf("connector binding %q is fixed, so it needs connection.connection_id", alias), false
+			}
+		case AgentConnectorSelectionTypeSession:
+			if binding.Connection.ConnectionId != nil {
+				return fmt.Sprintf("connector binding %q is chosen per session, so its connection is picked "+
+					"when a session is created and connection.connection_id is not set here", alias), false
+			}
+		}
+		tools := make(map[string]bool, len(binding.Tools))
+		for _, tool := range binding.Tools {
+			if strings.TrimSpace(tool.Name) == "" {
+				return fmt.Sprintf("connector binding %q grants a tool with no name", alias), false
+			}
+			if tools[tool.Name] {
+				return fmt.Sprintf("connector binding %q grants %q twice", alias, tool.Name), false
+			}
+			tools[tool.Name] = true
+		}
+	}
+	return "", true
+}
+
+// unboundConnectors reports a binding naming what the app cannot bind: a connector it cannot
+// see, built-in or its own, or for a fixed binding anything but a live connection the app
+// itself owns. A user's connection is theirs to use in their own sessions, and a fixed
+// binding would hand it to every session the config runs. An error is the store failing,
+// not the binding.
+func (s *Server) unboundConnectors(ctx context.Context, customerID string, bindings *[]AgentConnectorBinding) (string, bool, error) {
+	if bindings == nil {
+		return "", true, nil
+	}
+	for _, binding := range *bindings {
+		_, err := s.store.LatestConnectorDefinition(ctx, customerID, binding.ConnectorId)
+		if errors.Is(err, store.ErrNoConnectorDefinition) {
+			return fmt.Sprintf("connector binding %q names connector %q, and there is no such connector",
+				binding.Name, binding.ConnectorId), false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if binding.Connection.Type != AgentConnectorSelectionTypeFixed {
+			continue
+		}
+		id := value(binding.Connection.ConnectionId)
+		connection, err := s.store.ConnectorConnection(ctx, customerID, id)
+		if errors.Is(err, store.ErrNoConnectorConnection) {
+			return fmt.Sprintf("connector binding %q names connection %q, and the app has no such connection",
+				binding.Name, id), false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if connection.OwnerType != store.OwnerApp {
+			return fmt.Sprintf("connector binding %q is fixed, so its connection has to be the app's own, and "+
+				"%q is a user's: bind it with connection.type session instead", binding.Name, id), false, nil
+		}
+		// The grants and digests describe the connector the binding names, so a connection to
+		// another one would call them with the wrong provider's credentials.
+		if connection.ConnectorID != binding.ConnectorId {
+			return fmt.Sprintf("connector binding %q names connector %q, but connection %q is to %q",
+				binding.Name, binding.ConnectorId, id, connection.ConnectorID), false, nil
+		}
+	}
+	return "", true, nil
+}
+
+// pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same
+// config is. A plugin's tools are offered as <plugin>__<tool> (plugins.Prefix,
+// internal/plugins/mcp.go), a user plugin's as <plugin>__ and a suffix
+// (internal/plugins/user.go), an MCP server's as <name>__<tool> (McpServer.Name), and a
+// binding's as <alias>__<tool>. The built-in connectors share ids with the plugin catalog
+// (slack is in both internal/plugins/plugins.yaml and
+// internal/connectors/providers/slack.yaml), so the two would offer the same names. It reads
+// the config as it is about to be stored, so a patch or a sync adding either side is checked
+// against what the other already is.
+func pluginAliasComplaint(config store.AgentConfig) (string, bool) {
+	for _, binding := range config.Connectors {
+		if slices.Contains(config.Plugins, binding.Name) || slices.Contains(config.UserPlugins, binding.Name) {
+			return fmt.Sprintf("connector binding %q is called what the config's plugin %q is, and both "+
+				"would offer their tools as %s%stool", binding.Name, binding.Name, binding.Name, aliasSeparator), false
+		}
+		for _, server := range config.MCPServers {
+			if server.Name == binding.Name {
+				return fmt.Sprintf("connector binding %q is called what the config's MCP server %q is, and both "+
+					"would offer their tools as %s%stool", binding.Name, binding.Name, binding.Name, aliasSeparator), false
+			}
+		}
+	}
+	return "", true
+}
+
+// storedBindings turns the bindings a caller sent into what a config stores, as written.
+func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
+	stored := make([]store.ConnectorBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		tools := make([]store.ToolGrant, 0, len(binding.Tools))
+		for _, tool := range binding.Tools {
+			tools = append(tools, store.ToolGrant{Name: tool.Name, SchemaDigest: tool.SchemaDigest})
+		}
+		stored = append(stored, store.ConnectorBinding{
+			Name:        binding.Name,
+			ConnectorID: binding.ConnectorId,
+			Connection: store.ConnectionBinding{
+				Type:         string(binding.Connection.Type),
+				ConnectionID: value(binding.Connection.ConnectionId),
+			},
+			Tools:     tools,
+			Required:  value(binding.Required),
+			TimeoutMs: value(binding.TimeoutMs),
+		})
+	}
+	return stored
+}
+
+// bindingsOf renders a config's bindings for the wire.
+func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
+	rendered := make([]AgentConnectorBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		tools := make([]ConnectorToolGrant, 0, len(binding.Tools))
+		for _, tool := range binding.Tools {
+			tools = append(tools, ConnectorToolGrant{Name: tool.Name, SchemaDigest: tool.SchemaDigest})
+		}
+		required := binding.Required
+		one := AgentConnectorBinding{
+			Name:        binding.Name,
+			ConnectorId: binding.ConnectorID,
+			Connection: AgentConnectorSelection{
+				Type:         AgentConnectorSelectionType(binding.Connection.Type),
+				ConnectionId: optional(binding.Connection.ConnectionID),
+			},
+			Tools:    tools,
+			Required: &required,
+		}
+		if binding.TimeoutMs > 0 {
+			timeout := binding.TimeoutMs
+			one.TimeoutMs = &timeout
+		}
+		rendered = append(rendered, one)
+	}
+	return rendered
 }
 
 // textThinkingComplaint refuses a thinking model on a text agent, which runs everything on
@@ -770,6 +972,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Plugins != nil {
 		config.Plugins = *request.Plugins
 	}
+	if request.Connectors != nil {
+		config.Connectors = storedBindings(*request.Connectors)
+	}
 	if request.UserPlugins != nil {
 		config.UserPlugins = *request.UserPlugins
 	}
@@ -852,6 +1057,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.Plugins) > 0 {
 		named := config.Plugins
 		rendered.Plugins = &named
+	}
+	if len(config.Connectors) > 0 {
+		bindings := bindingsOf(config.Connectors)
+		rendered.Connectors = &bindings
 	}
 	if len(config.UserPlugins) > 0 {
 		named := config.UserPlugins
@@ -1081,70 +1290,138 @@ type deleteAgentConfigRequest struct {
 
 // AgentConfigRequest is the AgentConfigRequest schema.
 type AgentConfigRequest struct {
-	Dispatch           *AgentDispatch     `json:"dispatch,omitempty"`
-	Greeting           *string            `json:"greeting,omitempty"`
-	Guardrail          *string            `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered."`
-	Harness            *Harness           `json:"harness,omitempty"`
-	Instructions       *string            `json:"instructions,omitempty"`
-	Keyterms           *[]string          `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them."`
-	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty" doc:"What the agent may look things up in. Empty means it knows only what it was told."`
-	Llm                *string            `json:"llm,omitempty" doc:"The model holding the conversation."`
-	Mode               *AgentMode         `json:"mode,omitempty"`
-	Name               string             `json:"name" doc:"What the config is called, which is unique among the customer's own."`
-	Plugins            *[]string          `json:"plugins,omitempty" doc:"Hosted MCP servers this agent may reach, named from the built-in catalog."`
-	PluginEvents       *[]PluginEvent     `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
-	PluginOptions      *[]PluginOptions   `json:"plugin_options,omitempty" maxItems:"32" doc:"How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. A plugin without any is reached as the catalog has it."`
-	McpServers         *[]McpServer       `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
-	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
-	SandboxOptions     *SandboxOptions    `json:"sandbox_options,omitempty"`
-	Search             *string            `json:"search,omitempty" doc:"What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way."`
-	Skills             *[]string          `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
-	Speed              *float64           `json:"speed,omitempty" doc:"Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused." minimum:"0" example:"0.9"`
-	Sts                *string            `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
-	Stt                *string            `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
-	Tags               *map[string]string `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes."`
-	ThinkingLlm        *string            `json:"thinking_llm,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model."`
-	Tts                *string            `json:"tts,omitempty"`
-	UserPlugins        *[]string          `json:"user_plugins,omitempty" doc:"Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
-	Video              *SessionVideo      `json:"video,omitempty"`
-	VisibleTools       *[]string          `json:"visible_tools,omitempty" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[{\"id\",\"title\",\"url\",\"citation\"}]} also adds those citations to the reply's sources. Empty shows search and web_search." maxItems:"64"`
-	Voice              *string            `json:"voice,omitempty" doc:"Provider-specific voice id."`
+	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
+	Greeting           *string                  `json:"greeting,omitempty"`
+	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered."`
+	Harness            *Harness                 `json:"harness,omitempty"`
+	Instructions       *string                  `json:"instructions,omitempty"`
+	Keyterms           *[]string                `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them."`
+	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty" doc:"What the agent may look things up in. Empty means it knows only what it was told."`
+	Llm                *string                  `json:"llm,omitempty" doc:"The model holding the conversation."`
+	Mode               *AgentMode               `json:"mode,omitempty"`
+	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
+	Plugins            *[]string                `json:"plugins,omitempty" doc:"Hosted MCP servers this agent may reach, named from the built-in catalog."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
+	PluginOptions      *[]PluginOptions         `json:"plugin_options,omitempty" maxItems:"32" doc:"How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. A plugin without any is reached as the catalog has it."`
+	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
+	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
+	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
+	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
+	Search             *string                  `json:"search,omitempty" doc:"What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way."`
+	Skills             *[]string                `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
+	Speed              *float64                 `json:"speed,omitempty" doc:"Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused." minimum:"0" example:"0.9"`
+	Sts                *string                  `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
+	Stt                *string                  `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
+	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes."`
+	ThinkingLlm        *string                  `json:"thinking_llm,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model."`
+	Tts                *string                  `json:"tts,omitempty"`
+	UserPlugins        *[]string                `json:"user_plugins,omitempty" doc:"Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
+	Video              *SessionVideo            `json:"video,omitempty"`
+	VisibleTools       *[]string                `json:"visible_tools,omitempty" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[{\"id\",\"title\",\"url\",\"citation\"}]} also adds those citations to the reply's sources. Empty shows search and web_search." maxItems:"64"`
+	Voice              *string                  `json:"voice,omitempty" doc:"Provider-specific voice id."`
 }
 
 // AgentConfig is the AgentConfig schema.
 type AgentConfig struct {
-	CreatedAt          time.Time          `json:"created_at"`
-	Dispatch           *AgentDispatch     `json:"dispatch,omitempty"`
-	Greeting           *string            `json:"greeting,omitempty"`
-	Guardrail          *string            `json:"guardrail,omitempty"`
-	Harness            *Harness           `json:"harness,omitempty"`
-	Id                 string             `json:"id"`
-	Instructions       *string            `json:"instructions,omitempty"`
-	Keyterms           *[]string          `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
-	Llm                *string            `json:"llm,omitempty"`
-	Mode               AgentMode          `json:"mode"`
-	Name               string             `json:"name"`
-	Plugins            *[]string          `json:"plugins,omitempty"`
-	PluginEvents       *[]PluginEvent     `json:"plugin_events,omitempty"`
-	PluginOptions      *[]PluginOptions   `json:"plugin_options,omitempty"`
-	McpServers         *[]McpServer       `json:"mcp_servers,omitempty"`
-	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
-	SandboxOptions     *SandboxOptions    `json:"sandbox_options,omitempty"`
-	Search             *string            `json:"search,omitempty"`
-	Skills             *[]string          `json:"skills,omitempty"`
-	Speed              *float64           `json:"speed,omitempty"`
-	Sts                *string            `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
-	Stt                *string            `json:"stt,omitempty"`
-	SyncHash           *string            `json:"sync_hash,omitempty" doc:"Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory."`
-	Tags               *map[string]string `json:"tags,omitempty"`
-	ThinkingLlm        *string            `json:"thinking_llm,omitempty"`
-	Tts                *string            `json:"tts,omitempty"`
-	UpdatedAt          time.Time          `json:"updated_at"`
-	UserPlugins        *[]string          `json:"user_plugins,omitempty"`
-	Video              *SessionVideo      `json:"video,omitempty"`
-	VisibleTools       *[]string          `json:"visible_tools,omitempty"`
-	Voice              *string            `json:"voice,omitempty"`
+	CreatedAt          time.Time                `json:"created_at"`
+	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
+	Greeting           *string                  `json:"greeting,omitempty"`
+	Guardrail          *string                  `json:"guardrail,omitempty"`
+	Harness            *Harness                 `json:"harness,omitempty"`
+	Id                 string                   `json:"id"`
+	Instructions       *string                  `json:"instructions,omitempty"`
+	Keyterms           *[]string                `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty"`
+	Llm                *string                  `json:"llm,omitempty"`
+	Mode               AgentMode                `json:"mode"`
+	Name               string                   `json:"name"`
+	Plugins            *[]string                `json:"plugins,omitempty"`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty"`
+	PluginOptions      *[]PluginOptions         `json:"plugin_options,omitempty"`
+	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
+	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
+	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
+	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
+	Search             *string                  `json:"search,omitempty"`
+	Skills             *[]string                `json:"skills,omitempty"`
+	Speed              *float64                 `json:"speed,omitempty"`
+	Sts                *string                  `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
+	Stt                *string                  `json:"stt,omitempty"`
+	SyncHash           *string                  `json:"sync_hash,omitempty" doc:"Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory."`
+	Tags               *map[string]string       `json:"tags,omitempty"`
+	ThinkingLlm        *string                  `json:"thinking_llm,omitempty"`
+	Tts                *string                  `json:"tts,omitempty"`
+	UpdatedAt          time.Time                `json:"updated_at"`
+	UserPlugins        *[]string                `json:"user_plugins,omitempty"`
+	Video              *SessionVideo            `json:"video,omitempty"`
+	VisibleTools       *[]string                `json:"visible_tools,omitempty"`
+	Voice              *string                  `json:"voice,omitempty"`
+}
+
+// AgentConnectorBinding is a connector whose tools an agent config may call, under an alias.
+//
+// The alias pattern is the prototype's connectorAliasPattern (internal/api/connectors.go:54 on
+// codex/connector-support at cf62af0d), which gives no reason for the length of 63; that is
+// unverified. A trailing _ is refused because the offered name would not split back: alias a_
+// and tool search are offered as a___search, and a cut at the first aliasSeparator reads alias
+// a and tool _search. A config holds at most 64 bindings (the maxItems on each connectors
+// field), the cap visible_tools already has, and 128 tools is the most OpenAI documents taking
+// in one request. Neither was measured for connectors, so both are unverified. The 30000 ms ceiling is the prototype's
+// (internal/api/connectors.go:1176 at cf62af0d), and nothing there says why 30 seconds; it is
+// unverified.
+type AgentConnectorBinding struct {
+	Name        string                  `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
+	ConnectorId string                  `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
+	Connection  AgentConnectorSelection `json:"connection"`
+	Tools       []ConnectorToolGrant    `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none."`
+	Required    *bool                   `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
+	TimeoutMs   *int                    `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
+}
+
+func (*AgentConnectorBinding) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "A connector whose tools an agent config may call, under an alias. The binding is " +
+		"the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against."
+	return schema
+}
+
+// AgentConnectorSelection is which connection a binding's tools are called through.
+type AgentConnectorSelection struct {
+	Type         AgentConnectorSelectionType `json:"type"`
+	ConnectionId *string                     `json:"connection_id,omitempty" doc:"Required for fixed, and refused for session."`
+}
+
+func (*AgentConnectorSelection) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Which connection a binding's tools are called through."
+	return schema
+}
+
+// AgentConnectorSelectionType is whether a binding's connection is fixed or picked per session.
+type AgentConnectorSelectionType string
+
+const (
+	AgentConnectorSelectionTypeFixed   AgentConnectorSelectionType = "fixed"
+	AgentConnectorSelectionTypeSession AgentConnectorSelectionType = "session"
+)
+
+func (AgentConnectorSelectionType) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "AgentConnectorSelectionType", "fixed is the app's own connection named by "+
+		"connection_id, the same for every session. session is the connection the session's verified end "+
+		"user picks when the session is created, which has to be their own.",
+		string(AgentConnectorSelectionTypeFixed), string(AgentConnectorSelectionTypeSession))
+}
+
+// ConnectorToolGrant is one tool a binding allows. The digest is a SHA-256, 32 bytes in
+// lowercase hex, which is what the prototype took of a tool's name, description and input
+// schema (ToolSchemaDigest, internal/mcp/mcp.go:172-184 at cf62af0d) and checked a grant's
+// digest against (connectorToolDigestPattern, internal/api/connectors.go:56).
+type ConnectorToolGrant struct {
+	Name         string `json:"name" minLength:"1" doc:"The tool as the connector names it."`
+	SchemaDigest string `json:"schema_digest" pattern:"^[a-f0-9]{64}$" doc:"The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered."`
+}
+
+func (*ConnectorToolGrant) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One tool a binding allows."
+	return schema
 }
 
 func (*AgentConfigRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
