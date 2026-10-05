@@ -540,9 +540,9 @@ Do not confuse this with the `plugins/` folder at the repo root, for example `pl
 
 |  | What we see | How it was checked |
 | --- | --- | --- |
-| Environments | Only staging: release `the staging release` in namespace `the staging namespace` on the GKE cluster `the Router cluster`, address `accelerate.gcp.stream-io-api.com`. There is no production: release `the production release` is only planned | `kubectl get ns`; `the deploy code` on branch `a deploy branch` of the `the private infra` repo |
+| Environments | Only staging, at `accelerate.gcp.stream-io-api.com`. There is no production: a production release is only planned | the cluster's namespaces and the deploy code in the infra repo |
 | Version | `v0.6.9-dev-1480919a`: commit `1480919a` from September 28 on the `accelerate` branch, with plugins. The connectors prototype is not in it | Log of the initContainer `fetch-binary`; `git merge-base --is-ancestor` |
-| Connected plugins | None: `agent_plugin_connections` has 0 rows, and no agent config has a non-empty `plugins` | Read-only `SELECT` from a temporary pod in `the staging namespace`; the pod was removed |
+| Connected plugins | None: `agent_plugin_connections` has 0 rows, and no agent config has a non-empty `plugins` | Read-only `SELECT` from a temporary pod in the staging namespace; the pod was removed |
 | Usage | In 10 hours of logs: two `GET /v1/agents/configs/{id}/plugins` with an empty answer and no `authorize` | `kubectl logs` of the current pod; there are no older logs, and ClickHouse is not deployed on this cluster |
 
 So plugins are not used anywhere: we can replace them with connectors without moving any data.
@@ -643,7 +643,7 @@ Where the model comes from: the design in `connector-design.md:10` (AI-816 branc
 **Do we need the move at all (our view).** Most likely not: the repo shows no signs of a production deploy of Router.
 
 - The only hosted Router is `accelerate.gcp.stream-io-api.com`. The code calls it staging: `const staging = "https://accelerate.gcp.stream-io-api.com"` (`examples/routers/stt_realtime_example/main.go:32`) and `STAGING_ACCELERATION_URL` (`sdks/js/tests/live/staging.test.ts:52`).
-- **The cluster has only staging** (checked September 30, `kubectl get ns` on the context `the staging cluster's context`). Router runs on a separate GKE cluster, `the Router cluster`, and it has only the namespace `the staging namespace` with the release `the staging release`. The release `the production release` is planned for «later» in the deploy code but not created (`the deploy code` on branch `a deploy branch` of the `the private infra` repo; `the infra repo's shard directory` has only `the staging namespace.*`).
+- **The cluster has only staging** (checked September 30). Router runs on its own cluster, which has only the staging namespace and release. A production release is planned for «later» in the deploy code of the infra repo but not created.
 - **Staging runs the `accelerate` branch with plugins.** Version `v0.6.9-dev-1480919a` (log of the initContainer `fetch-binary`) is a commit from `accelerate`; it is not in `codex/connector-support`.
 - **Plugins are almost unused on staging.** In 10 hours of the current pod's log (31,184 lines) there are two `GET /v1/agents/configs/{id}/plugins` requests with a 3-byte answer (an empty list) and no `authorize`. There are no older logs: ClickHouse is not deployed on this cluster.
 - So the move code is not needed. It is enough to delete the old table. On staging the `agent_plugin_connections` table is empty: 0 rows, and no agent config has plugins (see «Where plugins run today»). Nobody will need to reconnect anything.
