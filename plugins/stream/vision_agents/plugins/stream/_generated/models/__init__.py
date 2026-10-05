@@ -64,6 +64,15 @@ from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
 from .connector_client_owner import ConnectorClientOwner
+from .connector_connection import ConnectorConnection
+from .connector_connection_inputs import ConnectorConnectionInputs
+from .connector_connection_metadata import ConnectorConnectionMetadata
+from .connector_connection_owner import ConnectorConnectionOwner
+from .connector_connection_owner_type import ConnectorConnectionOwnerType
+from .connector_connection_page import ConnectorConnectionPage
+from .connector_connection_request import ConnectorConnectionRequest
+from .connector_connection_request_inputs import ConnectorConnectionRequestInputs
+from .connector_connection_status import ConnectorConnectionStatus
 from .connector_definition import ConnectorDefinition
 from .connector_definition_page import ConnectorDefinitionPage
 from .connector_input import ConnectorInput
@@ -350,6 +359,15 @@ __all__ = (
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",
     "ConnectorClientOwner",
+    "ConnectorConnection",
+    "ConnectorConnectionInputs",
+    "ConnectorConnectionMetadata",
+    "ConnectorConnectionOwner",
+    "ConnectorConnectionOwnerType",
+    "ConnectorConnectionPage",
+    "ConnectorConnectionRequest",
+    "ConnectorConnectionRequestInputs",
+    "ConnectorConnectionStatus",
     "ConnectorDefinition",
     "ConnectorDefinitionPage",
     "ConnectorInput",

@@ -441,14 +441,15 @@ func (s *ConnectionsWithoutConnectorsSuite) TestTheListStillAnswers() {
 }
 
 // assertNotFoundLikeAMissingOne checks the caller is told what an id nobody used is told,
-// status and body, so the answer does not confirm the connection exists.
+// status and body, so the answer does not confirm the connection exists. The time each
+// took is left out, since no two answers agree on it.
 func (s *ConnectionsSuite) assertNotFoundLikeAMissingOne(as *testClient, method, id string) {
 	status, answered := as.call(method, "/v1/agents/connections/"+id, nil)
 	missingStatus, missing := as.call(method, "/v1/agents/connections/"+s.utils.uuid(), nil)
 
 	s.Equal(http.StatusNotFound, missingStatus)
 	s.Equal(missingStatus, status, "%s %s", method, id)
-	s.Equal(string(missing), string(answered), "%s %s", method, id)
+	s.Equal(withoutDuration(missing), withoutDuration(answered), "%s %s", method, id)
 }
 
 // customConnector stores one of the app's own connectors with a required input, an input
