@@ -138,6 +138,9 @@ async def sync_agent(
         logger.info("agent %s is already in sync", folder.name)
     else:
         logger.info("synced agent %s", folder.name)
+    if isinstance(result.warnings, list):
+        for warning in result.warnings:
+            logger.warning("synced agent %s with a warning: %s", folder.name, warning)
     return result
 
 

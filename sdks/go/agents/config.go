@@ -140,6 +140,9 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 	if err != nil {
 		return nil, err
 	}
+	for _, warning := range deref(result.Warnings) {
+		a.logger.Warn("synced with a warning", "agent", a.options.Name, "warning", warning)
+	}
 	if err := WriteStamp(folder.Path, hash); err != nil {
 		return nil, err
 	}
