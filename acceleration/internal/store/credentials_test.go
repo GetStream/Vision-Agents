@@ -21,20 +21,20 @@ func (s *StoreSuite) router() *Store {
 	return router
 }
 
-// grantLocks counts the advisory locks in this database under the grant namespace, held
+// credentialLocks counts the advisory locks in this database under the credential namespace, held
 // (granted) or waited for, as pg_locks shows a two-integer key: classid the first key and
 // objsubid 2 (https://www.postgresql.org/docs/current/view-pg-locks.html).
-func (s *StoreSuite) grantLocks(granted bool) int {
+func (s *StoreSuite) credentialLocks(granted bool) int {
 	var count int
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, `
 SELECT count(*) FROM pg_locks
 WHERE locktype = 'advisory' AND classid = ? AND objsubid = 2 AND granted = ?
   AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
-		grantLockNamespace, granted).Scan(&count))
+		credentialLockNamespace, granted).Scan(&count))
 	return count
 }
 
-// holding locks the connection's grant from another router until the returned release is
+// holding locks the connection's credential state from another router until the returned release is
 // called, and returns once the lock is held.
 func (s *StoreSuite) holding(connection ConnectorConnection) (release func()) {
 	held, done, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
@@ -60,8 +60,8 @@ func (s *StoreSuite) TestASaveAtTheStoredRevisionAdvancesIt() {
 
 	connection.Revision = 2
 	connection.Status = ConnectionConnected
-	connection.MaterialSealed = []byte("sealed for revision 2")
-	connection.MaterialKEKVersion = 1
+	connection.CredentialsSealed = []byte("sealed for revision 2")
+	connection.CredentialsKEKVersion = 1
 	connection.ExpiresAt = &expires
 	connection.AccountID = "acct-1"
 	connection.GrantedScopes = []string{"read"}
@@ -72,8 +72,8 @@ func (s *StoreSuite) TestASaveAtTheStoredRevisionAdvancesIt() {
 	s.Require().NoError(err)
 	s.Equal(2, stored.Revision)
 	s.Equal(ConnectionConnected, stored.Status)
-	s.Equal([]byte("sealed for revision 2"), stored.MaterialSealed)
-	s.Equal(1, stored.MaterialKEKVersion)
+	s.Equal([]byte("sealed for revision 2"), stored.CredentialsSealed)
+	s.Equal(1, stored.CredentialsKEKVersion)
 	s.Require().NotNil(stored.ExpiresAt)
 	s.True(expires.Equal(*stored.ExpiresAt))
 	s.Equal("acct-1", stored.AccountID)
@@ -99,17 +99,17 @@ func (s *StoreSuite) TestASaveAtAStaleRevisionIsRefused() {
 	s.Equal("the first writer", stored.LastError)
 }
 
-func (s *StoreSuite) TestASaveIsNewMaterialAtTheNextRevision() {
+func (s *StoreSuite) TestASaveIsNewCredentialsAtTheNextRevision() {
 	connection := s.connection("acme-app", nil)
 
 	connection.Revision = 1
-	s.ErrorContains(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1), "new material at revision 2")
+	s.ErrorContains(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1), "new credentials at revision 2")
 	connection.Revision = 3
-	s.ErrorContains(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1), "new material at revision 2")
+	s.ErrorContains(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1), "new credentials at revision 2")
 	s.Equal(1, s.storedConnection(connection.ID).Revision)
 }
 
-func (s *StoreSuite) TestASaveCannotPutBackAGrantACheckpointRetired() {
+func (s *StoreSuite) TestASaveCannotPutBackCredentialsACheckpointRetired() {
 	connection := s.connection("acme-app", nil)
 	snapshot := connection
 
@@ -123,7 +123,7 @@ func (s *StoreSuite) TestASaveCannotPutBackAGrantACheckpointRetired() {
 		})
 	s.Require().NoError(err)
 
-	// A save from a snapshot read before it, putting the old grant back as connected.
+	// A save from a snapshot read before it, putting the old credentials back as connected.
 	snapshot.Status = ConnectionConnected
 	s.Error(s.store.SaveConnectorConnectionAtRevision(s.ctx, &snapshot, 1))
 
@@ -155,8 +155,8 @@ func (s *StoreSuite) TestACommitAfterTheCallersDeadlineStillLands() {
 			<-ctx.Done()
 			locked.Revision++
 			locked.Status = ConnectionConnected
-			locked.MaterialSealed = []byte("rotated")
-			locked.MaterialKEKVersion = 1
+			locked.CredentialsSealed = []byte("rotated")
+			locked.CredentialsKEKVersion = 1
 			return true, nil
 		})
 	s.Require().NoError(err)
@@ -205,7 +205,7 @@ func (s *StoreSuite) TestASaveOntoADeletedConnectionIsRefused() {
 	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID))
 
 	connection.Revision = 2
-	connection.MaterialSealed = []byte("sealed after the delete")
+	connection.CredentialsSealed = []byte("sealed after the delete")
 	s.ErrorIs(s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1), ErrConnectorConnectionChanged)
 }
 
@@ -278,7 +278,7 @@ func (s *StoreSuite) TestLockedCallbacksOnOneConnectionNeverOverlapAcrossRouters
 	stored, err := s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
 	s.Require().NoError(err)
 	s.Equal(1+routers, stored.Revision, "every router saw the revision the one before it committed")
-	s.Zero(s.grantLocks(true), "every lock is released")
+	s.Zero(s.credentialLocks(true), "every lock is released")
 }
 
 func (s *StoreSuite) TestACheckpointIsCommittedWhileTheLockIsStillHeld() {
@@ -294,7 +294,7 @@ func (s *StoreSuite) TestACheckpointIsCommittedWhileTheLockIsStillHeld() {
 			seen, err := other.ConnectorConnection(s.ctx, "acme-app", connection.ID)
 			s.Require().NoError(err)
 			s.Equal(ConnectionNeedsReauthorization, seen.Status, "another router reads the checkpoint at once")
-			s.Equal(1, s.grantLocks(true), "and the lock is still held")
+			s.Equal(1, s.credentialLocks(true), "and the lock is still held")
 
 			locked.Revision++
 			locked.Status = ConnectionConnected
@@ -402,17 +402,17 @@ func (s *StoreSuite) TestAWaiterThatIsCanceledReturnsAndLeavesNoLockOrConnection
 // assertTheWaitEnded checks that a waiter that gave up is no longer queued for the lock in
 // Postgres and gave its connection up, while the holder still holds it.
 func (s *StoreSuite) assertTheWaitEnded(waiter *Store) {
-	s.Eventually(func() bool { return s.grantLocks(false) == 0 }, 2*time.Second, 10*time.Millisecond,
+	s.Eventually(func() bool { return s.credentialLocks(false) == 0 }, 2*time.Second, 10*time.Millisecond,
 		"the server stops waiting for the lock on behalf of a caller that gave up")
-	s.Equal(1, s.grantLocks(true), "the holder keeps the lock")
+	s.Equal(1, s.credentialLocks(true), "the holder keeps the lock")
 	s.Eventually(func() bool { return waiter.DB().Stats().InUse == 0 }, 2*time.Second, 10*time.Millisecond,
 		"the waiter's connection goes back")
 }
 
-// assertNothingIsHeld checks that once the holder is done no grant lock is left, so an
+// assertNothingIsHeld checks that once the holder is done no credential lock is left, so an
 // abandoned wait did not end up holding the lock it was canceled out of.
 func (s *StoreSuite) assertNothingIsHeld(waiter *Store) {
-	s.Eventually(func() bool { return s.grantLocks(true) == 0 && s.grantLocks(false) == 0 },
-		2*time.Second, 10*time.Millisecond, "no grant lock is left behind")
+	s.Eventually(func() bool { return s.credentialLocks(true) == 0 && s.credentialLocks(false) == 0 },
+		2*time.Second, 10*time.Millisecond, "no credential lock is left behind")
 	s.Zero(waiter.DB().Stats().InUse)
 }

@@ -79,7 +79,7 @@ func (s *GuardSuite) SetupSuite() {
 }
 
 // TestCoreImportsNoAdapter proves the arrow of dependency points inward: core imports no
-// scheme, source, backend, signal verifier or provider, nor any other connectors package.
+// scheme, tool source, credential store, signal verifier or provider, nor any other connectors package.
 // A direct import is enough to check, because an adapter imports core and so a transitive
 // one would already be an import cycle the compiler refuses.
 func (s *GuardSuite) TestCoreImportsNoAdapter() {
@@ -92,7 +92,7 @@ func (s *GuardSuite) TestCoreImportsNoAdapter() {
 				continue
 			}
 			s.Failf("core imports a connectors package outside core",
-				"%s imports %s; adapters under schemes/, sources/, backends/, signals/ and "+
+				"%s imports %s; adapters under schemes/, sources/, credentialstores/, signals/ and "+
 					"providers/ import core, never the other way", path, imported)
 		}
 	}

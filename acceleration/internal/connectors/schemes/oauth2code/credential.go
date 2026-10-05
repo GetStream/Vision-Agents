@@ -33,10 +33,10 @@ var ErrTokenTypeNotRevocable = errors.New("oauth2code: the provider does not rev
 // no access token, rather than leave without one.
 var errNoAccessToken = errors.New("oauth2code: the credential has no access token")
 
-// Mint returns the access token in m, renewed first when it is inside the margin of its
-// expiry (RFC 6749 section 6). The Material that comes back is m itself when nothing was
-// renewed, and new material when a refresh succeeded; a failed refresh returns no Material,
-// m is never written to, and the error is a *core.OutcomeError the resolver acts on. When the
+// Retrieve returns the access token in stored, renewed first when it is inside the
+// margin of its expiry (RFC 6749 section 6). The StoredCredentials that come back are stored
+// itself when nothing was renewed, and new ones when a refresh succeeded; a failed refresh
+// returns no StoredCredentials, stored is never written to, and the error is a *core.OutcomeError the resolver acts on. When the
 // refresh failed inside the margin, before the access token expired, that still valid token
 // comes back with the error, so a provider's bad minute is not a failed call: the resolver
 // can use it and still act on the outcome. Once the token has expired there is none.
@@ -46,45 +46,45 @@ var errNoAccessToken = errors.New("oauth2code: the credential has no access toke
 // while the window opened by the first attempt is still running: a retired token keeps
 // working inside it, so the retry cannot be the replay RFC 9700 section 4.14.2 revokes a
 // grant for. Without a grace, a retry could be exactly that, so there is none.
-func (s *Scheme) Mint(ctx context.Context, m core.Material, p core.Profile) (core.Credential, core.Material, error) {
-	current, err := open(m)
+func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+	current, err := open(stored)
 	if err != nil {
-		return core.Credential{}, core.Material{}, err
+		return core.AccessCredential{}, core.StoredCredentials{}, err
 	}
 	now := s.cfg.Now()
 	// A token with no known expiry is never renewed early: there is no margin to be inside.
-	if current.ExpiresAt.IsZero() || now.Add(margin(p)).Before(current.ExpiresAt) {
-		return credential(current), m, nil
+	if current.ExpiresAt.IsZero() || now.Add(margin(m)).Before(current.ExpiresAt) {
+		return credential(current), stored, nil
 	}
 	if current.RefreshToken == "" {
 		if now.Before(current.ExpiresAt) {
 			// Still valid, and nothing to renew it with.
-			return credential(current), m, nil
+			return credential(current), stored, nil
 		}
-		return core.Credential{}, core.Material{}, &core.OutcomeError{
+		return core.AccessCredential{}, core.StoredCredentials{}, &core.OutcomeError{
 			Outcome: core.Outcome{Kind: core.OutcomeInvalidGrant},
 			Err:     errors.New("oauth2code: the access token expired and the grant has no refresh token"),
 		}
 	}
-	next, err := s.refresh(ctx, p, current)
+	next, err := s.refresh(ctx, m, current)
 	if err != nil {
 		if s.cfg.Now().Before(current.ExpiresAt) {
-			return credential(current), core.Material{}, err
+			return credential(current), core.StoredCredentials{}, err
 		}
-		return core.Credential{}, core.Material{}, err
+		return core.AccessCredential{}, core.StoredCredentials{}, err
 	}
 	payload, err := json.Marshal(next)
 	if err != nil {
-		return core.Credential{}, core.Material{}, err
+		return core.AccessCredential{}, core.StoredCredentials{}, err
 	}
-	return credential(next), core.Material{Scheme: Name, Version: materialVersion, Payload: payload}, nil
+	return credential(next), core.StoredCredentials{Scheme: Name, Version: payloadVersion, Payload: payload}, nil
 }
 
 // Wrap puts the access token on every request as a bearer token (RFC 6750 section 2.1).
-// Every token this scheme mints is sent that way, whatever token_type the provider named
+// Every token this scheme hands out is sent that way, whatever token_type the provider named
 // it (a provider-shaped value such as "bot" is still a bearer token on the wire). A
 // credential without an access token fails each request instead.
-func (s *Scheme) Wrap(base http.RoundTripper, c core.Credential) http.RoundTripper {
+func (s *Scheme) Wrap(base http.RoundTripper, c core.AccessCredential) http.RoundTripper {
 	var secret struct {
 		AccessToken string `json:"access_token"`
 	}
@@ -106,12 +106,12 @@ func (s *Scheme) Wrap(base http.RoundTripper, c core.Credential) http.RoundTripp
 // token may work until it expires. ErrTokenTypeNotRevocable is the server saying it does not
 // revoke that kind of token (section 2.2.1, unsupported_token_type). Any other refusal is a
 // *core.OutcomeError; section 2.2.1 answers 503 when the client should try again.
-func (s *Scheme) Revoke(ctx context.Context, m core.Material, p core.Profile) error {
-	current, err := open(m)
+func (s *Scheme) Revoke(ctx context.Context, stored core.StoredCredentials, m core.ResolvedManifest) error {
+	current, err := open(stored)
 	if err != nil {
 		return err
 	}
-	endpoint := firstSet(p.Endpoints["revoke"], current.RevocationEndpoint)
+	endpoint := firstSet(m.Endpoints["revoke"], current.RevocationEndpoint)
 	if endpoint == "" {
 		return ErrNoRevocationEndpoint
 	}
@@ -119,7 +119,7 @@ func (s *Scheme) Revoke(ctx context.Context, m core.Material, p core.Profile) er
 	if err := s.checkEndpoint(ctx, endpoint); err != nil {
 		return err
 	}
-	c, err := s.clientSecret(ctx, current.Ref, p, current.Client)
+	c, err := s.clientSecret(ctx, current.Ref, m, current.Client)
 	if err != nil {
 		return err
 	}
@@ -152,29 +152,29 @@ func (s *Scheme) Revoke(ctx context.Context, m core.Material, p core.Profile) er
 }
 
 // refresh is the refresh_token grant (RFC 6749 section 6) with one grace retry, and the
-// material it leaves.
-func (s *Scheme) refresh(ctx context.Context, p core.Profile, current material) (material, error) {
+// payload it leaves.
+func (s *Scheme) refresh(ctx context.Context, m core.ResolvedManifest, current storedPayload) (storedPayload, error) {
 	// The manifest's refresh endpoint, when a provider renews somewhere else, then the token
 	// endpoint the code was redeemed at.
-	endpoint := firstSet(p.Endpoints["refresh"], current.TokenEndpoint)
+	endpoint := firstSet(m.Endpoints["refresh"], current.TokenEndpoint)
 	// Held to the egress policy as discovery holds every endpoint (checkEndpoint).
 	if err := s.checkEndpoint(ctx, endpoint); err != nil {
-		return material{}, err
+		return storedPayload{}, err
 	}
 	// A preregistered client's secret is looked up again, as at Complete, so a rotated one
 	// is used at once.
-	c, err := s.clientSecret(ctx, current.Ref, p, current.Client)
+	c, err := s.clientSecret(ctx, current.Ref, m, current.Client)
 	if err != nil {
-		return material{}, err
+		return storedPayload{}, err
 	}
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", current.RefreshToken)
-	if p.Scopes.SendOnRefresh && len(current.Scopes) > 0 {
+	if m.Scopes.SendOnRefresh && len(current.Scopes) > 0 {
 		// RFC 6749 section 6: scope is OPTIONAL and «MUST NOT include any scope not
 		// originally granted», so what is sent is the granted scopes, when the manifest says
 		// the provider needs them.
-		form.Set("scope", strings.Join(current.Scopes, separator(p)))
+		form.Set("scope", strings.Join(current.Scopes, separator(m)))
 	}
 	if current.Resource != "" {
 		// RFC 8707 section 2.2: the resource of the access token asked for, on a refresh too.
@@ -184,26 +184,26 @@ func (s *Scheme) refresh(ctx context.Context, p core.Profile, current material) 
 	token, err := s.redeem(ctx, endpoint, form, c)
 	var failed *core.OutcomeError
 	if errors.As(err, &failed) && failed.Outcome.Kind == core.OutcomeUncertain &&
-		p.Refresh.Grace > 0 && s.cfg.Now().Sub(start) < time.Duration(p.Refresh.Grace) {
+		m.Refresh.Grace > 0 && s.cfg.Now().Sub(start) < time.Duration(m.Refresh.Grace) {
 		token, err = s.redeem(ctx, endpoint, form, c)
 	}
 	if err != nil {
-		return material{}, err
+		return storedPayload{}, err
 	}
 
 	now := s.cfg.Now()
 	next := current
 	next.AccessToken = token.AccessToken
 	next.TokenType = token.TokenType
-	next.ExpiresAt = token.expiresAt(p, now)
-	next.Scopes = token.scopes(p, current.Scopes)
+	next.ExpiresAt = token.expiresAt(m, now)
+	next.Scopes = token.scopes(m, current.Scopes)
 	if token.RefreshToken != "" {
 		// RFC 6749 section 6: with a new refresh token «the client MUST discard the old
 		// refresh token and replace it with the new one». Without one the old one stays.
 		next.RefreshToken = token.RefreshToken
-		next.RefreshExpiresAt = refreshExpiresAt(p, now)
+		next.RefreshExpiresAt = refreshExpiresAt(m, now)
 	}
-	s.warnIfLastRefresh(p, next)
+	s.warnIfLastRefresh(m, next)
 	return next, nil
 }
 
@@ -244,38 +244,38 @@ func (s *Scheme) redeem(ctx context.Context, endpoint string, form url.Values, c
 }
 
 // warnIfLastRefresh logs when the refresh token, by the manifest's refresh.refresh_ttl, dies
-// before the access token just minted is due for renewal: the next renewal will fail and
+// before the access token just issued is due for renewal: the next renewal will fail and
 // only a reconnect helps. It names the connector and the connection, never a token.
-func (s *Scheme) warnIfLastRefresh(p core.Profile, m material) {
-	if m.RefreshExpiresAt.IsZero() || m.ExpiresAt.IsZero() || !m.RefreshExpiresAt.Before(m.ExpiresAt.Add(-margin(p))) {
+func (s *Scheme) warnIfLastRefresh(m core.ResolvedManifest, payload storedPayload) {
+	if payload.RefreshExpiresAt.IsZero() || payload.ExpiresAt.IsZero() || !payload.RefreshExpiresAt.Before(payload.ExpiresAt.Add(-margin(m))) {
 		return
 	}
 	s.cfg.Logger.Warn("oauth2code: the refresh token expires before the next refresh; the connection will need a reconnect",
-		"connector", p.ConnectorID, "connection", m.Ref.ConnectionID, "refresh_expires_at", m.RefreshExpiresAt)
+		"connector", m.ConnectorID, "connection", payload.Ref.ConnectionID, "refresh_expires_at", payload.RefreshExpiresAt)
 }
 
-// open reads the material this scheme sealed. Its errors never quote the payload.
-func open(m core.Material) (material, error) {
-	if m.Scheme != Name || m.Version != materialVersion {
-		return material{}, fmt.Errorf("oauth2code: material is %q version %d, not %q version %d", m.Scheme, m.Version, Name, materialVersion)
+// open reads the payload of the StoredCredentials this scheme sealed. Its errors never quote the payload.
+func open(stored core.StoredCredentials) (storedPayload, error) {
+	if stored.Scheme != Name || stored.Version != payloadVersion {
+		return storedPayload{}, fmt.Errorf("oauth2code: stored credentials are %q version %d, not %q version %d", stored.Scheme, stored.Version, Name, payloadVersion)
 	}
-	var out material
-	if json.Unmarshal(m.Payload, &out) != nil || out.AccessToken == "" {
-		return material{}, errors.New("oauth2code: material payload is unreadable or has no access token")
+	var out storedPayload
+	if json.Unmarshal(stored.Payload, &out) != nil || out.AccessToken == "" {
+		return storedPayload{}, errors.New("oauth2code: stored credentials payload is unreadable or has no access token")
 	}
 	return out, nil
 }
 
-// credential is the access token in m as a core.Credential, read back by Wrap.
-func credential(m material) core.Credential {
-	secret, _ := json.Marshal(map[string]string{"access_token": m.AccessToken})
-	return core.NewCredential(Name, m.ExpiresAt, secret)
+// credential is the access token in payload as a core.AccessCredential, read back by Wrap.
+func credential(payload storedPayload) core.AccessCredential {
+	secret, _ := json.Marshal(map[string]string{"access_token": payload.AccessToken})
+	return core.NewAccessCredential(Name, payload.ExpiresAt, secret)
 }
 
 // margin is the manifest's refresh.margin, else defaultMargin.
-func margin(p core.Profile) time.Duration {
-	if p.Refresh.Margin > 0 {
-		return time.Duration(p.Refresh.Margin)
+func margin(m core.ResolvedManifest) time.Duration {
+	if m.Refresh.Margin > 0 {
+		return time.Duration(m.Refresh.Margin)
 	}
 	return defaultMargin
 }
@@ -283,11 +283,11 @@ func margin(p core.Profile) time.Duration {
 // refreshExpiresAt is when a refresh token issued at now dies by the manifest's
 // refresh.refresh_ttl, counted from each issue (a rotated token starts its own), or zero
 // when the manifest does not say.
-func refreshExpiresAt(p core.Profile, now time.Time) time.Time {
-	if p.Refresh.RefreshTTL <= 0 {
+func refreshExpiresAt(m core.ResolvedManifest, now time.Time) time.Time {
+	if m.Refresh.RefreshTTL <= 0 {
 		return time.Time{}
 	}
-	return now.Add(time.Duration(p.Refresh.RefreshTTL))
+	return now.Add(time.Duration(m.Refresh.RefreshTTL))
 }
 
 // cloneValues copies a form, since tokenPost adds the client's parameters to the one it is

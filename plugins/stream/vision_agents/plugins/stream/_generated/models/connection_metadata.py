@@ -7,15 +7,12 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-T = TypeVar("T", bound="ConnectorConnectionRequestInputs")
+T = TypeVar("T", bound="ConnectionMetadata")
 
 
 @_attrs_define
-class ConnectorConnectionRequestInputs:
-    """Values for the connector's inputs, such as a region. One without a default is required, and each must match the
-    connector's enum or pattern.
-
-    """
+class ConnectionMetadata:
+    """What the provider said about the account when it was connected, such as a workspace id. Empty until then."""
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 
@@ -29,10 +26,10 @@ class ConnectorConnectionRequestInputs:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        connector_connection_request_inputs = cls()
+        connection_metadata = cls()
 
-        connector_connection_request_inputs.additional_properties = d
-        return connector_connection_request_inputs
+        connection_metadata.additional_properties = d
+        return connection_metadata
 
     @property
     def additional_keys(self) -> list[str]:

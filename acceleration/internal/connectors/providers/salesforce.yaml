@@ -17,8 +17,9 @@
 #   [sdk]  SalesforceMobileSDK-Android libs/SalesforceSDK/src/com/salesforce/androidsdk/auth/OAuth2.java
 #          at 863835e9a4e4c92bf0080b7152f06ecc94f0a108, opened October 2, 2026.
 id: salesforce
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 renames
+# client.policy to client.registration.
+revision: 2
 # [proto]:96-98
 name: Salesforce
 category: Customers
@@ -64,7 +65,7 @@ client:
   # fixture and the architecture doc's «A manifest, for scale» (our policy, not a vendor
   # fact); docs/connector-design.md:150 at cf62af0d. [oidc] has a registration_endpoint, but
   # whether it registers a client without an initial access token is not checked. # unverified
-  policy: [operator, customer]
+  registration: [operator, customer]
   # No auth_method: [oidc] lists client_secret_basic and client_secret_post, so oauth2_code
   # takes basic for a client with a secret and none for one without, which PKCE allows
   # (docs/connector-design.md:150 at cf62af0d). [proto]:104 pinned client_secret_post.

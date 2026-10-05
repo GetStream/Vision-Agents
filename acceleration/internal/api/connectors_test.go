@@ -39,7 +39,7 @@ func (s *ConnectorsSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 }
 
-func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientPolicy() {
+func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientRegistrations() {
 	slack := s.get("slack")
 
 	s.False(slack.Custom)
@@ -48,7 +48,7 @@ func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientPolicy
 	s.Equal([]string{"oauth2_code"}, slack.Schemes)
 	s.Empty(slack.Inputs, "Slack is connected with nothing but a consent")
 	s.Contains(slack.Scopes, "chat:write")
-	s.Equal([]ConnectorClientOwner{"operator"}, slack.Client.Policy)
+	s.Equal([]ConnectorClientRegistrationMethod{"operator"}, slack.Client.Registration)
 	s.Equal(ConnectorClientAuthMethod("client_secret_post"), slack.Client.AuthMethod)
 }
 
@@ -87,7 +87,7 @@ func (s *ConnectorsSuite) TestACustomMCPConnectorIsStoredAndReadBack() {
 	sent := s.customConnector(id)
 	sent["category"] = "  CRM  "
 	sent["scopes"] = []string{"crm.read", "crm.write"}
-	sent["client"] = map[string]any{"policy": []string{"dcr", "customer"}, "auth_method": "client_secret_basic"}
+	sent["client"] = map[string]any{"registration": []string{"dcr", "customer"}, "auth_method": "client_secret_basic"}
 
 	created := s.create(sent)
 	s.Equal(id, created.ID)
@@ -96,7 +96,7 @@ func (s *ConnectorsSuite) TestACustomMCPConnectorIsStoredAndReadBack() {
 	s.Equal("CRM", created.Category, "trimmed")
 	s.Equal([]string{"oauth2_code"}, created.Schemes)
 	s.Equal([]string{"crm.read", "crm.write"}, created.Scopes)
-	s.Equal([]ConnectorClientOwner{"dcr", "customer"}, created.Client.Policy)
+	s.Equal([]ConnectorClientRegistrationMethod{"dcr", "customer"}, created.Client.Registration)
 	s.Equal(ConnectorClientAuthMethod("client_secret_basic"), created.Client.AuthMethod)
 
 	s.Equal(created, s.get(id), "the answer to the create is the stored row")
@@ -174,7 +174,7 @@ func (s *ConnectorsSuite) TestASchemeThisDeploymentDoesNotHaveIsRefused() {
 
 func (s *ConnectorsSuite) TestAnOperatorClientIsRefusedForACustomConnector() {
 	sent := s.customConnector(s.customID())
-	sent["client"] = map[string]any{"policy": []string{"operator"}}
+	sent["client"] = map[string]any{"registration": []string{"operator"}}
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", sent)
 
@@ -182,20 +182,20 @@ func (s *ConnectorsSuite) TestAnOperatorClientIsRefusedForACustomConnector() {
 	s.Contains(failure, "operator")
 }
 
-func (s *ConnectorsSuite) TestAnOAuthConnectorWithoutAClientPolicyIsRefused() {
+func (s *ConnectorsSuite) TestAnOAuthConnectorWithoutClientRegistrationsIsRefused() {
 	sent := s.customConnector(s.customID())
 	delete(sent, "client")
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", sent)
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "client.policy")
+	s.Contains(failure, "client.registration")
 }
 
-func (s *ConnectorsSuite) TestARepeatedScopeOrClientOwnerIsRefused() {
+func (s *ConnectorsSuite) TestARepeatedScopeOrClientRegistrationIsRefused() {
 	for name, change := range map[string]func(map[string]any){
-		"scope": func(sent map[string]any) { sent["scopes"] = []string{"crm.read", "crm.read"} },
-		"owner": func(sent map[string]any) { sent["client"] = map[string]any{"policy": []string{"dcr", "dcr"}} },
+		"scope":  func(sent map[string]any) { sent["scopes"] = []string{"crm.read", "crm.read"} },
+		"source": func(sent map[string]any) { sent["client"] = map[string]any{"registration": []string{"dcr", "dcr"}} },
 	} {
 		sent := s.customConnector(s.customID())
 		change(sent)
@@ -217,7 +217,7 @@ func (s *ConnectorsSuite) TestAFieldTheRequestDoesNotHaveIsRefused() {
 		s.Equal(http.StatusBadRequest, status, field)
 	}
 	sent := s.customConnector(s.customID())
-	sent["client"] = map[string]any{"policy": []string{"dcr"}, "env": "SLACK"}
+	sent["client"] = map[string]any{"registration": []string{"dcr"}, "env": "SLACK"}
 	status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", sent)
 	s.Equal(http.StatusBadRequest, status, "client.env")
 }
@@ -247,7 +247,7 @@ func (s *ConnectorsSuite) TestAnotherAppsCustomConnectorIsNeitherListedNorRead()
 	s.create(s.customConnector(id))
 	stranger := s.data.backendOfAnotherApp()
 
-	var theirs ConnectorDefinitionPage
+	var theirs ConnectorPage
 	s.Require().Equal(http.StatusOK, stranger.do(http.MethodGet, "/v1/agents/connectors?limit=200", nil, &theirs))
 	s.NotContains(connectorIDs(theirs.Items), id)
 	s.Contains(connectorIDs(theirs.Items), "slack", "the built-ins are everybody's")
@@ -262,7 +262,7 @@ func (s *ConnectorsSuite) TestAnotherAppMayUseTheSameCustomIdWithoutTouchingThis
 
 	theirs := s.customConnector(id)
 	theirs["name"] = "Theirs"
-	var created ConnectorDefinition
+	var created Connector
 	s.Require().Equal(http.StatusOK,
 		s.data.backendOfAnotherApp().do(http.MethodPost, "/v1/agents/connectors", theirs, &created))
 	s.Equal(1, created.Revision)
@@ -279,7 +279,7 @@ func (s *ConnectorsSuite) TestTheListIsTheBuiltInsThenTheAppsOwnEachById() {
 	listed := s.list("")
 	s.False(listed.HasMore)
 	s.Nil(listed.NextCursor)
-	custom := slices.IndexFunc(listed.Items, func(d ConnectorDefinition) bool { return d.Custom })
+	custom := slices.IndexFunc(listed.Items, func(d Connector) bool { return d.Custom })
 	s.Require().Positive(custom, "the built-ins come first")
 	builtIns := connectorIDs(listed.Items[:custom])
 	s.True(slices.IsSorted(builtIns), "%v", builtIns)
@@ -298,7 +298,7 @@ func (s *ConnectorsSuite) TestPagingWalksTheWholeListWithoutRepeatingOrSkipping(
 	cursor := ""
 	for pages := 0; ; pages++ {
 		s.Require().Less(pages, len(whole), "paging does not end")
-		var listed ConnectorDefinitionPage
+		var listed ConnectorPage
 		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 			"/v1/agents/connectors?limit=2&cursor="+url.QueryEscape(cursor), nil, &listed))
 		s.LessOrEqual(len(listed.Items), 2)
@@ -383,7 +383,7 @@ func (s *ConnectorsSuite) customConnector(id string) map[string]any {
 		"name":     "Our CRM",
 		"endpoint": "https://8.8.8.8/mcp",
 		"schemes":  []string{"oauth2_code"},
-		"client":   map[string]any{"policy": []string{"dcr"}},
+		"client":   map[string]any{"registration": []string{"dcr"}},
 	}
 }
 
@@ -393,27 +393,27 @@ func (s *ConnectorsSuite) customID() string { return "custom_t" + s.suffix() }
 // suffix is a fresh UUID written as an id may have it.
 func (s *ConnectorsSuite) suffix() string { return strings.ReplaceAll(s.utils.uuid(), "-", "") }
 
-func (s *ConnectorsSuite) create(body map[string]any) ConnectorDefinition {
-	var created ConnectorDefinition
+func (s *ConnectorsSuite) create(body map[string]any) Connector {
+	var created Connector
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connectors", body, &created))
 	return created
 }
 
-func (s *ConnectorsSuite) get(id string) ConnectorDefinition {
-	var read ConnectorDefinition
+func (s *ConnectorsSuite) get(id string) Connector {
+	var read Connector
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/"+id, nil, &read))
 	return read
 }
 
 // list is one page of everything, which fits while the test's app has a few of its own.
-func (s *ConnectorsSuite) list(q string) ConnectorDefinitionPage {
-	var listed ConnectorDefinitionPage
+func (s *ConnectorsSuite) list(q string) ConnectorPage {
+	var listed ConnectorPage
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 		"/v1/agents/connectors?limit=200&q="+url.QueryEscape(q), nil, &listed))
 	return listed
 }
 
-func connectorIDs(definitions []ConnectorDefinition) []string {
+func connectorIDs(definitions []Connector) []string {
 	ids := make([]string, 0, len(definitions))
 	for _, definition := range definitions {
 		ids = append(ids, definition.ID)

@@ -39,21 +39,21 @@ type Client struct {
 	AuthMethod core.ClientAuthMethod
 }
 
-// ClientLookup finds the client owner registered for this connection's connector. found
-// is false when that owner has none, which is not an error: the next owner in the policy
-// is tried.
-type ClientLookup func(ctx context.Context, ref core.ConnectionRef, p core.Profile, owner core.ClientOwner) (c Client, found bool, err error)
+// ClientLookup finds the preregistered client of one kind (operator or customer) for this
+// connection's connector. found is false when there is none, which is not an error: the next
+// mechanism in client.registration is tried.
+type ClientLookup func(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, registration core.ClientRegistrationMethod) (c Client, found bool, err error)
 
 // EnvClients finds the operator's client in the environment, as <env>_MCP_CLIENT_ID and
 // <env>_MCP_CLIENT_SECRET where env is the manifest's client.env: the prototype's names
 // (internal/mcp/oauth.go:794-797 at cf62af0d) and T19's «operator environment». It answers
 // for the operator only; customer clients are records (T19).
 func EnvClients(getenv func(string) string) ClientLookup {
-	return func(_ context.Context, _ core.ConnectionRef, p core.Profile, owner core.ClientOwner) (Client, bool, error) {
-		if owner != core.ClientOperator || p.Client.Env == "" {
+	return func(_ context.Context, _ core.ConnectionRef, m core.ResolvedManifest, registration core.ClientRegistrationMethod) (Client, bool, error) {
+		if registration != core.ClientOperator || m.Client.Env == "" {
 			return Client{}, false, nil
 		}
-		prefix := p.Client.Env + "_MCP_"
+		prefix := m.Client.Env + "_MCP_"
 		c := Client{ID: getenv(prefix + "CLIENT_ID"), Secret: getenv(prefix + "CLIENT_SECRET")}
 		return c, c.ID != "", nil
 	}
@@ -61,80 +61,82 @@ func EnvClients(getenv func(string) string) ClientLookup {
 
 // client is the client one attempt and then one connection use.
 type client struct {
-	Owner      core.ClientOwner      `json:"owner"`
-	ID         string                `json:"id"`
-	AuthMethod core.ClientAuthMethod `json:"auth_method"`
+	// RegistrationMethod keeps the JSON name owner: it is sealed into attempts and stored credentials,
+	// and payloadVersion 1 payloads already hold it under that name.
+	RegistrationMethod core.ClientRegistrationMethod `json:"owner"`
+	ID                 string                        `json:"id"`
+	AuthMethod         core.ClientAuthMethod         `json:"auth_method"`
 	// Secret is kept only for a client this scheme registered (dcr), which has nowhere
 	// else to live. A preregistered client's secret is looked up again each time, so a
 	// rotated one is used at once and lives in one place (T19).
 	Secret string `json:"secret,omitempty"`
 }
 
-// ownerOrder is the order the policy's owners are tried in, whatever order the manifest
-// lists them in. A preregistered client comes first and CIMD before DCR, as MCP 2025-11-25
+// registrationOrder is the order client.registration's mechanisms are tried in, whatever order
+// the manifest lists them in. A preregistered client comes first and CIMD before DCR, as MCP 2025-11-25
 // «Client Registration Approaches» orders them; a customer's client before the operator's,
 // because a customer who registered its own app chose it over ours (T19).
-var ownerOrder = []core.ClientOwner{core.ClientCustomer, core.ClientOperator, core.ClientCIMD, core.ClientDCR}
+var registrationOrder = []core.ClientRegistrationMethod{core.ClientCustomer, core.ClientOperator, core.ClientCIMD, core.ClientDCR}
 
-// pickClient is the first client the manifest's policy allows that is available.
-func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, p core.Profile, d server, redirectURI string) (client, error) {
-	for _, owner := range ownerOrder {
-		if !slices.Contains(p.Client.Policy, owner) {
+// pickClient is the first client the manifest's client.registration allows that is available.
+func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, d server, redirectURI string) (client, error) {
+	for _, registration := range registrationOrder {
+		if !slices.Contains(m.Client.Registration, registration) {
 			continue
 		}
-		switch owner {
+		switch registration {
 		case core.ClientCustomer, core.ClientOperator:
 			if s.cfg.Clients == nil {
 				continue
 			}
-			found, ok, err := s.cfg.Clients(ctx, ref, p, owner)
+			found, ok, err := s.cfg.Clients(ctx, ref, m, registration)
 			if err != nil {
-				return client{}, fmt.Errorf("oauth2code: %s client: %w", owner, err)
+				return client{}, fmt.Errorf("oauth2code: %s client: %w", registration, err)
 			}
 			if !ok {
 				continue
 			}
-			method, err := preregisteredMethod(p, d, found)
+			method, err := preregisteredMethod(m, d, found)
 			if err != nil {
 				return client{}, err
 			}
-			return client{Owner: owner, ID: found.ID, AuthMethod: method}, nil
+			return client{RegistrationMethod: registration, ID: found.ID, AuthMethod: method}, nil
 		case core.ClientCIMD:
 			if s.cfg.ClientMetadataURL == "" || !d.CIMD {
 				continue
 			}
 			// CIMD section 4.1: no shared secret, so the client is public here.
 			// private_key_jwt, which §4.1 also allows, waits for a key store (PrivateKeyJWT).
-			return client{Owner: owner, ID: s.cfg.ClientMetadataURL, AuthMethod: core.AuthNone}, nil
+			return client{RegistrationMethod: registration, ID: s.cfg.ClientMetadataURL, AuthMethod: core.AuthNone}, nil
 		case core.ClientDCR:
 			if d.Registration == "" {
 				continue
 			}
-			return s.register(ctx, p, d, redirectURI)
+			return s.register(ctx, m, d, redirectURI)
 		}
 	}
-	return client{}, fmt.Errorf("%w (policy %v)", ErrNoClient, p.Client.Policy)
+	return client{}, fmt.Errorf("%w (client.registration %v)", ErrNoClient, m.Client.Registration)
 }
 
 // clientSecret is c with the secret the token request needs: a preregistered client's is
 // looked up again, so the attempt never carried it.
-func (s *Scheme) clientSecret(ctx context.Context, ref core.ConnectionRef, p core.Profile, c client) (client, error) {
-	if c.Owner != core.ClientCustomer && c.Owner != core.ClientOperator {
+func (s *Scheme) clientSecret(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, c client) (client, error) {
+	if c.RegistrationMethod != core.ClientCustomer && c.RegistrationMethod != core.ClientOperator {
 		return c, nil
 	}
 	if s.cfg.Clients == nil {
 		return client{}, ErrNoClient
 	}
-	found, ok, err := s.cfg.Clients(ctx, ref, p, c.Owner)
+	found, ok, err := s.cfg.Clients(ctx, ref, m, c.RegistrationMethod)
 	if err != nil {
-		return client{}, fmt.Errorf("oauth2code: %s client: %w", c.Owner, err)
+		return client{}, fmt.Errorf("oauth2code: %s client: %w", c.RegistrationMethod, err)
 	}
 	if !ok || found.ID != c.ID {
-		return client{}, fmt.Errorf("oauth2code: the %s client changed during the consent; start it again", c.Owner)
+		return client{}, fmt.Errorf("oauth2code: the %s client changed during the consent; start it again", c.RegistrationMethod)
 	}
 	c.Secret = found.Secret
 	if c.AuthMethod != core.AuthNone && c.Secret == "" {
-		return client{}, fmt.Errorf("oauth2code: the %s client has no secret for %s", c.Owner, c.AuthMethod)
+		return client{}, fmt.Errorf("oauth2code: the %s client has no secret for %s", c.RegistrationMethod, c.AuthMethod)
 	}
 	return c, nil
 }
@@ -143,8 +145,8 @@ func (s *Scheme) clientSecret(ctx context.Context, ref core.ConnectionRef, p cor
 // then the manifest's, then none for a client without a secret, then what the server
 // advertises. client_secret_basic is preferred, since RFC 6749 section 2.3.1 makes it the
 // one every server «MUST support» and calls the body form «NOT RECOMMENDED».
-func preregisteredMethod(p core.Profile, d server, c Client) (core.ClientAuthMethod, error) {
-	method := firstMethod(c.AuthMethod, p.Client.AuthMethod)
+func preregisteredMethod(m core.ResolvedManifest, d server, c Client) (core.ClientAuthMethod, error) {
+	method := firstMethod(c.AuthMethod, m.Client.AuthMethod)
 	if method == "" {
 		switch {
 		case c.Secret == "":
@@ -161,8 +163,8 @@ func preregisteredMethod(p core.Profile, d server, c Client) (core.ClientAuthMet
 }
 
 // register is RFC 7591 dynamic client registration for this attempt's redirect URI.
-func (s *Scheme) register(ctx context.Context, p core.Profile, d server, redirectURI string) (client, error) {
-	method := p.Client.AuthMethod
+func (s *Scheme) register(ctx context.Context, m core.ResolvedManifest, d server, redirectURI string) (client, error) {
+	method := m.Client.AuthMethod
 	if method == "" {
 		// A public client (none) keeps no secret to store, so it is asked for when the
 		// server allows it; RFC 7591 section 2 defines none as a public client. Then the two
@@ -238,7 +240,7 @@ func (s *Scheme) register(ctx context.Context, p core.Profile, d server, redirec
 	if method != core.AuthNone && registered.ClientSecret == "" {
 		return client{}, fmt.Errorf("oauth2code: register: %s without a client_secret", method)
 	}
-	return client{Owner: core.ClientDCR, ID: registered.ClientID, Secret: registered.ClientSecret, AuthMethod: method}, nil
+	return client{RegistrationMethod: core.ClientDCR, ID: registered.ClientID, Secret: registered.ClientSecret, AuthMethod: method}, nil
 }
 
 // checkMethod is whether this scheme implements method and the server, when it lists its

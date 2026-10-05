@@ -459,7 +459,7 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request, c *client)
 	writeToken(w, body)
 }
 
-// issue mints an access token for g and, when rotate is set, a new refresh token that
+// issue hands out an access token for g and, when rotate is set, a new refresh token that
 // retires the current one. Call it with mu held.
 func (s *Server) issue(g *grant, rotate bool) map[string]any {
 	ttl := AccessTTL

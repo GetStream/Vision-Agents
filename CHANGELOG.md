@@ -28,6 +28,14 @@ The Go SDK (`agents.PluginSettings`) and the Python folder reader (`PluginSettin
 `plugins/stream`) have moved, and the Python reader now accepts `scopes` and `user` on
 `mcp_servers`. Other SDKs follow.
 
+### The connector catalog answers `Connector` and `ConnectorPage`
+
+`listConnectors`, `getConnector` and `createConnector` (`/v1/agents/connectors`) answered schemas named `ConnectorDefinition` and `ConnectorDefinitionPage`. They are `Connector` and `ConnectorPage` now; the JSON is unchanged. Go, JavaScript and Python clients use the new type names.
+
+### Connections are `Connection` in the API, and a connector's client says `registration`
+
+The connection operations are renamed: `createConnectorConnection`, `listConnectorConnections`, `getConnectorConnection` and `deleteConnectorConnection` (`/v1/agents/connections`) are `createConnection`, `listConnections`, `getConnection` and `deleteConnection`. Their schemas follow: `ConnectorConnection`, `ConnectorConnectionPage`, `ConnectorConnectionRequest`, `ConnectorConnectionOwner`, `ConnectorConnectionOwnerType` and `ConnectorConnectionStatus` are `Connection`, `ConnectionPage`, `ConnectionRequest`, `ConnectionOwner`, `ConnectionOwnerType` and `ConnectionStatus`. Paths and JSON are unchanged. The connector client's `policy` field is `registration` on the wire, on `Connector.client` and `CustomConnectorRequest.client`, and its enum `ConnectorClientOwner` is `ConnectorClientRegistrationMethod`; the values are unchanged. In a manifest, `client.policy` is `client.registration` and `rate_limit.leak` is `rate_limit.leak_per_second`, and every built-in connector has a new revision. Go, JavaScript and Python clients use the new names.
+
 ### Deleting a session deletes it; stopping one is `POST .../stop`
 
 `DELETE /v1/agents/sessions/{id}` used to end a session and keep everything. It now deletes

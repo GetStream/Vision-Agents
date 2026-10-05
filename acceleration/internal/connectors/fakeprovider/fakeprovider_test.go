@@ -487,9 +487,9 @@ func (s *FakeProviderSuite) TestCommaScopesAnswersInSlackShapeThatTheSlackManife
 	for key := range recorded {
 		s.Contains(body, key)
 	}
-	captured := s.apply("../core/testdata/manifests/slack.yaml", nil, body)
-	s.Equal(srv.TeamID, captured.Metadata["team_id"])
-	s.Equal(srv.UserID, captured.Metadata["user_id"])
+	account := s.apply("../core/testdata/manifests/slack.yaml", nil, body)
+	s.Equal(srv.TeamID, account.Metadata["team_id"])
+	s.Equal(srv.UserID, account.Metadata["user_id"])
 }
 
 func (s *FakeProviderSuite) TestCommaScopesAnswersARefreshInTheSameSlackShape() {
@@ -511,8 +511,8 @@ func (s *FakeProviderSuite) TestCommaScopesAnswersARefreshInTheSameSlackShape() 
 	for key := range recorded {
 		s.Contains(refreshed, key)
 	}
-	captured := s.apply("../core/testdata/manifests/slack.yaml", nil, refreshed)
-	s.Equal(srv.TeamID, captured.Metadata["team_id"])
+	account := s.apply("../core/testdata/manifests/slack.yaml", nil, refreshed)
+	s.Equal(srv.TeamID, account.Metadata["team_id"])
 
 	status, userRefreshed := s.refresh(srv, user["refresh_token"].(string))
 	s.Require().Equal(http.StatusOK, status)
@@ -575,10 +575,10 @@ func (s *FakeProviderSuite) TestCallbackRealmIDPutsTheRealmInTheCallbackThatTheQ
 	s.Equal(srv.RealmID, callback.Query().Get("realmId"))
 	_, body := s.exchange(srv, callback.Query().Get("code"), verifier)
 
-	captured := s.apply("../core/testdata/manifests/quickbooks.yaml", callback.Query(), body)
-	s.Equal(srv.RealmID, captured.Metadata["realm_id"])
-	s.Equal(srv.RealmID, captured.AccountID)
-	s.Contains(captured.Unverified, "realm_id")
+	account := s.apply("../core/testdata/manifests/quickbooks.yaml", callback.Query(), body)
+	s.Equal(srv.RealmID, account.Metadata["realm_id"])
+	s.Equal(srv.RealmID, account.AccountID)
+	s.Contains(account.Unverified, "realm_id")
 
 	status, refreshed := s.refresh(srv, body["refresh_token"].(string))
 	s.Require().Equal(http.StatusOK, status)
@@ -809,16 +809,16 @@ func (s *FakeProviderSuite) getStatus(srv *fakeprovider.Server, path string) int
 }
 
 // apply runs a core fixture manifest's capture and identity rules over what the fake sent.
-func (s *FakeProviderSuite) apply(manifestPath string, callback url.Values, token map[string]any) core.Captured {
+func (s *FakeProviderSuite) apply(manifestPath string, callback url.Values, token map[string]any) core.AccountInfo {
 	manifest, err := core.ParseManifest(s.read(manifestPath))
 	s.Require().NoError(err)
-	profile, err := manifest.Resolve("oauth2_code", nil, nil)
+	resolved, err := manifest.Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
 	raw, err := json.Marshal(token)
 	s.Require().NoError(err)
-	captured, err := profile.Apply(callback, raw)
+	account, err := resolved.Apply(callback, raw)
 	s.Require().NoError(err)
-	return captured
+	return account
 }
 
 func (s *FakeProviderSuite) read(path string) []byte {

@@ -1,42 +1,37 @@
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.connector_connection import ConnectorConnection
-from ...models.connector_connection_request import ConnectorConnectionRequest
+from ...models.connection import Connection
 from ...models.error import Error
 from ...types import Response
 
 
 def _get_kwargs(
-    *,
-    body: ConnectorConnectionRequest,
+    id: str,
 ) -> dict[str, Any]:
-    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
-        "method": "post",
-        "url": "/v1/agents/connections",
+        "method": "get",
+        "url": "/v1/agents/connections/{id}".format(
+            id=quote(str(id), safe=""),
+        ),
     }
 
-    _kwargs["json"] = body.to_dict()
-
-    headers["Content-Type"] = "application/json"
-
-    _kwargs["headers"] = headers
     return _kwargs
 
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ConnectorConnection | Error | None:
-    if response.status_code == 201:
-        response_201 = ConnectorConnection.from_dict(response.json())
+) -> Connection | Error | None:
+    if response.status_code == 200:
+        response_200 = Connection.from_dict(response.json())
 
-        return response_201
+        return response_200
 
     if response.status_code == 400:
         response_400 = Error.from_dict(response.json())
@@ -53,6 +48,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 404:
+        response_404 = Error.from_dict(response.json())
+
+        return response_404
+
     if response.status_code == 500:
         response_500 = Error.from_dict(response.json())
 
@@ -66,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ConnectorConnection | Error]:
+) -> Response[Connection | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -76,33 +76,30 @@ def _build_response(
 
 
 def sync_detailed(
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ConnectorConnectionRequest,
-) -> Response[ConnectorConnection | Error]:
-    """Create a connection
+) -> Response[Connection | Error]:
+    """Read a connection
 
-     A pending connection to one account at a connector, made from the connector's newest revision. An
-    app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend
-    acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A
-    deployment with connectors off refuses every create.
+     An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not
+    found, the same as one that does not exist.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (ConnectorConnectionRequest): A connection to create, pending until an account is
-            connected. An unknown field is refused rather than ignored.
+        id (str): The connection, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorConnection | Error]
+        Response[Connection | Error]
     """
 
     kwargs = _get_kwargs(
-        body=body,
+        id=id,
     )
 
     response = client.get_httpx_client().request(
@@ -113,65 +110,59 @@ def sync_detailed(
 
 
 def sync(
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ConnectorConnectionRequest,
-) -> ConnectorConnection | Error | None:
-    """Create a connection
+) -> Connection | Error | None:
+    """Read a connection
 
-     A pending connection to one account at a connector, made from the connector's newest revision. An
-    app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend
-    acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A
-    deployment with connectors off refuses every create.
+     An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not
+    found, the same as one that does not exist.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (ConnectorConnectionRequest): A connection to create, pending until an account is
-            connected. An unknown field is refused rather than ignored.
+        id (str): The connection, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorConnection | Error
+        Connection | Error
     """
 
     return sync_detailed(
+        id=id,
         client=client,
-        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ConnectorConnectionRequest,
-) -> Response[ConnectorConnection | Error]:
-    """Create a connection
+) -> Response[Connection | Error]:
+    """Read a connection
 
-     A pending connection to one account at a connector, made from the connector's newest revision. An
-    app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend
-    acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A
-    deployment with connectors off refuses every create.
+     An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not
+    found, the same as one that does not exist.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (ConnectorConnectionRequest): A connection to create, pending until an account is
-            connected. An unknown field is refused rather than ignored.
+        id (str): The connection, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorConnection | Error]
+        Response[Connection | Error]
     """
 
     kwargs = _get_kwargs(
-        body=body,
+        id=id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -180,34 +171,31 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ConnectorConnectionRequest,
-) -> ConnectorConnection | Error | None:
-    """Create a connection
+) -> Connection | Error | None:
+    """Read a connection
 
-     A pending connection to one account at a connector, made from the connector's newest revision. An
-    app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend
-    acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A
-    deployment with connectors off refuses every create.
+     An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not
+    found, the same as one that does not exist.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (ConnectorConnectionRequest): A connection to create, pending until an account is
-            connected. An unknown field is refused rather than ignored.
+        id (str): The connection, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorConnection | Error
+        Connection | Error
     """
 
     return (
         await asyncio_detailed(
+            id=id,
             client=client,
-            body=body,
         )
     ).parsed

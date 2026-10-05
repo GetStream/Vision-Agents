@@ -8,20 +8,20 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..models.connector_connection_status import ConnectorConnectionStatus
+from ..models.connection_status import ConnectionStatus
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.connector_connection_inputs import ConnectorConnectionInputs
-    from ..models.connector_connection_metadata import ConnectorConnectionMetadata
-    from ..models.connector_connection_owner import ConnectorConnectionOwner
+    from ..models.connection_inputs import ConnectionInputs
+    from ..models.connection_metadata import ConnectionMetadata
+    from ..models.connection_owner import ConnectionOwner
 
 
-T = TypeVar("T", bound="ConnectorConnection")
+T = TypeVar("T", bound="Connection")
 
 
 @_attrs_define
-class ConnectorConnection:
+class Connection:
     """One account at one connector, owned by the app or by one of its users. Credentials are never shown.
 
     Attributes:
@@ -32,14 +32,14 @@ class ConnectorConnection:
             it is reconnected.
         granted_scopes (list[str] | None):
         id (str):
-        inputs (ConnectorConnectionInputs): What the connection was created with, the connector's defaults filled in.
-        metadata (ConnectorConnectionMetadata): What the provider said about the account when it was connected, such as
-            a workspace id. Empty until then.
-        owner (ConnectorConnectionOwner): Whose a connection is: the app's, which any of its agents may be bound to, or
-            one user's.
+        inputs (ConnectionInputs): What the connection was created with, the connector's defaults filled in.
+        metadata (ConnectionMetadata): What the provider said about the account when it was connected, such as a
+            workspace id. Empty until then.
+        owner (ConnectionOwner): Whose a connection is: the app's, which any of its agents may be bound to, or one
+            user's.
         revision (int): Advances with every new credential, starting at 1.
-        status (ConnectorConnectionStatus): pending until an account is connected, then connected, needs_reauthorization
-            once the provider stops accepting its credential, and disconnected when it is deleted.
+        status (ConnectionStatus): pending until an account is connected, then connected, needs_reauthorization once the
+            provider stops accepting its credential, and disconnected when it is deleted.
         updated_at (datetime.datetime):
         account_id (str | Unset): The provider account, known once it is connected.
         expires_at (datetime.datetime | Unset): When the current credential expires. Absent when there is none or it
@@ -53,11 +53,11 @@ class ConnectorConnection:
     definition_revision: int
     granted_scopes: list[str] | None
     id: str
-    inputs: ConnectorConnectionInputs
-    metadata: ConnectorConnectionMetadata
-    owner: ConnectorConnectionOwner
+    inputs: ConnectionInputs
+    metadata: ConnectionMetadata
+    owner: ConnectionOwner
     revision: int
-    status: ConnectorConnectionStatus
+    status: ConnectionStatus
     updated_at: datetime.datetime
     account_id: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
@@ -131,15 +131,9 @@ class ConnectorConnection:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.connector_connection_inputs import (
-            ConnectorConnectionInputs,
-        )
-        from ..models.connector_connection_metadata import (
-            ConnectorConnectionMetadata,
-        )
-        from ..models.connector_connection_owner import (
-            ConnectorConnectionOwner,
-        )
+        from ..models.connection_inputs import ConnectionInputs
+        from ..models.connection_metadata import ConnectionMetadata
+        from ..models.connection_owner import ConnectionOwner
 
         d = dict(src_dict)
         auth_scheme = d.pop("auth_scheme")
@@ -167,15 +161,15 @@ class ConnectorConnection:
 
         id = d.pop("id")
 
-        inputs = ConnectorConnectionInputs.from_dict(d.pop("inputs"))
+        inputs = ConnectionInputs.from_dict(d.pop("inputs"))
 
-        metadata = ConnectorConnectionMetadata.from_dict(d.pop("metadata"))
+        metadata = ConnectionMetadata.from_dict(d.pop("metadata"))
 
-        owner = ConnectorConnectionOwner.from_dict(d.pop("owner"))
+        owner = ConnectionOwner.from_dict(d.pop("owner"))
 
         revision = d.pop("revision")
 
-        status = ConnectorConnectionStatus(d.pop("status"))
+        status = ConnectionStatus(d.pop("status"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
@@ -190,7 +184,7 @@ class ConnectorConnection:
 
         label = d.pop("label", UNSET)
 
-        connector_connection = cls(
+        connection = cls(
             auth_scheme=auth_scheme,
             connector_id=connector_id,
             created_at=created_at,
@@ -208,8 +202,8 @@ class ConnectorConnection:
             label=label,
         )
 
-        connector_connection.additional_properties = d
-        return connector_connection
+        connection.additional_properties = d
+        return connection
 
     @property
     def additional_keys(self) -> list[str]:

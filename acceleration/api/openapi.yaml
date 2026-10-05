@@ -1514,44 +1514,7 @@ components:
         - kind
         - number
       type: object
-    ConnectorClient:
-      additionalProperties: false
-      description: Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
-      properties:
-        alg:
-          description: How a private_key_jwt assertion is signed, and set only for it.
-          enum:
-            - RS256
-            - PS256
-          type: string
-        auth_method:
-          $ref: '#/components/schemas/ConnectorClientAuthMethod'
-        policy:
-          description: Who may own the OAuth client. Empty when the connector needs none.
-          items:
-            $ref: '#/components/schemas/ConnectorClientOwner'
-          nullable: true
-          type: array
-          uniqueItems: true
-      type: object
-    ConnectorClientAuthMethod:
-      description: How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
-      enum:
-        - none
-        - client_secret_post
-        - client_secret_basic
-        - private_key_jwt
-        - tls_client_auth
-      type: string
-    ConnectorClientOwner:
-      description: operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
-      enum:
-        - operator
-        - customer
-        - dcr
-        - cimd
-      type: string
-    ConnectorConnection:
+    Connection:
       description: One account at one connector, owned by the app or by one of its users. Credentials are never shown.
       properties:
         account_id:
@@ -1600,14 +1563,14 @@ components:
           readOnly: true
           type: object
         owner:
-          $ref: '#/components/schemas/ConnectorConnectionOwner'
+          $ref: '#/components/schemas/ConnectionOwner'
         revision:
           description: Advances with every new credential, starting at 1.
           format: int64
           readOnly: true
           type: integer
         status:
-          $ref: '#/components/schemas/ConnectorConnectionStatus'
+          $ref: '#/components/schemas/ConnectionStatus'
         updated_at:
           format: date-time
           readOnly: true
@@ -1626,34 +1589,34 @@ components:
         - created_at
         - updated_at
       type: object
-    ConnectorConnectionOwner:
+    ConnectionOwner:
       additionalProperties: false
       description: 'Whose a connection is: the app''s, which any of its agents may be bound to, or one user''s.'
       properties:
         type:
-          $ref: '#/components/schemas/ConnectorConnectionOwnerType'
+          $ref: '#/components/schemas/ConnectionOwnerType'
         user_id:
           description: The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id.
           type: string
       required:
         - type
       type: object
-    ConnectorConnectionOwnerType:
+    ConnectionOwnerType:
       description: app is the app's own account, user one user's.
       enum:
         - app
         - user
       type: string
       x-enum-varnames:
-        - ConnectorConnectionOwnerTypeApp
-        - ConnectorConnectionOwnerTypeUser
-    ConnectorConnectionPage:
+        - ConnectionOwnerTypeApp
+        - ConnectionOwnerTypeUser
+    ConnectionPage:
       properties:
         has_more:
           type: boolean
         items:
           items:
-            $ref: '#/components/schemas/ConnectorConnection'
+            $ref: '#/components/schemas/Connection'
           nullable: true
           type: array
         next_cursor:
@@ -1663,7 +1626,7 @@ components:
         - items
         - has_more
       type: object
-    ConnectorConnectionRequest:
+    ConnectionRequest:
       additionalProperties: false
       description: A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
       properties:
@@ -1684,12 +1647,12 @@ components:
           maxLength: 120
           type: string
         owner:
-          $ref: '#/components/schemas/ConnectorConnectionOwner'
+          $ref: '#/components/schemas/ConnectionOwner'
       required:
         - connector_id
         - owner
       type: object
-    ConnectorConnectionStatus:
+    ConnectionStatus:
       description: pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
       enum:
         - pending
@@ -1697,7 +1660,7 @@ components:
         - needs_reauthorization
         - disconnected
       type: string
-    ConnectorDefinition:
+    Connector:
       description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
       properties:
         category:
@@ -1754,22 +1717,43 @@ components:
         - client
         - created_at
       type: object
-    ConnectorDefinitionPage:
+    ConnectorClient:
+      additionalProperties: false
+      description: How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
       properties:
-        has_more:
-          type: boolean
-        items:
+        alg:
+          description: How a private_key_jwt assertion is signed, and set only for it.
+          enum:
+            - RS256
+            - PS256
+          type: string
+        auth_method:
+          $ref: '#/components/schemas/ConnectorClientAuthMethod'
+        registration:
+          description: The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client.
           items:
-            $ref: '#/components/schemas/ConnectorDefinition'
+            $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
           nullable: true
           type: array
-        next_cursor:
-          description: Pass as cursor for the next page, with the same q. Absent on the last one.
-          type: string
-      required:
-        - items
-        - has_more
+          uniqueItems: true
       type: object
+    ConnectorClientAuthMethod:
+      description: How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
+      enum:
+        - none
+        - client_secret_post
+        - client_secret_basic
+        - private_key_jwt
+        - tls_client_auth
+      type: string
+    ConnectorClientRegistrationMethod:
+      description: operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+      enum:
+        - operator
+        - customer
+        - dcr
+        - cimd
+      type: string
     ConnectorInput:
       properties:
         default:
@@ -1788,6 +1772,22 @@ components:
           type: string
       required:
         - name
+      type: object
+    ConnectorPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/Connector'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page, with the same q. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
       type: object
     ConnectorToolGrant:
       description: One tool a binding allows.
@@ -7657,7 +7657,7 @@ paths:
         One owner's connections, newest first: the app's own, or those of the user the backend acts for.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: listConnectorConnections
+      operationId: listConnections
       parameters:
         - description: app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
           explode: false
@@ -7665,7 +7665,7 @@ paths:
           name: owner_type
           required: true
           schema:
-            $ref: '#/components/schemas/ConnectorConnectionOwnerType'
+            $ref: '#/components/schemas/ConnectionOwnerType'
             description: app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
         - description: Keeps one connector's.
           explode: false
@@ -7696,7 +7696,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorConnectionPage'
+                $ref: '#/components/schemas/ConnectionPage'
           description: A page of connections
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -7716,19 +7716,19 @@ paths:
         A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: createConnectorConnection
+      operationId: createConnection
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ConnectorConnectionRequest'
+              $ref: '#/components/schemas/ConnectionRequest'
         required: true
       responses:
         "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorConnection'
+                $ref: '#/components/schemas/Connection'
           description: The pending connection
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -7749,7 +7749,7 @@ paths:
         Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: deleteConnectorConnection
+      operationId: deleteConnection
       parameters:
         - description: The connection, as returned when it was created.
           in: path
@@ -7794,7 +7794,7 @@ paths:
         An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: getConnectorConnection
+      operationId: getConnection
       parameters:
         - description: The connection, as returned when it was created.
           in: path
@@ -7808,7 +7808,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorConnection'
+                $ref: '#/components/schemas/Connection'
           description: The connection
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -7863,7 +7863,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorDefinitionPage'
+                $ref: '#/components/schemas/ConnectorPage'
           description: A page of connectors
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -7895,7 +7895,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorDefinition'
+                $ref: '#/components/schemas/Connector'
           description: The connector as stored
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -7930,7 +7930,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorDefinition'
+                $ref: '#/components/schemas/Connector'
           description: The connector
         "400":
           $ref: '#/components/responses/BadRequest'

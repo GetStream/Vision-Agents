@@ -76,20 +76,20 @@ func (s *ManifestSuite) TestEveryStressTestManifestLoads() {
 }
 
 func (s *ManifestSuite) TestSalesforceUsesTheProductionHostsByDefault() {
-	p, err := s.load("salesforce").Resolve("oauth2_code", nil, nil)
+	resolved, err := s.load("salesforce").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
-	s.Equal("https://login.salesforce.com/services/oauth2/authorize", p.Endpoints["authorize"])
-	s.Equal("https://login.salesforce.com/services/oauth2/token", p.Endpoints["token"])
-	s.Equal("https://api.salesforce.com/platform/mcp/v1/platform/sobject-all", p.Endpoints["mcp"])
-	s.Equal(map[string]string{"environment": "production"}, p.Inputs)
+	s.Equal("https://login.salesforce.com/services/oauth2/authorize", resolved.Endpoints["authorize"])
+	s.Equal("https://login.salesforce.com/services/oauth2/token", resolved.Endpoints["token"])
+	s.Equal("https://api.salesforce.com/platform/mcp/v1/platform/sobject-all", resolved.Endpoints["mcp"])
+	s.Equal(map[string]string{"environment": "production"}, resolved.Inputs)
 }
 
 func (s *ManifestSuite) TestSalesforceSandboxUsesTheSandboxHosts() {
-	p, err := s.load("salesforce").Resolve("oauth2_code", map[string]string{"environment": "sandbox"}, nil)
+	resolved, err := s.load("salesforce").Resolve("oauth2_code", map[string]string{"environment": "sandbox"}, nil)
 	s.Require().NoError(err)
-	s.Equal("https://test.salesforce.com/services/oauth2/authorize", p.Endpoints["authorize"])
-	s.Equal("https://test.salesforce.com/services/oauth2/token", p.Endpoints["token"])
-	s.Equal("https://api.salesforce.com/platform/mcp/v1/sandbox/platform/sobject-all", p.Endpoints["mcp"])
+	s.Equal("https://test.salesforce.com/services/oauth2/authorize", resolved.Endpoints["authorize"])
+	s.Equal("https://test.salesforce.com/services/oauth2/token", resolved.Endpoints["token"])
+	s.Equal("https://api.salesforce.com/platform/mcp/v1/sandbox/platform/sobject-all", resolved.Endpoints["mcp"])
 }
 
 func (s *ManifestSuite) TestSalesforceRefusesAnEnvironmentOutsideTheEnum() {
@@ -103,46 +103,46 @@ func (s *ManifestSuite) TestSalesforceAPIBaseIsTheInstanceURLOnceCaptured() {
 	s.Require().NoError(err)
 	s.NotContains(before.Endpoints, "api_base")
 
-	captured, err := before.Apply(nil, s.recorded("salesforce.token.json"))
+	account, err := before.Apply(nil, s.recorded("salesforce.token.json"))
 	s.Require().NoError(err)
-	s.Equal("https://login.salesforce.com/id/00D000000000001AAA/005000000000001AAA", captured.AccountID)
-	s.Empty(captured.Unverified)
+	s.Equal("https://login.salesforce.com/id/00D000000000001AAA/005000000000001AAA", account.AccountID)
+	s.Empty(account.Unverified)
 
-	after, err := m.Resolve("oauth2_code", nil, captured.Metadata)
+	after, err := m.Resolve("oauth2_code", nil, account.Metadata)
 	s.Require().NoError(err)
 	s.Equal("https://example-org.my.salesforce.com", after.Endpoints["api_base"])
 }
 
 func (s *ManifestSuite) TestQuickBooksCapturesTheRealmIDFromTheCallbackQuery() {
 	m := s.load("quickbooks")
-	p, err := m.Resolve("oauth2_code", nil, nil)
+	resolved, err := m.Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
 
-	captured, err := p.Apply(s.callback("quickbooks.callback"), s.recorded("quickbooks.token.json"))
+	account, err := resolved.Apply(s.callback("quickbooks.callback"), s.recorded("quickbooks.token.json"))
 	s.Require().NoError(err)
-	s.Equal("9130350000000001", captured.Metadata["realm_id"])
-	s.Equal("8726400", captured.Metadata["refresh_token_expires_in"])
-	s.Equal("9130350000000001", captured.AccountID)
-	s.Equal([]string{"realm_id"}, captured.Unverified)
+	s.Equal("9130350000000001", account.Metadata["realm_id"])
+	s.Equal("8726400", account.Metadata["refresh_token_expires_in"])
+	s.Equal("9130350000000001", account.AccountID)
+	s.Equal([]string{"realm_id"}, account.Unverified)
 
-	connected, err := m.Resolve("oauth2_code", nil, captured.Metadata)
+	connected, err := m.Resolve("oauth2_code", nil, account.Metadata)
 	s.Require().NoError(err)
 	s.Equal("https://quickbooks.api.intuit.com/v3/company/9130350000000001", connected.Endpoints["api_base"])
 }
 
 func (s *ManifestSuite) TestQuickBooksRefusesACallbackWithTwoRealmIDs() {
-	p, err := s.load("quickbooks").Resolve("oauth2_code", nil, nil)
+	resolved, err := s.load("quickbooks").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
 	query := s.callback("quickbooks.callback")
 	query.Add("realmId", "9130350000000002")
-	_, err = p.Apply(query, s.recorded("quickbooks.token.json"))
+	_, err = resolved.Apply(query, s.recorded("quickbooks.token.json"))
 	s.ErrorContains(err, "capture realm_id: callback query has 2 values for realmId")
 }
 
 func (s *ManifestSuite) TestACallbackWithoutARequiredValueNamesTheRule() {
-	p, err := s.load("quickbooks").Resolve("oauth2_code", nil, nil)
+	resolved, err := s.load("quickbooks").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
-	_, err = p.Apply(url.Values{"code": {"synthetic-code"}}, s.recorded("quickbooks.token.json"))
+	_, err = resolved.Apply(url.Values{"code": {"synthetic-code"}}, s.recorded("quickbooks.token.json"))
 	s.ErrorContains(err, "capture realm_id: callback_query has no realmId")
 }
 
@@ -163,19 +163,19 @@ func (s *ManifestSuite) TestADotSegmentCannotRemoveAPathSegment() {
 		s.ErrorContains(err, `{tenant}: "`+value+`" is a dot segment`)
 	}
 
-	// Apply refuses it too, so a caller that stores Captured before the next Resolve never
+	// Apply refuses it too, so a caller that stores AccountInfo before the next Resolve never
 	// keeps ".." as metadata or as the account id.
-	p, err := s.load("github").Resolve("github_app", nil, nil)
+	resolved, err := s.load("github").Resolve("github_app", nil, nil)
 	s.Require().NoError(err)
 	for _, value := range []string{"..", "."} {
-		captured, err := p.Apply(url.Values{"installation_id": {value}}, nil)
+		account, err := resolved.Apply(url.Values{"installation_id": {value}}, nil)
 		s.ErrorContains(err, `capture installation_id: "`+value+`" is a dot segment`)
-		s.Empty(captured.AccountID)
+		s.Empty(account.AccountID)
 	}
 }
 
 func (s *ManifestSuite) TestSalesforceIdentityURLStaysUnderSalesforce() {
-	p, err := s.load("salesforce").Resolve("oauth2_code", nil, nil)
+	resolved, err := s.load("salesforce").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
 	for _, id := range []string{
 		"https://evil.example/id/00D/005",
@@ -191,13 +191,13 @@ func (s *ManifestSuite) TestSalesforceIdentityURLStaysUnderSalesforce() {
 	} {
 		token, err := json.Marshal(map[string]string{"instance_url": "https://example-org.my.salesforce.com", "id": id})
 		s.Require().NoError(err)
-		_, err = p.Apply(nil, token)
+		_, err = resolved.Apply(nil, token)
 		s.ErrorContains(err, "capture identity_url", id)
 	}
 
-	captured, err := p.Apply(nil, []byte(`{"instance_url":"https://example-org.my.salesforce.com","id":"https://Login.Salesforce.com/id/00D000000000001AAA/005000000000001AAA"}`))
+	account, err := resolved.Apply(nil, []byte(`{"instance_url":"https://example-org.my.salesforce.com","id":"https://Login.Salesforce.com/id/00D000000000001AAA/005000000000001AAA"}`))
 	s.Require().NoError(err)
-	s.Equal("https://login.salesforce.com/id/00D000000000001AAA/005000000000001AAA", captured.AccountID)
+	s.Equal("https://login.salesforce.com/id/00D000000000001AAA/005000000000001AAA", account.AccountID)
 }
 
 func (s *ManifestSuite) TestAKeepPathCaptureIsNeverPartOfATemplate() {
@@ -215,72 +215,72 @@ func (s *ManifestSuite) TestKeepPathNeedsHostSuffixes() {
 }
 
 func (s *ManifestSuite) TestGoogleReadsTheAccountFromTheIDTokenSub() {
-	p, err := s.load("google").Resolve("oauth2_code", nil, nil)
+	resolved, err := s.load("google").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
 	token := s.withIDToken(s.recorded("google.token.json"), map[string]any{
 		"iss": "https://accounts.google.com", "sub": "110169484474386276334", "hd": "example.com",
 	})
 
-	captured, err := p.Apply(nil, token)
+	account, err := resolved.Apply(nil, token)
 	s.Require().NoError(err)
-	s.Equal("110169484474386276334", captured.AccountID)
-	s.Equal(map[string]string{"sub": "110169484474386276334", "hd": "example.com"}, captured.Metadata)
-	s.Equal(map[string]string{"access_type": "offline", "prompt": "consent", "include_granted_scopes": "true"}, p.AuthorizeParams)
+	s.Equal("110169484474386276334", account.AccountID)
+	s.Equal(map[string]string{"sub": "110169484474386276334", "hd": "example.com"}, account.Metadata)
+	s.Equal(map[string]string{"access_type": "offline", "prompt": "consent", "include_granted_scopes": "true"}, resolved.AuthorizeParams)
 }
 
 func (s *ManifestSuite) TestGoogleConnectsAnAccountWithoutAHostedDomain() {
-	p, err := s.load("google").Resolve("oauth2_code", nil, nil)
+	resolved, err := s.load("google").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
-	captured, err := p.Apply(nil, s.withIDToken(s.recorded("google.token.json"), map[string]any{"sub": "110169484474386276334"}))
+	account, err := resolved.Apply(nil, s.withIDToken(s.recorded("google.token.json"), map[string]any{"sub": "110169484474386276334"}))
 	s.Require().NoError(err)
-	s.Equal(map[string]string{"sub": "110169484474386276334"}, captured.Metadata)
+	s.Equal(map[string]string{"sub": "110169484474386276334"}, account.Metadata)
 }
 
 func (s *ManifestSuite) TestGoogleWithoutAnIDTokenFails() {
-	p, err := s.load("google").Resolve("oauth2_code", nil, nil)
+	resolved, err := s.load("google").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
-	_, err = p.Apply(nil, s.recorded("google.token.json"))
+	_, err = resolved.Apply(nil, s.recorded("google.token.json"))
 	s.ErrorContains(err, "capture sub: token response has no id_token")
 }
 
 func (s *ManifestSuite) TestMicrosoftAccountIsTheTenantAndTheObjectID() {
-	p, err := s.load("microsoft").Resolve("oauth2_code", map[string]string{"tenant": "contoso.onmicrosoft.com"}, nil)
+	resolved, err := s.load("microsoft").Resolve("oauth2_code", map[string]string{"tenant": "contoso.onmicrosoft.com"}, nil)
 	s.Require().NoError(err)
-	s.Equal("https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/token", p.Endpoints["token"])
-	s.Equal(AuthPrivateKeyJWT, p.Client.AuthMethod)
-	s.Equal("PS256", p.Client.Alg)
+	s.Equal("https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/token", resolved.Endpoints["token"])
+	s.Equal(AuthPrivateKeyJWT, resolved.Client.AuthMethod)
+	s.Equal("PS256", resolved.Client.Alg)
 
-	captured, err := p.Apply(nil, s.withIDToken(s.recorded("microsoft.token.json"), map[string]any{
+	account, err := resolved.Apply(nil, s.withIDToken(s.recorded("microsoft.token.json"), map[string]any{
 		"tid": "aaaabbbb-0000-cccc-1111-dddd2222eeee", "oid": "00000000-0000-0000-66f3-3332eca7ea81",
 	}))
 	s.Require().NoError(err)
-	s.Equal("aaaabbbb-0000-cccc-1111-dddd2222eeee:00000000-0000-0000-66f3-3332eca7ea81", captured.AccountID)
+	s.Equal("aaaabbbb-0000-cccc-1111-dddd2222eeee:00000000-0000-0000-66f3-3332eca7ea81", account.AccountID)
 }
 
 func (s *ManifestSuite) TestSlackAccountIsTheTeamAndTheUser() {
-	p, err := s.load("slack").Resolve("oauth2_code", nil, nil)
+	resolved, err := s.load("slack").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
-	s.Equal(",", p.Scopes.Separator)
+	s.Equal(",", resolved.Scopes.Separator)
 
-	captured, err := p.Apply(nil, s.recorded("slack.token.json"))
+	account, err := resolved.Apply(nil, s.recorded("slack.token.json"))
 	s.Require().NoError(err)
-	s.Equal("T0000TEAM:U0000USER", captured.AccountID)
-	s.NotContains(captured.Metadata, "enterprise_id")
+	s.Equal("T0000TEAM:U0000USER", account.AccountID)
+	s.NotContains(account.Metadata, "enterprise_id")
 }
 
 func (s *ManifestSuite) TestZohoRegionPicksTheAccountsHost() {
 	m := s.load("zoho")
-	p, err := m.Resolve("oauth2_code", map[string]string{"region": "eu"}, nil)
+	resolved, err := m.Resolve("oauth2_code", map[string]string{"region": "eu"}, nil)
 	s.Require().NoError(err)
-	s.Equal("https://accounts.zoho.eu/oauth/v2/auth", p.Endpoints["authorize"])
-	s.Equal("https://accounts.zoho.eu/oauth/v2/token", p.Endpoints["token"])
+	s.Equal("https://accounts.zoho.eu/oauth/v2/auth", resolved.Endpoints["authorize"])
+	s.Equal("https://accounts.zoho.eu/oauth/v2/token", resolved.Endpoints["token"])
 
-	captured, err := p.Apply(s.callback("zoho.callback"), s.recorded("zoho.token.json"))
+	account, err := resolved.Apply(s.callback("zoho.callback"), s.recorded("zoho.token.json"))
 	s.Require().NoError(err)
-	s.Equal("https://accounts.zoho.eu", captured.Metadata["accounts_server"])
-	s.Equal([]string{"location", "accounts_server"}, captured.Unverified)
+	s.Equal("https://accounts.zoho.eu", account.Metadata["accounts_server"])
+	s.Equal([]string{"location", "accounts_server"}, account.Unverified)
 
-	connected, err := m.Resolve("oauth2_code", map[string]string{"region": "eu"}, captured.Metadata)
+	connected, err := m.Resolve("oauth2_code", map[string]string{"region": "eu"}, account.Metadata)
 	s.Require().NoError(err)
 	s.Equal("https://www.zohoapis.eu", connected.Endpoints["api_base"])
 }
@@ -296,31 +296,31 @@ func (s *ManifestSuite) TestShopifyRefusesAShopOutsideMyshopify() {
 }
 
 func (s *ManifestSuite) TestShopifyAccountIsTheShopAndItsCallbackGoesThroughTheHook() {
-	p, err := s.load("shopify").Resolve("oauth2_code", map[string]string{"shop": "example-shop.myshopify.com"}, nil)
+	resolved, err := s.load("shopify").Resolve("oauth2_code", map[string]string{"shop": "example-shop.myshopify.com"}, nil)
 	s.Require().NoError(err)
-	s.Equal("https://example-shop.myshopify.com/admin/oauth/authorize", p.Endpoints["authorize"])
-	s.Equal(map[string]string{HookBeforeComplete: "shopify.callback_hmac"}, p.Hooks)
-	s.Equal(map[string]string{"expiring": "1"}, p.TokenParams)
+	s.Equal("https://example-shop.myshopify.com/admin/oauth/authorize", resolved.Endpoints["authorize"])
+	s.Equal(map[string]string{HookBeforeComplete: "shopify.callback_hmac"}, resolved.Hooks)
+	s.Equal(map[string]string{"expiring": "1"}, resolved.TokenParams)
 
-	captured, err := p.Apply(s.callback("shopify.callback"), nil)
+	account, err := resolved.Apply(s.callback("shopify.callback"), nil)
 	s.Require().NoError(err)
-	s.Equal("example-shop.myshopify.com", captured.AccountID)
-	s.Equal([]string{"callback_shop"}, captured.Unverified)
+	s.Equal("example-shop.myshopify.com", account.AccountID)
+	s.Equal([]string{"callback_shop"}, account.Unverified)
 }
 
 // The callback's shop is what the browser sent; the account is the shop the connection was
 // created for, and the hook compares the two.
 func (s *ManifestSuite) TestShopifyAccountIsTheInputShopNotTheCallbackShop() {
-	p, err := s.load("shopify").Resolve("oauth2_code", map[string]string{"shop": "example-shop.myshopify.com"}, nil)
+	resolved, err := s.load("shopify").Resolve("oauth2_code", map[string]string{"shop": "example-shop.myshopify.com"}, nil)
 	s.Require().NoError(err)
 	query := s.callback("shopify.callback")
 	query.Set("shop", "evil.example")
 
-	captured, err := p.Apply(query, nil)
+	account, err := resolved.Apply(query, nil)
 	s.Require().NoError(err)
-	s.Equal("example-shop.myshopify.com", captured.AccountID)
-	s.Equal("evil.example", captured.Metadata["callback_shop"])
-	s.Equal([]string{"callback_shop"}, captured.Unverified)
+	s.Equal("example-shop.myshopify.com", account.AccountID)
+	s.Equal("evil.example", account.Metadata["callback_shop"])
+	s.Equal([]string{"callback_shop"}, account.Unverified)
 }
 
 func (s *ManifestSuite) TestACaptureCannotShareAnInputsName() {
@@ -331,14 +331,14 @@ func (s *ManifestSuite) TestACaptureCannotShareAnInputsName() {
 
 func (s *ManifestSuite) TestGitHubInstallationIDIsUnverifiedUntilConfirmed() {
 	m := s.load("github")
-	p, err := m.Resolve("github_app", nil, nil)
+	resolved, err := m.Resolve("github_app", nil, nil)
 	s.Require().NoError(err)
-	captured, err := p.Apply(s.callback("github.callback"), nil)
+	account, err := resolved.Apply(s.callback("github.callback"), nil)
 	s.Require().NoError(err)
-	s.Equal("12345678", captured.AccountID)
-	s.Equal([]string{"installation_id"}, captured.Unverified)
+	s.Equal("12345678", account.AccountID)
+	s.Equal([]string{"installation_id"}, account.Unverified)
 
-	connected, err := m.Resolve("github_app", nil, captured.Metadata)
+	connected, err := m.Resolve("github_app", nil, account.Metadata)
 	s.Require().NoError(err)
 	s.Equal("https://api.github.com/app/installations/12345678/access_tokens", connected.Endpoints["installation_token"])
 }
@@ -394,7 +394,7 @@ func (s *ManifestSuite) TestAnInputCannotBeTheWholeOrigin() {
 // broken token endpoint could otherwise point the bearer token at any host.
 func (s *ManifestSuite) TestAnOriginCaptureStaysUnderItsHostSuffixes() {
 	m := s.load("salesforce")
-	p, err := m.Resolve("oauth2_code", nil, nil)
+	resolved, err := m.Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
 	for _, value := range []string{
 		"https://evil.example",
@@ -414,17 +414,17 @@ func (s *ManifestSuite) TestAnOriginCaptureStaysUnderItsHostSuffixes() {
 
 		token, err := json.Marshal(map[string]string{"instance_url": value, "id": "https://login.salesforce.com/id/00D/005"})
 		s.Require().NoError(err)
-		_, err = p.Apply(nil, token)
+		_, err = resolved.Apply(nil, token)
 		s.ErrorContains(err, "capture instance_url", value)
 	}
 }
 
 func (s *ManifestSuite) TestAnOriginCaptureIsStoredAsSchemeAndHost() {
-	p, err := s.load("salesforce").Resolve("oauth2_code", nil, nil)
+	resolved, err := s.load("salesforce").Resolve("oauth2_code", nil, nil)
 	s.Require().NoError(err)
-	captured, err := p.Apply(nil, []byte(`{"instance_url":"https://Example-Org.my.salesforce.com/","id":"https://login.salesforce.com/id/00D/005"}`))
+	account, err := resolved.Apply(nil, []byte(`{"instance_url":"https://Example-Org.my.salesforce.com/","id":"https://login.salesforce.com/id/00D/005"}`))
 	s.Require().NoError(err)
-	s.Equal("https://example-org.my.salesforce.com", captured.Metadata["instance_url"])
+	s.Equal("https://example-org.my.salesforce.com", account.Metadata["instance_url"])
 }
 
 func (s *ManifestSuite) TestAVarMustCoverEveryValueOfItsInput() {

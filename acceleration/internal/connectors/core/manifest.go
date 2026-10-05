@@ -18,9 +18,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Manifest is one connector's definition as data: what a scheme, a source and the resolver
+// Manifest is one connector's definition as data: what a scheme, a tool source and the resolver
 // read instead of switching on a connector id. ParseManifest is how one is read, and
-// Resolve turns it into the Profile of one connection.
+// Resolve turns it into the ResolvedManifest of one connection.
 //
 // The model is substitution and lookup only, on purpose (architecture doc, «Risks» items 1
 // and 3): endpoints are {var} templates, captured values are read by a JSON path or a query
@@ -83,11 +83,14 @@ type Var struct {
 	Values map[string]string `yaml:"values" json:"values"`
 }
 
-// ClientPolicy says who may own the OAuth client and how it authenticates at the token
+// ClientPolicy says how the OAuth client is registered and how it authenticates at the token
 // endpoint.
 type ClientPolicy struct {
-	Policy     []ClientOwner    `yaml:"policy,omitempty" json:"policy,omitempty"`
-	AuthMethod ClientAuthMethod `yaml:"auth_method,omitempty" json:"auth_method,omitempty"`
+	// Registration lists the client registration mechanisms the connector allows: the two
+	// kinds of pre-registration (operator, customer) and the two on-the-fly ones (dcr, cimd).
+	// MCP's authorization spec, «Client Registration Approaches», names the same mechanisms.
+	Registration []ClientRegistrationMethod `yaml:"registration,omitempty" json:"registration,omitempty"`
+	AuthMethod   ClientAuthMethod           `yaml:"auth_method,omitempty" json:"auth_method,omitempty"`
 	// Alg is the signing algorithm of a private_key_jwt assertion, and set only for it.
 	Alg string `yaml:"alg,omitempty" json:"alg,omitempty"`
 	// Env is the prefix of the operator's client id and secret variables.
@@ -122,10 +125,10 @@ type RefreshPolicy struct {
 // RateLimitRule is how the provider counts calls.
 type RateLimitRule struct {
 	Per RateLimitScope `yaml:"per,omitempty" json:"per,omitempty"`
-	// Bucket and Leak describe a leaky bucket: its size in requests, and how many leave per
-	// second.
-	Bucket int `yaml:"bucket,omitempty" json:"bucket,omitempty"`
-	Leak   int `yaml:"leak,omitempty" json:"leak,omitempty"`
+	// Bucket and LeakPerSecond describe a leaky bucket: its size in requests, and how many
+	// leave per second.
+	Bucket        int `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	LeakPerSecond int `yaml:"leak_per_second,omitempty" json:"leak_per_second,omitempty"`
 }
 
 // SourceRule is one tool source the connector offers and the endpoint it runs against.
@@ -144,7 +147,7 @@ type CaptureRule struct {
 	Key string `yaml:"key,omitempty" json:"key,omitempty"`
 	// Optional lets the value be absent, such as a claim only some accounts carry.
 	Optional bool `yaml:"optional,omitempty" json:"optional,omitempty"`
-	// Verify marks a callback value as untrusted until a request with the minted token
+	// Verify marks a callback value as untrusted until a request with the access token
 	// confirms it (architecture doc, «What the stress test adds to the core», item 13).
 	Verify bool `yaml:"verify,omitempty" json:"verify,omitempty"`
 	// HostSuffixes makes the value an https origin whose host ends in one of these, such as
@@ -169,16 +172,18 @@ const (
 	FromCallbackQuery ValueSource = "callback_query"
 )
 
-// ClientOwner is who registered the OAuth client a connection uses.
-type ClientOwner string
+// ClientRegistrationMethod is how the OAuth client a connection uses is registered: in advance by the
+// operator or the customer, or on the fly. «Client registration» is the OAuth and MCP term
+// (RFC 7591; MCP spec 2025-11-25, «Client Registration Approaches»).
+type ClientRegistrationMethod string
 
-// The owners from the architecture doc's «Axes where providers differ», row 10. A broker's
-// client is not here: a broker sits behind the Backend, not in a manifest.
+// The mechanisms from the architecture doc's «Axes where providers differ», row 10. A broker's
+// client is not here: a broker sits behind the CredentialStore, not in a manifest.
 const (
-	ClientOperator ClientOwner = "operator"
-	ClientCustomer ClientOwner = "customer"
-	ClientDCR      ClientOwner = "dcr"
-	ClientCIMD     ClientOwner = "cimd"
+	ClientOperator ClientRegistrationMethod = "operator"
+	ClientCustomer ClientRegistrationMethod = "customer"
+	ClientDCR      ClientRegistrationMethod = "dcr"
+	ClientCIMD     ClientRegistrationMethod = "cimd"
 )
 
 // ClientAuthMethod is how the client authenticates at the token endpoint.
@@ -209,11 +214,11 @@ const (
 )
 
 var (
-	valueSources      = []ValueSource{FromTokenResponse, FromIDToken, FromCallbackQuery}
-	clientOwners      = []ClientOwner{ClientOperator, ClientCustomer, ClientDCR, ClientCIMD}
-	clientAuthMethods = []ClientAuthMethod{AuthNone, AuthClientSecretPost, AuthClientSecretBasic, AuthPrivateKeyJWT, AuthTLSClientAuth}
-	rateLimitScopes   = []RateLimitScope{RateLimitPerApp, RateLimitPerTenant, RateLimitPerUser}
-	hookPoints        = []string{HookBeforeAuthorize, HookBeforeComplete, HookAfterToken}
+	valueSources        = []ValueSource{FromTokenResponse, FromIDToken, FromCallbackQuery}
+	clientRegistrations = []ClientRegistrationMethod{ClientOperator, ClientCustomer, ClientDCR, ClientCIMD}
+	clientAuthMethods   = []ClientAuthMethod{AuthNone, AuthClientSecretPost, AuthClientSecretBasic, AuthPrivateKeyJWT, AuthTLSClientAuth}
+	rateLimitScopes     = []RateLimitScope{RateLimitPerApp, RateLimitPerTenant, RateLimitPerUser}
+	hookPoints          = []string{HookBeforeAuthorize, HookBeforeComplete, HookAfterToken}
 	// assertionAlgs are JWS algorithms (RFC 7518 section 3.1) a private_key_jwt assertion
 	// may use: PS256 is what Microsoft requires for certificate credentials (architecture
 	// doc, stress-test row 8), RS256 the common default for the rest.
@@ -445,9 +450,9 @@ func (m Manifest) Validate() error {
 		}
 	}
 
-	for i, owner := range m.Client.Policy {
-		if !slices.Contains(clientOwners, owner) {
-			fail(fmt.Sprintf("client.policy[%d]", i), "%q is not one of %v", owner, clientOwners)
+	for i, registration := range m.Client.Registration {
+		if !slices.Contains(clientRegistrations, registration) {
+			fail(fmt.Sprintf("client.registration[%d]", i), "%q is not one of %v", registration, clientRegistrations)
 		}
 	}
 	if m.Client.AuthMethod != "" && !slices.Contains(clientAuthMethods, m.Client.AuthMethod) {
@@ -474,8 +479,8 @@ func (m Manifest) Validate() error {
 	if m.RateLimit.Per != "" && !slices.Contains(rateLimitScopes, m.RateLimit.Per) {
 		fail("rate_limit.per", "%q is not one of %v", m.RateLimit.Per, rateLimitScopes)
 	}
-	if m.RateLimit.Bucket < 0 || m.RateLimit.Leak < 0 {
-		fail("rate_limit", "bucket and leak cannot be negative")
+	if m.RateLimit.Bucket < 0 || m.RateLimit.LeakPerSecond < 0 {
+		fail("rate_limit", "bucket and leak_per_second cannot be negative")
 	}
 
 	for i, source := range m.Sources {
@@ -508,14 +513,14 @@ func (m Manifest) Validate() error {
 // applied, and the values captured when it was connected. An endpoint that needs a value
 // not captured yet, such as an API base read from the token response, is left out until
 // it is.
-func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Profile, error) {
+func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (ResolvedManifest, error) {
 	if !slices.Contains(m.Schemes, scheme) {
-		return Profile{}, fmt.Errorf("manifest %q: scheme %q is not one of %v", m.ID, scheme, m.Schemes)
+		return ResolvedManifest{}, fmt.Errorf("manifest %q: scheme %q is not one of %v", m.ID, scheme, m.Schemes)
 	}
 	resolved := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(inputs)) {
 		if !slices.ContainsFunc(m.Inputs, func(in Input) bool { return in.Name == name }) {
-			return Profile{}, fmt.Errorf("manifest %q: input %q is not declared", m.ID, name)
+			return ResolvedManifest{}, fmt.Errorf("manifest %q: input %q is not declared", m.ID, name)
 		}
 	}
 	for _, in := range m.Inputs {
@@ -524,16 +529,16 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Pr
 			value = in.Default
 		}
 		if value == "" {
-			return Profile{}, fmt.Errorf("manifest %q: input %q is required", m.ID, in.Name)
+			return ResolvedManifest{}, fmt.Errorf("manifest %q: input %q is required", m.ID, in.Name)
 		}
 		if err := in.check(value); err != nil {
-			return Profile{}, fmt.Errorf("manifest %q: %w", m.ID, err)
+			return ResolvedManifest{}, fmt.Errorf("manifest %q: %w", m.ID, err)
 		}
 		resolved[in.Name] = value
 	}
 	for _, name := range slices.Sorted(maps.Keys(metadata)) {
 		if !slices.ContainsFunc(m.Capture, func(rule CaptureRule) bool { return rule.Name == name }) {
-			return Profile{}, fmt.Errorf("manifest %q: metadata %q is not captured by this manifest", m.ID, name)
+			return ResolvedManifest{}, fmt.Errorf("manifest %q: metadata %q is not captured by this manifest", m.ID, name)
 		}
 	}
 
@@ -541,7 +546,7 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Pr
 	for _, role := range slices.Sorted(maps.Keys(m.Endpoints)) {
 		endpoint, complete, err := m.render(m.Endpoints[role], resolved, metadata)
 		if err != nil {
-			return Profile{}, fmt.Errorf("manifest %q: endpoints.%s: %w", m.ID, role, err)
+			return ResolvedManifest{}, fmt.Errorf("manifest %q: endpoints.%s: %w", m.ID, role, err)
 		}
 		if complete {
 			endpoints[role] = endpoint
@@ -551,7 +556,7 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Pr
 	for point, name := range m.Hooks {
 		hooks[point] = string(name)
 	}
-	return Profile{
+	return ResolvedManifest{
 		ConnectorID:     m.ID,
 		Revision:        m.Revision,
 		Scheme:          scheme,
@@ -570,27 +575,27 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Pr
 	}, nil
 }
 
-// Apply applies the profile's capture and identity rules to what a consent returned:
+// Apply applies the resolved manifest's capture and identity rules to what a consent returned:
 // the callback query and the token endpoint's response body. An id_token is read only from
 // that body, never from a callback, so its claims arrived over the back channel and its
 // signature is not checked here (OpenID Connect Core 1.0, section 3.1.3.7, item 6).
 //
-// Captured.Unverified lists the values a rule marked verify; when an identity part is among
+// AccountInfo.Unverified lists the values a rule marked verify; when an identity part is among
 // them, so is the account id.
-func (p Profile) Apply(query url.Values, tokenResponse json.RawMessage) (Captured, error) {
+func (m ResolvedManifest) Apply(query url.Values, tokenResponse json.RawMessage) (AccountInfo, error) {
 	var token, claims map[string]any
 	var tokenErr, claimsErr error
-	if slices.ContainsFunc(p.Capture, func(rule CaptureRule) bool { return rule.From != FromCallbackQuery }) {
+	if slices.ContainsFunc(m.Capture, func(rule CaptureRule) bool { return rule.From != FromCallbackQuery }) {
 		token, tokenErr = decodeObject(tokenResponse)
 	}
-	if slices.ContainsFunc(p.Capture, func(rule CaptureRule) bool { return rule.From == FromIDToken }) {
+	if slices.ContainsFunc(m.Capture, func(rule CaptureRule) bool { return rule.From == FromIDToken }) {
 		if claimsErr = tokenErr; claimsErr == nil {
 			claims, claimsErr = idTokenClaims(token)
 		}
 	}
 
-	captured := Captured{Metadata: map[string]string{}}
-	for _, rule := range p.Capture {
+	account := AccountInfo{Metadata: map[string]string{}}
+	for _, rule := range m.Capture {
 		var value string
 		var found bool
 		var err error
@@ -611,43 +616,43 @@ func (p Profile) Apply(query url.Values, tokenResponse json.RawMessage) (Capture
 			}
 		}
 		if err != nil {
-			return Captured{}, fmt.Errorf("capture %s: %w", rule.Name, err)
+			return AccountInfo{}, fmt.Errorf("capture %s: %w", rule.Name, err)
 		}
 		if !found {
 			if rule.Optional {
 				continue
 			}
-			return Captured{}, fmt.Errorf("capture %s: %s has no %s", rule.Name, rule.From, rule.Key+rule.Path)
+			return AccountInfo{}, fmt.Errorf("capture %s: %s has no %s", rule.Name, rule.From, rule.Key+rule.Path)
 		}
 		if len(rule.HostSuffixes) > 0 {
 			if value, err = httpsUnder(value, rule.HostSuffixes, rule.KeepPath); err != nil {
-				return Captured{}, fmt.Errorf("capture %s: %w", rule.Name, err)
+				return AccountInfo{}, fmt.Errorf("capture %s: %w", rule.Name, err)
 			}
 		}
-		// Refused here as well as in render, so a caller that stores Captured before the
+		// Refused here as well as in render, so a caller that stores AccountInfo before the
 		// next Resolve never keeps a dot segment as metadata or as the account id.
 		if isDotSegment(value) {
-			return Captured{}, fmt.Errorf("capture %s: %q is a dot segment (RFC 3986 section 3.3)", rule.Name, value)
+			return AccountInfo{}, fmt.Errorf("capture %s: %q is a dot segment (RFC 3986 section 3.3)", rule.Name, value)
 		}
-		captured.Metadata[rule.Name] = value
+		account.Metadata[rule.Name] = value
 		if rule.Verify {
-			captured.Unverified = append(captured.Unverified, rule.Name)
+			account.Unverified = append(account.Unverified, rule.Name)
 		}
 	}
 
-	parts := make([]string, 0, len(p.Identity))
-	for _, name := range p.Identity {
-		part, ok := p.Inputs[name]
+	parts := make([]string, 0, len(m.Identity))
+	for _, name := range m.Identity {
+		part, ok := m.Inputs[name]
 		if !ok {
-			part = captured.Metadata[name]
+			part = account.Metadata[name]
 		}
 		if isDotSegment(part) {
-			return Captured{}, fmt.Errorf("identity %s: %q is a dot segment (RFC 3986 section 3.3)", name, part)
+			return AccountInfo{}, fmt.Errorf("identity %s: %q is a dot segment (RFC 3986 section 3.3)", name, part)
 		}
 		parts = append(parts, part)
 	}
-	captured.AccountID = strings.Join(parts, ":")
-	return captured, nil
+	account.AccountID = strings.Join(parts, ":")
+	return account, nil
 }
 
 // check is whether a value is allowed for this input.
@@ -833,7 +838,7 @@ func decodeObject(raw json.RawMessage) (map[string]any, error) {
 }
 
 // idTokenClaims decodes the payload of the token response's id_token without checking its
-// signature; see Profile.Apply for why that is enough.
+// signature; see ResolvedManifest.Apply for why that is enough.
 func idTokenClaims(token map[string]any) (map[string]any, error) {
 	raw, ok := token["id_token"].(string)
 	if !ok {

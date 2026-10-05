@@ -10,24 +10,23 @@ from typing_extensions import Self
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.connector_connection import ConnectorConnection
+    from ..models.connector import Connector
 
 
-T = TypeVar("T", bound="ConnectorConnectionPage")
+T = TypeVar("T", bound="ConnectorPage")
 
 
 @_attrs_define
-class ConnectorConnectionPage:
+class ConnectorPage:
     """
     Attributes:
         has_more (bool):
-        items (list[ConnectorConnection] | None):
-        next_cursor (str | Unset): Pass as cursor for the next page, with the same owner_type and connector_id. Absent
-            on the last one.
+        items (list[Connector] | None):
+        next_cursor (str | Unset): Pass as cursor for the next page, with the same q. Absent on the last one.
     """
 
     has_more: bool
-    items: list[ConnectorConnection] | None
+    items: list[Connector] | None
     next_cursor: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -61,12 +60,12 @@ class ConnectorConnectionPage:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.connector_connection import ConnectorConnection
+        from ..models.connector import Connector
 
         d = dict(src_dict)
         has_more = d.pop("has_more")
 
-        def _parse_items(data: object) -> list[ConnectorConnection] | None:
+        def _parse_items(data: object) -> list[Connector] | None:
             if data is None:
                 return data
             try:
@@ -75,29 +74,27 @@ class ConnectorConnectionPage:
                 items_type_0 = []
                 _items_type_0 = data
                 for items_type_0_item_data in _items_type_0:
-                    items_type_0_item = ConnectorConnection.from_dict(
-                        items_type_0_item_data
-                    )
+                    items_type_0_item = Connector.from_dict(items_type_0_item_data)
 
                     items_type_0.append(items_type_0_item)
 
                 return items_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(list[ConnectorConnection] | None, data)
+            return cast(list[Connector] | None, data)
 
         items = _parse_items(d.pop("items"))
 
         next_cursor = d.pop("next_cursor", UNSET)
 
-        connector_connection_page = cls(
+        connector_page = cls(
             has_more=has_more,
             items=items,
             next_cursor=next_cursor,
         )
 
-        connector_connection_page.additional_properties = d
-        return connector_connection_page
+        connector_page.additional_properties = d
+        return connector_page
 
     @property
     def additional_keys(self) -> list[str]:

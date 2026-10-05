@@ -9,34 +9,32 @@ from typing_extensions import Self
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.connector_connection_owner import ConnectorConnectionOwner
-    from ..models.connector_connection_request_inputs import (
-        ConnectorConnectionRequestInputs,
-    )
+    from ..models.connection_owner import ConnectionOwner
+    from ..models.connection_request_inputs import ConnectionRequestInputs
 
 
-T = TypeVar("T", bound="ConnectorConnectionRequest")
+T = TypeVar("T", bound="ConnectionRequest")
 
 
 @_attrs_define
-class ConnectorConnectionRequest:
+class ConnectionRequest:
     """A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
 
     Attributes:
         connector_id (str): A built-in, such as slack, or one of the app's own.
-        owner (ConnectorConnectionOwner): Whose a connection is: the app's, which any of its agents may be bound to, or
-            one user's.
+        owner (ConnectionOwner): Whose a connection is: the app's, which any of its agents may be bound to, or one
+            user's.
         auth_scheme (str | Unset): One of the connector's schemes. Omitted is its only one; a connector with several
             needs it named.
-        inputs (ConnectorConnectionRequestInputs | Unset): Values for the connector's inputs, such as a region. One
-            without a default is required, and each must match the connector's enum or pattern.
+        inputs (ConnectionRequestInputs | Unset): Values for the connector's inputs, such as a region. One without a
+            default is required, and each must match the connector's enum or pattern.
         label (str | Unset): A name to tell connections apart by.
     """
 
     connector_id: str
-    owner: ConnectorConnectionOwner
+    owner: ConnectionOwner
     auth_scheme: str | Unset = UNSET
-    inputs: ConnectorConnectionRequestInputs | Unset = UNSET
+    inputs: ConnectionRequestInputs | Unset = UNSET
     label: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,30 +69,28 @@ class ConnectorConnectionRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.connector_connection_owner import (
-            ConnectorConnectionOwner,
-        )
-        from ..models.connector_connection_request_inputs import (
-            ConnectorConnectionRequestInputs,
+        from ..models.connection_owner import ConnectionOwner
+        from ..models.connection_request_inputs import (
+            ConnectionRequestInputs,
         )
 
         d = dict(src_dict)
         connector_id = d.pop("connector_id")
 
-        owner = ConnectorConnectionOwner.from_dict(d.pop("owner"))
+        owner = ConnectionOwner.from_dict(d.pop("owner"))
 
         auth_scheme = d.pop("auth_scheme", UNSET)
 
         _inputs = d.pop("inputs", UNSET)
-        inputs: ConnectorConnectionRequestInputs | Unset
+        inputs: ConnectionRequestInputs | Unset
         if isinstance(_inputs, Unset):
             inputs = UNSET
         else:
-            inputs = ConnectorConnectionRequestInputs.from_dict(_inputs)
+            inputs = ConnectionRequestInputs.from_dict(_inputs)
 
         label = d.pop("label", UNSET)
 
-        connector_connection_request = cls(
+        connection_request = cls(
             connector_id=connector_id,
             owner=owner,
             auth_scheme=auth_scheme,
@@ -102,4 +98,4 @@ class ConnectorConnectionRequest:
             label=label,
         )
 
-        return connector_connection_request
+        return connection_request

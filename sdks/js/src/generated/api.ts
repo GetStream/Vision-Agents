@@ -614,7 +614,7 @@ export type paths = {
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
-        readonly get: operations["listConnectorConnections"];
+        readonly get: operations["listConnections"];
         readonly put?: never;
         /**
          * Create a connection
@@ -622,7 +622,7 @@ export type paths = {
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
-        readonly post: operations["createConnectorConnection"];
+        readonly post: operations["createConnection"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -642,7 +642,7 @@ export type paths = {
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
-        readonly get: operations["getConnectorConnection"];
+        readonly get: operations["getConnection"];
         readonly put?: never;
         readonly post?: never;
         /**
@@ -651,7 +651,7 @@ export type paths = {
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
-        readonly delete: operations["deleteConnectorConnection"];
+        readonly delete: operations["deleteConnection"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -3590,29 +3590,8 @@ export type components = {
             /** @description What authenticates a send: a Meta access token, a Telnyx API key, a Linq API key. */
             readonly token?: string;
         };
-        /** @description Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint. */
-        readonly ConnectorClient: {
-            /**
-             * @description How a private_key_jwt assertion is signed, and set only for it.
-             * @enum {string}
-             */
-            readonly alg?: "RS256" | "PS256";
-            readonly auth_method?: components["schemas"]["ConnectorClientAuthMethod"];
-            /** @description Who may own the OAuth client. Empty when the connector needs none. */
-            readonly policy?: readonly components["schemas"]["ConnectorClientOwner"][] | null;
-        };
-        /**
-         * @description How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
-         * @enum {string}
-         */
-        readonly ConnectorClientAuthMethod: "none" | "client_secret_post" | "client_secret_basic" | "private_key_jwt" | "tls_client_auth";
-        /**
-         * @description operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
-         * @enum {string}
-         */
-        readonly ConnectorClientOwner: "operator" | "customer" | "dcr" | "cimd";
         /** @description One account at one connector, owned by the app or by one of its users. Credentials are never shown. */
-        readonly ConnectorConnection: {
+        readonly Connection: {
             /** @description The provider account, known once it is connected. */
             readonly account_id?: string;
             /** @description How the connection authenticates, one of its connector's schemes. */
@@ -3641,19 +3620,19 @@ export type components = {
             readonly metadata: {
                 readonly [key: string]: string;
             };
-            readonly owner: components["schemas"]["ConnectorConnectionOwner"];
+            readonly owner: components["schemas"]["ConnectionOwner"];
             /**
              * Format: int64
              * @description Advances with every new credential, starting at 1.
              */
             readonly revision: number;
-            readonly status: components["schemas"]["ConnectorConnectionStatus"];
+            readonly status: components["schemas"]["ConnectionStatus"];
             /** Format: date-time */
             readonly updated_at: string;
         };
         /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
-        readonly ConnectorConnectionOwner: {
-            readonly type: components["schemas"]["ConnectorConnectionOwnerType"];
+        readonly ConnectionOwner: {
+            readonly type: components["schemas"]["ConnectionOwnerType"];
             /** @description The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id. */
             readonly user_id?: string;
         };
@@ -3661,15 +3640,15 @@ export type components = {
          * @description app is the app's own account, user one user's.
          * @enum {string}
          */
-        readonly ConnectorConnectionOwnerType: "app" | "user";
-        readonly ConnectorConnectionPage: {
+        readonly ConnectionOwnerType: "app" | "user";
+        readonly ConnectionPage: {
             readonly has_more: boolean;
-            readonly items: readonly components["schemas"]["ConnectorConnection"][] | null;
+            readonly items: readonly components["schemas"]["Connection"][] | null;
             /** @description Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one. */
             readonly next_cursor?: string;
         };
         /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
-        readonly ConnectorConnectionRequest: {
+        readonly ConnectionRequest: {
             /** @description One of the connector's schemes. Omitted is its only one; a connector with several needs it named. */
             readonly auth_scheme?: string;
             /** @description A built-in, such as slack, or one of the app's own. */
@@ -3680,15 +3659,15 @@ export type components = {
             };
             /** @description A name to tell connections apart by. */
             readonly label?: string;
-            readonly owner: components["schemas"]["ConnectorConnectionOwner"];
+            readonly owner: components["schemas"]["ConnectionOwner"];
         };
         /**
          * @description pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
          * @enum {string}
          */
-        readonly ConnectorConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
+        readonly ConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
         /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
-        readonly ConnectorDefinition: {
+        readonly Connector: {
             readonly category?: string;
             readonly client: components["schemas"]["ConnectorClient"];
             /**
@@ -3714,12 +3693,27 @@ export type components = {
             /** @description The scopes a consent asks for. */
             readonly scopes: readonly string[] | null;
         };
-        readonly ConnectorDefinitionPage: {
-            readonly has_more: boolean;
-            readonly items: readonly components["schemas"]["ConnectorDefinition"][] | null;
-            /** @description Pass as cursor for the next page, with the same q. Absent on the last one. */
-            readonly next_cursor?: string;
+        /** @description How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint. */
+        readonly ConnectorClient: {
+            /**
+             * @description How a private_key_jwt assertion is signed, and set only for it.
+             * @enum {string}
+             */
+            readonly alg?: "RS256" | "PS256";
+            readonly auth_method?: components["schemas"]["ConnectorClientAuthMethod"];
+            /** @description The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client. */
+            readonly registration?: readonly components["schemas"]["ConnectorClientRegistrationMethod"][] | null;
         };
+        /**
+         * @description How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
+         * @enum {string}
+         */
+        readonly ConnectorClientAuthMethod: "none" | "client_secret_post" | "client_secret_basic" | "private_key_jwt" | "tls_client_auth";
+        /**
+         * @description operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+         * @enum {string}
+         */
+        readonly ConnectorClientRegistrationMethod: "operator" | "customer" | "dcr" | "cimd";
         readonly ConnectorInput: {
             /** @description Used when the connection gives no value. An input without one is required. */
             readonly default?: string;
@@ -3728,6 +3722,12 @@ export type components = {
             readonly name: string;
             /** @description A regular expression the whole value must match. */
             readonly pattern?: string;
+        };
+        readonly ConnectorPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Connector"][] | null;
+            /** @description Pass as cursor for the next page, with the same q. Absent on the last one. */
+            readonly next_cursor?: string;
         };
         /** @description One tool a binding allows. */
         readonly ConnectorToolGrant: {
@@ -7751,7 +7751,7 @@ export interface operations {
             };
         };
     };
-    readonly listConnectorConnections: {
+    readonly listConnections: {
         readonly parameters: {
             readonly query: {
                 /** @description Keeps one connector's. */
@@ -7761,7 +7761,7 @@ export interface operations {
                 /** @description Up to 200. Omitted is 25. */
                 readonly limit?: number;
                 /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. */
-                readonly owner_type: components["schemas"]["ConnectorConnectionOwnerType"];
+                readonly owner_type: components["schemas"]["ConnectionOwnerType"];
             };
             readonly header?: never;
             readonly path?: never;
@@ -7775,7 +7775,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorConnectionPage"];
+                    readonly "application/json": components["schemas"]["ConnectionPage"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -7792,7 +7792,7 @@ export interface operations {
             };
         };
     };
-    readonly createConnectorConnection: {
+    readonly createConnection: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -7801,7 +7801,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["ConnectorConnectionRequest"];
+                readonly "application/json": components["schemas"]["ConnectionRequest"];
             };
         };
         readonly responses: {
@@ -7811,7 +7811,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorConnection"];
+                    readonly "application/json": components["schemas"]["Connection"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -7828,7 +7828,7 @@ export interface operations {
             };
         };
     };
-    readonly getConnectorConnection: {
+    readonly getConnection: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -7846,7 +7846,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorConnection"];
+                    readonly "application/json": components["schemas"]["Connection"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -7864,7 +7864,7 @@ export interface operations {
             };
         };
     };
-    readonly deleteConnectorConnection: {
+    readonly deleteConnection: {
         readonly parameters: {
             readonly query?: {
                 /** @description Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists. */
@@ -7932,7 +7932,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorDefinitionPage"];
+                    readonly "application/json": components["schemas"]["ConnectorPage"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -7968,7 +7968,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorDefinition"];
+                    readonly "application/json": components["schemas"]["Connector"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -8003,7 +8003,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorDefinition"];
+                    readonly "application/json": components["schemas"]["Connector"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

@@ -8,7 +8,9 @@ from typing_extensions import Self
 
 from ..models.connector_client_alg import ConnectorClientAlg
 from ..models.connector_client_auth_method import ConnectorClientAuthMethod
-from ..models.connector_client_owner import ConnectorClientOwner
+from ..models.connector_client_registration_method import (
+    ConnectorClientRegistrationMethod,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ConnectorClient")
@@ -16,19 +18,19 @@ T = TypeVar("T", bound="ConnectorClient")
 
 @_attrs_define
 class ConnectorClient:
-    """Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
+    """How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 
     Attributes:
         alg (ConnectorClientAlg | Unset): How a private_key_jwt assertion is signed, and set only for it.
         auth_method (ConnectorClientAuthMethod | Unset): How the OAuth client authenticates at the token endpoint, as
             the IANA OAuth token endpoint authentication methods registry spells it.
-        policy (list[ConnectorClientOwner] | None | Unset): Who may own the OAuth client. Empty when the connector needs
-            none.
+        registration (list[ConnectorClientRegistrationMethod] | None | Unset): The client registration mechanisms the
+            connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client.
     """
 
     alg: ConnectorClientAlg | Unset = UNSET
     auth_method: ConnectorClientAuthMethod | Unset = UNSET
-    policy: list[ConnectorClientOwner] | None | Unset = UNSET
+    registration: list[ConnectorClientRegistrationMethod] | None | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         alg: str | Unset = UNSET
@@ -39,17 +41,17 @@ class ConnectorClient:
         if not isinstance(self.auth_method, Unset):
             auth_method = self.auth_method.value
 
-        policy: list[str] | None | Unset
-        if isinstance(self.policy, Unset):
-            policy = UNSET
-        elif isinstance(self.policy, list):
-            policy = []
-            for policy_type_0_item_data in self.policy:
-                policy_type_0_item = policy_type_0_item_data.value
-                policy.append(policy_type_0_item)
+        registration: list[str] | None | Unset
+        if isinstance(self.registration, Unset):
+            registration = UNSET
+        elif isinstance(self.registration, list):
+            registration = []
+            for registration_type_0_item_data in self.registration:
+                registration_type_0_item = registration_type_0_item_data.value
+                registration.append(registration_type_0_item)
 
         else:
-            policy = self.policy
+            registration = self.registration
 
         field_dict: dict[str, Any] = {}
 
@@ -58,8 +60,8 @@ class ConnectorClient:
             field_dict["alg"] = alg
         if auth_method is not UNSET:
             field_dict["auth_method"] = auth_method
-        if policy is not UNSET:
-            field_dict["policy"] = policy
+        if registration is not UNSET:
+            field_dict["registration"] = registration
 
         return field_dict
 
@@ -80,7 +82,9 @@ class ConnectorClient:
         else:
             auth_method = ConnectorClientAuthMethod(_auth_method)
 
-        def _parse_policy(data: object) -> list[ConnectorClientOwner] | None | Unset:
+        def _parse_registration(
+            data: object,
+        ) -> list[ConnectorClientRegistrationMethod] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -88,24 +92,26 @@ class ConnectorClient:
             try:
                 if not isinstance(data, list):
                     raise TypeError()
-                policy_type_0 = []
-                _policy_type_0 = data
-                for policy_type_0_item_data in _policy_type_0:
-                    policy_type_0_item = ConnectorClientOwner(policy_type_0_item_data)
+                registration_type_0 = []
+                _registration_type_0 = data
+                for registration_type_0_item_data in _registration_type_0:
+                    registration_type_0_item = ConnectorClientRegistrationMethod(
+                        registration_type_0_item_data
+                    )
 
-                    policy_type_0.append(policy_type_0_item)
+                    registration_type_0.append(registration_type_0_item)
 
-                return policy_type_0
+                return registration_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(list[ConnectorClientOwner] | None | Unset, data)
+            return cast(list[ConnectorClientRegistrationMethod] | None | Unset, data)
 
-        policy = _parse_policy(d.pop("policy", UNSET))
+        registration = _parse_registration(d.pop("registration", UNSET))
 
         connector_client = cls(
             alg=alg,
             auth_method=auth_method,
-            policy=policy,
+            registration=registration,
         )
 
         return connector_client

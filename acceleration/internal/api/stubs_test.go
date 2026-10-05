@@ -764,7 +764,7 @@ func (m *keptMemories) remaining() []memory.Scope {
 
 // namedScheme is a scheme registered by its name alone, which is all a connector definition
 // reads of one: whether a custom definition may name it. Nothing in these suites connects
-// through it, so it acquires, mints and applies nothing.
+// through it, so it acquires, issues and applies nothing.
 type namedScheme string
 
 func (n namedScheme) Name() string { return string(n) }
@@ -773,16 +773,20 @@ func (namedScheme) Begin(context.Context, core.BeginInput) (core.BeginOutput, er
 	return core.BeginOutput{}, errors.New("a named scheme does not connect")
 }
 
-func (namedScheme) Complete(context.Context, core.CompleteInput) (core.Material, core.Captured, error) {
-	return core.Material{}, core.Captured{}, errors.New("a named scheme does not connect")
+func (namedScheme) Complete(context.Context, core.CompleteInput) (core.StoredCredentials, core.AccountInfo, error) {
+	return core.StoredCredentials{}, core.AccountInfo{}, errors.New("a named scheme does not connect")
 }
 
-func (namedScheme) Mint(context.Context, core.Material, core.Profile) (core.Credential, core.Material, error) {
-	return core.Credential{}, core.Material{}, errors.New("a named scheme does not connect")
+func (namedScheme) Retrieve(context.Context, core.StoredCredentials, core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+	return core.AccessCredential{}, core.StoredCredentials{}, errors.New("a named scheme does not connect")
 }
 
-func (namedScheme) Wrap(base http.RoundTripper, _ core.Credential) http.RoundTripper { return base }
+func (namedScheme) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return base
+}
 
 func (namedScheme) Classify(*http.Response, []byte, error) core.Outcome { return core.Outcome{} }
 
-func (namedScheme) Revoke(context.Context, core.Material, core.Profile) error { return nil }
+func (namedScheme) Revoke(context.Context, core.StoredCredentials, core.ResolvedManifest) error {
+	return nil
+}

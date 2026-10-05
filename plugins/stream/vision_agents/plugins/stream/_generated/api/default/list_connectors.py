@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.connector_definition_page import ConnectorDefinitionPage
+from ...models.connector_page import ConnectorPage
 from ...models.error import Error
 from ...types import UNSET, Response, Unset
 
@@ -38,9 +38,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ConnectorDefinitionPage | Error | None:
+) -> ConnectorPage | Error | None:
     if response.status_code == 200:
-        response_200 = ConnectorDefinitionPage.from_dict(response.json())
+        response_200 = ConnectorPage.from_dict(response.json())
 
         return response_200
 
@@ -72,7 +72,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ConnectorDefinitionPage | Error]:
+) -> Response[ConnectorPage | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -87,7 +87,7 @@ def sync_detailed(
     q: str | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Response[ConnectorDefinitionPage | Error]:
+) -> Response[ConnectorPage | Error]:
     """List or search connectors
 
      The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones
@@ -106,7 +106,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorDefinitionPage | Error]
+        Response[ConnectorPage | Error]
     """
 
     kwargs = _get_kwargs(
@@ -128,7 +128,7 @@ def sync(
     q: str | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> ConnectorDefinitionPage | Error | None:
+) -> ConnectorPage | Error | None:
     """List or search connectors
 
      The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones
@@ -147,7 +147,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorDefinitionPage | Error
+        ConnectorPage | Error
     """
 
     return sync_detailed(
@@ -164,7 +164,7 @@ async def asyncio_detailed(
     q: str | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Response[ConnectorDefinitionPage | Error]:
+) -> Response[ConnectorPage | Error]:
     """List or search connectors
 
      The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones
@@ -183,7 +183,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorDefinitionPage | Error]
+        Response[ConnectorPage | Error]
     """
 
     kwargs = _get_kwargs(
@@ -203,7 +203,7 @@ async def asyncio(
     q: str | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> ConnectorDefinitionPage | Error | None:
+) -> ConnectorPage | Error | None:
     """List or search connectors
 
      The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones
@@ -222,7 +222,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorDefinitionPage | Error
+        ConnectorPage | Error
     """
 
     return (

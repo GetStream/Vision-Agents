@@ -46,7 +46,7 @@ rate_limit:
   # Per app and store, bucket 40, leak 2 per second (Plus: 400 and 20): [limits]; row 4.
   per: tenant
   bucket: 40
-  leak: 2
+  leak_per_second: 2
 sources:
   - kind: http
     endpoint: api_base
