@@ -148,6 +148,41 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 
 // declareSettings carries what agent.yaml declared onto the sync request. Only what the file
 // names is sent, so the router leaves whatever is already stored for the rest.
+// pluginEntries are the plugins a declaration names as the router takes them: an id alone
+// for one with nothing else said about it, or nothing for none.
+func pluginEntries(named []PluginSettings) *[]acceleration.PluginEntry {
+	if len(named) == 0 {
+		return nil
+	}
+	entries := make([]acceleration.PluginEntry, 0, len(named))
+	for _, plugin := range named {
+		var entry acceleration.PluginEntry
+		if !plugin.Readonly && len(plugin.Scopes) == 0 && len(plugin.Toolsets) == 0 && len(plugin.Tools) == 0 {
+			// A string always encodes.
+			_ = entry.FromPluginEntry0(plugin.Name)
+			entries = append(entries, entry)
+			continue
+		}
+		declared := acceleration.PluginWithOptions{Name: plugin.Name}
+		if plugin.Readonly {
+			declared.Readonly = &plugin.Readonly
+		}
+		if len(plugin.Scopes) > 0 {
+			declared.Scopes = &plugin.Scopes
+		}
+		if len(plugin.Toolsets) > 0 {
+			declared.Toolsets = &plugin.Toolsets
+		}
+		if len(plugin.Tools) > 0 {
+			declared.Tools = &plugin.Tools
+		}
+		// Neither does a struct of strings and a bool.
+		_ = entry.FromPluginWithOptions(declared)
+		entries = append(entries, entry)
+	}
+	return &entries
+}
+
 func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	if settings.Mode != "" {
 		mode := acceleration.AgentMode(settings.Mode)
@@ -191,12 +226,8 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 			Cpu: &cpu, MemoryGb: &memory, DiskGb: &disk,
 		}
 	}
-	if len(settings.Plugins) > 0 {
-		body.Plugins = &settings.Plugins
-	}
-	if len(settings.UserPlugins) > 0 {
-		body.UserPlugins = &settings.UserPlugins
-	}
+	body.AgentPlugins = pluginEntries(settings.AgentPlugins)
+	body.UserPlugins = pluginEntries(settings.UserPlugins)
 	if len(settings.PluginEvents) > 0 {
 		events := make([]acceleration.PluginEvent, 0, len(settings.PluginEvents))
 		for _, event := range settings.PluginEvents {
@@ -212,26 +243,6 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		}
 		body.PluginEvents = &events
 	}
-	if len(settings.PluginOptions) > 0 {
-		options := make([]acceleration.PluginOptions, 0, len(settings.PluginOptions))
-		for _, option := range settings.PluginOptions {
-			declared := acceleration.PluginOptions{Plugin: option.Plugin}
-			if option.Readonly {
-				declared.Readonly = &option.Readonly
-			}
-			if len(option.Scopes) > 0 {
-				declared.Scopes = &option.Scopes
-			}
-			if len(option.Toolsets) > 0 {
-				declared.Toolsets = &option.Toolsets
-			}
-			if len(option.Tools) > 0 {
-				declared.Tools = &option.Tools
-			}
-			options = append(options, declared)
-		}
-		body.PluginOptions = &options
-	}
 	if len(settings.MCPServers) > 0 {
 		servers := make([]acceleration.McpServer, 0, len(settings.MCPServers))
 		for _, server := range settings.MCPServers {
@@ -239,9 +250,27 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 			if len(server.Tools) > 0 {
 				declared.Tools = &server.Tools
 			}
+			if len(server.Scopes) > 0 {
+				declared.Scopes = &server.Scopes
+			}
+			if server.User {
+				declared.User = &server.User
+			}
 			servers = append(servers, declared)
 		}
 		body.McpServers = &servers
+	}
+	if settings.Channels != nil {
+		declared := acceleration.AgentChannels{
+			Whatsapp: channelLine(settings.Channels.WhatsApp),
+			Sms:      channelLine(settings.Channels.SMS),
+			Imessage: channelLine(settings.Channels.IMessage),
+		}
+		if settings.Channels.Identity != "" {
+			identity := acceleration.ChannelIdentity(settings.Channels.Identity)
+			declared.Identity = &identity
+		}
+		body.Channels = &declared
 	}
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
@@ -495,4 +524,12 @@ func setString(field **string, value string) {
 	if value != "" {
 		*field = &value
 	}
+}
+
+// channelLine is one declared channel for the wire, or nothing when it names no number.
+func channelLine(line *ChannelSettings) *acceleration.ChannelLineRequest {
+	if line == nil || line.Number == "" {
+		return nil
+	}
+	return &acceleration.ChannelLineRequest{Number: line.Number}
 }

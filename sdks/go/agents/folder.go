@@ -162,23 +162,25 @@ type Settings struct {
 	Sandbox     string `yaml:"sandbox"`
 	// SandboxOptions is how the sandbox is built and how long code may run in it.
 	SandboxOptions *SandboxSettings `yaml:"sandbox_options"`
-	Plugins        []string         `yaml:"plugins"`
+	// AgentPlugins are the catalog plugins the agent reaches with the app's own login.
+	AgentPlugins []PluginSettings `yaml:"agent_plugins"`
 	// UserPlugins are the plugins each end user connects with their own account, in the
 	// conversation, rather than the app once for everybody.
-	UserPlugins []string `yaml:"user_plugins"`
+	UserPlugins []PluginSettings `yaml:"user_plugins"`
 	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
 	// a text conversation when it arrives.
 	PluginEvents []PluginEventSettings `yaml:"plugin_events"`
-	// PluginOptions change how the router reaches plugins the agent names, such as
-	// linear's read-only endpoint, and the scopes their logins ask for.
-	PluginOptions []PluginOptionsSettings `yaml:"plugin_options"`
 	// MCPServers are MCP servers outside the plugin catalog, which the router opens by
-	// their URL with no login.
+	// their URL, with a login when the server asks for one.
 	MCPServers []MCPServerSettings `yaml:"mcp_servers"`
-	Keyterms   []string            `yaml:"keyterms"`
-	Tags       map[string]string   `yaml:"tags"`
-	Video      *VideoSettings      `yaml:"video"`
-	Dispatch   *DispatchSettings   `yaml:"dispatch"`
+	// Channels are the lines the agent answers on besides its Stream Chat channel: a
+	// WhatsApp number, a number to text, an iMessage line. Each names a number the app
+	// connected on the router, which is where the provider's credentials live.
+	Channels *ChannelsSettings `yaml:"channels"`
+	Keyterms []string          `yaml:"keyterms"`
+	Tags     map[string]string `yaml:"tags"`
+	Video    *VideoSettings    `yaml:"video"`
+	Dispatch *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -194,9 +196,10 @@ type PluginEventSettings struct {
 	Instructions string `yaml:"instructions"`
 }
 
-// PluginOptionsSettings is how the agent reaches one catalog plugin it names.
-type PluginOptionsSettings struct {
-	Plugin string `yaml:"plugin"`
+// PluginSettings is one catalog plugin the agent names, and how it reaches it. agent.yaml
+// gives it as the plugin's id alone, or as a mapping naming it with the rest.
+type PluginSettings struct {
+	Name string `yaml:"name"`
 	// Readonly reaches the plugin's read-only endpoint, for a vendor that runs one.
 	Readonly bool `yaml:"readonly"`
 	// Scopes are asked for at consent in place of the catalog's.
@@ -207,6 +210,23 @@ type PluginOptionsSettings struct {
 	Tools []string `yaml:"tools"`
 }
 
+func (p *PluginSettings) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		*p = PluginSettings{Name: node.Value}
+		return nil
+	}
+	// A node decodes without its decoder's KnownFields, so the mapping is read again by
+	// one that refuses a key it does not know.
+	raw, err := yaml.Marshal(node)
+	if err != nil {
+		return err
+	}
+	type plain PluginSettings
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	return decoder.Decode((*plain)(p))
+}
+
 // MCPServerSettings is an MCP server outside the plugin catalog. Name prefixes its tools,
 // as <name>__<tool>.
 type MCPServerSettings struct {
@@ -214,6 +234,27 @@ type MCPServerSettings struct {
 	URL  string `yaml:"url"`
 	// Tools offer only the server's tools matching these names or path.Match patterns.
 	Tools []string `yaml:"tools"`
+	// Scopes are what the server's OAuth login asks for. Empty asks for what the server
+	// advertises. Without User, the app logs in once, on the dashboard.
+	Scopes []string `yaml:"scopes"`
+	// User has each end user log in with their own account, in the conversation.
+	User bool `yaml:"user"`
+}
+
+// ChannelsSettings are the lines an agent answers on outside Stream Chat.
+type ChannelsSettings struct {
+	WhatsApp *ChannelSettings `yaml:"whatsapp"`
+	SMS      *ChannelSettings `yaml:"sms"`
+	IMessage *ChannelSettings `yaml:"imessage"`
+	// Identity is how a sender becomes an end user: phone, the default, makes each number
+	// an end user of its own; link answers only a number somebody tied to an end user with
+	// a code.
+	Identity string `yaml:"identity"`
+}
+
+// ChannelSettings is one line the agent is reachable on.
+type ChannelSettings struct {
+	Number string `yaml:"number"`
 }
 
 // VideoSettings is which video a skill that captures it sees.

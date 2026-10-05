@@ -112,13 +112,43 @@ class MCPServerSettings:
     tools: list[str] = field(default_factory=list)
     """Offer only the tools matching these names or patterns such as `search_*`.
     Empty offers every tool."""
+    scopes: list[str] = field(default_factory=list)
+    """What its OAuth login asks for. Empty asks for what the server advertises.
+    Without `user`, the app logs in once, on the dashboard."""
+    user: bool = False
+    """Each end user logs in with their own account, in the chat."""
 
 
 @dataclass
-class PluginOptionsSettings:
-    """How the router reaches one catalog plugin the agent names."""
+class ChannelSettings:
+    """One line the agent is reachable on."""
 
-    plugin: str
+    number: str
+    """The number people write to, in E.164. It must be a line the app connected."""
+
+
+@dataclass
+class ChannelsSettings:
+    """The lines the agent answers on outside its Stream Chat channel."""
+
+    whatsapp: ChannelSettings | None = None
+    sms: ChannelSettings | None = None
+    imessage: ChannelSettings | None = None
+    identity: str = ""
+    """How a sender becomes an end user: `phone`, the default, makes each number an end
+    user of its own; `link` answers only a number somebody tied to an end user with a
+    code."""
+
+
+@dataclass
+class PluginSettings:
+    """One catalog plugin the agent names, and how the router reaches it.
+
+    `agent.yaml` gives it as the plugin's id alone, or as a mapping naming it with the
+    rest.
+    """
+
+    name: str
     readonly: bool = False
     """Reach the plugin's read-only endpoint, for a vendor that runs one."""
     scopes: list[str] = field(default_factory=list)
@@ -158,15 +188,16 @@ class Settings:
     sandbox: str = ""
     sandbox_options: SandboxSettings | None = None
     """How the sandbox is built. None when the file says nothing about it."""
-    plugins: list[str] = field(default_factory=list)
+    agent_plugins: list[PluginSettings] = field(default_factory=list)
     """Catalog MCP servers the app connects once, on the dashboard, for every session."""
-    user_plugins: list[str] = field(default_factory=list)
+    user_plugins: list[PluginSettings] = field(default_factory=list)
     """Catalog MCP servers each end user connects with their own account, in the chat."""
-    plugin_options: list[PluginOptionsSettings] = field(default_factory=list)
-    """How those plugins are reached, such as linear's read-only endpoint, and the
-    scopes their logins ask for."""
     mcp_servers: list[MCPServerSettings] = field(default_factory=list)
-    """MCP servers outside the catalog, opened by the router with no login."""
+    """MCP servers outside the catalog, opened by the router by their URL, with a login
+    when the server asks for one."""
+    channels: ChannelsSettings | None = None
+    """Lines the agent answers on besides Stream Chat. The provider's credentials live on
+    the router, connected once for the app; this only names the numbers."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -405,14 +436,14 @@ def _declare(path: Path) -> Settings:
             settings.sandbox = _word(value)
         elif field_name == "sandbox_options":
             settings.sandbox_options = _sandbox_options(path, value)
-        elif field_name == "plugins":
-            settings.plugins = _terms(path, field_name, value)
+        elif field_name == "agent_plugins":
+            settings.agent_plugins = _plugins(path, field_name, value)
         elif field_name == "user_plugins":
-            settings.user_plugins = _terms(path, field_name, value)
-        elif field_name == "plugin_options":
-            settings.plugin_options = _plugin_options(path, value)
+            settings.user_plugins = _plugins(path, field_name, value)
         elif field_name == "mcp_servers":
             settings.mcp_servers = _mcp_servers(path, value)
+        elif field_name == "channels":
+            settings.channels = _channels(path, value)
         elif field_name == "keyterms":
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":
@@ -484,35 +515,40 @@ def _dispatch(path: Path, value: object) -> dict[str, str]:
     return {str(key): _word(item) for key, item in value.items() if _word(item)}
 
 
-def _plugin_options(path: Path, value: object) -> list[PluginOptionsSettings]:
+def _plugins(path: Path, field_name: str, value: object) -> list[PluginSettings]:
+    """The catalog plugins one list names, each an id or a mapping naming it."""
     if value is None:
         return []
     if not isinstance(value, list):
-        raise ValueError(f"{path} should give plugin_options as a list")
-    options = []
+        raise ValueError(f"{path} should give {field_name} as a list")
+    named = []
     for item in value:
+        if isinstance(item, str):
+            if item.strip():
+                named.append(PluginSettings(name=item.strip()))
+            continue
         if not isinstance(item, dict):
-            raise ValueError(f"{path} should give each of plugin_options as a mapping")
-        extra = set(item) - {"plugin", "readonly", "scopes", "toolsets", "tools"}
-        if extra:
             raise ValueError(
-                f"{path} unknown plugin_options setting: {sorted(extra)[0]}"
+                f"{path} should give each of {field_name} as a plugin id or a mapping"
             )
+        extra = set(item) - {"name", "readonly", "scopes", "toolsets", "tools"}
+        if extra:
+            raise ValueError(f"{path} unknown {field_name} setting: {sorted(extra)[0]}")
         readonly = item.get("readonly", False)
         if not isinstance(readonly, bool):
             raise ValueError(
-                f"{path} should give plugin_options readonly as true or false"
+                f"{path} should give {field_name} readonly as true or false"
             )
-        options.append(
-            PluginOptionsSettings(
-                plugin=_word(item.get("plugin")),
+        named.append(
+            PluginSettings(
+                name=_word(item.get("name")),
                 readonly=readonly,
-                scopes=_terms(path, "plugin_options.scopes", item.get("scopes")),
-                toolsets=_terms(path, "plugin_options.toolsets", item.get("toolsets")),
-                tools=_terms(path, "plugin_options.tools", item.get("tools")),
+                scopes=_terms(path, f"{field_name}.scopes", item.get("scopes")),
+                toolsets=_terms(path, f"{field_name}.toolsets", item.get("toolsets")),
+                tools=_terms(path, f"{field_name}.tools", item.get("tools")),
             )
         )
-    return options
+    return named
 
 
 def _mcp_servers(path: Path, value: object) -> list[MCPServerSettings]:
@@ -524,17 +560,55 @@ def _mcp_servers(path: Path, value: object) -> list[MCPServerSettings]:
     for item in value:
         if not isinstance(item, dict):
             raise ValueError(f"{path} should give each of mcp_servers as a mapping")
-        extra = set(item) - {"name", "url", "tools"}
+        extra = set(item) - {"name", "url", "tools", "scopes", "user"}
         if extra:
             raise ValueError(f"{path} unknown mcp_servers setting: {sorted(extra)[0]}")
+        user = item.get("user", False)
+        if not isinstance(user, bool):
+            raise ValueError(f"{path} should give mcp_servers user as true or false")
         servers.append(
             MCPServerSettings(
                 name=_word(item.get("name")),
                 url=_word(item.get("url")),
                 tools=_terms(path, "mcp_servers.tools", item.get("tools")),
+                scopes=_terms(path, "mcp_servers.scopes", item.get("scopes")),
+                user=user,
             )
         )
     return servers
+
+
+def _channels(path: Path, value: object) -> ChannelsSettings | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give channels as a mapping")
+    extra = set(value) - {"whatsapp", "sms", "imessage", "identity"}
+    if extra:
+        raise ValueError(f"{path} unknown channels setting: {sorted(extra)[0]}")
+    identity = _word(value.get("identity"))
+    if identity and identity not in {"phone", "link"}:
+        raise ValueError(f"{path} channels.identity is phone or link, not {identity}")
+    return ChannelsSettings(
+        whatsapp=_channel(path, "whatsapp", value.get("whatsapp")),
+        sms=_channel(path, "sms", value.get("sms")),
+        imessage=_channel(path, "imessage", value.get("imessage")),
+        identity=identity,
+    )
+
+
+def _channel(path: Path, kind: str, value: object) -> ChannelSettings | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give channels.{kind} as a mapping")
+    extra = set(value) - {"number"}
+    if extra:
+        raise ValueError(f"{path} unknown channels.{kind} setting: {sorted(extra)[0]}")
+    number = _word(value.get("number"))
+    if not number:
+        raise ValueError(f"{path} channels.{kind} needs a number")
+    return ChannelSettings(number=number)
 
 
 def _sandbox_options(path: Path, value: object) -> SandboxSettings:

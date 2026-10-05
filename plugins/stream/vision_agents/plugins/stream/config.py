@@ -16,17 +16,20 @@ from ._generated.api.default import (
     update_skill,
 )
 from ._generated.models import (
+    AgentChannels,
     AgentConfig,
     AgentConfigRequest,
     AgentDispatch,
     AgentMode,
+    ChannelIdentity,
+    ChannelLineRequest,
     DispatchSetting,
     Error,
     Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
     McpServer,
-    PluginOptions,
+    PluginWithOptions,
     SandboxOptions,
     SimulationDeclaration,
     SimulationDeclarationMode,
@@ -41,6 +44,8 @@ from ._generated.models import Sandbox as SandboxProvider
 from .folder import (
     AGENT_STAMP,
     Folder,
+    MCPServerSettings,
+    PluginSettings,
     Settings,
     Simulation,
     find,
@@ -352,26 +357,29 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.search = settings.search
     if settings.greeting:
         body.greeting = settings.greeting
-    if settings.plugins:
-        body.plugins = settings.plugins
+    if settings.agent_plugins:
+        body.agent_plugins = [
+            _plugin_entry(plugin) for plugin in settings.agent_plugins
+        ]
     if settings.user_plugins:
-        body.user_plugins = settings.user_plugins
-    if settings.plugin_options:
-        body.plugin_options = [
-            PluginOptions(
-                plugin=option.plugin,
-                readonly=option.readonly,
-                scopes=option.scopes,
-                toolsets=option.toolsets,
-                tools=option.tools,
-            )
-            for option in settings.plugin_options
-        ]
+        body.user_plugins = [_plugin_entry(plugin) for plugin in settings.user_plugins]
     if settings.mcp_servers:
-        body.mcp_servers = [
-            McpServer(name=server.name, url=server.url, tools=server.tools)
-            for server in settings.mcp_servers
-        ]
+        body.mcp_servers = [_mcp_server(server) for server in settings.mcp_servers]
+    if settings.channels is not None:
+        declared = AgentChannels()
+        if settings.channels.whatsapp is not None:
+            declared.whatsapp = ChannelLineRequest(
+                number=settings.channels.whatsapp.number
+            )
+        if settings.channels.sms is not None:
+            declared.sms = ChannelLineRequest(number=settings.channels.sms.number)
+        if settings.channels.imessage is not None:
+            declared.imessage = ChannelLineRequest(
+                number=settings.channels.imessage.number
+            )
+        if settings.channels.identity:
+            declared.identity = ChannelIdentity(settings.channels.identity)
+        body.channels = declared
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:
@@ -390,6 +398,31 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         tags = SyncAgentRequestTags()
         tags.additional_properties = dict(settings.tags)
         body.tags = tags
+
+
+def _plugin_entry(plugin: PluginSettings) -> PluginWithOptions | str:
+    """A plugin as the router takes it: its id alone when nothing else is said about it."""
+    if not (plugin.readonly or plugin.scopes or plugin.toolsets or plugin.tools):
+        return plugin.name
+    declared = PluginWithOptions(name=plugin.name)
+    if plugin.readonly:
+        declared.readonly = True
+    if plugin.scopes:
+        declared.scopes = plugin.scopes
+    if plugin.toolsets:
+        declared.toolsets = plugin.toolsets
+    if plugin.tools:
+        declared.tools = plugin.tools
+    return declared
+
+
+def _mcp_server(server: MCPServerSettings) -> McpServer:
+    declared = McpServer(name=server.name, url=server.url, tools=server.tools)
+    if server.scopes:
+        declared.scopes = server.scopes
+    if server.user:
+        declared.user = True
+    return declared
 
 
 def _simulation(simulation: Simulation) -> SimulationDeclaration:
