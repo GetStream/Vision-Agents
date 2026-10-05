@@ -2,6 +2,19 @@
 
 The contracts every connector adapter implements: `Scheme`, `Source`, `Runtime`, `Backend`, `Resolver`, `Verifier`, `Hook`, the `Registry`, and the value types they pass, plus the provider manifest model (`manifest.go`): parsing, validation, endpoint templates, and the capture and identity rules, all pure functions. No adapter implementation lives here. `doc.go` states the rule the rest of this file expands on: adapters import `core`, `core` imports no adapter.
 
+## Terms
+
+One word, one meaning, in code, docs and API alike.
+
+| Term | What it is | In code |
+| --- | --- | --- |
+| connector | One provider the router can reach, named by an id such as `slack` or `custom_crm` | API schema `Connector` (`internal/api/connectors.go`), paths `/v1/agents/connectors` |
+| definition | One revision of a connector's manifest. A connector has one or more; a connection pins one | `store.ConnectorDefinition`, table `connector_definitions` |
+| manifest | The content of a definition as data: endpoints, schemes, scopes, capture and identity rules, sources. The router reads all of it; the API shows only the part a caller chooses between | `Manifest` (`manifest.go`) |
+| connection | One account at one connector, owned by the app or by one user, with its sealed grant | `store.ConnectorConnection`, API `ConnectorConnection`, `Connection` (`source.go`) |
+| grant | The part of a connection that changes under the lock: material, revision, status | `Grant` (`resolver.go`) |
+| binding | What one agent config may use from one connector: which connection, and the exact tool grants | `Binding`, `ToolGrant` (`source.go`), agent config `connectors[]` |
+
 ## Rules
 
 - **Core imports no adapter.** Schemes, sources, backends, signals and providers live in their own packages under `internal/connectors/` and import `core`. `TestCoreImportsNoAdapter` fails on any import under `internal/connectors/` outside `core`.
