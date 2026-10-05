@@ -661,11 +661,6 @@ class TestStreamEdgeIntegration:
             while True:
                 await asyncio.wait_for(track.recv(), timeout=10)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="stream-py: a video publish after stop() fails in the SDK "
-        "(MediaError: no unused vp9 publish option, or RtcError: participant not found)",
-    )
     async def test_republished_video_gives_frames(
         self,
         edge: StreamEdge,
