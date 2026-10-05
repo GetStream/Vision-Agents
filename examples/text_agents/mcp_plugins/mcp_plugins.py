@@ -53,7 +53,7 @@ conversation in Chat.
 USER_ID = os.environ.get("MCP_PLUGINS_USER_ID", "on-call-engineer")
 
 QUESTION = """
-Which unresolved Sentry issues are newest, and when am I free today to look at them?
+What are my open Linear issues?
 """
 
 

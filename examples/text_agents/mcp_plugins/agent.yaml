@@ -6,11 +6,13 @@ llm: llm-fast
 plugins:
   - sentry
   - github
-  - linear
   - hubspot
   - salesforce
 # Each person's own: the agent asks for one in the chat the first time it needs it.
+# Linear, Calendly and Cal.com register their own OAuth clients, so they need nothing
+# configured on the router: ask about an issue and the login works.
 user_plugins:
+  - linear
   - google_calendar
   - google_drive
   - google_docs
