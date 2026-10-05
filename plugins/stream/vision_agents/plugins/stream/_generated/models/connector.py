@@ -15,11 +15,11 @@ if TYPE_CHECKING:
     from ..models.connector_input import ConnectorInput
 
 
-T = TypeVar("T", bound="ConnectorDefinition")
+T = TypeVar("T", bound="Connector")
 
 
 @_attrs_define
-class ConnectorDefinition:
+class Connector:
     """A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between
     is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
 
@@ -190,7 +190,7 @@ class ConnectorDefinition:
 
         description = d.pop("description", UNSET)
 
-        connector_definition = cls(
+        connector = cls(
             client=client,
             created_at=created_at,
             custom=custom,
@@ -204,8 +204,8 @@ class ConnectorDefinition:
             description=description,
         )
 
-        connector_definition.additional_properties = d
-        return connector_definition
+        connector.additional_properties = d
+        return connector
 
     @property
     def additional_keys(self) -> list[str]:

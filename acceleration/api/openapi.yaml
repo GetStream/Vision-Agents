@@ -1514,6 +1514,63 @@ components:
         - kind
         - number
       type: object
+    Connector:
+      description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
+      properties:
+        category:
+          type: string
+        client:
+          $ref: '#/components/schemas/ConnectorClient'
+        created_at:
+          description: When this revision was stored.
+          format: date-time
+          readOnly: true
+          type: string
+        custom:
+          description: The app's own definition rather than a built-in.
+          readOnly: true
+          type: boolean
+        description:
+          type: string
+        id:
+          description: Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does.
+          type: string
+        inputs:
+          description: What a connection is created with, such as a region or a shop.
+          items:
+            $ref: '#/components/schemas/ConnectorInput'
+          nullable: true
+          type: array
+        name:
+          type: string
+        revision:
+          description: The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
+          format: int64
+          readOnly: true
+          type: integer
+        schemes:
+          description: How a connection may authenticate, such as oauth2_code.
+          items:
+            type: string
+          nullable: true
+          type: array
+        scopes:
+          description: The scopes a consent asks for.
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - id
+        - revision
+        - name
+        - custom
+        - schemes
+        - inputs
+        - scopes
+        - client
+        - created_at
+      type: object
     ConnectorClient:
       additionalProperties: false
       description: Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
@@ -1697,79 +1754,6 @@ components:
         - needs_reauthorization
         - disconnected
       type: string
-    ConnectorDefinition:
-      description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
-      properties:
-        category:
-          type: string
-        client:
-          $ref: '#/components/schemas/ConnectorClient'
-        created_at:
-          description: When this revision was stored.
-          format: date-time
-          readOnly: true
-          type: string
-        custom:
-          description: The app's own definition rather than a built-in.
-          readOnly: true
-          type: boolean
-        description:
-          type: string
-        id:
-          description: Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does.
-          type: string
-        inputs:
-          description: What a connection is created with, such as a region or a shop.
-          items:
-            $ref: '#/components/schemas/ConnectorInput'
-          nullable: true
-          type: array
-        name:
-          type: string
-        revision:
-          description: The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
-          format: int64
-          readOnly: true
-          type: integer
-        schemes:
-          description: How a connection may authenticate, such as oauth2_code.
-          items:
-            type: string
-          nullable: true
-          type: array
-        scopes:
-          description: The scopes a consent asks for.
-          items:
-            type: string
-          nullable: true
-          type: array
-      required:
-        - id
-        - revision
-        - name
-        - custom
-        - schemes
-        - inputs
-        - scopes
-        - client
-        - created_at
-      type: object
-    ConnectorDefinitionPage:
-      properties:
-        has_more:
-          type: boolean
-        items:
-          items:
-            $ref: '#/components/schemas/ConnectorDefinition'
-          nullable: true
-          type: array
-        next_cursor:
-          description: Pass as cursor for the next page, with the same q. Absent on the last one.
-          type: string
-      required:
-        - items
-        - has_more
-      type: object
     ConnectorInput:
       properties:
         default:
@@ -1788,6 +1772,22 @@ components:
           type: string
       required:
         - name
+      type: object
+    ConnectorPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/Connector'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page, with the same q. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
       type: object
     ConnectorToolGrant:
       description: One tool a binding allows.
@@ -7863,7 +7863,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorDefinitionPage'
+                $ref: '#/components/schemas/ConnectorPage'
           description: A page of connectors
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -7895,7 +7895,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorDefinition'
+                $ref: '#/components/schemas/Connector'
           description: The connector as stored
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -7930,7 +7930,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorDefinition'
+                $ref: '#/components/schemas/Connector'
           description: The connector
         "400":
           $ref: '#/components/responses/BadRequest'

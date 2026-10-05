@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.connector_definition import ConnectorDefinition
+from ...models.connector import Connector
 from ...models.error import Error
 from ...types import Response
 
@@ -27,9 +27,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ConnectorDefinition | Error | None:
+) -> Connector | Error | None:
     if response.status_code == 200:
-        response_200 = ConnectorDefinition.from_dict(response.json())
+        response_200 = Connector.from_dict(response.json())
 
         return response_200
 
@@ -66,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ConnectorDefinition | Error]:
+) -> Response[Connector | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +79,7 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ConnectorDefinition | Error]:
+) -> Response[Connector | Error]:
     """Read a connector
 
      A built-in or one of the app's own, at its newest revision. Another app's custom connector is not
@@ -95,7 +95,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorDefinition | Error]
+        Response[Connector | Error]
     """
 
     kwargs = _get_kwargs(
@@ -113,7 +113,7 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ConnectorDefinition | Error | None:
+) -> Connector | Error | None:
     """Read a connector
 
      A built-in or one of the app's own, at its newest revision. Another app's custom connector is not
@@ -129,7 +129,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorDefinition | Error
+        Connector | Error
     """
 
     return sync_detailed(
@@ -142,7 +142,7 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ConnectorDefinition | Error]:
+) -> Response[Connector | Error]:
     """Read a connector
 
      A built-in or one of the app's own, at its newest revision. Another app's custom connector is not
@@ -158,7 +158,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorDefinition | Error]
+        Response[Connector | Error]
     """
 
     kwargs = _get_kwargs(
@@ -174,7 +174,7 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ConnectorDefinition | Error | None:
+) -> Connector | Error | None:
     """Read a connector
 
      A built-in or one of the app's own, at its newest revision. Another app's custom connector is not
@@ -190,7 +190,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorDefinition | Error
+        Connector | Error
     """
 
     return (

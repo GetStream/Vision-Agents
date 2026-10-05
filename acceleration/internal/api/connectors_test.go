@@ -247,7 +247,7 @@ func (s *ConnectorsSuite) TestAnotherAppsCustomConnectorIsNeitherListedNorRead()
 	s.create(s.customConnector(id))
 	stranger := s.data.backendOfAnotherApp()
 
-	var theirs ConnectorDefinitionPage
+	var theirs ConnectorPage
 	s.Require().Equal(http.StatusOK, stranger.do(http.MethodGet, "/v1/agents/connectors?limit=200", nil, &theirs))
 	s.NotContains(connectorIDs(theirs.Items), id)
 	s.Contains(connectorIDs(theirs.Items), "slack", "the built-ins are everybody's")
@@ -262,7 +262,7 @@ func (s *ConnectorsSuite) TestAnotherAppMayUseTheSameCustomIdWithoutTouchingThis
 
 	theirs := s.customConnector(id)
 	theirs["name"] = "Theirs"
-	var created ConnectorDefinition
+	var created Connector
 	s.Require().Equal(http.StatusOK,
 		s.data.backendOfAnotherApp().do(http.MethodPost, "/v1/agents/connectors", theirs, &created))
 	s.Equal(1, created.Revision)
@@ -279,7 +279,7 @@ func (s *ConnectorsSuite) TestTheListIsTheBuiltInsThenTheAppsOwnEachById() {
 	listed := s.list("")
 	s.False(listed.HasMore)
 	s.Nil(listed.NextCursor)
-	custom := slices.IndexFunc(listed.Items, func(d ConnectorDefinition) bool { return d.Custom })
+	custom := slices.IndexFunc(listed.Items, func(d Connector) bool { return d.Custom })
 	s.Require().Positive(custom, "the built-ins come first")
 	builtIns := connectorIDs(listed.Items[:custom])
 	s.True(slices.IsSorted(builtIns), "%v", builtIns)
@@ -298,7 +298,7 @@ func (s *ConnectorsSuite) TestPagingWalksTheWholeListWithoutRepeatingOrSkipping(
 	cursor := ""
 	for pages := 0; ; pages++ {
 		s.Require().Less(pages, len(whole), "paging does not end")
-		var listed ConnectorDefinitionPage
+		var listed ConnectorPage
 		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 			"/v1/agents/connectors?limit=2&cursor="+url.QueryEscape(cursor), nil, &listed))
 		s.LessOrEqual(len(listed.Items), 2)
@@ -393,27 +393,27 @@ func (s *ConnectorsSuite) customID() string { return "custom_t" + s.suffix() }
 // suffix is a fresh UUID written as an id may have it.
 func (s *ConnectorsSuite) suffix() string { return strings.ReplaceAll(s.utils.uuid(), "-", "") }
 
-func (s *ConnectorsSuite) create(body map[string]any) ConnectorDefinition {
-	var created ConnectorDefinition
+func (s *ConnectorsSuite) create(body map[string]any) Connector {
+	var created Connector
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connectors", body, &created))
 	return created
 }
 
-func (s *ConnectorsSuite) get(id string) ConnectorDefinition {
-	var read ConnectorDefinition
+func (s *ConnectorsSuite) get(id string) Connector {
+	var read Connector
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/"+id, nil, &read))
 	return read
 }
 
 // list is one page of everything, which fits while the test's app has a few of its own.
-func (s *ConnectorsSuite) list(q string) ConnectorDefinitionPage {
-	var listed ConnectorDefinitionPage
+func (s *ConnectorsSuite) list(q string) ConnectorPage {
+	var listed ConnectorPage
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 		"/v1/agents/connectors?limit=200&q="+url.QueryEscape(q), nil, &listed))
 	return listed
 }
 
-func connectorIDs(definitions []ConnectorDefinition) []string {
+func connectorIDs(definitions []Connector) []string {
 	ids := make([]string, 0, len(definitions))
 	for _, definition := range definitions {
 		ids = append(ids, definition.ID)

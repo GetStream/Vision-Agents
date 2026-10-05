@@ -80,6 +80,7 @@ from .classify_result_answers import ClassifyResultAnswers
 from .classify_usage import ClassifyUsage
 from .command_receipt import CommandReceipt
 from .connect_channel_request import ConnectChannelRequest
+from .connector import Connector
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
@@ -93,9 +94,8 @@ from .connector_connection_page import ConnectorConnectionPage
 from .connector_connection_request import ConnectorConnectionRequest
 from .connector_connection_request_inputs import ConnectorConnectionRequestInputs
 from .connector_connection_status import ConnectorConnectionStatus
-from .connector_definition import ConnectorDefinition
-from .connector_definition_page import ConnectorDefinitionPage
 from .connector_input import ConnectorInput
+from .connector_page import ConnectorPage
 from .connector_tool_grant import ConnectorToolGrant
 from .contact import Contact
 from .contact_state import ContactState
@@ -419,6 +419,7 @@ __all__ = (
     "ClassifyUsage",
     "CommandReceipt",
     "ConnectChannelRequest",
+    "Connector",
     "ConnectorClient",
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",
@@ -432,9 +433,8 @@ __all__ = (
     "ConnectorConnectionRequest",
     "ConnectorConnectionRequestInputs",
     "ConnectorConnectionStatus",
-    "ConnectorDefinition",
-    "ConnectorDefinitionPage",
     "ConnectorInput",
+    "ConnectorPage",
     "ConnectorToolGrant",
     "Contact",
     "ContactState",

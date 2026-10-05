@@ -3590,6 +3590,33 @@ export type components = {
             /** @description What authenticates a send: a Meta access token, a Telnyx API key, a Linq API key. */
             readonly token?: string;
         };
+        /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
+        readonly Connector: {
+            readonly category?: string;
+            readonly client: components["schemas"]["ConnectorClient"];
+            /**
+             * Format: date-time
+             * @description When this revision was stored.
+             */
+            readonly created_at: string;
+            /** @description The app's own definition rather than a built-in. */
+            readonly custom: boolean;
+            readonly description?: string;
+            /** @description Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does. */
+            readonly id: string;
+            /** @description What a connection is created with, such as a region or a shop. */
+            readonly inputs: readonly components["schemas"]["ConnectorInput"][] | null;
+            readonly name: string;
+            /**
+             * Format: int64
+             * @description The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
+             */
+            readonly revision: number;
+            /** @description How a connection may authenticate, such as oauth2_code. */
+            readonly schemes: readonly string[] | null;
+            /** @description The scopes a consent asks for. */
+            readonly scopes: readonly string[] | null;
+        };
         /** @description Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint. */
         readonly ConnectorClient: {
             /**
@@ -3687,39 +3714,6 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectorConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
-        /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
-        readonly ConnectorDefinition: {
-            readonly category?: string;
-            readonly client: components["schemas"]["ConnectorClient"];
-            /**
-             * Format: date-time
-             * @description When this revision was stored.
-             */
-            readonly created_at: string;
-            /** @description The app's own definition rather than a built-in. */
-            readonly custom: boolean;
-            readonly description?: string;
-            /** @description Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does. */
-            readonly id: string;
-            /** @description What a connection is created with, such as a region or a shop. */
-            readonly inputs: readonly components["schemas"]["ConnectorInput"][] | null;
-            readonly name: string;
-            /**
-             * Format: int64
-             * @description The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
-             */
-            readonly revision: number;
-            /** @description How a connection may authenticate, such as oauth2_code. */
-            readonly schemes: readonly string[] | null;
-            /** @description The scopes a consent asks for. */
-            readonly scopes: readonly string[] | null;
-        };
-        readonly ConnectorDefinitionPage: {
-            readonly has_more: boolean;
-            readonly items: readonly components["schemas"]["ConnectorDefinition"][] | null;
-            /** @description Pass as cursor for the next page, with the same q. Absent on the last one. */
-            readonly next_cursor?: string;
-        };
         readonly ConnectorInput: {
             /** @description Used when the connection gives no value. An input without one is required. */
             readonly default?: string;
@@ -3728,6 +3722,12 @@ export type components = {
             readonly name: string;
             /** @description A regular expression the whole value must match. */
             readonly pattern?: string;
+        };
+        readonly ConnectorPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Connector"][] | null;
+            /** @description Pass as cursor for the next page, with the same q. Absent on the last one. */
+            readonly next_cursor?: string;
         };
         /** @description One tool a binding allows. */
         readonly ConnectorToolGrant: {
@@ -7932,7 +7932,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorDefinitionPage"];
+                    readonly "application/json": components["schemas"]["ConnectorPage"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -7968,7 +7968,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorDefinition"];
+                    readonly "application/json": components["schemas"]["Connector"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -8003,7 +8003,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorDefinition"];
+                    readonly "application/json": components["schemas"]["Connector"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

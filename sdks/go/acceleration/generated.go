@@ -2822,6 +2822,37 @@ type ConnectChannelRequest struct {
 	Token *string `json:"token,omitempty"`
 }
 
+// Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
+type Connector struct {
+	Category *string `json:"category,omitempty"`
+
+	// Client Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
+	Client ConnectorClient `json:"client"`
+
+	// CreatedAt When this revision was stored.
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+
+	// Custom The app's own definition rather than a built-in.
+	Custom      *bool   `json:"custom,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// Id Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does.
+	Id string `json:"id"`
+
+	// Inputs What a connection is created with, such as a region or a shop.
+	Inputs *[]ConnectorInput `json:"inputs"`
+	Name   string            `json:"name"`
+
+	// Revision The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
+	Revision *int64 `json:"revision,omitempty"`
+
+	// Schemes How a connection may authenticate, such as oauth2_code.
+	Schemes *[]string `json:"schemes"`
+
+	// Scopes The scopes a consent asks for.
+	Scopes *[]string `json:"scopes"`
+}
+
 // ConnectorClient Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
 type ConnectorClient struct {
 	// Alg How a private_key_jwt assertion is signed, and set only for it.
@@ -2921,46 +2952,6 @@ type ConnectorConnectionRequest struct {
 // ConnectorConnectionStatus pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
 type ConnectorConnectionStatus string
 
-// ConnectorDefinition A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
-type ConnectorDefinition struct {
-	Category *string `json:"category,omitempty"`
-
-	// Client Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
-	Client ConnectorClient `json:"client"`
-
-	// CreatedAt When this revision was stored.
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-
-	// Custom The app's own definition rather than a built-in.
-	Custom      *bool   `json:"custom,omitempty"`
-	Description *string `json:"description,omitempty"`
-
-	// Id Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does.
-	Id string `json:"id"`
-
-	// Inputs What a connection is created with, such as a region or a shop.
-	Inputs *[]ConnectorInput `json:"inputs"`
-	Name   string            `json:"name"`
-
-	// Revision The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
-	Revision *int64 `json:"revision,omitempty"`
-
-	// Schemes How a connection may authenticate, such as oauth2_code.
-	Schemes *[]string `json:"schemes"`
-
-	// Scopes The scopes a consent asks for.
-	Scopes *[]string `json:"scopes"`
-}
-
-// ConnectorDefinitionPage defines model for ConnectorDefinitionPage.
-type ConnectorDefinitionPage struct {
-	HasMore bool                   `json:"has_more"`
-	Items   *[]ConnectorDefinition `json:"items"`
-
-	// NextCursor Pass as cursor for the next page, with the same q. Absent on the last one.
-	NextCursor *string `json:"next_cursor,omitempty"`
-}
-
 // ConnectorInput defines model for ConnectorInput.
 type ConnectorInput struct {
 	// Default Used when the connection gives no value. An input without one is required.
@@ -2972,6 +2963,15 @@ type ConnectorInput struct {
 
 	// Pattern A regular expression the whole value must match.
 	Pattern *string `json:"pattern,omitempty"`
+}
+
+// ConnectorPage defines model for ConnectorPage.
+type ConnectorPage struct {
+	HasMore bool         `json:"has_more"`
+	Items   *[]Connector `json:"items"`
+
+	// NextCursor Pass as cursor for the next page, with the same q. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ConnectorToolGrant One tool a binding allows.
@@ -24882,7 +24882,7 @@ type ListConnectorsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorDefinitionPage
+	JSON200 *ConnectorPage
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -24894,7 +24894,7 @@ type ListConnectorsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListConnectorsResponse) GetJSON200() *ConnectorDefinitionPage {
+func (r ListConnectorsResponse) GetJSON200() *ConnectorPage {
 	return r.JSON200
 }
 
@@ -24951,7 +24951,7 @@ type CreateConnectorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorDefinition
+	JSON200 *Connector
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -24963,7 +24963,7 @@ type CreateConnectorResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreateConnectorResponse) GetJSON200() *ConnectorDefinition {
+func (r CreateConnectorResponse) GetJSON200() *Connector {
 	return r.JSON200
 }
 
@@ -25020,7 +25020,7 @@ type GetConnectorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorDefinition
+	JSON200 *Connector
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -25034,7 +25034,7 @@ type GetConnectorResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetConnectorResponse) GetJSON200() *ConnectorDefinition {
+func (r GetConnectorResponse) GetJSON200() *Connector {
 	return r.JSON200
 }
 
@@ -39240,7 +39240,7 @@ func ParseListConnectorsResponse(rsp *http.Response) (*ListConnectorsResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorDefinitionPage
+		var dest ConnectorPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -39294,7 +39294,7 @@ func ParseCreateConnectorResponse(rsp *http.Response) (*CreateConnectorResponse,
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorDefinition
+		var dest Connector
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -39348,7 +39348,7 @@ func ParseGetConnectorResponse(rsp *http.Response) (*GetConnectorResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorDefinition
+		var dest Connector
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

@@ -495,8 +495,8 @@ func (s *ConnectionsSuite) bindFixed(connectionID string) {
 	s.Require().NoError(err)
 }
 
-func (s *ConnectionsSuite) connector(id string) ConnectorDefinition {
-	var definition ConnectorDefinition
+func (s *ConnectionsSuite) connector(id string) Connector {
+	var definition Connector
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/"+id, nil, &definition))
 	return definition
 }

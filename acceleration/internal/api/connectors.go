@@ -25,12 +25,12 @@ const noConnectors = "connector definitions are not available: no database confi
 // (architecture doc, «Layers and interfaces», the Source registry's first member).
 const mcpSource = "mcp"
 
-// ConnectorDefinition is a connector as a catalog lists it and a connection is created
-// from. It is the non-secret part of the manifest: what a caller chooses between (schemes,
-// inputs, scopes, who owns the OAuth client). Everything the router reads to connect is
-// left out: endpoints, vars, authorize and token parameters, capture and identity rules,
+// Connector is one connector as the catalog shows it and a connection is created from: the
+// revision of its definition (store.ConnectorDefinition) the request read. It is the
+// non-secret part of the manifest: what a caller chooses between (schemes, inputs, scopes,
+// who owns the OAuth client). Everything the router reads to connect is left out: endpoints, vars, authorize and token parameters, capture and identity rules,
 // refresh and rate limits, sources, hooks and the operator's client variables.
-type ConnectorDefinition struct {
+type Connector struct {
 	ID          string           `json:"id" doc:"Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does."`
 	Revision    int              `json:"revision" readOnly:"true" doc:"The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected."`
 	Name        string           `json:"name"`
@@ -44,7 +44,7 @@ type ConnectorDefinition struct {
 	CreatedAt   time.Time        `json:"created_at" readOnly:"true" doc:"When this revision was stored."`
 }
 
-func (*ConnectorDefinition) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+func (*Connector) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "A connector: an account elsewhere an agent may reach, built in or the " +
 		"app's own. Only what a caller chooses between is shown. Endpoints, how an account is " +
 		"recognised, refresh and rate limits stay with the router."
@@ -97,11 +97,11 @@ func (ConnectorClientAuthMethod) Schema(registry huma.Registry) *huma.Schema {
 		string(core.AuthPrivateKeyJWT), string(core.AuthTLSClientAuth))
 }
 
-// ConnectorDefinitionPage is a page of connector definitions.
-type ConnectorDefinitionPage struct {
-	Items      []ConnectorDefinition `json:"items"`
-	HasMore    bool                  `json:"has_more"`
-	NextCursor *string               `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same q. Absent on the last one."`
+// ConnectorPage is a page of connectors.
+type ConnectorPage struct {
+	Items      []Connector `json:"items"`
+	HasMore    bool        `json:"has_more"`
+	NextCursor *string     `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same q. Absent on the last one."`
 }
 
 // CustomConnectorRequest is a custom MCP server for the app's agents to connect to.
@@ -143,7 +143,7 @@ type listConnectorsRequest struct {
 }
 
 type listConnectorsResponse struct {
-	Body ConnectorDefinitionPage
+	Body ConnectorPage
 }
 
 type getConnectorRequest struct {
@@ -155,7 +155,7 @@ type createConnectorRequest struct {
 }
 
 type connectorResponse struct {
-	Body ConnectorDefinition
+	Body Connector
 }
 
 // registerConnectors declares the connector definition operations. All three are
@@ -226,9 +226,9 @@ func (s *Server) listConnectors(ctx context.Context, request *listConnectorsRequ
 	}
 
 	kept, more := page(found, store.ConnectorDefinitionLimit(request.Limit))
-	listed := ConnectorDefinitionPage{Items: make([]ConnectorDefinition, 0, len(kept)), HasMore: more}
+	listed := ConnectorPage{Items: make([]Connector, 0, len(kept)), HasMore: more}
 	for _, definition := range kept {
-		listed.Items = append(listed.Items, connectorDefinitionOf(definition))
+		listed.Items = append(listed.Items, connectorOf(definition))
 	}
 	if more {
 		last := kept[len(kept)-1]
@@ -256,7 +256,7 @@ func (s *Server) getConnector(ctx context.Context, request *getConnectorRequest)
 	if err != nil {
 		return nil, err
 	}
-	return &connectorResponse{Body: connectorDefinitionOf(definition)}, nil
+	return &connectorResponse{Body: connectorOf(definition)}, nil
 }
 
 // createConnector stores a custom MCP definition as the caller's own.
@@ -277,7 +277,7 @@ func (s *Server) createConnector(ctx context.Context, request *createConnectorRe
 	if err != nil {
 		return nil, err
 	}
-	return &connectorResponse{Body: connectorDefinitionOf(definition)}, nil
+	return &connectorResponse{Body: connectorOf(definition)}, nil
 }
 
 // customManifest is the manifest a custom MCP definition is stored as, or why it cannot be.
@@ -338,9 +338,9 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 	return manifest, nil
 }
 
-// connectorDefinitionOf is the part of a stored definition a caller is shown. Each field is
+// connectorOf is the part of a stored definition a caller is shown. Each field is
 // copied by name, so a field added to the manifest stays hidden until it is added here.
-func connectorDefinitionOf(definition store.ConnectorDefinition) ConnectorDefinition {
+func connectorOf(definition store.ConnectorDefinition) Connector {
 	manifest := definition.Manifest
 	inputs := make([]ConnectorInput, 0, len(manifest.Inputs))
 	for _, in := range manifest.Inputs {
@@ -350,7 +350,7 @@ func connectorDefinitionOf(definition store.ConnectorDefinition) ConnectorDefini
 	for _, owner := range manifest.Client.Policy {
 		owners = append(owners, ConnectorClientOwner(owner))
 	}
-	return ConnectorDefinition{
+	return Connector{
 		ID:          definition.ID,
 		Revision:    definition.Revision,
 		Name:        definition.Name,
