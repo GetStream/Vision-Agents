@@ -43,12 +43,15 @@ plugins:
       - search:read.users
       - users:read
       - users:read.email
-    # Slack grants nothing by default, so the tools need their scopes named.
+    # Slack grants nothing by default, so the tools need their scopes named. These are user
+    # token scopes; https://docs.slack.dev/ai/slack-mcp-server/ lists which tool needs which.
+    # Search is per kind of conversation: public channels by default, and search:read.private,
+    # .mpim, .im and .files through plugin_options.
     scopes:
       - channels:history
       - channels:read
       - chat:write
-      - search:read
+      - search:read.public
       - users:read
   # https://calendly.com/.well-known/oauth-authorization-server, opened October 5, 2026.
   # OAuth with dynamic client registration; the authorization server is calendly.com and the
@@ -103,18 +106,21 @@ plugins:
     logo: shopify.svg
     instance_required: true
     instance_hint: The shop hostname, such as mystore.myshopify.com
-  # Probed October 5, 2026. The server is per-org, so the issuer is the org's own host; the
-  # org publishes OpenID Connect discovery and no RFC 8414 document, and no registration
-  # endpoint, so a connected app's SALESFORCE_MCP_CLIENT_ID and _SECRET are what logs in.
+  # https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/sobject-reads.html,
+  # opened October 5, 2026. One host for every production org, read-only: sobject-mutations,
+  # sobject-deletes and sobject-all are the servers that write. login.salesforce.com
+  # publishes only OpenID Connect discovery, and its registration endpoint refuses a client
+  # without credentials, so an External Client App's SALESFORCE_MCP_CLIENT_ID and _SECRET
+  # log in. The org must activate sobject-reads under Setup, MCP Servers.
   - id: salesforce
     name: Salesforce
     category: Customers
-    description: Accounts, contacts and opportunities in an org.
-    url: https://{instance}/mcp
+    description: Query accounts, contacts, opportunities and cases in an org.
+    url: https://api.salesforce.com/platform/mcp/v1/platform/sobject-reads
     auth: oauth
     logo: salesforce.svg
-    instance_required: true
-    instance_hint: The org my-domain, such as mycompany.my.salesforce.com
+    scopes: [mcp_api, refresh_token]
+    scopes_supported: [mcp_api, refresh_token]
   # https://mcp.sentry.dev, opened October 3, 2026. OAuth with dynamic client registration,
   # advertised at /.well-known/oauth-protected-resource/mcp.
   - id: sentry

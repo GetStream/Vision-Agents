@@ -194,6 +194,108 @@ func (e BudgetInterval) Valid() bool {
 	}
 }
 
+// Defines values for BusinessProfileLegalEntityType.
+const (
+	BusinessProfileLegalEntityTypeCorporation    BusinessProfileLegalEntityType = "corporation"
+	BusinessProfileLegalEntityTypeLlc            BusinessProfileLegalEntityType = "llc"
+	BusinessProfileLegalEntityTypeOther          BusinessProfileLegalEntityType = "other"
+	BusinessProfileLegalEntityTypePartnership    BusinessProfileLegalEntityType = "partnership"
+	BusinessProfileLegalEntityTypeSoleProprietor BusinessProfileLegalEntityType = "sole_proprietor"
+)
+
+// Valid indicates whether the value is a known member of the BusinessProfileLegalEntityType enum.
+func (e BusinessProfileLegalEntityType) Valid() bool {
+	switch e {
+	case BusinessProfileLegalEntityTypeCorporation:
+		return true
+	case BusinessProfileLegalEntityTypeLlc:
+		return true
+	case BusinessProfileLegalEntityTypeOther:
+		return true
+	case BusinessProfileLegalEntityTypePartnership:
+		return true
+	case BusinessProfileLegalEntityTypeSoleProprietor:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BusinessProfileOrganizationType.
+const (
+	BusinessProfileOrganizationTypeGovernment BusinessProfileOrganizationType = "government"
+	BusinessProfileOrganizationTypeNonprofit  BusinessProfileOrganizationType = "nonprofit"
+	BusinessProfileOrganizationTypePrivate    BusinessProfileOrganizationType = "private"
+	BusinessProfileOrganizationTypePublic     BusinessProfileOrganizationType = "public"
+)
+
+// Valid indicates whether the value is a known member of the BusinessProfileOrganizationType enum.
+func (e BusinessProfileOrganizationType) Valid() bool {
+	switch e {
+	case BusinessProfileOrganizationTypeGovernment:
+		return true
+	case BusinessProfileOrganizationTypeNonprofit:
+		return true
+	case BusinessProfileOrganizationTypePrivate:
+		return true
+	case BusinessProfileOrganizationTypePublic:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BusinessProfileRequestLegalEntityType.
+const (
+	BusinessProfileRequestLegalEntityTypeCorporation    BusinessProfileRequestLegalEntityType = "corporation"
+	BusinessProfileRequestLegalEntityTypeLlc            BusinessProfileRequestLegalEntityType = "llc"
+	BusinessProfileRequestLegalEntityTypeOther          BusinessProfileRequestLegalEntityType = "other"
+	BusinessProfileRequestLegalEntityTypePartnership    BusinessProfileRequestLegalEntityType = "partnership"
+	BusinessProfileRequestLegalEntityTypeSoleProprietor BusinessProfileRequestLegalEntityType = "sole_proprietor"
+)
+
+// Valid indicates whether the value is a known member of the BusinessProfileRequestLegalEntityType enum.
+func (e BusinessProfileRequestLegalEntityType) Valid() bool {
+	switch e {
+	case BusinessProfileRequestLegalEntityTypeCorporation:
+		return true
+	case BusinessProfileRequestLegalEntityTypeLlc:
+		return true
+	case BusinessProfileRequestLegalEntityTypeOther:
+		return true
+	case BusinessProfileRequestLegalEntityTypePartnership:
+		return true
+	case BusinessProfileRequestLegalEntityTypeSoleProprietor:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BusinessProfileRequestOrganizationType.
+const (
+	BusinessProfileRequestOrganizationTypeGovernment BusinessProfileRequestOrganizationType = "government"
+	BusinessProfileRequestOrganizationTypeNonprofit  BusinessProfileRequestOrganizationType = "nonprofit"
+	BusinessProfileRequestOrganizationTypePrivate    BusinessProfileRequestOrganizationType = "private"
+	BusinessProfileRequestOrganizationTypePublic     BusinessProfileRequestOrganizationType = "public"
+)
+
+// Valid indicates whether the value is a known member of the BusinessProfileRequestOrganizationType enum.
+func (e BusinessProfileRequestOrganizationType) Valid() bool {
+	switch e {
+	case BusinessProfileRequestOrganizationTypeGovernment:
+		return true
+	case BusinessProfileRequestOrganizationTypeNonprofit:
+		return true
+	case BusinessProfileRequestOrganizationTypePrivate:
+		return true
+	case BusinessProfileRequestOrganizationTypePublic:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CallDirection.
 const (
 	Inbound  CallDirection = "inbound"
@@ -236,6 +338,45 @@ func (e CampaignState) Valid() bool {
 	}
 }
 
+// Defines values for ChannelIdentity.
+const (
+	ChannelIdentityLink  ChannelIdentity = "link"
+	ChannelIdentityPhone ChannelIdentity = "phone"
+)
+
+// Valid indicates whether the value is a known member of the ChannelIdentity enum.
+func (e ChannelIdentity) Valid() bool {
+	switch e {
+	case ChannelIdentityLink:
+		return true
+	case ChannelIdentityPhone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ChannelKind.
+const (
+	ChannelKindImessage ChannelKind = "imessage"
+	ChannelKindSms      ChannelKind = "sms"
+	ChannelKindWhatsapp ChannelKind = "whatsapp"
+)
+
+// Valid indicates whether the value is a known member of the ChannelKind enum.
+func (e ChannelKind) Valid() bool {
+	switch e {
+	case ChannelKindImessage:
+		return true
+	case ChannelKindSms:
+		return true
+	case ChannelKindWhatsapp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ClassifyQuestionType.
 const (
 	Choice ClassifyQuestionType = "choice"
@@ -251,6 +392,48 @@ func (e ClassifyQuestionType) Valid() bool {
 	case Noul:
 		return true
 	case Score:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectionOwnerType.
+const (
+	ConnectionOwnerTypeApp  ConnectionOwnerType = "app"
+	ConnectionOwnerTypeUser ConnectionOwnerType = "user"
+)
+
+// Valid indicates whether the value is a known member of the ConnectionOwnerType enum.
+func (e ConnectionOwnerType) Valid() bool {
+	switch e {
+	case ConnectionOwnerTypeApp:
+		return true
+	case ConnectionOwnerTypeUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectionStatus.
+const (
+	ConnectionStatusConnected            ConnectionStatus = "connected"
+	ConnectionStatusDisconnected         ConnectionStatus = "disconnected"
+	ConnectionStatusNeedsReauthorization ConnectionStatus = "needs_reauthorization"
+	ConnectionStatusPending              ConnectionStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ConnectionStatus enum.
+func (e ConnectionStatus) Valid() bool {
+	switch e {
+	case ConnectionStatusConnected:
+		return true
+	case ConnectionStatusDisconnected:
+		return true
+	case ConnectionStatusNeedsReauthorization:
+		return true
+	case ConnectionStatusPending:
 		return true
 	default:
 		return false
@@ -302,16 +485,16 @@ func (e ConnectorClientAuthMethod) Valid() bool {
 	}
 }
 
-// Defines values for ConnectorClientOwner.
+// Defines values for ConnectorClientRegistrationMethod.
 const (
-	Cimd     ConnectorClientOwner = "cimd"
-	Customer ConnectorClientOwner = "customer"
-	Dcr      ConnectorClientOwner = "dcr"
-	Operator ConnectorClientOwner = "operator"
+	Cimd     ConnectorClientRegistrationMethod = "cimd"
+	Customer ConnectorClientRegistrationMethod = "customer"
+	Dcr      ConnectorClientRegistrationMethod = "dcr"
+	Operator ConnectorClientRegistrationMethod = "operator"
 )
 
-// Valid indicates whether the value is a known member of the ConnectorClientOwner enum.
-func (e ConnectorClientOwner) Valid() bool {
+// Valid indicates whether the value is a known member of the ConnectorClientRegistrationMethod enum.
+func (e ConnectorClientRegistrationMethod) Valid() bool {
 	switch e {
 	case Cimd:
 		return true
@@ -320,48 +503,6 @@ func (e ConnectorClientOwner) Valid() bool {
 	case Dcr:
 		return true
 	case Operator:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for ConnectorConnectionOwnerType.
-const (
-	ConnectorConnectionOwnerTypeApp  ConnectorConnectionOwnerType = "app"
-	ConnectorConnectionOwnerTypeUser ConnectorConnectionOwnerType = "user"
-)
-
-// Valid indicates whether the value is a known member of the ConnectorConnectionOwnerType enum.
-func (e ConnectorConnectionOwnerType) Valid() bool {
-	switch e {
-	case ConnectorConnectionOwnerTypeApp:
-		return true
-	case ConnectorConnectionOwnerTypeUser:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for ConnectorConnectionStatus.
-const (
-	ConnectorConnectionStatusConnected            ConnectorConnectionStatus = "connected"
-	ConnectorConnectionStatusDisconnected         ConnectorConnectionStatus = "disconnected"
-	ConnectorConnectionStatusNeedsReauthorization ConnectorConnectionStatus = "needs_reauthorization"
-	ConnectorConnectionStatusPending              ConnectorConnectionStatus = "pending"
-)
-
-// Valid indicates whether the value is a known member of the ConnectorConnectionStatus enum.
-func (e ConnectorConnectionStatus) Valid() bool {
-	switch e {
-	case ConnectorConnectionStatusConnected:
-		return true
-	case ConnectorConnectionStatusDisconnected:
-		return true
-	case ConnectorConnectionStatusNeedsReauthorization:
-		return true
-	case ConnectorConnectionStatusPending:
 		return true
 	default:
 		return false
@@ -386,6 +527,24 @@ func (e ContactState) Valid() bool {
 	case ContactStateFailed:
 		return true
 	case ContactStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateOptOutRequestSource.
+const (
+	Api       CreateOptOutRequestSource = "api"
+	Dashboard CreateOptOutRequestSource = "dashboard"
+)
+
+// Valid indicates whether the value is a known member of the CreateOptOutRequestSource enum.
+func (e CreateOptOutRequestSource) Valid() bool {
+	switch e {
+	case Api:
+		return true
+	case Dashboard:
 		return true
 	default:
 		return false
@@ -754,40 +913,40 @@ func (e LlmOptionsVerbosity) Valid() bool {
 
 // Defines values for Modality.
 const (
-	Image     Modality = "image"
-	Knowledge Modality = "knowledge"
-	Lcm       Modality = "lcm"
-	Llm       Modality = "llm"
-	Memory    Modality = "memory"
-	Phone     Modality = "phone"
-	Search    Modality = "search"
-	Sts       Modality = "sts"
-	Stt       Modality = "stt"
-	Tts       Modality = "tts"
+	ModalityImage     Modality = "image"
+	ModalityKnowledge Modality = "knowledge"
+	ModalityLcm       Modality = "lcm"
+	ModalityLlm       Modality = "llm"
+	ModalityMemory    Modality = "memory"
+	ModalityPhone     Modality = "phone"
+	ModalitySearch    Modality = "search"
+	ModalitySts       Modality = "sts"
+	ModalityStt       Modality = "stt"
+	ModalityTts       Modality = "tts"
 )
 
 // Valid indicates whether the value is a known member of the Modality enum.
 func (e Modality) Valid() bool {
 	switch e {
-	case Image:
+	case ModalityImage:
 		return true
-	case Knowledge:
+	case ModalityKnowledge:
 		return true
-	case Lcm:
+	case ModalityLcm:
 		return true
-	case Llm:
+	case ModalityLlm:
 		return true
-	case Memory:
+	case ModalityMemory:
 		return true
-	case Phone:
+	case ModalityPhone:
 		return true
-	case Search:
+	case ModalitySearch:
 		return true
-	case Sts:
+	case ModalitySts:
 		return true
-	case Stt:
+	case ModalityStt:
 		return true
-	case Tts:
+	case ModalityTts:
 		return true
 	default:
 		return false
@@ -836,6 +995,33 @@ func (e ModelOverwritesVerbosity) Valid() bool {
 	case ModelOverwritesVerbosityLow:
 		return true
 	case ModelOverwritesVerbosityMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OptOutChannel.
+const (
+	OptOutChannelAll      OptOutChannel = "all"
+	OptOutChannelImessage OptOutChannel = "imessage"
+	OptOutChannelSms      OptOutChannel = "sms"
+	OptOutChannelVoice    OptOutChannel = "voice"
+	OptOutChannelWhatsapp OptOutChannel = "whatsapp"
+)
+
+// Valid indicates whether the value is a known member of the OptOutChannel enum.
+func (e OptOutChannel) Valid() bool {
+	switch e {
+	case OptOutChannelAll:
+		return true
+	case OptOutChannelImessage:
+		return true
+	case OptOutChannelSms:
+		return true
+	case OptOutChannelVoice:
+		return true
+	case OptOutChannelWhatsapp:
 		return true
 	default:
 		return false
@@ -971,6 +1157,48 @@ func (e RecordingStatus) Valid() bool {
 	case RecordingStatusQueued:
 		return true
 	case RecordingStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReviewActor.
+const (
+	App    ReviewActor = "app"
+	Staff  ReviewActor = "staff"
+	Vendor ReviewActor = "vendor"
+)
+
+// Valid indicates whether the value is a known member of the ReviewActor enum.
+func (e ReviewActor) Valid() bool {
+	switch e {
+	case App:
+		return true
+	case Staff:
+		return true
+	case Vendor:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReviewDecision.
+const (
+	Approve        ReviewDecision = "approve"
+	Reject         ReviewDecision = "reject"
+	RequestChanges ReviewDecision = "request_changes"
+)
+
+// Valid indicates whether the value is a known member of the ReviewDecision enum.
+func (e ReviewDecision) Valid() bool {
+	switch e {
+	case Approve:
+		return true
+	case Reject:
+		return true
+	case RequestChanges:
 		return true
 	default:
 		return false
@@ -1535,6 +1763,39 @@ func (e UpdateSessionRequestVerbosity) Valid() bool {
 	}
 }
 
+// Defines values for UseCaseStatus.
+const (
+	UseCaseStatusApproved         UseCaseStatus = "approved"
+	UseCaseStatusChangesRequested UseCaseStatus = "changes_requested"
+	UseCaseStatusDraft            UseCaseStatus = "draft"
+	UseCaseStatusRejected         UseCaseStatus = "rejected"
+	UseCaseStatusSubmitted        UseCaseStatus = "submitted"
+	UseCaseStatusVendorPending    UseCaseStatus = "vendor_pending"
+	UseCaseStatusVendorRejected   UseCaseStatus = "vendor_rejected"
+)
+
+// Valid indicates whether the value is a known member of the UseCaseStatus enum.
+func (e UseCaseStatus) Valid() bool {
+	switch e {
+	case UseCaseStatusApproved:
+		return true
+	case UseCaseStatusChangesRequested:
+		return true
+	case UseCaseStatusDraft:
+		return true
+	case UseCaseStatusRejected:
+		return true
+	case UseCaseStatusSubmitted:
+		return true
+	case UseCaseStatusVendorPending:
+		return true
+	case UseCaseStatusVendorRejected:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VoiceBindingState.
 const (
 	VoiceBindingStateFailed  VoiceBindingState = "failed"
@@ -1641,8 +1902,22 @@ type ActivityBucket struct {
 // ActivityGranularity Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 type ActivityGranularity string
 
+// AgentChannels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
+type AgentChannels struct {
+	// Identity How a sender becomes an end user. phone makes each number an end user of its own, phone:+15551234567, so anybody who writes is answered. link answers only a number somebody tied to an end user with a code from POST /v1/agents/channels/links, which is what an agent reading a person's own calendar or orders needs. Omitted is phone.
+	Identity *ChannelIdentity    `json:"identity,omitempty"`
+	Imessage *ChannelLineRequest `json:"imessage,omitempty"`
+	Sms      *ChannelLineRequest `json:"sms,omitempty"`
+	Whatsapp *ChannelLineRequest `json:"whatsapp,omitempty"`
+}
+
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
+	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
+
+	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
+	Channels *AgentChannels `json:"channels,omitempty"`
+
 	// Connectors The bindings exactly as they were written. Absent when there are none.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 	CreatedAt  time.Time                `json:"created_at"`
@@ -1662,11 +1937,9 @@ type AgentConfig struct {
 	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
-	Mode          AgentMode        `json:"mode"`
-	Name          string           `json:"name"`
-	PluginEvents  *[]PluginEvent   `json:"plugin_events,omitempty"`
-	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
-	Plugins       *[]string        `json:"plugins,omitempty"`
+	Mode         AgentMode      `json:"mode"`
+	Name         string         `json:"name"`
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -1687,7 +1960,7 @@ type AgentConfig struct {
 	ThinkingLlm  *string            `json:"thinking_llm,omitempty"`
 	Tts          *string            `json:"tts,omitempty"`
 	UpdatedAt    time.Time          `json:"updated_at"`
-	UserPlugins  *[]string          `json:"user_plugins,omitempty"`
+	UserPlugins  *[]PluginEntry     `json:"user_plugins,omitempty"`
 	Video        *SessionVideo      `json:"video,omitempty"`
 	VisibleTools *[]string          `json:"visible_tools,omitempty"`
 	Voice        *string            `json:"voice,omitempty"`
@@ -1695,6 +1968,11 @@ type AgentConfig struct {
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
 type AgentConfigPatch struct {
+	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
+
+	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
+	Channels *AgentChannels `json:"channels,omitempty"`
+
 	// Connectors The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
@@ -1717,10 +1995,8 @@ type AgentConfigPatch struct {
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
-	Name          *string          `json:"name,omitempty"`
-	PluginEvents  *[]PluginEvent   `json:"plugin_events,omitempty"`
-	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
-	Plugins       *[]string        `json:"plugins,omitempty"`
+	Name         *string        `json:"name,omitempty"`
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -1737,10 +2013,10 @@ type AgentConfigPatch struct {
 	Tags  *map[string]string `json:"tags,omitempty"`
 
 	// ThinkingLlm Only a voice agent names one. Switching an agent to text drops it.
-	ThinkingLlm *string       `json:"thinking_llm,omitempty"`
-	Tts         *string       `json:"tts,omitempty"`
-	UserPlugins *[]string     `json:"user_plugins,omitempty"`
-	Video       *SessionVideo `json:"video,omitempty"`
+	ThinkingLlm *string        `json:"thinking_llm,omitempty"`
+	Tts         *string        `json:"tts,omitempty"`
+	UserPlugins *[]PluginEntry `json:"user_plugins,omitempty"`
+	Video       *SessionVideo  `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -1749,6 +2025,12 @@ type AgentConfigPatch struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
+	// AgentPlugins Hosted MCP servers this agent may reach with the app's own login, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for.
+	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
+
+	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
+	Channels *AgentChannels `json:"channels,omitempty"`
+
 	// Connectors The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
@@ -1784,12 +2066,6 @@ type AgentConfigRequest struct {
 	// PluginEvents MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// PluginOptions How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. A plugin without any is reached as the catalog has it.
-	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
-
-	// Plugins Hosted MCP servers this agent may reach, named from the built-in catalog.
-	Plugins *[]string `json:"plugins,omitempty"`
-
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
@@ -1820,9 +2096,9 @@ type AgentConfigRequest struct {
 	ThinkingLlm *string `json:"thinking_llm,omitempty"`
 	Tts         *string `json:"tts,omitempty"`
 
-	// UserPlugins Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
-	UserPlugins *[]string     `json:"user_plugins,omitempty"`
-	Video       *SessionVideo `json:"video,omitempty"`
+	// UserPlugins Hosted MCP servers each end user connects with their own account, named from the built-in catalog like agent_plugins. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+	UserPlugins *[]PluginEntry `json:"user_plugins,omitempty"`
+	Video       *SessionVideo  `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -1987,7 +2263,7 @@ type AttachedNumber struct {
 
 // AuthorizePluginRequest defines model for AuthorizePluginRequest.
 type AuthorizePluginRequest struct {
-	// InstanceUrl The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL.
+	// InstanceUrl The shop hostname. Required for plugins that have no single global URL.
 	InstanceUrl *string `json:"instance_url,omitempty"`
 }
 
@@ -2032,6 +2308,114 @@ type Budget struct {
 
 // BudgetInterval How often a budget resets. A week starts on Monday.
 type BudgetInterval string
+
+// BusinessProfile Who the app is, and the brand a vendor registered it as.
+type BusinessProfile struct {
+	AuthorizedContactEmail     *string `json:"authorized_contact_email,omitempty"`
+	AuthorizedContactFirstName *string `json:"authorized_contact_first_name,omitempty"`
+	AuthorizedContactLastName  *string `json:"authorized_contact_last_name,omitempty"`
+
+	// AuthorizedContactPhone E.164.
+	AuthorizedContactPhone *string `json:"authorized_contact_phone,omitempty"`
+	AuthorizedContactTitle *string `json:"authorized_contact_title,omitempty"`
+
+	// BrandId The brand the vendor registered the app as, once a use case was sent.
+	BrandId *string `json:"brand_id,omitempty"`
+
+	// BrandName What people know it as, shown to recipients. Omitted is the legal name.
+	BrandName *string `json:"brand_name,omitempty"`
+
+	// BrandStatus The vendor's word for where the brand stands, such as VERIFIED.
+	BrandStatus *string `json:"brand_status,omitempty"`
+
+	// BusinessRegistrationCountry ISO 3166-1 alpha-2.
+	BusinessRegistrationCountry *string `json:"business_registration_country,omitempty"`
+
+	// BusinessVerificationDocuments URLs of documents a reviewer may ask for, such as articles of incorporation.
+	BusinessVerificationDocuments *[]string `json:"business_verification_documents,omitempty"`
+	CreatedAt                     time.Time `json:"created_at"`
+
+	// Industry The registry's vertical, such as technology, healthcare or retail.
+	Industry *string `json:"industry,omitempty"`
+
+	// LegalBusinessName The name the business is registered under.
+	LegalBusinessName *string                          `json:"legal_business_name,omitempty"`
+	LegalEntityType   *BusinessProfileLegalEntityType  `json:"legal_entity_type,omitempty"`
+	OrganizationType  *BusinessProfileOrganizationType `json:"organization_type,omitempty"`
+	PrivacyPolicyUrl  *string                          `json:"privacy_policy_url,omitempty"`
+	RegisteredAddress *PostalAddress                   `json:"registered_address,omitempty"`
+
+	// StockExchange Where it is listed, such as NASDAQ or NYSE.
+	StockExchange *string `json:"stock_exchange,omitempty"`
+
+	// StockSymbol A public company's ticker.
+	StockSymbol *string `json:"stock_symbol,omitempty"`
+
+	// TaxId The EIN in the US, or the country's business number. A sole proprietor has none.
+	TaxId *string `json:"tax_id,omitempty"`
+
+	// TaxIdIssuingCountry ISO 3166-1 alpha-2. Omitted is the registration country.
+	TaxIdIssuingCountry   *string   `json:"tax_id_issuing_country,omitempty"`
+	TermsAndConditionsUrl *string   `json:"terms_and_conditions_url,omitempty"`
+	UpdatedAt             time.Time `json:"updated_at"`
+	WebsiteUrl            *string   `json:"website_url,omitempty"`
+}
+
+// BusinessProfileLegalEntityType defines model for BusinessProfile.LegalEntityType.
+type BusinessProfileLegalEntityType string
+
+// BusinessProfileOrganizationType defines model for BusinessProfile.OrganizationType.
+type BusinessProfileOrganizationType string
+
+// BusinessProfileRequest Who the app is: written once and reused by every channel it registers for. Nothing is required to save it; submitting a use case says what is missing.
+type BusinessProfileRequest struct {
+	AuthorizedContactEmail     *string `json:"authorized_contact_email,omitempty"`
+	AuthorizedContactFirstName *string `json:"authorized_contact_first_name,omitempty"`
+	AuthorizedContactLastName  *string `json:"authorized_contact_last_name,omitempty"`
+
+	// AuthorizedContactPhone E.164.
+	AuthorizedContactPhone *string `json:"authorized_contact_phone,omitempty"`
+	AuthorizedContactTitle *string `json:"authorized_contact_title,omitempty"`
+
+	// BrandName What people know it as, shown to recipients. Omitted is the legal name.
+	BrandName *string `json:"brand_name,omitempty"`
+
+	// BusinessRegistrationCountry ISO 3166-1 alpha-2.
+	BusinessRegistrationCountry *string `json:"business_registration_country,omitempty"`
+
+	// BusinessVerificationDocuments URLs of documents a reviewer may ask for, such as articles of incorporation.
+	BusinessVerificationDocuments *[]string `json:"business_verification_documents,omitempty"`
+
+	// Industry The registry's vertical, such as technology, healthcare or retail.
+	Industry *string `json:"industry,omitempty"`
+
+	// LegalBusinessName The name the business is registered under.
+	LegalBusinessName *string                                 `json:"legal_business_name,omitempty"`
+	LegalEntityType   *BusinessProfileRequestLegalEntityType  `json:"legal_entity_type,omitempty"`
+	OrganizationType  *BusinessProfileRequestOrganizationType `json:"organization_type,omitempty"`
+	PrivacyPolicyUrl  *string                                 `json:"privacy_policy_url,omitempty"`
+	RegisteredAddress *PostalAddress                          `json:"registered_address,omitempty"`
+
+	// StockExchange Where it is listed, such as NASDAQ or NYSE.
+	StockExchange *string `json:"stock_exchange,omitempty"`
+
+	// StockSymbol A public company's ticker.
+	StockSymbol *string `json:"stock_symbol,omitempty"`
+
+	// TaxId The EIN in the US, or the country's business number. A sole proprietor has none.
+	TaxId *string `json:"tax_id,omitempty"`
+
+	// TaxIdIssuingCountry ISO 3166-1 alpha-2. Omitted is the registration country.
+	TaxIdIssuingCountry   *string `json:"tax_id_issuing_country,omitempty"`
+	TermsAndConditionsUrl *string `json:"terms_and_conditions_url,omitempty"`
+	WebsiteUrl            *string `json:"website_url,omitempty"`
+}
+
+// BusinessProfileRequestLegalEntityType defines model for BusinessProfileRequest.LegalEntityType.
+type BusinessProfileRequestLegalEntityType string
+
+// BusinessProfileRequestOrganizationType defines model for BusinessProfileRequest.OrganizationType.
+type BusinessProfileRequestOrganizationType string
 
 // BuyNumberRequest defines model for BuyNumberRequest.
 type BuyNumberRequest struct {
@@ -2234,6 +2618,48 @@ type Candidate struct {
 	Provider string         `json:"provider"`
 }
 
+// ChannelAccount One line the app answers on: the number people write to and where its provider delivers. The credentials are write-only, so they are never shown here.
+type ChannelAccount struct {
+	// AccountId The provider's own id for the line, such as WhatsApp's phone number id.
+	AccountId *string   `json:"account_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// Delivering True when the provider was pointed at the webhook URL for you, so there is nothing left to paste.
+	Delivering bool   `json:"delivering"`
+	Id         string `json:"id"`
+
+	// Kind A channel a conversation can be carried over.
+	Kind ChannelKind `json:"kind"`
+
+	// Number The number people write to, in E.164.
+	Number    string    `json:"number"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// WebhookUrl Where the provider should deliver. Paste it into Meta's or Linq's webhook setup; a Telnyx number is pointed at it for you.
+	WebhookUrl string `json:"webhook_url"`
+}
+
+// ChannelIdentity How a sender becomes an end user. phone makes each number an end user of its own, phone:+15551234567, so anybody who writes is answered. link answers only a number somebody tied to an end user with a code from POST /v1/agents/channels/links, which is what an agent reading a person's own calendar or orders needs. Omitted is phone.
+type ChannelIdentity string
+
+// ChannelKind A channel a conversation can be carried over.
+type ChannelKind string
+
+// ChannelLineRequest defines model for ChannelLineRequest.
+type ChannelLineRequest struct {
+	// Number The number people write to, in E.164. It must be a line this app connected.
+	Number string `json:"number"`
+}
+
+// ChannelLink A code that ties the number texting it to one end user, for one agent.
+type ChannelLink struct {
+	// Code The code to show the end user. They text it to the agent from the number they want answered.
+	Code string `json:"code"`
+
+	// ExpiresAt When the code stops working.
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 // ChatToken defines model for ChatToken.
 type ChatToken struct {
 	// ApiKey The Stream app the channel is in, which the browser SDK connects to.
@@ -2375,29 +2801,29 @@ type CommandReceipt struct {
 	UserMessageId string `json:"user_message_id"`
 }
 
-// ConnectorClient Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
-type ConnectorClient struct {
-	// Alg How a private_key_jwt assertion is signed, and set only for it.
-	Alg *ConnectorClientAlg `json:"alg,omitempty"`
+// ConnectChannelRequest Credentials for one line, connected once for the app and named by any number of agents under channels in agent.yaml. Sending a line already connected replaces its credentials and keeps its webhook URL.
+type ConnectChannelRequest struct {
+	// AccountId The provider's own id for the line. WhatsApp's phone number id; not needed by the others.
+	AccountId *string `json:"account_id,omitempty"`
 
-	// AuthMethod How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
-	AuthMethod *ConnectorClientAuthMethod `json:"auth_method,omitempty"`
+	// Challenge The verify token Meta's webhook setup echoes back. WhatsApp only.
+	Challenge *string `json:"challenge,omitempty"`
 
-	// Policy Who may own the OAuth client. Empty when the connector needs none.
-	Policy *[]ConnectorClientOwner `json:"policy,omitempty"`
+	// Kind whatsapp, sms or imessage.
+	Kind string `json:"kind"`
+
+	// Number The number people write to, in E.164. For sms it must be a number this app bought with POST /v1/phone/numbers.
+	Number string `json:"number"`
+
+	// Signing What the provider signs deliveries with: Meta's app secret, Telnyx's public key, Linq's whsec_ secret.
+	Signing *string `json:"signing,omitempty"`
+
+	// Token What authenticates a send: a Meta access token, a Telnyx API key, a Linq API key.
+	Token *string `json:"token,omitempty"`
 }
 
-// ConnectorClientAlg How a private_key_jwt assertion is signed, and set only for it.
-type ConnectorClientAlg string
-
-// ConnectorClientAuthMethod How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
-type ConnectorClientAuthMethod string
-
-// ConnectorClientOwner operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
-type ConnectorClientOwner string
-
-// ConnectorConnection One account at one connector, owned by the app or by one of its users. Credentials are never shown.
-type ConnectorConnection struct {
+// Connection One account at one connector, owned by the app or by one of its users. Credentials are never shown.
+type Connection struct {
 	// AccountId The provider account, known once it is connected.
 	AccountId *string `json:"account_id,omitempty"`
 
@@ -2422,39 +2848,39 @@ type ConnectorConnection struct {
 	Metadata *map[string]string `json:"metadata,omitempty"`
 
 	// Owner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
-	Owner ConnectorConnectionOwner `json:"owner"`
+	Owner ConnectionOwner `json:"owner"`
 
 	// Revision Advances with every new credential, starting at 1.
 	Revision *int64 `json:"revision,omitempty"`
 
 	// Status pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
-	Status    ConnectorConnectionStatus `json:"status"`
-	UpdatedAt *time.Time                `json:"updated_at,omitempty"`
+	Status    ConnectionStatus `json:"status"`
+	UpdatedAt *time.Time       `json:"updated_at,omitempty"`
 }
 
-// ConnectorConnectionOwner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
-type ConnectorConnectionOwner struct {
+// ConnectionOwner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
+type ConnectionOwner struct {
 	// Type app is the app's own account, user one user's.
-	Type ConnectorConnectionOwnerType `json:"type"`
+	Type ConnectionOwnerType `json:"type"`
 
 	// UserId The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id.
 	UserId *string `json:"user_id,omitempty"`
 }
 
-// ConnectorConnectionOwnerType app is the app's own account, user one user's.
-type ConnectorConnectionOwnerType string
+// ConnectionOwnerType app is the app's own account, user one user's.
+type ConnectionOwnerType string
 
-// ConnectorConnectionPage defines model for ConnectorConnectionPage.
-type ConnectorConnectionPage struct {
-	HasMore bool                   `json:"has_more"`
-	Items   *[]ConnectorConnection `json:"items"`
+// ConnectionPage defines model for ConnectionPage.
+type ConnectionPage struct {
+	HasMore bool          `json:"has_more"`
+	Items   *[]Connection `json:"items"`
 
 	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
-// ConnectorConnectionRequest A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
-type ConnectorConnectionRequest struct {
+// ConnectionRequest A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
+type ConnectionRequest struct {
 	// AuthScheme One of the connector's schemes. Omitted is its only one; a connector with several needs it named.
 	AuthScheme *string `json:"auth_scheme,omitempty"`
 
@@ -2468,17 +2894,17 @@ type ConnectorConnectionRequest struct {
 	Label *string `json:"label,omitempty"`
 
 	// Owner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
-	Owner ConnectorConnectionOwner `json:"owner"`
+	Owner ConnectionOwner `json:"owner"`
 }
 
-// ConnectorConnectionStatus pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
-type ConnectorConnectionStatus string
+// ConnectionStatus pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
+type ConnectionStatus string
 
-// ConnectorDefinition A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
-type ConnectorDefinition struct {
+// Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
+type Connector struct {
 	Category *string `json:"category,omitempty"`
 
-	// Client Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
+	// Client How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 	Client ConnectorClient `json:"client"`
 
 	// CreatedAt When this revision was stored.
@@ -2505,14 +2931,26 @@ type ConnectorDefinition struct {
 	Scopes *[]string `json:"scopes"`
 }
 
-// ConnectorDefinitionPage defines model for ConnectorDefinitionPage.
-type ConnectorDefinitionPage struct {
-	HasMore bool                   `json:"has_more"`
-	Items   *[]ConnectorDefinition `json:"items"`
+// ConnectorClient How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
+type ConnectorClient struct {
+	// Alg How a private_key_jwt assertion is signed, and set only for it.
+	Alg *ConnectorClientAlg `json:"alg,omitempty"`
 
-	// NextCursor Pass as cursor for the next page, with the same q. Absent on the last one.
-	NextCursor *string `json:"next_cursor,omitempty"`
+	// AuthMethod How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
+	AuthMethod *ConnectorClientAuthMethod `json:"auth_method,omitempty"`
+
+	// Registration The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client.
+	Registration *[]ConnectorClientRegistrationMethod `json:"registration,omitempty"`
 }
+
+// ConnectorClientAlg How a private_key_jwt assertion is signed, and set only for it.
+type ConnectorClientAlg string
+
+// ConnectorClientAuthMethod How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
+type ConnectorClientAuthMethod string
+
+// ConnectorClientRegistrationMethod operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+type ConnectorClientRegistrationMethod string
 
 // ConnectorInput defines model for ConnectorInput.
 type ConnectorInput struct {
@@ -2525,6 +2963,15 @@ type ConnectorInput struct {
 
 	// Pattern A regular expression the whole value must match.
 	Pattern *string `json:"pattern,omitempty"`
+}
+
+// ConnectorPage defines model for ConnectorPage.
+type ConnectorPage struct {
+	HasMore bool         `json:"has_more"`
+	Items   *[]Connector `json:"items"`
+
+	// NextCursor Pass as cursor for the next page, with the same q. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ConnectorToolGrant One tool a binding allows.
@@ -2568,6 +3015,21 @@ type ContactsRequest struct {
 type ContentPart struct {
 	union json.RawMessage
 }
+
+// CreateOptOutRequest defines model for CreateOptOutRequest.
+type CreateOptOutRequest struct {
+	// Channel The channel a recipient opted out of, or all of them.
+	Channel OptOutChannel `json:"channel"`
+
+	// Recipient The number, in E.164.
+	Recipient string `json:"recipient"`
+
+	// Source Omitted is api.
+	Source *CreateOptOutRequestSource `json:"source,omitempty"`
+}
+
+// CreateOptOutRequestSource Omitted is api.
+type CreateOptOutRequestSource string
 
 // CreateResponseRequest defines model for CreateResponseRequest.
 type CreateResponseRequest struct {
@@ -2689,7 +3151,7 @@ type CreateSessionRequest struct {
 type CustomConnectorRequest struct {
 	Category *string `json:"category,omitempty"`
 
-	// Client Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
+	// Client How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 	Client      *ConnectorClient `json:"client,omitempty"`
 	Description *string          `json:"description,omitempty"`
 
@@ -2875,6 +3337,18 @@ type HealthStatus struct {
 
 // HealthStatusStatus defines model for HealthStatus.Status.
 type HealthStatusStatus string
+
+// IMessageProfile defines model for IMessageProfile.
+type IMessageProfile struct {
+	ConsentMethod *string `json:"consent_method,omitempty"`
+
+	// ContactCardImageUrl Square, at least 200 by 200.
+	ContactCardImageUrl *string `json:"contact_card_image_url,omitempty"`
+	ContactCardName     *string `json:"contact_card_name,omitempty"`
+
+	// FallbackChannels imessage, rcs or sms, in the order to try them.
+	FallbackChannels *[]string `json:"fallback_channels,omitempty"`
+}
 
 // ImageContentPart defines model for ImageContentPart.
 type ImageContentPart struct {
@@ -3156,6 +3630,15 @@ type LibraryVoices struct {
 	Voices      []LibraryVoice `json:"voices"`
 }
 
+// LinkChannelRequest defines model for LinkChannelRequest.
+type LinkChannelRequest struct {
+	// ConfigId The agent whose channels the number is being claimed on.
+	ConfigId string `json:"config_id"`
+
+	// UserId The end user the number will belong to.
+	UserId string `json:"user_id"`
+}
+
 // LlmOptions How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model answers under belongs to the agent asking, not to the config that decides where the asking goes.
 type LlmOptions struct {
 	// Format Whether the answer is prose or a JSON object.
@@ -3197,16 +3680,41 @@ type LlmOptionsReasoningEffort string
 // LlmOptionsVerbosity defines model for LlmOptions.Verbosity.
 type LlmOptionsVerbosity string
 
-// McpServer An MCP server the plugin catalog does not have. Every session opens it at the start, with no login, and offers its tools to the model; the instructions the server gives are added to the agent's own.
+// McpServer An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
 type McpServer struct {
+	// Branding The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
+	Branding *McpServerBranding `json:"branding,omitempty"`
+
 	// Name What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
 	Name string `json:"name"`
+
+	// NeedsLogin Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.
+	NeedsLogin *bool `json:"needs_login,omitempty"`
+
+	// Scopes The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
+	Scopes *[]string `json:"scopes,omitempty"`
 
 	// Tools Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
 	Tools *[]string `json:"tools,omitempty"`
 
 	// Url Its Streamable HTTP endpoint, over https.
 	Url string `json:"url"`
+
+	// User Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a login may set it.
+	User *bool `json:"user,omitempty"`
+}
+
+// McpServerBranding The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
+type McpServerBranding struct {
+	Description *string `json:"description,omitempty"`
+
+	// IconUrl Its first icon served over https, as the server links it.
+	IconUrl *string `json:"icon_url,omitempty"`
+
+	// Title Its display title, or its name when it gives none.
+	Title      *string `json:"title,omitempty"`
+	Version    *string `json:"version,omitempty"`
+	WebsiteUrl *string `json:"website_url,omitempty"`
 }
 
 // MessageContent defines model for MessageContent.
@@ -3284,6 +3792,32 @@ type NumberSearchResult struct {
 	Skipped []SkippedVendor `json:"skipped"`
 }
 
+// OptOut Somebody who asked not to be reached. Nothing is texted or dialled to them on the channel, or on any for all, until the opt-out is revoked or they text START.
+type OptOut struct {
+	// Channel The channel a recipient opted out of, or all of them.
+	Channel   OptOutChannel `json:"channel"`
+	CreatedAt time.Time     `json:"created_at"`
+	Id        string        `json:"id"`
+
+	// Recipient The number, in E.164.
+	Recipient string `json:"recipient"`
+
+	// Source keyword when they texted STOP, otherwise api or dashboard.
+	Source string `json:"source"`
+}
+
+// OptOutChannel The channel a recipient opted out of, or all of them.
+type OptOutChannel string
+
+// OptOutPage defines model for OptOutPage.
+type OptOutPage struct {
+	HasMore bool     `json:"has_more"`
+	Items   []OptOut `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // PhoneCapability What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
 type PhoneCapability string
 
@@ -3309,6 +3843,28 @@ type PhoneNumberType string
 
 // PhoneOperation defines model for PhoneOperation.
 type PhoneOperation string
+
+// PhoneSandbox What an app may text and call before a 10DLC use case of its is approved.
+type PhoneSandbox struct {
+	AudioMinutesPerDay int64 `json:"audio_minutes_per_day"`
+
+	// AudioSecondsToday Seconds of outbound calls since midnight UTC.
+	AudioSecondsToday int64 `json:"audio_seconds_today"`
+
+	// Enabled Whether this deployment sandboxes apps with no approved use case. Off on a self-hosted router.
+	Enabled        bool  `json:"enabled"`
+	MaxRecipients  int64 `json:"max_recipients"`
+	MessagesPerDay int64 `json:"messages_per_day"`
+
+	// MessagesToday Messages sent since midnight UTC.
+	MessagesToday int64 `json:"messages_today"`
+
+	// Recipients The only numbers a sandboxed app may text and call.
+	Recipients []string `json:"recipients"`
+
+	// Sandboxed Whether this app is held to the limits below: true until one of its use cases is approved.
+	Sandboxed bool `json:"sandboxed"`
+}
 
 // PhoneVendor defines model for PhoneVendor.
 type PhoneVendor struct {
@@ -3382,13 +3938,13 @@ type Plugin struct {
 	LogoUrl *string `json:"logo_url,omitempty"`
 	Name    string  `json:"name"`
 
-	// Readonly True when the plugin has a read-only endpoint an agent may pick in plugin_options.
+	// Readonly True when the plugin has a read-only endpoint an agent may pick on its entry.
 	Readonly *bool `json:"readonly,omitempty"`
 
-	// ScopesSupported The OAuth scopes an agent may ask for in plugin_options, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
+	// ScopesSupported The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
 	ScopesSupported *[]string `json:"scopes_supported,omitempty"`
 
-	// Toolsets The groups of tools an agent may limit the plugin to in plugin_options. Absent when it cannot be limited.
+	// Toolsets The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
 	Toolsets *[]string `json:"toolsets,omitempty"`
 }
 
@@ -3406,7 +3962,7 @@ type PluginConnection struct {
 	InstanceRequired *bool   `json:"instance_required,omitempty"`
 	InstanceUrl      *string `json:"instance_url,omitempty"`
 
-	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential.
+	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL.
 	LogoUrl  *string                `json:"logo_url,omitempty"`
 	Name     string                 `json:"name"`
 	PluginId string                 `json:"plugin_id"`
@@ -3415,6 +3971,14 @@ type PluginConnection struct {
 
 // PluginConnectionStatus defines model for PluginConnection.Status.
 type PluginConnectionStatus string
+
+// PluginEntry One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.
+type PluginEntry struct {
+	union json.RawMessage
+}
+
+// PluginEntry0 defines model for PluginEntry.0.
+type PluginEntry0 = string
 
 // PluginEvent One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
 type PluginEvent struct {
@@ -3427,14 +3991,14 @@ type PluginEvent struct {
 	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
 	Instructions *string `json:"instructions,omitempty"`
 
-	// Plugin A catalog plugin the config names under plugins or user_plugins.
+	// Plugin A catalog plugin the config names under agent_plugins or user_plugins.
 	Plugin string `json:"plugin"`
 }
 
-// PluginOptions How an agent reaches one catalog plugin it names, and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
-type PluginOptions struct {
-	// Plugin A catalog plugin id. It applies once the config names the plugin under plugins or user_plugins, and to the app's login made from the dashboard.
-	Plugin string `json:"plugin"`
+// PluginWithOptions One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
+type PluginWithOptions struct {
+	// Name A catalog plugin id, such as linear.
+	Name string `json:"name"`
 
 	// Readonly Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
 	Readonly *bool `json:"readonly,omitempty"`
@@ -3469,6 +4033,19 @@ type Policy struct {
 	//
 	// Example: {"application":"support"}
 	Tags *map[string]string `json:"tags,omitempty"`
+}
+
+// PostalAddress defines model for PostalAddress.
+type PostalAddress struct {
+	City *string `json:"city,omitempty"`
+
+	// Country ISO 3166-1 alpha-2.
+	Country    *string `json:"country,omitempty"`
+	PostalCode *string `json:"postal_code,omitempty"`
+
+	// State State or region.
+	State  *string `json:"state,omitempty"`
+	Street *string `json:"street,omitempty"`
 }
 
 // PrepareVoiceRequest defines model for PrepareVoiceRequest.
@@ -3577,6 +4154,39 @@ type ProviderPrice struct {
 	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
 }
 
+// RCSProfile defines model for RCSProfile.
+type RCSProfile struct {
+	AgentOverview *string `json:"agent_overview,omitempty"`
+
+	// BrandColor Hex, such as #1A73E8, with at least 4.5:1 contrast against white.
+	BrandColor       *string `json:"brand_color,omitempty"`
+	CallToActionText *string `json:"call_to_action_text,omitempty"`
+	CallToActionUrl  *string `json:"call_to_action_url,omitempty"`
+	CompanyOverview  *string `json:"company_overview,omitempty"`
+	Description      *string `json:"description,omitempty"`
+	DisplayName      *string `json:"display_name,omitempty"`
+	DoubleOptIn      *bool   `json:"double_opt_in,omitempty"`
+
+	// HeroUrl 1440 by 448 PNG or JPEG, at most 200 KB, on public HTTPS.
+	HeroUrl          *string `json:"hero_url,omitempty"`
+	InteractionTypes *string `json:"interaction_types,omitempty"`
+
+	// LogoUrl 224 by 224 PNG or JPEG, at most 50 KB, on public HTTPS.
+	LogoUrl                  *string   `json:"logo_url,omitempty"`
+	MessageExamples          *[]string `json:"message_examples,omitempty"`
+	OptInConfirmationMessage *string   `json:"opt_in_confirmation_message,omitempty"`
+	OptInMethods             *string   `json:"opt_in_methods,omitempty"`
+	SupportEmail             *string   `json:"support_email,omitempty"`
+	SupportLabel             *string   `json:"support_label,omitempty"`
+	SupportPhone             *string   `json:"support_phone,omitempty"`
+
+	// TestVideoUrl Shows consent, example interactions, HELP and STOP.
+	TestVideoUrl *string `json:"test_video_url,omitempty"`
+
+	// UseCase otp, transactional, promotional or multi_use.
+	UseCase *string `json:"use_case,omitempty"`
+}
+
 // RecordingSource Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first.
 type RecordingSource struct {
 	// Audio The file itself, base64. For clips - a long recording belongs behind a URL.
@@ -3597,6 +4207,42 @@ type RespondRequest struct {
 	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
 	CommandId *string `json:"command_id,omitempty"`
 	Text      string  `json:"text"`
+}
+
+// ReviewActor Who moved a use case: the app, Stream staff or the vendor.
+type ReviewActor string
+
+// ReviewDecision approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
+type ReviewDecision string
+
+// ReviewPage defines model for ReviewPage.
+type ReviewPage struct {
+	HasMore bool            `json:"has_more"`
+	Items   []UseCaseReview `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ReviewQueue defines model for ReviewQueue.
+type ReviewQueue struct {
+	HasMore bool               `json:"has_more"`
+	Items   []UseCaseForReview `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ReviewUseCaseRequest defines model for ReviewUseCaseRequest.
+type ReviewUseCaseRequest struct {
+	// Decision approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
+	Decision ReviewDecision `json:"decision"`
+
+	// Notes What the app should change, or why it was rejected. Required unless approving.
+	Notes *string `json:"notes,omitempty"`
+
+	// Reviewer Who decided, as the app's timeline shows it.
+	Reviewer *string `json:"reviewer,omitempty"`
 }
 
 // RewindSessionRequest defines model for RewindSessionRequest.
@@ -4044,6 +4690,12 @@ type SessionVideo struct {
 
 	// Source Track or processor source. Omitted requires one unambiguous available source.
 	Source *string `json:"source,omitempty"`
+}
+
+// SetSandboxRecipientsRequest defines model for SetSandboxRecipientsRequest.
+type SetSandboxRecipientsRequest struct {
+	// Recipients Numbers in E.164, at most max_recipients of them.
+	Recipients []string `json:"recipients"`
 }
 
 // Simulation defines model for Simulation.
@@ -4508,6 +5160,12 @@ type SttOptions struct {
 
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
+	// AgentPlugins Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached.
+	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
+
+	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
+	Channels *AgentChannels `json:"channels,omitempty"`
+
 	// Connectors The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
@@ -4543,10 +5201,6 @@ type SyncAgentRequest struct {
 	// PluginEvents MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// PluginOptions How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for.
-	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
-	Plugins       *[]string        `json:"plugins,omitempty"`
-
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
@@ -4570,10 +5224,10 @@ type SyncAgentRequest struct {
 	ThinkingLlm *string `json:"thinking_llm,omitempty"`
 	Tts         *string `json:"tts,omitempty"`
 
-	// UserPlugins Plugins each end user connects with their own account, from the conversation, the first time the agent needs one.
-	UserPlugins *[]string     `json:"user_plugins,omitempty"`
-	Video       *SessionVideo `json:"video,omitempty"`
-	Voice       *string       `json:"voice,omitempty"`
+	// UserPlugins Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins.
+	UserPlugins *[]PluginEntry `json:"user_plugins,omitempty"`
+	Video       *SessionVideo  `json:"video,omitempty"`
+	Voice       *string        `json:"voice,omitempty"`
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -4582,6 +5236,9 @@ type SyncAgentResult struct {
 
 	// Unchanged True when the hash matched and nothing was written.
 	Unchanged bool `json:"unchanged"`
+
+	// Warnings What was stored but will not work yet, such as a channel line the app has not connected.
+	Warnings *[]string `json:"warnings,omitempty"`
 }
 
 // TagKeySummary defines model for TagKeySummary.
@@ -4969,6 +5626,201 @@ type UpdateSessionRequestThinking string
 // UpdateSessionRequestVerbosity defines model for UpdateSessionRequest.Verbosity.
 type UpdateSessionRequestVerbosity string
 
+// UseCase A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.
+type UseCase struct {
+	AgeGated   *bool            `json:"age_gated,omitempty"`
+	ApprovedAt *time.Time       `json:"approved_at,omitempty"`
+	Channels   *UseCaseChannels `json:"channels,omitempty"`
+	CreatedAt  time.Time        `json:"created_at"`
+
+	// Description What the messages are for, in at least 40 characters.
+	Description   *string `json:"description,omitempty"`
+	DirectLending *bool   `json:"direct_lending,omitempty"`
+	EmbeddedLinks *bool   `json:"embedded_links,omitempty"`
+	EmbeddedPhone *bool   `json:"embedded_phone,omitempty"`
+
+	// HelpMessage The answer to HELP: who you are and how to reach support.
+	HelpMessage *string `json:"help_message,omitempty"`
+	Id          string  `json:"id"`
+
+	// IsDefault Send as this use case from every number assigned to no other one. An app's first use case is its default.
+	IsDefault *bool `json:"is_default,omitempty"`
+
+	// MessageFlow How a recipient opts in, and where a reviewer can see it, in at least 40 characters.
+	MessageFlow *string `json:"message_flow,omitempty"`
+
+	// MessageSamples Two to five messages as they will be sent.
+	MessageSamples *[]string `json:"message_samples,omitempty"`
+	Name           string    `json:"name"`
+
+	// Numbers The app's numbers that send as this use case, in E.164. Omitted on an update leaves them as they are; empty unassigns them all.
+	Numbers *[]string `json:"numbers,omitempty"`
+
+	// OptInMessage The answer to START, and the first message after opting in.
+	OptInMessage *string `json:"opt_in_message,omitempty"`
+
+	// OptOutMessage The answer to STOP.
+	OptOutMessage *string `json:"opt_out_message,omitempty"`
+
+	// Status Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
+	Status      UseCaseStatus `json:"status"`
+	SubmittedAt *time.Time    `json:"submitted_at,omitempty"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+
+	// UseCaseType The campaign registry's use case, such as CUSTOMER_CARE, ACCOUNT_NOTIFICATION, 2FA, MARKETING or MIXED.
+	UseCaseType *string `json:"use_case_type,omitempty"`
+
+	// Vendor Who registers the campaign, once Stream approved it.
+	Vendor           *string `json:"vendor,omitempty"`
+	VendorCampaignId *string `json:"vendor_campaign_id,omitempty"`
+
+	// VendorStatus The vendor's word for where the campaign stands, such as TCR_ACCEPTED.
+	VendorStatus *string `json:"vendor_status,omitempty"`
+}
+
+// UseCaseChannels defines model for UseCaseChannels.
+type UseCaseChannels struct {
+	Imessage *IMessageProfile `json:"imessage,omitempty"`
+	Rcs      *RCSProfile      `json:"rcs,omitempty"`
+	Voice    *VoiceProfile    `json:"voice,omitempty"`
+	Whatsapp *WhatsAppProfile `json:"whatsapp,omitempty"`
+}
+
+// UseCaseForReview A use case with the app it is for and the profile it was submitted on.
+type UseCaseForReview struct {
+	AgeGated   *bool      `json:"age_gated,omitempty"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+
+	// BusinessProfile Who the app is, and the brand a vendor registered it as.
+	BusinessProfile *BusinessProfile `json:"business_profile,omitempty"`
+	Channels        *UseCaseChannels `json:"channels,omitempty"`
+	CreatedAt       time.Time        `json:"created_at"`
+
+	// CustomerId The app the use case is for.
+	CustomerId string `json:"customer_id"`
+
+	// Description What the messages are for, in at least 40 characters.
+	Description   *string `json:"description,omitempty"`
+	DirectLending *bool   `json:"direct_lending,omitempty"`
+	EmbeddedLinks *bool   `json:"embedded_links,omitempty"`
+	EmbeddedPhone *bool   `json:"embedded_phone,omitempty"`
+
+	// HelpMessage The answer to HELP: who you are and how to reach support.
+	HelpMessage *string `json:"help_message,omitempty"`
+	Id          string  `json:"id"`
+
+	// IsDefault Send as this use case from every number assigned to no other one. An app's first use case is its default.
+	IsDefault *bool `json:"is_default,omitempty"`
+
+	// MessageFlow How a recipient opts in, and where a reviewer can see it, in at least 40 characters.
+	MessageFlow *string `json:"message_flow,omitempty"`
+
+	// MessageSamples Two to five messages as they will be sent.
+	MessageSamples *[]string `json:"message_samples,omitempty"`
+	Name           string    `json:"name"`
+
+	// Numbers The app's numbers that send as this use case, in E.164. Omitted on an update leaves them as they are; empty unassigns them all.
+	Numbers *[]string `json:"numbers,omitempty"`
+
+	// OptInMessage The answer to START, and the first message after opting in.
+	OptInMessage *string `json:"opt_in_message,omitempty"`
+
+	// OptOutMessage The answer to STOP.
+	OptOutMessage *string `json:"opt_out_message,omitempty"`
+
+	// Reviews What happened to it so far, oldest first. Only on a single use case.
+	Reviews *[]UseCaseReview `json:"reviews,omitempty"`
+
+	// Status Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
+	Status      UseCaseStatus `json:"status"`
+	SubmittedAt *time.Time    `json:"submitted_at,omitempty"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+
+	// UseCaseType The campaign registry's use case, such as CUSTOMER_CARE, ACCOUNT_NOTIFICATION, 2FA, MARKETING or MIXED.
+	UseCaseType *string `json:"use_case_type,omitempty"`
+
+	// Vendor Who registers the campaign, once Stream approved it.
+	Vendor           *string `json:"vendor,omitempty"`
+	VendorCampaignId *string `json:"vendor_campaign_id,omitempty"`
+
+	// VendorStatus The vendor's word for where the campaign stands, such as TCR_ACCEPTED.
+	VendorStatus *string `json:"vendor_status,omitempty"`
+}
+
+// UseCasePage defines model for UseCasePage.
+type UseCasePage struct {
+	HasMore bool      `json:"has_more"`
+	Items   []UseCase `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// UseCaseRequest What an app sends texts and makes calls for. Saved as a draft and submitted for review once it and the business profile are complete.
+type UseCaseRequest struct {
+	AgeGated *bool            `json:"age_gated,omitempty"`
+	Channels *UseCaseChannels `json:"channels,omitempty"`
+
+	// Description What the messages are for, in at least 40 characters.
+	Description   *string `json:"description,omitempty"`
+	DirectLending *bool   `json:"direct_lending,omitempty"`
+	EmbeddedLinks *bool   `json:"embedded_links,omitempty"`
+	EmbeddedPhone *bool   `json:"embedded_phone,omitempty"`
+
+	// HelpMessage The answer to HELP: who you are and how to reach support.
+	HelpMessage *string `json:"help_message,omitempty"`
+
+	// IsDefault Send as this use case from every number assigned to no other one. An app's first use case is its default.
+	IsDefault *bool `json:"is_default,omitempty"`
+
+	// MessageFlow How a recipient opts in, and where a reviewer can see it, in at least 40 characters.
+	MessageFlow *string `json:"message_flow,omitempty"`
+
+	// MessageSamples Two to five messages as they will be sent.
+	MessageSamples *[]string `json:"message_samples,omitempty"`
+	Name           string    `json:"name"`
+
+	// Numbers The app's numbers that send as this use case, in E.164. Omitted on an update leaves them as they are; empty unassigns them all.
+	Numbers *[]string `json:"numbers,omitempty"`
+
+	// OptInMessage The answer to START, and the first message after opting in.
+	OptInMessage *string `json:"opt_in_message,omitempty"`
+
+	// OptOutMessage The answer to STOP.
+	OptOutMessage *string `json:"opt_out_message,omitempty"`
+
+	// UseCaseType The campaign registry's use case, such as CUSTOMER_CARE, ACCOUNT_NOTIFICATION, 2FA, MARKETING or MIXED.
+	UseCaseType *string `json:"use_case_type,omitempty"`
+}
+
+// UseCaseReview One move a use case made, and who made it. Nothing here is ever changed.
+type UseCaseReview struct {
+	// Actor Who moved a use case: the app, Stream staff or the vendor.
+	Actor ReviewActor `json:"actor"`
+
+	// ActorName Who exactly: the reviewer, or the vendor.
+	ActorName  *string    `json:"actor_name,omitempty"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+
+	// FromStatus Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
+	FromStatus UseCaseStatus `json:"from_status"`
+	Id         string        `json:"id"`
+
+	// Notes What the reviewer or vendor said.
+	Notes       *string    `json:"notes,omitempty"`
+	SubmittedAt *time.Time `json:"submitted_at,omitempty"`
+
+	// ToStatus Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
+	ToStatus UseCaseStatus `json:"to_status"`
+
+	// VendorPayload What the vendor answered, as it came.
+	VendorPayload *map[string]interface{} `json:"vendor_payload,omitempty"`
+}
+
+// UseCaseStatus Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
+type UseCaseStatus string
+
 // VideoSource defines model for VideoSource.
 type VideoSource struct {
 	// MaxFrames How many frames to sample, evenly spaced across the clip. Default 8.
@@ -5026,6 +5878,26 @@ type VoicePreviewRequest struct {
 	Text *string `json:"text,omitempty"`
 }
 
+// VoiceProfile defines model for VoiceProfile.
+type VoiceProfile struct {
+	CallRecordingEnabled *bool `json:"call_recording_enabled,omitempty"`
+
+	// CallerIdNumber A number bought here, or a verified external one.
+	CallerIdNumber *string `json:"caller_id_number,omitempty"`
+
+	// CallingPurpose Support, reminders, sales and so on.
+	CallingPurpose          *string   `json:"calling_purpose,omitempty"`
+	ConsentCollectionMethod *string   `json:"consent_collection_method,omitempty"`
+	ConsentDisclosureText   *string   `json:"consent_disclosure_text,omitempty"`
+	ConsentEvidenceLocation *string   `json:"consent_evidence_location,omitempty"`
+	DestinationCountries    *[]string `json:"destination_countries,omitempty"`
+	ExpectedCallVolume      *string   `json:"expected_call_volume,omitempty"`
+	OptOutHandling          *string   `json:"opt_out_handling,omitempty"`
+
+	// RecordingDisclosure How a recorded call is disclosed and consented to.
+	RecordingDisclosure *string `json:"recording_disclosure,omitempty"`
+}
+
 // VoiceProviders defines model for VoiceProviders.
 type VoiceProviders struct {
 	Providers []string `json:"providers"`
@@ -5061,6 +5933,20 @@ type VoiceSampleRequest struct {
 
 	// Transcript What is said in the recording. Optional, and the providers that use one clone more faithfully with it.
 	Transcript *string `json:"transcript,omitempty"`
+}
+
+// WhatsAppProfile defines model for WhatsAppProfile.
+type WhatsAppProfile struct {
+	// BusinessAccount The WhatsApp Business account, existing or to create.
+	BusinessAccount *string `json:"business_account,omitempty"`
+
+	// BusinessPortfolio The Meta business portfolio, existing or to create.
+	BusinessPortfolio *string `json:"business_portfolio,omitempty"`
+	DisplayName       *string `json:"display_name,omitempty"`
+	PhoneNumber       *string `json:"phone_number,omitempty"`
+
+	// VerificationMethod sms or voice.
+	VerificationMethod *string `json:"verification_method,omitempty"`
 }
 
 // BadRequest defines model for BadRequest.
@@ -5100,16 +5986,23 @@ type GetCallEventsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// VerifyChannelHookParams defines parameters for VerifyChannelHook.
+type VerifyChannelHookParams struct {
+	HubMode        *string `form:"hub.mode,omitempty" json:"hub.mode,omitempty"`
+	HubVerifyToken *string `form:"hub.verify_token,omitempty" json:"hub.verify_token,omitempty"`
+	HubChallenge   *string `form:"hub.challenge,omitempty" json:"hub.challenge,omitempty"`
+}
+
 // ListAgentConfigsParams defines parameters for ListAgentConfigs.
 type ListAgentConfigsParams struct {
 	// Name Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
-// ListConnectorConnectionsParams defines parameters for ListConnectorConnections.
-type ListConnectorConnectionsParams struct {
+// ListConnectionsParams defines parameters for ListConnections.
+type ListConnectionsParams struct {
 	// OwnerType app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
-	OwnerType ConnectorConnectionOwnerType `form:"owner_type" json:"owner_type"`
+	OwnerType ConnectionOwnerType `form:"owner_type" json:"owner_type"`
 
 	// ConnectorId Keeps one connector's.
 	ConnectorId *string `form:"connector_id,omitempty" json:"connector_id,omitempty"`
@@ -5121,8 +6014,8 @@ type ListConnectorConnectionsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
-// DeleteConnectorConnectionParams defines parameters for DeleteConnectorConnection.
-type DeleteConnectorConnectionParams struct {
+// DeleteConnectionParams defines parameters for DeleteConnection.
+type DeleteConnectionParams struct {
 	// Force Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists.
 	Force *bool `form:"force,omitempty" json:"force,omitempty"`
 }
@@ -5263,6 +6156,18 @@ type ListDataChangesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListUseCasesForReviewParams defines parameters for ListUseCasesForReview.
+type ListUseCasesForReviewParams struct {
+	// Status Omitted is submitted: what waits on Stream.
+	Status *UseCaseStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// Limit Up to 200. Omitted is 50.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page, sent with the same status.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListPhoneNumbersParams defines parameters for ListPhoneNumbers.
 type ListPhoneNumbersParams struct {
 	// IncludeReleased Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill.
@@ -5295,6 +6200,33 @@ type SearchPhoneNumbersParams struct {
 
 	// Features Capabilities every number must have. Repeat the parameter to require several. A vendor that cannot filter on one still reports what its numbers carry, so these are checked on the results either way.
 	Features *[]PhoneCapability `form:"features,omitempty" json:"features,omitempty"`
+}
+
+// ListOptOutsParams defines parameters for ListOptOuts.
+type ListOptOutsParams struct {
+	// Limit Up to 200. Omitted is 50.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListUseCasesParams defines parameters for ListUseCases.
+type ListUseCasesParams struct {
+	// Limit Up to 200. Omitted is 50.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListUseCaseReviewsParams defines parameters for ListUseCaseReviews.
+type ListUseCaseReviewsParams struct {
+	// Limit Up to 200. Omitted is 50.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // GetActivityParams defines parameters for GetActivity.
@@ -5394,6 +6326,12 @@ type CreateCampaignJSONRequestBody = CampaignRequest
 // AddCampaignContactsJSONRequestBody defines body for AddCampaignContacts for application/json ContentType.
 type AddCampaignContactsJSONRequestBody = ContactsRequest
 
+// ConnectChannelJSONRequestBody defines body for ConnectChannel for application/json ContentType.
+type ConnectChannelJSONRequestBody = ConnectChannelRequest
+
+// LinkChannelNumberJSONRequestBody defines body for LinkChannelNumber for application/json ContentType.
+type LinkChannelNumberJSONRequestBody = LinkChannelRequest
+
 // CreateChatTokenJSONRequestBody defines body for CreateChatToken for application/json ContentType.
 type CreateChatTokenJSONRequestBody = ChatTokenRequest
 
@@ -5409,8 +6347,8 @@ type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 // AuthorizePluginJSONRequestBody defines body for AuthorizePlugin for application/json ContentType.
 type AuthorizePluginJSONRequestBody = AuthorizePluginRequest
 
-// CreateConnectorConnectionJSONRequestBody defines body for CreateConnectorConnection for application/json ContentType.
-type CreateConnectorConnectionJSONRequestBody = ConnectorConnectionRequest
+// CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
+type CreateConnectionJSONRequestBody = ConnectionRequest
 
 // CreateConnectorJSONRequestBody defines body for CreateConnector for application/json ContentType.
 type CreateConnectorJSONRequestBody = CustomConnectorRequest
@@ -5493,6 +6431,12 @@ type ClassifyJSONRequestBody = ClassifyRequest
 // GenerateImageJSONRequestBody defines body for GenerateImage for application/json ContentType.
 type GenerateImageJSONRequestBody = ImageGenerationRequest
 
+// ReviewUseCaseJSONRequestBody defines body for ReviewUseCase for application/json ContentType.
+type ReviewUseCaseJSONRequestBody = ReviewUseCaseRequest
+
+// SaveBusinessProfileJSONRequestBody defines body for SaveBusinessProfile for application/json ContentType.
+type SaveBusinessProfileJSONRequestBody = BusinessProfileRequest
+
 // PlacePhoneCallJSONRequestBody defines body for PlacePhoneCall for application/json ContentType.
 type PlacePhoneCallJSONRequestBody = PlaceCallRequest
 
@@ -5507,6 +6451,18 @@ type BuyPhoneNumberJSONRequestBody = BuyNumberRequest
 
 // AttachPhoneNumberJSONRequestBody defines body for AttachPhoneNumber for application/json ContentType.
 type AttachPhoneNumberJSONRequestBody = AttachNumberRequest
+
+// CreateOptOutJSONRequestBody defines body for CreateOptOut for application/json ContentType.
+type CreateOptOutJSONRequestBody = CreateOptOutRequest
+
+// SetSandboxRecipientsJSONRequestBody defines body for SetSandboxRecipients for application/json ContentType.
+type SetSandboxRecipientsJSONRequestBody = SetSandboxRecipientsRequest
+
+// CreateUseCaseJSONRequestBody defines body for CreateUseCase for application/json ContentType.
+type CreateUseCaseJSONRequestBody = UseCaseRequest
+
+// UpdateUseCaseJSONRequestBody defines body for UpdateUseCase for application/json ContentType.
+type UpdateUseCaseJSONRequestBody = UseCaseRequest
 
 // UpdateAppPolicyJSONRequestBody defines body for UpdateAppPolicy for application/json ContentType.
 type UpdateAppPolicyJSONRequestBody = Policy
@@ -5718,6 +6674,68 @@ func (t *MessageContent) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsPluginEntry0 returns the union data inside the PluginEntry as a PluginEntry0
+func (t PluginEntry) AsPluginEntry0() (PluginEntry0, error) {
+	var body PluginEntry0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPluginEntry0 overwrites any union data inside the PluginEntry as the provided PluginEntry0
+func (t *PluginEntry) FromPluginEntry0(v PluginEntry0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePluginEntry0 performs a merge with any union data inside the PluginEntry, using the provided PluginEntry0
+func (t *PluginEntry) MergePluginEntry0(v PluginEntry0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPluginWithOptions returns the union data inside the PluginEntry as a PluginWithOptions
+func (t PluginEntry) AsPluginWithOptions() (PluginWithOptions, error) {
+	var body PluginWithOptions
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPluginWithOptions overwrites any union data inside the PluginEntry as the provided PluginWithOptions
+func (t *PluginEntry) FromPluginWithOptions(v PluginWithOptions) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePluginWithOptions performs a merge with any union data inside the PluginEntry, using the provided PluginWithOptions
+func (t *PluginEntry) MergePluginWithOptions(v PluginWithOptions) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t PluginEntry) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *PluginEntry) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
 
@@ -5919,6 +6937,86 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
 	StartCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListChannelAccounts List channel lines
+	//
+	// The lines this app has connected, oldest first. Credentials are never read back.
+	//
+	// Server-side only.
+	//
+	// Corresponds with GET /v1/agents/channels (the `ListChannelAccounts` operationId).
+	ListChannelAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConnectChannelWithBody Connect a channel line
+	//
+	// Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+	//
+	// Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+	//
+	// Server-side only: it carries provider credentials.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/channels (the `ConnectChannel` operationId).
+	ConnectChannelWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConnectChannel Connect a channel line
+	//
+	// Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+	//
+	// Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+	//
+	// Server-side only: it carries provider credentials.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/channels (the `ConnectChannel` operationId).
+	ConnectChannel(ctx context.Context, body ConnectChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// VerifyChannelHook Answer a channel provider's webhook check
+	//
+	// What WhatsApp asks for before it will deliver: the verify token the line was connected with, answered with the challenge it sent, as text. Unauthenticated because Meta is not a customer; the token in the path names the line.
+	//
+	// Corresponds with GET /v1/agents/channels/hooks/{token} (the `VerifyChannelHook` operationId).
+	VerifyChannelHook(ctx context.Context, token string, params *VerifyChannelHookParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReceiveChannelMessage Receive a message on a channel
+	//
+	// Where WhatsApp, Telnyx and Linq deliver what somebody wrote to one of the app's lines. Unauthenticated because the provider is not a customer: the token in the path names the line, and each delivery is checked against the signing secret that line was connected with. A message that has not been seen before earns a turn from whichever agent names the number under `channels`, and what the agent says goes back over the channel rather than in this response.
+	//
+	// Corresponds with POST /v1/agents/channels/hooks/{token} (the `ReceiveChannelMessage` operationId).
+	ReceiveChannelMessage(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LinkChannelNumberWithBody Mint a code to claim a number
+	//
+	// Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/channels/links (the `LinkChannelNumber` operationId).
+	LinkChannelNumberWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LinkChannelNumber Mint a code to claim a number
+	//
+	// Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/channels/links (the `LinkChannelNumber` operationId).
+	LinkChannelNumber(ctx context.Context, body LinkChannelNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DisconnectChannel Disconnect a channel line
+	//
+	// Drops the line's credentials, so nothing is delivered or sent on it again.
+	//
+	// Server-side only.
+	//
+	// Corresponds with DELETE /v1/agents/channels/{id} (the `DisconnectChannel` operationId).
+	DisconnectChannel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateChatTokenWithBody What a browser needs to read an agent's conversation
 	//
 	// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
@@ -6024,7 +7122,7 @@ type ClientInterface interface {
 
 	// ListConfigPlugins The plugin logins this agent holds
 	//
-	// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
+	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
 	ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6038,7 +7136,7 @@ type ClientInterface interface {
 
 	// AuthorizePluginWithBody Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -6048,7 +7146,7 @@ type ClientInterface interface {
 
 	// AuthorizePlugin Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
@@ -6056,16 +7154,16 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListConnectorConnections List connections
+	// ListConnections List connections
 	//
 	// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// Corresponds with GET /v1/agents/connections (the `ListConnectorConnections` operationId).
-	ListConnectorConnections(ctx context.Context, params *ListConnectorConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /v1/agents/connections (the `ListConnections` operationId).
+	ListConnections(ctx context.Context, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateConnectorConnectionWithBody Create a connection
+	// CreateConnectionWithBody Create a connection
 	//
 	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 	//
@@ -6073,10 +7171,10 @@ type ClientInterface interface {
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
-	CreateConnectorConnectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/agents/connections (the `CreateConnection` operationId).
+	CreateConnectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateConnectorConnection Create a connection
+	// CreateConnection Create a connection
 	//
 	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 	//
@@ -6084,26 +7182,26 @@ type ClientInterface interface {
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
-	CreateConnectorConnection(ctx context.Context, body CreateConnectorConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/agents/connections (the `CreateConnection` operationId).
+	CreateConnection(ctx context.Context, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteConnectorConnection Delete a connection
+	// DeleteConnection Delete a connection
 	//
 	// Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnectorConnection` operationId).
-	DeleteConnectorConnection(ctx context.Context, id string, params *DeleteConnectorConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnection` operationId).
+	DeleteConnection(ctx context.Context, id string, params *DeleteConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetConnectorConnection Read a connection
+	// GetConnection Read a connection
 	//
 	// An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnectorConnection` operationId).
-	GetConnectorConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
+	GetConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectors List or search connectors
 	//
@@ -7034,6 +8132,77 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 	GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListUseCasesForReview List use cases waiting on Stream
+	//
+	// Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with GET /v1/ops/use-cases (the `ListUseCasesForReview` operationId).
+	ListUseCasesForReview(ctx context.Context, params *ListUseCasesForReviewParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUseCaseForReview Get a use case to review
+	//
+	// A use case with its app, profile and history.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with GET /v1/ops/use-cases/{id} (the `GetUseCaseForReview` operationId).
+	GetUseCaseForReview(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReviewUseCaseWithBody Review a submitted use case
+	//
+	// Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/ops/use-cases/{id}/review (the `ReviewUseCase` operationId).
+	ReviewUseCaseWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReviewUseCase Review a submitted use case
+	//
+	// Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/ops/use-cases/{id}/review (the `ReviewUseCase` operationId).
+	ReviewUseCase(ctx context.Context, id string, body ReviewUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBusinessProfile Get the business profile
+	//
+	// Who the app said it is, and the brand a vendor registered it as.
+	//
+	// Server-side only.
+	//
+	// Corresponds with GET /v1/phone/business-profile (the `GetBusinessProfile` operationId).
+	GetBusinessProfile(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SaveBusinessProfileWithBody Save the business profile
+	//
+	// Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/phone/business-profile (the `SaveBusinessProfile` operationId).
+	SaveBusinessProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SaveBusinessProfile Save the business profile
+	//
+	// Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/phone/business-profile (the `SaveBusinessProfile` operationId).
+	SaveBusinessProfile(ctx context.Context, body SaveBusinessProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PlacePhoneCallWithBody Place an outbound call and bridge it into a Stream call
 	//
 	// Stream's SIP is inbound only, so the vendor originates the call and connects it to a trunk the agent is already on, rather than Stream dialling out.
@@ -7088,6 +8257,13 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/phone/calls/{vendor_call_id}/digits (the `PressPhoneDigits` operationId).
 	PressPhoneDigits(ctx context.Context, vendorCallId string, body PressPhoneDigitsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceiveDLCReport Receive a 10DLC registration report
+	//
+	// Where Telnyx reports on the brands and campaigns this router registered. Unauthenticated because the vendor is not a customer: each report is checked against the vendor's Ed25519 signature, and then only names the campaign to ask the vendor about, so a report cannot say a campaign was approved that was not.
+	//
+	// Corresponds with POST /v1/phone/hooks/10dlc (the `ReceiveDLCReport` operationId).
+	ReceiveDLCReport(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPhoneNumbers The numbers the calling customer holds
 	//
 	// Corresponds with GET /v1/phone/numbers (the `ListPhoneNumbers` operationId).
@@ -7136,6 +8312,164 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/phone/numbers/{e164}/attach (the `AttachPhoneNumber` operationId).
 	AttachPhoneNumber(ctx context.Context, e164 string, body AttachPhoneNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListOptOuts List opt-outs
+	//
+	// The people who asked not to be reached, newest first.
+	//
+	// Server-side only.
+	//
+	// Corresponds with GET /v1/phone/opt-outs (the `ListOptOuts` operationId).
+	ListOptOuts(ctx context.Context, params *ListOptOutsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateOptOutWithBody Record an opt-out
+	//
+	// Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/phone/opt-outs (the `CreateOptOut` operationId).
+	CreateOptOutWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateOptOut Record an opt-out
+	//
+	// Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/phone/opt-outs (the `CreateOptOut` operationId).
+	CreateOptOut(ctx context.Context, body CreateOptOutJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeOptOut Revoke an opt-out
+	//
+	// Lifts an opt-out. The record of it is kept.
+	//
+	// Server-side only.
+	//
+	// Corresponds with DELETE /v1/phone/opt-outs/{id} (the `RevokeOptOut` operationId).
+	RevokeOptOut(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPhoneSandbox Get the sandbox
+	//
+	// What the app may text and call before a use case is approved, and how much of today's allowance it used.
+	//
+	// Server-side only.
+	//
+	// Corresponds with GET /v1/phone/sandbox (the `GetPhoneSandbox` operationId).
+	GetPhoneSandbox(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSandboxRecipientsWithBody Set the sandbox recipients
+	//
+	// Replaces the numbers a sandboxed app may text and call.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
+	SetSandboxRecipientsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSandboxRecipients Set the sandbox recipients
+	//
+	// Replaces the numbers a sandboxed app may text and call.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
+	SetSandboxRecipients(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListUseCases List 10DLC use cases
+	//
+	// The app's use cases, newest first.
+	//
+	// Server-side only.
+	//
+	// Corresponds with GET /v1/phone/use-cases (the `ListUseCases` operationId).
+	ListUseCases(ctx context.Context, params *ListUseCasesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateUseCaseWithBody Create a 10DLC use case
+	//
+	// Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/phone/use-cases (the `CreateUseCase` operationId).
+	CreateUseCaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateUseCase Create a 10DLC use case
+	//
+	// Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/phone/use-cases (the `CreateUseCase` operationId).
+	CreateUseCase(ctx context.Context, body CreateUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteUseCase Delete a 10DLC use case
+	//
+	// Refused once the vendor holds it.
+	//
+	// Server-side only.
+	//
+	// Corresponds with DELETE /v1/phone/use-cases/{id} (the `DeleteUseCase` operationId).
+	DeleteUseCase(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUseCase Get a 10DLC use case
+	//
+	// Server-side only.
+	//
+	// Corresponds with GET /v1/phone/use-cases/{id} (the `GetUseCase` operationId).
+	GetUseCase(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateUseCaseWithBody Update a 10DLC use case
+	//
+	// Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/phone/use-cases/{id} (the `UpdateUseCase` operationId).
+	UpdateUseCaseWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateUseCase Update a 10DLC use case
+	//
+	// Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/phone/use-cases/{id} (the `UpdateUseCase` operationId).
+	UpdateUseCase(ctx context.Context, id string, body UpdateUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListUseCaseReviews List a use case's review history
+	//
+	// Every move the use case made and who made it, oldest first.
+	//
+	// Server-side only.
+	//
+	// Corresponds with GET /v1/phone/use-cases/{id}/reviews (the `ListUseCaseReviews` operationId).
+	ListUseCaseReviews(ctx context.Context, id string, params *ListUseCaseReviewsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SubmitUseCase Submit a 10DLC use case for review
+	//
+	// Sends a use case to Stream's review, once it and the business profile have everything the registry asks for; a 400 says what is missing. Stream approving it registers it with the vendor.
+	//
+	// Server-side only.
+	//
+	// Corresponds with POST /v1/phone/use-cases/{id}/submit (the `SubmitUseCase` operationId).
+	SubmitUseCase(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPhoneVendors List the telephony vendors and whether they can be used
 	//
@@ -7701,6 +9035,166 @@ func (c *Client) StartCampaign(ctx context.Context, id string, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
+// ListChannelAccounts List channel lines
+//
+// The lines this app has connected, oldest first. Credentials are never read back.
+//
+// Server-side only.
+//
+// Corresponds with GET /v1/agents/channels (the `ListChannelAccounts` operationId).
+func (c *Client) ListChannelAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListChannelAccountsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConnectChannelWithBody Connect a channel line
+//
+// Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+//
+// Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+//
+// Server-side only: it carries provider credentials.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/channels (the `ConnectChannel` operationId).
+func (c *Client) ConnectChannelWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConnectChannelRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConnectChannel Connect a channel line
+//
+// Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+//
+// Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+//
+// Server-side only: it carries provider credentials.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/channels (the `ConnectChannel` operationId).
+func (c *Client) ConnectChannel(ctx context.Context, body ConnectChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConnectChannelRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// VerifyChannelHook Answer a channel provider's webhook check
+//
+// What WhatsApp asks for before it will deliver: the verify token the line was connected with, answered with the challenge it sent, as text. Unauthenticated because Meta is not a customer; the token in the path names the line.
+//
+// Corresponds with GET /v1/agents/channels/hooks/{token} (the `VerifyChannelHook` operationId).
+func (c *Client) VerifyChannelHook(ctx context.Context, token string, params *VerifyChannelHookParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyChannelHookRequest(c.Server, token, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveChannelMessage Receive a message on a channel
+//
+// Where WhatsApp, Telnyx and Linq deliver what somebody wrote to one of the app's lines. Unauthenticated because the provider is not a customer: the token in the path names the line, and each delivery is checked against the signing secret that line was connected with. A message that has not been seen before earns a turn from whichever agent names the number under `channels`, and what the agent says goes back over the channel rather than in this response.
+//
+// Corresponds with POST /v1/agents/channels/hooks/{token} (the `ReceiveChannelMessage` operationId).
+func (c *Client) ReceiveChannelMessage(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveChannelMessageRequest(c.Server, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LinkChannelNumberWithBody Mint a code to claim a number
+//
+// Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/channels/links (the `LinkChannelNumber` operationId).
+func (c *Client) LinkChannelNumberWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLinkChannelNumberRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LinkChannelNumber Mint a code to claim a number
+//
+// Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/channels/links (the `LinkChannelNumber` operationId).
+func (c *Client) LinkChannelNumber(ctx context.Context, body LinkChannelNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLinkChannelNumberRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DisconnectChannel Disconnect a channel line
+//
+// Drops the line's credentials, so nothing is delivered or sent on it again.
+//
+// Server-side only.
+//
+// Corresponds with DELETE /v1/agents/channels/{id} (the `DisconnectChannel` operationId).
+func (c *Client) DisconnectChannel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDisconnectChannelRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreateChatTokenWithBody What a browser needs to read an agent's conversation
 //
 // An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
@@ -7916,7 +9410,7 @@ func (c *Client) UpdateAgentConfig(ctx context.Context, id string, body UpdateAg
 
 // ListConfigPlugins The plugin logins this agent holds
 //
-// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
+// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
 func (c *Client) ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7950,7 +9444,7 @@ func (c *Client) DisconnectPlugin(ctx context.Context, id string, pluginId strin
 
 // AuthorizePluginWithBody Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -7970,7 +9464,7 @@ func (c *Client) AuthorizePluginWithBody(ctx context.Context, id string, pluginI
 
 // AuthorizePlugin Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
@@ -7988,15 +9482,15 @@ func (c *Client) AuthorizePlugin(ctx context.Context, id string, pluginId string
 	return c.Client.Do(req)
 }
 
-// ListConnectorConnections List connections
+// ListConnections List connections
 //
 // One owner's connections, newest first: the app's own, or those of the user the backend acts for.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
-// Corresponds with GET /v1/agents/connections (the `ListConnectorConnections` operationId).
-func (c *Client) ListConnectorConnections(ctx context.Context, params *ListConnectorConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListConnectorConnectionsRequest(c.Server, params)
+// Corresponds with GET /v1/agents/connections (the `ListConnections` operationId).
+func (c *Client) ListConnections(ctx context.Context, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectionsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -8007,7 +9501,7 @@ func (c *Client) ListConnectorConnections(ctx context.Context, params *ListConne
 	return c.Client.Do(req)
 }
 
-// CreateConnectorConnectionWithBody Create a connection
+// CreateConnectionWithBody Create a connection
 //
 // A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 //
@@ -8015,9 +9509,9 @@ func (c *Client) ListConnectorConnections(ctx context.Context, params *ListConne
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
-func (c *Client) CreateConnectorConnectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateConnectorConnectionRequestWithBody(c.Server, contentType, body)
+// Corresponds with POST /v1/agents/connections (the `CreateConnection` operationId).
+func (c *Client) CreateConnectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectionRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8028,7 +9522,7 @@ func (c *Client) CreateConnectorConnectionWithBody(ctx context.Context, contentT
 	return c.Client.Do(req)
 }
 
-// CreateConnectorConnection Create a connection
+// CreateConnection Create a connection
 //
 // A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 //
@@ -8036,9 +9530,9 @@ func (c *Client) CreateConnectorConnectionWithBody(ctx context.Context, contentT
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
-func (c *Client) CreateConnectorConnection(ctx context.Context, body CreateConnectorConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateConnectorConnectionRequest(c.Server, body)
+// Corresponds with POST /v1/agents/connections (the `CreateConnection` operationId).
+func (c *Client) CreateConnection(ctx context.Context, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectionRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8049,15 +9543,15 @@ func (c *Client) CreateConnectorConnection(ctx context.Context, body CreateConne
 	return c.Client.Do(req)
 }
 
-// DeleteConnectorConnection Delete a connection
+// DeleteConnection Delete a connection
 //
 // Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
-// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnectorConnection` operationId).
-func (c *Client) DeleteConnectorConnection(ctx context.Context, id string, params *DeleteConnectorConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteConnectorConnectionRequest(c.Server, id, params)
+// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnection` operationId).
+func (c *Client) DeleteConnection(ctx context.Context, id string, params *DeleteConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectionRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -8068,15 +9562,15 @@ func (c *Client) DeleteConnectorConnection(ctx context.Context, id string, param
 	return c.Client.Do(req)
 }
 
-// GetConnectorConnection Read a connection
+// GetConnection Read a connection
 //
 // An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
-// Corresponds with GET /v1/agents/connections/{id} (the `GetConnectorConnection` operationId).
-func (c *Client) GetConnectorConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConnectorConnectionRequest(c.Server, id)
+// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
+func (c *Client) GetConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectionRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -10046,6 +11540,147 @@ func (c *Client) GenerateImage(ctx context.Context, body GenerateImageJSONReques
 	return c.Client.Do(req)
 }
 
+// ListUseCasesForReview List use cases waiting on Stream
+//
+// Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with GET /v1/ops/use-cases (the `ListUseCasesForReview` operationId).
+func (c *Client) ListUseCasesForReview(ctx context.Context, params *ListUseCasesForReviewParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListUseCasesForReviewRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUseCaseForReview Get a use case to review
+//
+// A use case with its app, profile and history.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with GET /v1/ops/use-cases/{id} (the `GetUseCaseForReview` operationId).
+func (c *Client) GetUseCaseForReview(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUseCaseForReviewRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReviewUseCaseWithBody Review a submitted use case
+//
+// Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/ops/use-cases/{id}/review (the `ReviewUseCase` operationId).
+func (c *Client) ReviewUseCaseWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReviewUseCaseRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReviewUseCase Review a submitted use case
+//
+// Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/ops/use-cases/{id}/review (the `ReviewUseCase` operationId).
+func (c *Client) ReviewUseCase(ctx context.Context, id string, body ReviewUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReviewUseCaseRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetBusinessProfile Get the business profile
+//
+// Who the app said it is, and the brand a vendor registered it as.
+//
+// Server-side only.
+//
+// Corresponds with GET /v1/phone/business-profile (the `GetBusinessProfile` operationId).
+func (c *Client) GetBusinessProfile(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBusinessProfileRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SaveBusinessProfileWithBody Save the business profile
+//
+// Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/phone/business-profile (the `SaveBusinessProfile` operationId).
+func (c *Client) SaveBusinessProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSaveBusinessProfileRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SaveBusinessProfile Save the business profile
+//
+// Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/phone/business-profile (the `SaveBusinessProfile` operationId).
+func (c *Client) SaveBusinessProfile(ctx context.Context, body SaveBusinessProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSaveBusinessProfileRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // PlacePhoneCallWithBody Place an outbound call and bridge it into a Stream call
 //
 // Stream's SIP is inbound only, so the vendor originates the call and connects it to a trunk the agent is already on, rather than Stream dialling out.
@@ -10150,6 +11785,23 @@ func (c *Client) PressPhoneDigitsWithBody(ctx context.Context, vendorCallId stri
 // Corresponds with POST /v1/phone/calls/{vendor_call_id}/digits (the `PressPhoneDigits` operationId).
 func (c *Client) PressPhoneDigits(ctx context.Context, vendorCallId string, body PressPhoneDigitsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPressPhoneDigitsRequest(c.Server, vendorCallId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveDLCReport Receive a 10DLC registration report
+//
+// Where Telnyx reports on the brands and campaigns this router registered. Unauthenticated because the vendor is not a customer: each report is checked against the vendor's Ed25519 signature, and then only names the campaign to ask the vendor about, so a report cannot say a campaign was approved that was not.
+//
+// Corresponds with POST /v1/phone/hooks/10dlc (the `ReceiveDLCReport` operationId).
+func (c *Client) ReceiveDLCReport(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveDLCReportRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -10269,6 +11921,324 @@ func (c *Client) AttachPhoneNumberWithBody(ctx context.Context, e164 string, con
 // Corresponds with POST /v1/phone/numbers/{e164}/attach (the `AttachPhoneNumber` operationId).
 func (c *Client) AttachPhoneNumber(ctx context.Context, e164 string, body AttachPhoneNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAttachPhoneNumberRequest(c.Server, e164, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListOptOuts List opt-outs
+//
+// The people who asked not to be reached, newest first.
+//
+// Server-side only.
+//
+// Corresponds with GET /v1/phone/opt-outs (the `ListOptOuts` operationId).
+func (c *Client) ListOptOuts(ctx context.Context, params *ListOptOutsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListOptOutsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateOptOutWithBody Record an opt-out
+//
+// Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/phone/opt-outs (the `CreateOptOut` operationId).
+func (c *Client) CreateOptOutWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOptOutRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateOptOut Record an opt-out
+//
+// Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/phone/opt-outs (the `CreateOptOut` operationId).
+func (c *Client) CreateOptOut(ctx context.Context, body CreateOptOutJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOptOutRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeOptOut Revoke an opt-out
+//
+// Lifts an opt-out. The record of it is kept.
+//
+// Server-side only.
+//
+// Corresponds with DELETE /v1/phone/opt-outs/{id} (the `RevokeOptOut` operationId).
+func (c *Client) RevokeOptOut(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeOptOutRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPhoneSandbox Get the sandbox
+//
+// What the app may text and call before a use case is approved, and how much of today's allowance it used.
+//
+// Server-side only.
+//
+// Corresponds with GET /v1/phone/sandbox (the `GetPhoneSandbox` operationId).
+func (c *Client) GetPhoneSandbox(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPhoneSandboxRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSandboxRecipientsWithBody Set the sandbox recipients
+//
+// Replaces the numbers a sandboxed app may text and call.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
+func (c *Client) SetSandboxRecipientsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSandboxRecipientsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSandboxRecipients Set the sandbox recipients
+//
+// Replaces the numbers a sandboxed app may text and call.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
+func (c *Client) SetSandboxRecipients(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSandboxRecipientsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListUseCases List 10DLC use cases
+//
+// The app's use cases, newest first.
+//
+// Server-side only.
+//
+// Corresponds with GET /v1/phone/use-cases (the `ListUseCases` operationId).
+func (c *Client) ListUseCases(ctx context.Context, params *ListUseCasesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListUseCasesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateUseCaseWithBody Create a 10DLC use case
+//
+// Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/phone/use-cases (the `CreateUseCase` operationId).
+func (c *Client) CreateUseCaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateUseCaseRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateUseCase Create a 10DLC use case
+//
+// Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/phone/use-cases (the `CreateUseCase` operationId).
+func (c *Client) CreateUseCase(ctx context.Context, body CreateUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateUseCaseRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteUseCase Delete a 10DLC use case
+//
+// Refused once the vendor holds it.
+//
+// Server-side only.
+//
+// Corresponds with DELETE /v1/phone/use-cases/{id} (the `DeleteUseCase` operationId).
+func (c *Client) DeleteUseCase(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteUseCaseRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUseCase Get a 10DLC use case
+//
+// Server-side only.
+//
+// Corresponds with GET /v1/phone/use-cases/{id} (the `GetUseCase` operationId).
+func (c *Client) GetUseCase(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUseCaseRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateUseCaseWithBody Update a 10DLC use case
+//
+// Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/phone/use-cases/{id} (the `UpdateUseCase` operationId).
+func (c *Client) UpdateUseCaseWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateUseCaseRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateUseCase Update a 10DLC use case
+//
+// Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/phone/use-cases/{id} (the `UpdateUseCase` operationId).
+func (c *Client) UpdateUseCase(ctx context.Context, id string, body UpdateUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateUseCaseRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListUseCaseReviews List a use case's review history
+//
+// Every move the use case made and who made it, oldest first.
+//
+// Server-side only.
+//
+// Corresponds with GET /v1/phone/use-cases/{id}/reviews (the `ListUseCaseReviews` operationId).
+func (c *Client) ListUseCaseReviews(ctx context.Context, id string, params *ListUseCaseReviewsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListUseCaseReviewsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SubmitUseCase Submit a 10DLC use case for review
+//
+// Sends a use case to Stream's review, once it and the business profile have everything the registry asks for; a 400 says what is missing. Stream approving it registers it with the vendor.
+//
+// Server-side only.
+//
+// Corresponds with POST /v1/phone/use-cases/{id}/submit (the `SubmitUseCase` operationId).
+func (c *Client) SubmitUseCase(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSubmitUseCaseRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -11476,6 +13446,266 @@ func NewStartCampaignRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListChannelAccountsRequest constructs an http.Request for the ListChannelAccounts method
+func NewListChannelAccountsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/channels")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewConnectChannelRequest calls the generic ConnectChannel builder with application/json body
+func NewConnectChannelRequest(server string, body ConnectChannelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewConnectChannelRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewConnectChannelRequestWithBody constructs an http.Request for the ConnectChannel method, with any body, and a specified content type
+func NewConnectChannelRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/channels")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewVerifyChannelHookRequest constructs an http.Request for the VerifyChannelHook method
+func NewVerifyChannelHookRequest(server string, token string, params *VerifyChannelHookParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/channels/hooks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.HubMode != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "hub.mode", *params.HubMode, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.HubVerifyToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "hub.verify_token", *params.HubVerifyToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.HubChallenge != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "hub.challenge", *params.HubChallenge, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReceiveChannelMessageRequest constructs an http.Request for the ReceiveChannelMessage method
+func NewReceiveChannelMessageRequest(server string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/channels/hooks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLinkChannelNumberRequest calls the generic LinkChannelNumber builder with application/json body
+func NewLinkChannelNumberRequest(server string, body LinkChannelNumberJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLinkChannelNumberRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLinkChannelNumberRequestWithBody constructs an http.Request for the LinkChannelNumber method, with any body, and a specified content type
+func NewLinkChannelNumberRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/channels/links")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDisconnectChannelRequest constructs an http.Request for the DisconnectChannel method
+func NewDisconnectChannelRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/channels/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateChatTokenRequest calls the generic CreateChatToken builder with application/json body
 func NewCreateChatTokenRequest(server string, body CreateChatTokenJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -11901,8 +14131,8 @@ func NewAuthorizePluginRequestWithBody(server string, id string, pluginId string
 	return req, nil
 }
 
-// NewListConnectorConnectionsRequest constructs an http.Request for the ListConnectorConnections method
-func NewListConnectorConnectionsRequest(server string, params *ListConnectorConnectionsParams) (*http.Request, error) {
+// NewListConnectionsRequest constructs an http.Request for the ListConnections method
+func NewListConnectionsRequest(server string, params *ListConnectionsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -11987,19 +14217,19 @@ func NewListConnectorConnectionsRequest(server string, params *ListConnectorConn
 	return req, nil
 }
 
-// NewCreateConnectorConnectionRequest calls the generic CreateConnectorConnection builder with application/json body
-func NewCreateConnectorConnectionRequest(server string, body CreateConnectorConnectionJSONRequestBody) (*http.Request, error) {
+// NewCreateConnectionRequest calls the generic CreateConnection builder with application/json body
+func NewCreateConnectionRequest(server string, body CreateConnectionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateConnectorConnectionRequestWithBody(server, "application/json", bodyReader)
+	return NewCreateConnectionRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewCreateConnectorConnectionRequestWithBody constructs an http.Request for the CreateConnectorConnection method, with any body, and a specified content type
-func NewCreateConnectorConnectionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewCreateConnectionRequestWithBody constructs an http.Request for the CreateConnection method, with any body, and a specified content type
+func NewCreateConnectionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -12027,8 +14257,8 @@ func NewCreateConnectorConnectionRequestWithBody(server string, contentType stri
 	return req, nil
 }
 
-// NewDeleteConnectorConnectionRequest constructs an http.Request for the DeleteConnectorConnection method
-func NewDeleteConnectorConnectionRequest(server string, id string, params *DeleteConnectorConnectionParams) (*http.Request, error) {
+// NewDeleteConnectionRequest constructs an http.Request for the DeleteConnection method
+func NewDeleteConnectionRequest(server string, id string, params *DeleteConnectionParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12088,8 +14318,8 @@ func NewDeleteConnectorConnectionRequest(server string, id string, params *Delet
 	return req, nil
 }
 
-// NewGetConnectorConnectionRequest constructs an http.Request for the GetConnectorConnection method
-func NewGetConnectorConnectionRequest(server string, id string) (*http.Request, error) {
+// NewGetConnectionRequest constructs an http.Request for the GetConnection method
+func NewGetConnectionRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -15632,6 +17862,232 @@ func NewGenerateImageRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
+// NewListUseCasesForReviewRequest constructs an http.Request for the ListUseCasesForReview method
+func NewListUseCasesForReviewRequest(server string, params *ListUseCasesForReviewParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/use-cases")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetUseCaseForReviewRequest constructs an http.Request for the GetUseCaseForReview method
+func NewGetUseCaseForReviewRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/use-cases/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReviewUseCaseRequest calls the generic ReviewUseCase builder with application/json body
+func NewReviewUseCaseRequest(server string, id string, body ReviewUseCaseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReviewUseCaseRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewReviewUseCaseRequestWithBody constructs an http.Request for the ReviewUseCase method, with any body, and a specified content type
+func NewReviewUseCaseRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/use-cases/%s/review", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetBusinessProfileRequest constructs an http.Request for the GetBusinessProfile method
+func NewGetBusinessProfileRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/business-profile")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSaveBusinessProfileRequest calls the generic SaveBusinessProfile builder with application/json body
+func NewSaveBusinessProfileRequest(server string, body SaveBusinessProfileJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSaveBusinessProfileRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSaveBusinessProfileRequestWithBody constructs an http.Request for the SaveBusinessProfile method, with any body, and a specified content type
+func NewSaveBusinessProfileRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/business-profile")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPlacePhoneCallRequest calls the generic PlacePhoneCall builder with application/json body
 func NewPlacePhoneCallRequest(server string, body PlacePhoneCallJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -15755,6 +18211,33 @@ func NewPressPhoneDigitsRequestWithBody(server string, vendorCallId string, cont
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReceiveDLCReportRequest constructs an http.Request for the ReceiveDLCReport method
+func NewReceiveDLCReportRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/hooks/10dlc")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -16088,6 +18571,541 @@ func NewAttachPhoneNumberRequestWithBody(server string, e164 string, contentType
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListOptOutsRequest constructs an http.Request for the ListOptOuts method
+func NewListOptOutsRequest(server string, params *ListOptOutsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/opt-outs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateOptOutRequest calls the generic CreateOptOut builder with application/json body
+func NewCreateOptOutRequest(server string, body CreateOptOutJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateOptOutRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateOptOutRequestWithBody constructs an http.Request for the CreateOptOut method, with any body, and a specified content type
+func NewCreateOptOutRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/opt-outs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeOptOutRequest constructs an http.Request for the RevokeOptOut method
+func NewRevokeOptOutRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/opt-outs/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetPhoneSandboxRequest constructs an http.Request for the GetPhoneSandbox method
+func NewGetPhoneSandboxRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/sandbox")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetSandboxRecipientsRequest calls the generic SetSandboxRecipients builder with application/json body
+func NewSetSandboxRecipientsRequest(server string, body SetSandboxRecipientsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetSandboxRecipientsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSetSandboxRecipientsRequestWithBody constructs an http.Request for the SetSandboxRecipients method, with any body, and a specified content type
+func NewSetSandboxRecipientsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/sandbox/recipients")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListUseCasesRequest constructs an http.Request for the ListUseCases method
+func NewListUseCasesRequest(server string, params *ListUseCasesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/use-cases")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateUseCaseRequest calls the generic CreateUseCase builder with application/json body
+func NewCreateUseCaseRequest(server string, body CreateUseCaseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateUseCaseRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateUseCaseRequestWithBody constructs an http.Request for the CreateUseCase method, with any body, and a specified content type
+func NewCreateUseCaseRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/use-cases")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteUseCaseRequest constructs an http.Request for the DeleteUseCase method
+func NewDeleteUseCaseRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/use-cases/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetUseCaseRequest constructs an http.Request for the GetUseCase method
+func NewGetUseCaseRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/use-cases/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateUseCaseRequest calls the generic UpdateUseCase builder with application/json body
+func NewUpdateUseCaseRequest(server string, id string, body UpdateUseCaseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateUseCaseRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateUseCaseRequestWithBody constructs an http.Request for the UpdateUseCase method, with any body, and a specified content type
+func NewUpdateUseCaseRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/use-cases/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListUseCaseReviewsRequest constructs an http.Request for the ListUseCaseReviews method
+func NewListUseCaseReviewsRequest(server string, id string, params *ListUseCaseReviewsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/use-cases/%s/reviews", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSubmitUseCaseRequest constructs an http.Request for the SubmitUseCase method
+func NewSubmitUseCaseRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/use-cases/%s/submit", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -17494,6 +20512,94 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
 	StartCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartCampaignResponse, error)
 
+	// ListChannelAccountsWithResponse List channel lines
+	//
+	// The lines this app has connected, oldest first. Credentials are never read back.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/channels (the `ListChannelAccounts` operationId).
+	ListChannelAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListChannelAccountsResponse, error)
+
+	// ConnectChannelWithBodyWithResponse Connect a channel line
+	//
+	// Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+	//
+	// Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+	//
+	// Server-side only: it carries provider credentials.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/channels (the `ConnectChannel` operationId).
+	ConnectChannelWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConnectChannelResponse, error)
+
+	// ConnectChannelWithResponse Connect a channel line
+	//
+	// Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+	//
+	// Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+	//
+	// Server-side only: it carries provider credentials.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/channels (the `ConnectChannel` operationId).
+	ConnectChannelWithResponse(ctx context.Context, body ConnectChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*ConnectChannelResponse, error)
+
+	// VerifyChannelHookWithResponse Answer a channel provider's webhook check
+	//
+	// What WhatsApp asks for before it will deliver: the verify token the line was connected with, answered with the challenge it sent, as text. Unauthenticated because Meta is not a customer; the token in the path names the line.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/channels/hooks/{token} (the `VerifyChannelHook` operationId).
+	VerifyChannelHookWithResponse(ctx context.Context, token string, params *VerifyChannelHookParams, reqEditors ...RequestEditorFn) (*VerifyChannelHookResponse, error)
+
+	// ReceiveChannelMessageWithResponse Receive a message on a channel
+	//
+	// Where WhatsApp, Telnyx and Linq deliver what somebody wrote to one of the app's lines. Unauthenticated because the provider is not a customer: the token in the path names the line, and each delivery is checked against the signing secret that line was connected with. A message that has not been seen before earns a turn from whichever agent names the number under `channels`, and what the agent says goes back over the channel rather than in this response.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/channels/hooks/{token} (the `ReceiveChannelMessage` operationId).
+	ReceiveChannelMessageWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveChannelMessageResponse, error)
+
+	// LinkChannelNumberWithBodyWithResponse Mint a code to claim a number
+	//
+	// Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/channels/links (the `LinkChannelNumber` operationId).
+	LinkChannelNumberWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LinkChannelNumberResponse, error)
+
+	// LinkChannelNumberWithResponse Mint a code to claim a number
+	//
+	// Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/channels/links (the `LinkChannelNumber` operationId).
+	LinkChannelNumberWithResponse(ctx context.Context, body LinkChannelNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*LinkChannelNumberResponse, error)
+
+	// DisconnectChannelWithResponse Disconnect a channel line
+	//
+	// Drops the line's credentials, so nothing is delivered or sent on it again.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/channels/{id} (the `DisconnectChannel` operationId).
+	DisconnectChannelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DisconnectChannelResponse, error)
+
 	// CreateChatTokenWithBodyWithResponse What a browser needs to read an agent's conversation
 	//
 	// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
@@ -17605,7 +20711,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListConfigPluginsWithResponse The plugin logins this agent holds
 	//
-	// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
+	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17623,7 +20729,7 @@ type ClientWithResponsesInterface interface {
 
 	// AuthorizePluginWithBodyWithResponse Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -17633,7 +20739,7 @@ type ClientWithResponsesInterface interface {
 
 	// AuthorizePluginWithResponse Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -17641,7 +20747,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
-	// ListConnectorConnectionsWithResponse List connections
+	// ListConnectionsWithResponse List connections
 	//
 	// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
 	//
@@ -17649,10 +20755,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/agents/connections (the `ListConnectorConnections` operationId).
-	ListConnectorConnectionsWithResponse(ctx context.Context, params *ListConnectorConnectionsParams, reqEditors ...RequestEditorFn) (*ListConnectorConnectionsResponse, error)
+	// Corresponds with GET /v1/agents/connections (the `ListConnections` operationId).
+	ListConnectionsWithResponse(ctx context.Context, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*ListConnectionsResponse, error)
 
-	// CreateConnectorConnectionWithBodyWithResponse Create a connection
+	// CreateConnectionWithBodyWithResponse Create a connection
 	//
 	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 	//
@@ -17660,10 +20766,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
-	CreateConnectorConnectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectorConnectionResponse, error)
+	// Corresponds with POST /v1/agents/connections (the `CreateConnection` operationId).
+	CreateConnectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error)
 
-	// CreateConnectorConnectionWithResponse Create a connection
+	// CreateConnectionWithResponse Create a connection
 	//
 	// A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 	//
@@ -17671,10 +20777,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
-	CreateConnectorConnectionWithResponse(ctx context.Context, body CreateConnectorConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorConnectionResponse, error)
+	// Corresponds with POST /v1/agents/connections (the `CreateConnection` operationId).
+	CreateConnectionWithResponse(ctx context.Context, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error)
 
-	// DeleteConnectorConnectionWithResponse Delete a connection
+	// DeleteConnectionWithResponse Delete a connection
 	//
 	// Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
 	//
@@ -17682,10 +20788,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnectorConnection` operationId).
-	DeleteConnectorConnectionWithResponse(ctx context.Context, id string, params *DeleteConnectorConnectionParams, reqEditors ...RequestEditorFn) (*DeleteConnectorConnectionResponse, error)
+	// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnection` operationId).
+	DeleteConnectionWithResponse(ctx context.Context, id string, params *DeleteConnectionParams, reqEditors ...RequestEditorFn) (*DeleteConnectionResponse, error)
 
-	// GetConnectorConnectionWithResponse Read a connection
+	// GetConnectionWithResponse Read a connection
 	//
 	// An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
 	//
@@ -17693,8 +20799,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnectorConnection` operationId).
-	GetConnectorConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorConnectionResponse, error)
+	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
+	GetConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectionResponse, error)
 
 	// ListConnectorsWithResponse List or search connectors
 	//
@@ -18721,6 +21827,83 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 	GenerateImageWithResponse(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error)
 
+	// ListUseCasesForReviewWithResponse List use cases waiting on Stream
+	//
+	// Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/ops/use-cases (the `ListUseCasesForReview` operationId).
+	ListUseCasesForReviewWithResponse(ctx context.Context, params *ListUseCasesForReviewParams, reqEditors ...RequestEditorFn) (*ListUseCasesForReviewResponse, error)
+
+	// GetUseCaseForReviewWithResponse Get a use case to review
+	//
+	// A use case with its app, profile and history.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/ops/use-cases/{id} (the `GetUseCaseForReview` operationId).
+	GetUseCaseForReviewWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetUseCaseForReviewResponse, error)
+
+	// ReviewUseCaseWithBodyWithResponse Review a submitted use case
+	//
+	// Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ops/use-cases/{id}/review (the `ReviewUseCase` operationId).
+	ReviewUseCaseWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReviewUseCaseResponse, error)
+
+	// ReviewUseCaseWithResponse Review a submitted use case
+	//
+	// Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ops/use-cases/{id}/review (the `ReviewUseCase` operationId).
+	ReviewUseCaseWithResponse(ctx context.Context, id string, body ReviewUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*ReviewUseCaseResponse, error)
+
+	// GetBusinessProfileWithResponse Get the business profile
+	//
+	// Who the app said it is, and the brand a vendor registered it as.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/business-profile (the `GetBusinessProfile` operationId).
+	GetBusinessProfileWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBusinessProfileResponse, error)
+
+	// SaveBusinessProfileWithBodyWithResponse Save the business profile
+	//
+	// Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/business-profile (the `SaveBusinessProfile` operationId).
+	SaveBusinessProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaveBusinessProfileResponse, error)
+
+	// SaveBusinessProfileWithResponse Save the business profile
+	//
+	// Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/business-profile (the `SaveBusinessProfile` operationId).
+	SaveBusinessProfileWithResponse(ctx context.Context, body SaveBusinessProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*SaveBusinessProfileResponse, error)
+
 	// PlacePhoneCallWithBodyWithResponse Place an outbound call and bridge it into a Stream call
 	//
 	// Stream's SIP is inbound only, so the vendor originates the call and connects it to a trunk the agent is already on, rather than Stream dialling out.
@@ -18774,6 +21957,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/phone/calls/{vendor_call_id}/digits (the `PressPhoneDigits` operationId).
 	PressPhoneDigitsWithResponse(ctx context.Context, vendorCallId string, body PressPhoneDigitsJSONRequestBody, reqEditors ...RequestEditorFn) (*PressPhoneDigitsResponse, error)
+
+	// ReceiveDLCReportWithResponse Receive a 10DLC registration report
+	//
+	// Where Telnyx reports on the brands and campaigns this router registered. Unauthenticated because the vendor is not a customer: each report is checked against the vendor's Ed25519 signature, and then only names the campaign to ask the vendor about, so a report cannot say a campaign was approved that was not.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/hooks/10dlc (the `ReceiveDLCReport` operationId).
+	ReceiveDLCReportWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveDLCReportResponse, error)
 
 	// ListPhoneNumbersWithResponse The numbers the calling customer holds
 	//
@@ -18829,6 +22021,180 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/phone/numbers/{e164}/attach (the `AttachPhoneNumber` operationId).
 	AttachPhoneNumberWithResponse(ctx context.Context, e164 string, body AttachPhoneNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachPhoneNumberResponse, error)
+
+	// ListOptOutsWithResponse List opt-outs
+	//
+	// The people who asked not to be reached, newest first.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/opt-outs (the `ListOptOuts` operationId).
+	ListOptOutsWithResponse(ctx context.Context, params *ListOptOutsParams, reqEditors ...RequestEditorFn) (*ListOptOutsResponse, error)
+
+	// CreateOptOutWithBodyWithResponse Record an opt-out
+	//
+	// Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/opt-outs (the `CreateOptOut` operationId).
+	CreateOptOutWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOptOutResponse, error)
+
+	// CreateOptOutWithResponse Record an opt-out
+	//
+	// Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/opt-outs (the `CreateOptOut` operationId).
+	CreateOptOutWithResponse(ctx context.Context, body CreateOptOutJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOptOutResponse, error)
+
+	// RevokeOptOutWithResponse Revoke an opt-out
+	//
+	// Lifts an opt-out. The record of it is kept.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/phone/opt-outs/{id} (the `RevokeOptOut` operationId).
+	RevokeOptOutWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RevokeOptOutResponse, error)
+
+	// GetPhoneSandboxWithResponse Get the sandbox
+	//
+	// What the app may text and call before a use case is approved, and how much of today's allowance it used.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/sandbox (the `GetPhoneSandbox` operationId).
+	GetPhoneSandboxWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPhoneSandboxResponse, error)
+
+	// SetSandboxRecipientsWithBodyWithResponse Set the sandbox recipients
+	//
+	// Replaces the numbers a sandboxed app may text and call.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
+	SetSandboxRecipientsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxRecipientsResponse, error)
+
+	// SetSandboxRecipientsWithResponse Set the sandbox recipients
+	//
+	// Replaces the numbers a sandboxed app may text and call.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
+	SetSandboxRecipientsWithResponse(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxRecipientsResponse, error)
+
+	// ListUseCasesWithResponse List 10DLC use cases
+	//
+	// The app's use cases, newest first.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/use-cases (the `ListUseCases` operationId).
+	ListUseCasesWithResponse(ctx context.Context, params *ListUseCasesParams, reqEditors ...RequestEditorFn) (*ListUseCasesResponse, error)
+
+	// CreateUseCaseWithBodyWithResponse Create a 10DLC use case
+	//
+	// Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/use-cases (the `CreateUseCase` operationId).
+	CreateUseCaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateUseCaseResponse, error)
+
+	// CreateUseCaseWithResponse Create a 10DLC use case
+	//
+	// Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/use-cases (the `CreateUseCase` operationId).
+	CreateUseCaseWithResponse(ctx context.Context, body CreateUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateUseCaseResponse, error)
+
+	// DeleteUseCaseWithResponse Delete a 10DLC use case
+	//
+	// Refused once the vendor holds it.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/phone/use-cases/{id} (the `DeleteUseCase` operationId).
+	DeleteUseCaseWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteUseCaseResponse, error)
+
+	// GetUseCaseWithResponse Get a 10DLC use case
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/use-cases/{id} (the `GetUseCase` operationId).
+	GetUseCaseWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetUseCaseResponse, error)
+
+	// UpdateUseCaseWithBodyWithResponse Update a 10DLC use case
+	//
+	// Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+	//
+	// Server-side only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/use-cases/{id} (the `UpdateUseCase` operationId).
+	UpdateUseCaseWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUseCaseResponse, error)
+
+	// UpdateUseCaseWithResponse Update a 10DLC use case
+	//
+	// Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+	//
+	// Server-side only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/use-cases/{id} (the `UpdateUseCase` operationId).
+	UpdateUseCaseWithResponse(ctx context.Context, id string, body UpdateUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUseCaseResponse, error)
+
+	// ListUseCaseReviewsWithResponse List a use case's review history
+	//
+	// Every move the use case made and who made it, oldest first.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/use-cases/{id}/reviews (the `ListUseCaseReviews` operationId).
+	ListUseCaseReviewsWithResponse(ctx context.Context, id string, params *ListUseCaseReviewsParams, reqEditors ...RequestEditorFn) (*ListUseCaseReviewsResponse, error)
+
+	// SubmitUseCaseWithResponse Submit a 10DLC use case for review
+	//
+	// Sends a use case to Stream's review, once it and the business profile have everything the registry asks for; a 400 says what is missing. Stream approving it registers it with the vendor.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/use-cases/{id}/submit (the `SubmitUseCase` operationId).
+	SubmitUseCaseWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*SubmitUseCaseResponse, error)
 
 	// ListPhoneVendorsWithResponse List the telephony vendors and whether they can be used
 	//
@@ -20146,6 +23512,357 @@ func (r StartCampaignResponse) ContentType() string {
 	return ""
 }
 
+type ListChannelAccountsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]ChannelAccount
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListChannelAccountsResponse) GetJSON200() *[]ChannelAccount {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListChannelAccountsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListChannelAccountsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListChannelAccountsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListChannelAccountsResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListChannelAccountsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListChannelAccountsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListChannelAccountsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListChannelAccountsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ConnectChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ChannelAccount
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConnectChannelResponse) GetJSON200() *ChannelAccount {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ConnectChannelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ConnectChannelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ConnectChannelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ConnectChannelResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ConnectChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConnectChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConnectChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConnectChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type VerifyChannelHookResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r VerifyChannelHookResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r VerifyChannelHookResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r VerifyChannelHookResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r VerifyChannelHookResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReceiveChannelMessageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveChannelMessageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveChannelMessageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveChannelMessageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveChannelMessageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LinkChannelNumberResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ChannelLink
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LinkChannelNumberResponse) GetJSON200() *ChannelLink {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r LinkChannelNumberResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r LinkChannelNumberResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r LinkChannelNumberResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LinkChannelNumberResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r LinkChannelNumberResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r LinkChannelNumberResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LinkChannelNumberResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LinkChannelNumberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LinkChannelNumberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DisconnectChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DisconnectChannelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DisconnectChannelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DisconnectChannelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DisconnectChannelResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DisconnectChannelResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DisconnectChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DisconnectChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DisconnectChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DisconnectChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreateChatTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -20871,11 +24588,11 @@ func (r AuthorizePluginResponse) ContentType() string {
 	return ""
 }
 
-type ListConnectorConnectionsResponse struct {
+type ListConnectionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorConnectionPage
+	JSON200 *ConnectionPage
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -20887,37 +24604,37 @@ type ListConnectorConnectionsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListConnectorConnectionsResponse) GetJSON200() *ConnectorConnectionPage {
+func (r ListConnectionsResponse) GetJSON200() *ConnectionPage {
 	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ListConnectorConnectionsResponse) GetJSON400() *BadRequest {
+func (r ListConnectionsResponse) GetJSON400() *BadRequest {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ListConnectorConnectionsResponse) GetJSON401() *Unauthorized {
+func (r ListConnectionsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r ListConnectorConnectionsResponse) GetJSON403() *Forbidden {
+func (r ListConnectionsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ListConnectorConnectionsResponse) GetJSON500() *Error {
+func (r ListConnectionsResponse) GetJSON500() *Error {
 	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
-func (r ListConnectorConnectionsResponse) GetBody() []byte {
+func (r ListConnectionsResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ListConnectorConnectionsResponse) Status() string {
+func (r ListConnectionsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -20925,7 +24642,7 @@ func (r ListConnectorConnectionsResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ListConnectorConnectionsResponse) StatusCode() int {
+func (r ListConnectionsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -20933,18 +24650,18 @@ func (r ListConnectorConnectionsResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListConnectorConnectionsResponse) ContentType() string {
+func (r ListConnectionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type CreateConnectorConnectionResponse struct {
+type CreateConnectionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ConnectorConnection
+	JSON201 *Connection
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -20956,37 +24673,37 @@ type CreateConnectorConnectionResponse struct {
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateConnectorConnectionResponse) GetJSON201() *ConnectorConnection {
+func (r CreateConnectionResponse) GetJSON201() *Connection {
 	return r.JSON201
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r CreateConnectorConnectionResponse) GetJSON400() *BadRequest {
+func (r CreateConnectionResponse) GetJSON400() *BadRequest {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r CreateConnectorConnectionResponse) GetJSON401() *Unauthorized {
+func (r CreateConnectionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r CreateConnectorConnectionResponse) GetJSON403() *Forbidden {
+func (r CreateConnectionResponse) GetJSON403() *Forbidden {
 	return r.JSON403
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r CreateConnectorConnectionResponse) GetJSON500() *Error {
+func (r CreateConnectionResponse) GetJSON500() *Error {
 	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
-func (r CreateConnectorConnectionResponse) GetBody() []byte {
+func (r CreateConnectionResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r CreateConnectorConnectionResponse) Status() string {
+func (r CreateConnectionResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -20994,7 +24711,7 @@ func (r CreateConnectorConnectionResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r CreateConnectorConnectionResponse) StatusCode() int {
+func (r CreateConnectionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -21002,14 +24719,14 @@ func (r CreateConnectorConnectionResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateConnectorConnectionResponse) ContentType() string {
+func (r CreateConnectionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type DeleteConnectorConnectionResponse struct {
+type DeleteConnectionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON400 the response for an HTTP 400 `application/json` response
@@ -21027,42 +24744,42 @@ type DeleteConnectorConnectionResponse struct {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r DeleteConnectorConnectionResponse) GetJSON400() *BadRequest {
+func (r DeleteConnectionResponse) GetJSON400() *BadRequest {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r DeleteConnectorConnectionResponse) GetJSON401() *Unauthorized {
+func (r DeleteConnectionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r DeleteConnectorConnectionResponse) GetJSON403() *Forbidden {
+func (r DeleteConnectionResponse) GetJSON403() *Forbidden {
 	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r DeleteConnectorConnectionResponse) GetJSON404() *NotFound {
+func (r DeleteConnectionResponse) GetJSON404() *NotFound {
 	return r.JSON404
 }
 
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r DeleteConnectorConnectionResponse) GetJSON409() *Error {
+func (r DeleteConnectionResponse) GetJSON409() *Error {
 	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r DeleteConnectorConnectionResponse) GetJSON500() *Error {
+func (r DeleteConnectionResponse) GetJSON500() *Error {
 	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
-func (r DeleteConnectorConnectionResponse) GetBody() []byte {
+func (r DeleteConnectionResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r DeleteConnectorConnectionResponse) Status() string {
+func (r DeleteConnectionResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -21070,7 +24787,7 @@ func (r DeleteConnectorConnectionResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r DeleteConnectorConnectionResponse) StatusCode() int {
+func (r DeleteConnectionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -21078,18 +24795,18 @@ func (r DeleteConnectorConnectionResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DeleteConnectorConnectionResponse) ContentType() string {
+func (r DeleteConnectionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type GetConnectorConnectionResponse struct {
+type GetConnectionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorConnection
+	JSON200 *Connection
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -21103,42 +24820,42 @@ type GetConnectorConnectionResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetConnectorConnectionResponse) GetJSON200() *ConnectorConnection {
+func (r GetConnectionResponse) GetJSON200() *Connection {
 	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r GetConnectorConnectionResponse) GetJSON400() *BadRequest {
+func (r GetConnectionResponse) GetJSON400() *BadRequest {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r GetConnectorConnectionResponse) GetJSON401() *Unauthorized {
+func (r GetConnectionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r GetConnectorConnectionResponse) GetJSON403() *Forbidden {
+func (r GetConnectionResponse) GetJSON403() *Forbidden {
 	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r GetConnectorConnectionResponse) GetJSON404() *NotFound {
+func (r GetConnectionResponse) GetJSON404() *NotFound {
 	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r GetConnectorConnectionResponse) GetJSON500() *Error {
+func (r GetConnectionResponse) GetJSON500() *Error {
 	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
-func (r GetConnectorConnectionResponse) GetBody() []byte {
+func (r GetConnectionResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r GetConnectorConnectionResponse) Status() string {
+func (r GetConnectionResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -21146,7 +24863,7 @@ func (r GetConnectorConnectionResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetConnectorConnectionResponse) StatusCode() int {
+func (r GetConnectionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -21154,7 +24871,7 @@ func (r GetConnectorConnectionResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetConnectorConnectionResponse) ContentType() string {
+func (r GetConnectionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21165,7 +24882,7 @@ type ListConnectorsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorDefinitionPage
+	JSON200 *ConnectorPage
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -21177,7 +24894,7 @@ type ListConnectorsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListConnectorsResponse) GetJSON200() *ConnectorDefinitionPage {
+func (r ListConnectorsResponse) GetJSON200() *ConnectorPage {
 	return r.JSON200
 }
 
@@ -21234,7 +24951,7 @@ type CreateConnectorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorDefinition
+	JSON200 *Connector
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -21246,7 +24963,7 @@ type CreateConnectorResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreateConnectorResponse) GetJSON200() *ConnectorDefinition {
+func (r CreateConnectorResponse) GetJSON200() *Connector {
 	return r.JSON200
 }
 
@@ -21303,7 +25020,7 @@ type GetConnectorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorDefinition
+	JSON200 *Connector
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -21317,7 +25034,7 @@ type GetConnectorResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetConnectorResponse) GetJSON200() *ConnectorDefinition {
+func (r GetConnectorResponse) GetJSON200() *Connector {
 	return r.JSON200
 }
 
@@ -26524,6 +30241,379 @@ func (r GenerateImageResponse) ContentType() string {
 	return ""
 }
 
+type ListUseCasesForReviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReviewQueue
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListUseCasesForReviewResponse) GetJSON200() *ReviewQueue {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListUseCasesForReviewResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListUseCasesForReviewResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListUseCasesForReviewResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ListUseCasesForReviewResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListUseCasesForReviewResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListUseCasesForReviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListUseCasesForReviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListUseCasesForReviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListUseCasesForReviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetUseCaseForReviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UseCaseForReview
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUseCaseForReviewResponse) GetJSON200() *UseCaseForReview {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUseCaseForReviewResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUseCaseForReviewResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetUseCaseForReviewResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r GetUseCaseForReviewResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUseCaseForReviewResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUseCaseForReviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUseCaseForReviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUseCaseForReviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUseCaseForReviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReviewUseCaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UseCaseForReview
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReviewUseCaseResponse) GetJSON200() *UseCaseForReview {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReviewUseCaseResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ReviewUseCaseResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReviewUseCaseResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ReviewUseCaseResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReviewUseCaseResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReviewUseCaseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReviewUseCaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReviewUseCaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReviewUseCaseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetBusinessProfileResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BusinessProfile
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetBusinessProfileResponse) GetJSON200() *BusinessProfile {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetBusinessProfileResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetBusinessProfileResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetBusinessProfileResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetBusinessProfileResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetBusinessProfileResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetBusinessProfileResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBusinessProfileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBusinessProfileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetBusinessProfileResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SaveBusinessProfileResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BusinessProfile
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SaveBusinessProfileResponse) GetJSON200() *BusinessProfile {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SaveBusinessProfileResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SaveBusinessProfileResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SaveBusinessProfileResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SaveBusinessProfileResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SaveBusinessProfileResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SaveBusinessProfileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SaveBusinessProfileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SaveBusinessProfileResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PlacePhoneCallResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26739,6 +30829,40 @@ func (r PressPhoneDigitsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PressPhoneDigitsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReceiveDLCReportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveDLCReportResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveDLCReportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveDLCReportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveDLCReportResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27105,6 +31229,883 @@ func (r AttachPhoneNumberResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AttachPhoneNumberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListOptOutsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OptOutPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListOptOutsResponse) GetJSON200() *OptOutPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListOptOutsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListOptOutsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListOptOutsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListOptOutsResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListOptOutsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListOptOutsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListOptOutsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListOptOutsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateOptOutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *OptOut
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateOptOutResponse) GetJSON201() *OptOut {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateOptOutResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateOptOutResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateOptOutResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateOptOutResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateOptOutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateOptOutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateOptOutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateOptOutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeOptOutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RevokeOptOutResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RevokeOptOutResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RevokeOptOutResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RevokeOptOutResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RevokeOptOutResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeOptOutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeOptOutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeOptOutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeOptOutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPhoneSandboxResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PhoneSandbox
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPhoneSandboxResponse) GetJSON200() *PhoneSandbox {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetPhoneSandboxResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetPhoneSandboxResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetPhoneSandboxResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetPhoneSandboxResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPhoneSandboxResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPhoneSandboxResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPhoneSandboxResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPhoneSandboxResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetSandboxRecipientsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PhoneSandbox
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetSandboxRecipientsResponse) GetJSON200() *PhoneSandbox {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetSandboxRecipientsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetSandboxRecipientsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetSandboxRecipientsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetSandboxRecipientsResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SetSandboxRecipientsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetSandboxRecipientsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetSandboxRecipientsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetSandboxRecipientsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListUseCasesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UseCasePage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListUseCasesResponse) GetJSON200() *UseCasePage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListUseCasesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListUseCasesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListUseCasesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListUseCasesResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListUseCasesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListUseCasesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListUseCasesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListUseCasesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateUseCaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *UseCase
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateUseCaseResponse) GetJSON201() *UseCase {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateUseCaseResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateUseCaseResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateUseCaseResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateUseCaseResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateUseCaseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateUseCaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateUseCaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateUseCaseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteUseCaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteUseCaseResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteUseCaseResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteUseCaseResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteUseCaseResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteUseCaseResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteUseCaseResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteUseCaseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteUseCaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteUseCaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteUseCaseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetUseCaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UseCase
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUseCaseResponse) GetJSON200() *UseCase {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUseCaseResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUseCaseResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetUseCaseResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetUseCaseResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUseCaseResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUseCaseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUseCaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUseCaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUseCaseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateUseCaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UseCase
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateUseCaseResponse) GetJSON200() *UseCase {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateUseCaseResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateUseCaseResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateUseCaseResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateUseCaseResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateUseCaseResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateUseCaseResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateUseCaseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateUseCaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateUseCaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateUseCaseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListUseCaseReviewsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReviewPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListUseCaseReviewsResponse) GetJSON200() *ReviewPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListUseCaseReviewsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListUseCaseReviewsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListUseCaseReviewsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListUseCaseReviewsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListUseCaseReviewsResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListUseCaseReviewsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListUseCaseReviewsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListUseCaseReviewsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListUseCaseReviewsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SubmitUseCaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UseCase
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SubmitUseCaseResponse) GetJSON200() *UseCase {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SubmitUseCaseResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SubmitUseCaseResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SubmitUseCaseResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SubmitUseCaseResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SubmitUseCaseResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SubmitUseCaseResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SubmitUseCaseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SubmitUseCaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SubmitUseCaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SubmitUseCaseResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -29157,6 +34158,142 @@ func (c *ClientWithResponses) StartCampaignWithResponse(ctx context.Context, id 
 	return ParseStartCampaignResponse(rsp)
 }
 
+// ListChannelAccountsWithResponse List channel lines
+//
+// The lines this app has connected, oldest first. Credentials are never read back.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/channels (the `ListChannelAccounts` operationId).
+func (c *ClientWithResponses) ListChannelAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListChannelAccountsResponse, error) {
+	rsp, err := c.ListChannelAccounts(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListChannelAccountsResponse(rsp)
+}
+
+// ConnectChannelWithBodyWithResponse Connect a channel line
+//
+// Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+//
+// Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+//
+// Server-side only: it carries provider credentials.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/channels (the `ConnectChannel` operationId).
+func (c *ClientWithResponses) ConnectChannelWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConnectChannelResponse, error) {
+	rsp, err := c.ConnectChannelWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConnectChannelResponse(rsp)
+}
+
+// ConnectChannelWithResponse Connect a channel line
+//
+// Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+//
+// Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+//
+// Server-side only: it carries provider credentials.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/channels (the `ConnectChannel` operationId).
+func (c *ClientWithResponses) ConnectChannelWithResponse(ctx context.Context, body ConnectChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*ConnectChannelResponse, error) {
+	rsp, err := c.ConnectChannel(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConnectChannelResponse(rsp)
+}
+
+// VerifyChannelHookWithResponse Answer a channel provider's webhook check
+//
+// What WhatsApp asks for before it will deliver: the verify token the line was connected with, answered with the challenge it sent, as text. Unauthenticated because Meta is not a customer; the token in the path names the line.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/channels/hooks/{token} (the `VerifyChannelHook` operationId).
+func (c *ClientWithResponses) VerifyChannelHookWithResponse(ctx context.Context, token string, params *VerifyChannelHookParams, reqEditors ...RequestEditorFn) (*VerifyChannelHookResponse, error) {
+	rsp, err := c.VerifyChannelHook(ctx, token, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyChannelHookResponse(rsp)
+}
+
+// ReceiveChannelMessageWithResponse Receive a message on a channel
+//
+// Where WhatsApp, Telnyx and Linq deliver what somebody wrote to one of the app's lines. Unauthenticated because the provider is not a customer: the token in the path names the line, and each delivery is checked against the signing secret that line was connected with. A message that has not been seen before earns a turn from whichever agent names the number under `channels`, and what the agent says goes back over the channel rather than in this response.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/channels/hooks/{token} (the `ReceiveChannelMessage` operationId).
+func (c *ClientWithResponses) ReceiveChannelMessageWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveChannelMessageResponse, error) {
+	rsp, err := c.ReceiveChannelMessage(ctx, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveChannelMessageResponse(rsp)
+}
+
+// LinkChannelNumberWithBodyWithResponse Mint a code to claim a number
+//
+// Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/channels/links (the `LinkChannelNumber` operationId).
+func (c *ClientWithResponses) LinkChannelNumberWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LinkChannelNumberResponse, error) {
+	rsp, err := c.LinkChannelNumberWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLinkChannelNumberResponse(rsp)
+}
+
+// LinkChannelNumberWithResponse Mint a code to claim a number
+//
+// Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/channels/links (the `LinkChannelNumber` operationId).
+func (c *ClientWithResponses) LinkChannelNumberWithResponse(ctx context.Context, body LinkChannelNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*LinkChannelNumberResponse, error) {
+	rsp, err := c.LinkChannelNumber(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLinkChannelNumberResponse(rsp)
+}
+
+// DisconnectChannelWithResponse Disconnect a channel line
+//
+// Drops the line's credentials, so nothing is delivered or sent on it again.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/channels/{id} (the `DisconnectChannel` operationId).
+func (c *ClientWithResponses) DisconnectChannelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DisconnectChannelResponse, error) {
+	rsp, err := c.DisconnectChannel(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDisconnectChannelResponse(rsp)
+}
+
 // CreateChatTokenWithBodyWithResponse What a browser needs to read an agent's conversation
 //
 // An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
@@ -29334,7 +34471,7 @@ func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context,
 
 // ListConfigPluginsWithResponse The plugin logins this agent holds
 //
-// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
+// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29364,7 +34501,7 @@ func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, 
 
 // AuthorizePluginWithBodyWithResponse Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -29380,7 +34517,7 @@ func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Co
 
 // AuthorizePluginWithResponse Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -29394,7 +34531,7 @@ func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, i
 	return ParseAuthorizePluginResponse(rsp)
 }
 
-// ListConnectorConnectionsWithResponse List connections
+// ListConnectionsWithResponse List connections
 //
 // One owner's connections, newest first: the app's own, or those of the user the backend acts for.
 //
@@ -29402,16 +34539,16 @@ func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, i
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/agents/connections (the `ListConnectorConnections` operationId).
-func (c *ClientWithResponses) ListConnectorConnectionsWithResponse(ctx context.Context, params *ListConnectorConnectionsParams, reqEditors ...RequestEditorFn) (*ListConnectorConnectionsResponse, error) {
-	rsp, err := c.ListConnectorConnections(ctx, params, reqEditors...)
+// Corresponds with GET /v1/agents/connections (the `ListConnections` operationId).
+func (c *ClientWithResponses) ListConnectionsWithResponse(ctx context.Context, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*ListConnectionsResponse, error) {
+	rsp, err := c.ListConnections(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseListConnectorConnectionsResponse(rsp)
+	return ParseListConnectionsResponse(rsp)
 }
 
-// CreateConnectorConnectionWithBodyWithResponse Create a connection
+// CreateConnectionWithBodyWithResponse Create a connection
 //
 // A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 //
@@ -29419,16 +34556,16 @@ func (c *ClientWithResponses) ListConnectorConnectionsWithResponse(ctx context.C
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
-func (c *ClientWithResponses) CreateConnectorConnectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectorConnectionResponse, error) {
-	rsp, err := c.CreateConnectorConnectionWithBody(ctx, contentType, body, reqEditors...)
+// Corresponds with POST /v1/agents/connections (the `CreateConnection` operationId).
+func (c *ClientWithResponses) CreateConnectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error) {
+	rsp, err := c.CreateConnectionWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateConnectorConnectionResponse(rsp)
+	return ParseCreateConnectionResponse(rsp)
 }
 
-// CreateConnectorConnectionWithResponse Create a connection
+// CreateConnectionWithResponse Create a connection
 //
 // A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 //
@@ -29436,16 +34573,16 @@ func (c *ClientWithResponses) CreateConnectorConnectionWithBodyWithResponse(ctx 
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/agents/connections (the `CreateConnectorConnection` operationId).
-func (c *ClientWithResponses) CreateConnectorConnectionWithResponse(ctx context.Context, body CreateConnectorConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorConnectionResponse, error) {
-	rsp, err := c.CreateConnectorConnection(ctx, body, reqEditors...)
+// Corresponds with POST /v1/agents/connections (the `CreateConnection` operationId).
+func (c *ClientWithResponses) CreateConnectionWithResponse(ctx context.Context, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error) {
+	rsp, err := c.CreateConnection(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateConnectorConnectionResponse(rsp)
+	return ParseCreateConnectionResponse(rsp)
 }
 
-// DeleteConnectorConnectionWithResponse Delete a connection
+// DeleteConnectionWithResponse Delete a connection
 //
 // Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
 //
@@ -29453,16 +34590,16 @@ func (c *ClientWithResponses) CreateConnectorConnectionWithResponse(ctx context.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnectorConnection` operationId).
-func (c *ClientWithResponses) DeleteConnectorConnectionWithResponse(ctx context.Context, id string, params *DeleteConnectorConnectionParams, reqEditors ...RequestEditorFn) (*DeleteConnectorConnectionResponse, error) {
-	rsp, err := c.DeleteConnectorConnection(ctx, id, params, reqEditors...)
+// Corresponds with DELETE /v1/agents/connections/{id} (the `DeleteConnection` operationId).
+func (c *ClientWithResponses) DeleteConnectionWithResponse(ctx context.Context, id string, params *DeleteConnectionParams, reqEditors ...RequestEditorFn) (*DeleteConnectionResponse, error) {
+	rsp, err := c.DeleteConnection(ctx, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDeleteConnectorConnectionResponse(rsp)
+	return ParseDeleteConnectionResponse(rsp)
 }
 
-// GetConnectorConnectionWithResponse Read a connection
+// GetConnectionWithResponse Read a connection
 //
 // An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
 //
@@ -29470,13 +34607,13 @@ func (c *ClientWithResponses) DeleteConnectorConnectionWithResponse(ctx context.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/agents/connections/{id} (the `GetConnectorConnection` operationId).
-func (c *ClientWithResponses) GetConnectorConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorConnectionResponse, error) {
-	rsp, err := c.GetConnectorConnection(ctx, id, reqEditors...)
+// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
+func (c *ClientWithResponses) GetConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectionResponse, error) {
+	rsp, err := c.GetConnection(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetConnectorConnectionResponse(rsp)
+	return ParseGetConnectionResponse(rsp)
 }
 
 // ListConnectorsWithResponse List or search connectors
@@ -31122,6 +36259,125 @@ func (c *ClientWithResponses) GenerateImageWithResponse(ctx context.Context, bod
 	return ParseGenerateImageResponse(rsp)
 }
 
+// ListUseCasesForReviewWithResponse List use cases waiting on Stream
+//
+// Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/ops/use-cases (the `ListUseCasesForReview` operationId).
+func (c *ClientWithResponses) ListUseCasesForReviewWithResponse(ctx context.Context, params *ListUseCasesForReviewParams, reqEditors ...RequestEditorFn) (*ListUseCasesForReviewResponse, error) {
+	rsp, err := c.ListUseCasesForReview(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListUseCasesForReviewResponse(rsp)
+}
+
+// GetUseCaseForReviewWithResponse Get a use case to review
+//
+// A use case with its app, profile and history.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/ops/use-cases/{id} (the `GetUseCaseForReview` operationId).
+func (c *ClientWithResponses) GetUseCaseForReviewWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetUseCaseForReviewResponse, error) {
+	rsp, err := c.GetUseCaseForReview(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUseCaseForReviewResponse(rsp)
+}
+
+// ReviewUseCaseWithBodyWithResponse Review a submitted use case
+//
+// Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ops/use-cases/{id}/review (the `ReviewUseCase` operationId).
+func (c *ClientWithResponses) ReviewUseCaseWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReviewUseCaseResponse, error) {
+	rsp, err := c.ReviewUseCaseWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReviewUseCaseResponse(rsp)
+}
+
+// ReviewUseCaseWithResponse Review a submitted use case
+//
+// Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ops/use-cases/{id}/review (the `ReviewUseCase` operationId).
+func (c *ClientWithResponses) ReviewUseCaseWithResponse(ctx context.Context, id string, body ReviewUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*ReviewUseCaseResponse, error) {
+	rsp, err := c.ReviewUseCase(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReviewUseCaseResponse(rsp)
+}
+
+// GetBusinessProfileWithResponse Get the business profile
+//
+// Who the app said it is, and the brand a vendor registered it as.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/business-profile (the `GetBusinessProfile` operationId).
+func (c *ClientWithResponses) GetBusinessProfileWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBusinessProfileResponse, error) {
+	rsp, err := c.GetBusinessProfile(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBusinessProfileResponse(rsp)
+}
+
+// SaveBusinessProfileWithBodyWithResponse Save the business profile
+//
+// Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/business-profile (the `SaveBusinessProfile` operationId).
+func (c *ClientWithResponses) SaveBusinessProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaveBusinessProfileResponse, error) {
+	rsp, err := c.SaveBusinessProfileWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSaveBusinessProfileResponse(rsp)
+}
+
+// SaveBusinessProfileWithResponse Save the business profile
+//
+// Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/business-profile (the `SaveBusinessProfile` operationId).
+func (c *ClientWithResponses) SaveBusinessProfileWithResponse(ctx context.Context, body SaveBusinessProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*SaveBusinessProfileResponse, error) {
+	rsp, err := c.SaveBusinessProfile(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSaveBusinessProfileResponse(rsp)
+}
+
 // PlacePhoneCallWithBodyWithResponse Place an outbound call and bridge it into a Stream call
 //
 // Stream's SIP is inbound only, so the vendor originates the call and connects it to a trunk the agent is already on, rather than Stream dialling out.
@@ -31210,6 +36466,21 @@ func (c *ClientWithResponses) PressPhoneDigitsWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParsePressPhoneDigitsResponse(rsp)
+}
+
+// ReceiveDLCReportWithResponse Receive a 10DLC registration report
+//
+// Where Telnyx reports on the brands and campaigns this router registered. Unauthenticated because the vendor is not a customer: each report is checked against the vendor's Ed25519 signature, and then only names the campaign to ask the vendor about, so a report cannot say a campaign was approved that was not.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/hooks/10dlc (the `ReceiveDLCReport` operationId).
+func (c *ClientWithResponses) ReceiveDLCReportWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveDLCReportResponse, error) {
+	rsp, err := c.ReceiveDLCReport(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveDLCReportResponse(rsp)
 }
 
 // ListPhoneNumbersWithResponse The numbers the calling customer holds
@@ -31307,6 +36578,276 @@ func (c *ClientWithResponses) AttachPhoneNumberWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseAttachPhoneNumberResponse(rsp)
+}
+
+// ListOptOutsWithResponse List opt-outs
+//
+// The people who asked not to be reached, newest first.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/opt-outs (the `ListOptOuts` operationId).
+func (c *ClientWithResponses) ListOptOutsWithResponse(ctx context.Context, params *ListOptOutsParams, reqEditors ...RequestEditorFn) (*ListOptOutsResponse, error) {
+	rsp, err := c.ListOptOuts(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListOptOutsResponse(rsp)
+}
+
+// CreateOptOutWithBodyWithResponse Record an opt-out
+//
+// Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/opt-outs (the `CreateOptOut` operationId).
+func (c *ClientWithResponses) CreateOptOutWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOptOutResponse, error) {
+	rsp, err := c.CreateOptOutWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOptOutResponse(rsp)
+}
+
+// CreateOptOutWithResponse Record an opt-out
+//
+// Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/opt-outs (the `CreateOptOut` operationId).
+func (c *ClientWithResponses) CreateOptOutWithResponse(ctx context.Context, body CreateOptOutJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOptOutResponse, error) {
+	rsp, err := c.CreateOptOut(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOptOutResponse(rsp)
+}
+
+// RevokeOptOutWithResponse Revoke an opt-out
+//
+// Lifts an opt-out. The record of it is kept.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/phone/opt-outs/{id} (the `RevokeOptOut` operationId).
+func (c *ClientWithResponses) RevokeOptOutWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RevokeOptOutResponse, error) {
+	rsp, err := c.RevokeOptOut(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeOptOutResponse(rsp)
+}
+
+// GetPhoneSandboxWithResponse Get the sandbox
+//
+// What the app may text and call before a use case is approved, and how much of today's allowance it used.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/sandbox (the `GetPhoneSandbox` operationId).
+func (c *ClientWithResponses) GetPhoneSandboxWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPhoneSandboxResponse, error) {
+	rsp, err := c.GetPhoneSandbox(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPhoneSandboxResponse(rsp)
+}
+
+// SetSandboxRecipientsWithBodyWithResponse Set the sandbox recipients
+//
+// Replaces the numbers a sandboxed app may text and call.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
+func (c *ClientWithResponses) SetSandboxRecipientsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxRecipientsResponse, error) {
+	rsp, err := c.SetSandboxRecipientsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSandboxRecipientsResponse(rsp)
+}
+
+// SetSandboxRecipientsWithResponse Set the sandbox recipients
+//
+// Replaces the numbers a sandboxed app may text and call.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
+func (c *ClientWithResponses) SetSandboxRecipientsWithResponse(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxRecipientsResponse, error) {
+	rsp, err := c.SetSandboxRecipients(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSandboxRecipientsResponse(rsp)
+}
+
+// ListUseCasesWithResponse List 10DLC use cases
+//
+// The app's use cases, newest first.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/use-cases (the `ListUseCases` operationId).
+func (c *ClientWithResponses) ListUseCasesWithResponse(ctx context.Context, params *ListUseCasesParams, reqEditors ...RequestEditorFn) (*ListUseCasesResponse, error) {
+	rsp, err := c.ListUseCases(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListUseCasesResponse(rsp)
+}
+
+// CreateUseCaseWithBodyWithResponse Create a 10DLC use case
+//
+// Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/use-cases (the `CreateUseCase` operationId).
+func (c *ClientWithResponses) CreateUseCaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateUseCaseResponse, error) {
+	rsp, err := c.CreateUseCaseWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateUseCaseResponse(rsp)
+}
+
+// CreateUseCaseWithResponse Create a 10DLC use case
+//
+// Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/use-cases (the `CreateUseCase` operationId).
+func (c *ClientWithResponses) CreateUseCaseWithResponse(ctx context.Context, body CreateUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateUseCaseResponse, error) {
+	rsp, err := c.CreateUseCase(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateUseCaseResponse(rsp)
+}
+
+// DeleteUseCaseWithResponse Delete a 10DLC use case
+//
+// Refused once the vendor holds it.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/phone/use-cases/{id} (the `DeleteUseCase` operationId).
+func (c *ClientWithResponses) DeleteUseCaseWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteUseCaseResponse, error) {
+	rsp, err := c.DeleteUseCase(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteUseCaseResponse(rsp)
+}
+
+// GetUseCaseWithResponse Get a 10DLC use case
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/use-cases/{id} (the `GetUseCase` operationId).
+func (c *ClientWithResponses) GetUseCaseWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetUseCaseResponse, error) {
+	rsp, err := c.GetUseCase(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUseCaseResponse(rsp)
+}
+
+// UpdateUseCaseWithBodyWithResponse Update a 10DLC use case
+//
+// Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+//
+// Server-side only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/use-cases/{id} (the `UpdateUseCase` operationId).
+func (c *ClientWithResponses) UpdateUseCaseWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUseCaseResponse, error) {
+	rsp, err := c.UpdateUseCaseWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateUseCaseResponse(rsp)
+}
+
+// UpdateUseCaseWithResponse Update a 10DLC use case
+//
+// Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+//
+// Server-side only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/use-cases/{id} (the `UpdateUseCase` operationId).
+func (c *ClientWithResponses) UpdateUseCaseWithResponse(ctx context.Context, id string, body UpdateUseCaseJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUseCaseResponse, error) {
+	rsp, err := c.UpdateUseCase(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateUseCaseResponse(rsp)
+}
+
+// ListUseCaseReviewsWithResponse List a use case's review history
+//
+// Every move the use case made and who made it, oldest first.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/use-cases/{id}/reviews (the `ListUseCaseReviews` operationId).
+func (c *ClientWithResponses) ListUseCaseReviewsWithResponse(ctx context.Context, id string, params *ListUseCaseReviewsParams, reqEditors ...RequestEditorFn) (*ListUseCaseReviewsResponse, error) {
+	rsp, err := c.ListUseCaseReviews(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListUseCaseReviewsResponse(rsp)
+}
+
+// SubmitUseCaseWithResponse Submit a 10DLC use case for review
+//
+// Sends a use case to Stream's review, once it and the business profile have everything the registry asks for; a 400 says what is missing. Stream approving it registers it with the vendor.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/use-cases/{id}/submit (the `SubmitUseCase` operationId).
+func (c *ClientWithResponses) SubmitUseCaseWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*SubmitUseCaseResponse, error) {
+	rsp, err := c.SubmitUseCase(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSubmitUseCaseResponse(rsp)
 }
 
 // ListPhoneVendorsWithResponse List the telephony vendors and whether they can be used
@@ -32612,6 +38153,264 @@ func ParseStartCampaignResponse(rsp *http.Response) (*StartCampaignResponse, err
 	return response, nil
 }
 
+// ParseListChannelAccountsResponse parses an HTTP response from a ListChannelAccountsWithResponse call
+func ParseListChannelAccountsResponse(rsp *http.Response) (*ListChannelAccountsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListChannelAccountsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []ChannelAccount
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseConnectChannelResponse parses an HTTP response from a ConnectChannelWithResponse call
+func ParseConnectChannelResponse(rsp *http.Response) (*ConnectChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConnectChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ChannelAccount
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseVerifyChannelHookResponse parses an HTTP response from a VerifyChannelHookWithResponse call
+func ParseVerifyChannelHookResponse(rsp *http.Response) (*VerifyChannelHookResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &VerifyChannelHookResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseReceiveChannelMessageResponse parses an HTTP response from a ReceiveChannelMessageWithResponse call
+func ParseReceiveChannelMessageResponse(rsp *http.Response) (*ReceiveChannelMessageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveChannelMessageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseLinkChannelNumberResponse parses an HTTP response from a LinkChannelNumberWithResponse call
+func ParseLinkChannelNumberResponse(rsp *http.Response) (*LinkChannelNumberResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LinkChannelNumberResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ChannelLink
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDisconnectChannelResponse parses an HTTP response from a DisconnectChannelWithResponse call
+func ParseDisconnectChannelResponse(rsp *http.Response) (*DisconnectChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DisconnectChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreateChatTokenResponse parses an HTTP response from a CreateChatTokenWithResponse call
 func ParseCreateChatTokenResponse(rsp *http.Response) (*CreateChatTokenResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -33193,22 +38992,22 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 	return response, nil
 }
 
-// ParseListConnectorConnectionsResponse parses an HTTP response from a ListConnectorConnectionsWithResponse call
-func ParseListConnectorConnectionsResponse(rsp *http.Response) (*ListConnectorConnectionsResponse, error) {
+// ParseListConnectionsResponse parses an HTTP response from a ListConnectionsWithResponse call
+func ParseListConnectionsResponse(rsp *http.Response) (*ListConnectionsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ListConnectorConnectionsResponse{
+	response := &ListConnectionsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorConnectionPage
+		var dest ConnectionPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -33247,22 +39046,22 @@ func ParseListConnectorConnectionsResponse(rsp *http.Response) (*ListConnectorCo
 	return response, nil
 }
 
-// ParseCreateConnectorConnectionResponse parses an HTTP response from a CreateConnectorConnectionWithResponse call
-func ParseCreateConnectorConnectionResponse(rsp *http.Response) (*CreateConnectorConnectionResponse, error) {
+// ParseCreateConnectionResponse parses an HTTP response from a CreateConnectionWithResponse call
+func ParseCreateConnectionResponse(rsp *http.Response) (*CreateConnectionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &CreateConnectorConnectionResponse{
+	response := &CreateConnectionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ConnectorConnection
+		var dest Connection
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -33301,15 +39100,15 @@ func ParseCreateConnectorConnectionResponse(rsp *http.Response) (*CreateConnecto
 	return response, nil
 }
 
-// ParseDeleteConnectorConnectionResponse parses an HTTP response from a DeleteConnectorConnectionWithResponse call
-func ParseDeleteConnectorConnectionResponse(rsp *http.Response) (*DeleteConnectorConnectionResponse, error) {
+// ParseDeleteConnectionResponse parses an HTTP response from a DeleteConnectionWithResponse call
+func ParseDeleteConnectionResponse(rsp *http.Response) (*DeleteConnectionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &DeleteConnectorConnectionResponse{
+	response := &DeleteConnectionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -33365,22 +39164,22 @@ func ParseDeleteConnectorConnectionResponse(rsp *http.Response) (*DeleteConnecto
 	return response, nil
 }
 
-// ParseGetConnectorConnectionResponse parses an HTTP response from a GetConnectorConnectionWithResponse call
-func ParseGetConnectorConnectionResponse(rsp *http.Response) (*GetConnectorConnectionResponse, error) {
+// ParseGetConnectionResponse parses an HTTP response from a GetConnectionWithResponse call
+func ParseGetConnectionResponse(rsp *http.Response) (*GetConnectionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetConnectorConnectionResponse{
+	response := &GetConnectionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorConnection
+		var dest Connection
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -33441,7 +39240,7 @@ func ParseListConnectorsResponse(rsp *http.Response) (*ListConnectorsResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorDefinitionPage
+		var dest ConnectorPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -33495,7 +39294,7 @@ func ParseCreateConnectorResponse(rsp *http.Response) (*CreateConnectorResponse,
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorDefinition
+		var dest Connector
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -33549,7 +39348,7 @@ func ParseGetConnectorResponse(rsp *http.Response) (*GetConnectorResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorDefinition
+		var dest Connector
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -37685,6 +43484,304 @@ func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, err
 	return response, nil
 }
 
+// ParseListUseCasesForReviewResponse parses an HTTP response from a ListUseCasesForReviewWithResponse call
+func ParseListUseCasesForReviewResponse(rsp *http.Response) (*ListUseCasesForReviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListUseCasesForReviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewQueue
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetUseCaseForReviewResponse parses an HTTP response from a GetUseCaseForReviewWithResponse call
+func ParseGetUseCaseForReviewResponse(rsp *http.Response) (*GetUseCaseForReviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUseCaseForReviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UseCaseForReview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReviewUseCaseResponse parses an HTTP response from a ReviewUseCaseWithResponse call
+func ParseReviewUseCaseResponse(rsp *http.Response) (*ReviewUseCaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReviewUseCaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UseCaseForReview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBusinessProfileResponse parses an HTTP response from a GetBusinessProfileWithResponse call
+func ParseGetBusinessProfileResponse(rsp *http.Response) (*GetBusinessProfileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBusinessProfileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BusinessProfile
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSaveBusinessProfileResponse parses an HTTP response from a SaveBusinessProfileWithResponse call
+func ParseSaveBusinessProfileResponse(rsp *http.Response) (*SaveBusinessProfileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SaveBusinessProfileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BusinessProfile
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParsePlacePhoneCallResponse parses an HTTP response from a PlacePhoneCallWithResponse call
 func ParsePlacePhoneCallResponse(rsp *http.Response) (*PlacePhoneCallResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -37859,6 +43956,22 @@ func ParsePressPhoneDigitsResponse(rsp *http.Response) (*PressPhoneDigitsRespons
 		}
 		response.JSON500 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseReceiveDLCReportResponse parses an HTTP response from a ReceiveDLCReportWithResponse call
+func ParseReceiveDLCReportResponse(rsp *http.Response) (*ReceiveDLCReportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveDLCReportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
@@ -38145,6 +44258,709 @@ func ParseAttachPhoneNumberResponse(rsp *http.Response) (*AttachPhoneNumberRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListOptOutsResponse parses an HTTP response from a ListOptOutsWithResponse call
+func ParseListOptOutsResponse(rsp *http.Response) (*ListOptOutsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListOptOutsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OptOutPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateOptOutResponse parses an HTTP response from a CreateOptOutWithResponse call
+func ParseCreateOptOutResponse(rsp *http.Response) (*CreateOptOutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateOptOutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest OptOut
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeOptOutResponse parses an HTTP response from a RevokeOptOutWithResponse call
+func ParseRevokeOptOutResponse(rsp *http.Response) (*RevokeOptOutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeOptOutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPhoneSandboxResponse parses an HTTP response from a GetPhoneSandboxWithResponse call
+func ParseGetPhoneSandboxResponse(rsp *http.Response) (*GetPhoneSandboxResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPhoneSandboxResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PhoneSandbox
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetSandboxRecipientsResponse parses an HTTP response from a SetSandboxRecipientsWithResponse call
+func ParseSetSandboxRecipientsResponse(rsp *http.Response) (*SetSandboxRecipientsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetSandboxRecipientsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PhoneSandbox
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListUseCasesResponse parses an HTTP response from a ListUseCasesWithResponse call
+func ParseListUseCasesResponse(rsp *http.Response) (*ListUseCasesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListUseCasesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UseCasePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateUseCaseResponse parses an HTTP response from a CreateUseCaseWithResponse call
+func ParseCreateUseCaseResponse(rsp *http.Response) (*CreateUseCaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateUseCaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest UseCase
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteUseCaseResponse parses an HTTP response from a DeleteUseCaseWithResponse call
+func ParseDeleteUseCaseResponse(rsp *http.Response) (*DeleteUseCaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteUseCaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetUseCaseResponse parses an HTTP response from a GetUseCaseWithResponse call
+func ParseGetUseCaseResponse(rsp *http.Response) (*GetUseCaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUseCaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UseCase
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateUseCaseResponse parses an HTTP response from a UpdateUseCaseWithResponse call
+func ParseUpdateUseCaseResponse(rsp *http.Response) (*UpdateUseCaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateUseCaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UseCase
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListUseCaseReviewsResponse parses an HTTP response from a ListUseCaseReviewsWithResponse call
+func ParseListUseCaseReviewsResponse(rsp *http.Response) (*ListUseCaseReviewsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListUseCaseReviewsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSubmitUseCaseResponse parses an HTTP response from a SubmitUseCaseWithResponse call
+func ParseSubmitUseCaseResponse(rsp *http.Response) (*SubmitUseCaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SubmitUseCaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UseCase
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error

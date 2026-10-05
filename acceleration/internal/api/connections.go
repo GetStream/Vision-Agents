@@ -28,127 +28,127 @@ const connectorsOff = "connections cannot be created: connectors are not enabled
 // not-found»).
 const noSuchConnection = "no such connection"
 
-// ConnectorConnection is one account at one connector, as a caller is shown it. Credential
-// material is never part of it.
-type ConnectorConnection struct {
-	ID                 string                    `json:"id" readOnly:"true"`
-	ConnectorID        string                    `json:"connector_id"`
-	DefinitionRevision int                       `json:"definition_revision" readOnly:"true" doc:"The connector's revision when the connection was made, which it keeps reading until it is reconnected."`
-	Owner              ConnectorConnectionOwner  `json:"owner"`
-	AuthScheme         string                    `json:"auth_scheme" doc:"How the connection authenticates, one of its connector's schemes."`
-	Inputs             map[string]string         `json:"inputs" doc:"What the connection was created with, the connector's defaults filled in."`
-	Metadata           map[string]string         `json:"metadata" readOnly:"true" doc:"What the provider said about the account when it was connected, such as a workspace id. Empty until then."`
-	Label              string                    `json:"label,omitempty"`
-	AccountID          string                    `json:"account_id,omitempty" readOnly:"true" doc:"The provider account, known once it is connected."`
-	Status             ConnectorConnectionStatus `json:"status"`
-	GrantedScopes      []string                  `json:"granted_scopes" readOnly:"true"`
-	Revision           int                       `json:"revision" readOnly:"true" doc:"Advances with every new credential, starting at 1."`
-	ExpiresAt          *time.Time                `json:"expires_at,omitempty" readOnly:"true" doc:"When the current credential expires. Absent when there is none or it does not."`
-	CreatedAt          time.Time                 `json:"created_at" readOnly:"true"`
-	UpdatedAt          time.Time                 `json:"updated_at" readOnly:"true"`
+// Connection is one account at one connector, as a caller is shown it. Its stored
+// credentials are never part of it.
+type Connection struct {
+	ID                 string            `json:"id" readOnly:"true"`
+	ConnectorID        string            `json:"connector_id"`
+	DefinitionRevision int               `json:"definition_revision" readOnly:"true" doc:"The connector's revision when the connection was made, which it keeps reading until it is reconnected."`
+	Owner              ConnectionOwner   `json:"owner"`
+	AuthScheme         string            `json:"auth_scheme" doc:"How the connection authenticates, one of its connector's schemes."`
+	Inputs             map[string]string `json:"inputs" doc:"What the connection was created with, the connector's defaults filled in."`
+	Metadata           map[string]string `json:"metadata" readOnly:"true" doc:"What the provider said about the account when it was connected, such as a workspace id. Empty until then."`
+	Label              string            `json:"label,omitempty"`
+	AccountID          string            `json:"account_id,omitempty" readOnly:"true" doc:"The provider account, known once it is connected."`
+	Status             ConnectionStatus  `json:"status"`
+	GrantedScopes      []string          `json:"granted_scopes" readOnly:"true"`
+	Revision           int               `json:"revision" readOnly:"true" doc:"Advances with every new credential, starting at 1."`
+	ExpiresAt          *time.Time        `json:"expires_at,omitempty" readOnly:"true" doc:"When the current credential expires. Absent when there is none or it does not."`
+	CreatedAt          time.Time         `json:"created_at" readOnly:"true"`
+	UpdatedAt          time.Time         `json:"updated_at" readOnly:"true"`
 }
 
-func (*ConnectorConnection) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+func (*Connection) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "One account at one connector, owned by the app or by one of its " +
 		"users. Credentials are never shown."
 	return schema
 }
 
-// ConnectorConnectionOwner is whose a connection is.
-type ConnectorConnectionOwner struct {
-	Type   ConnectorConnectionOwnerType `json:"type"`
-	UserID string                       `json:"user_id,omitempty" doc:"The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id."`
+// ConnectionOwner is whose a connection is.
+type ConnectionOwner struct {
+	Type   ConnectionOwnerType `json:"type"`
+	UserID string              `json:"user_id,omitempty" doc:"The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id."`
 }
 
-func (*ConnectorConnectionOwner) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+func (*ConnectionOwner) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "Whose a connection is: the app's, which any of its agents may be " +
 		"bound to, or one user's."
 	schema.AdditionalProperties = false
 	return schema
 }
 
-// ConnectorConnectionOwnerType is the two owners a connection can have (architecture doc,
+// ConnectionOwnerType is the two owners a connection can have (architecture doc,
 // one-way door 8).
-type ConnectorConnectionOwnerType string
+type ConnectionOwnerType string
 
-func (ConnectorConnectionOwnerType) Schema(registry huma.Registry) *huma.Schema {
-	ref := namedEnum(registry, "ConnectorConnectionOwnerType",
+func (ConnectionOwnerType) Schema(registry huma.Registry) *huma.Schema {
+	ref := namedEnum(registry, "ConnectionOwnerType",
 		"app is the app's own account, user one user's.", store.OwnerApp, store.OwnerUser)
 	// AgentLogSource has user too. When two enums share a constant name oapi-codegen prefixes
 	// both with their type (enumsConflict, pkg/codegen/codegen.go:1553 in v2.8.0), which would
 	// rename the Go SDK's User, Agent, System and Tool. Naming these constants keeps the
 	// others as they were, as PhoneOperation does in api/legacy.yaml.
-	registry.Map()["ConnectorConnectionOwnerType"].Extensions = map[string]any{
-		"x-enum-varnames": []string{"ConnectorConnectionOwnerTypeApp", "ConnectorConnectionOwnerTypeUser"},
+	registry.Map()["ConnectionOwnerType"].Extensions = map[string]any{
+		"x-enum-varnames": []string{"ConnectionOwnerTypeApp", "ConnectionOwnerTypeUser"},
 	}
 	return ref
 }
 
-// ConnectorConnectionStatus is where a connection is in its life.
-type ConnectorConnectionStatus string
+// ConnectionStatus is where a connection is in its life.
+type ConnectionStatus string
 
-func (ConnectorConnectionStatus) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "ConnectorConnectionStatus",
+func (ConnectionStatus) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ConnectionStatus",
 		"pending until an account is connected, then connected, needs_reauthorization once the "+
 			"provider stops accepting its credential, and disconnected when it is deleted.",
 		store.ConnectionPending, store.ConnectionConnected, store.ConnectionNeedsReauthorization,
 		store.ConnectionDisconnected)
 }
 
-// ConnectorConnectionRequest is a connection to create.
+// ConnectionRequest is a connection to create.
 //
 // The label's 120 is the prototype's (CreateConnectorConnectionRequest in api/openapi.yaml
 // on codex/connector-support at cf62af0d). Inputs have no count or length of their own: each
 // must be one the connector declares and match its enum or pattern, which bounds them.
-type ConnectorConnectionRequest struct {
-	ConnectorID string                   `json:"connector_id" minLength:"1" doc:"A built-in, such as slack, or one of the app's own."`
-	Owner       ConnectorConnectionOwner `json:"owner"`
-	AuthScheme  string                   `json:"auth_scheme,omitempty" doc:"One of the connector's schemes. Omitted is its only one; a connector with several needs it named."`
-	Inputs      map[string]string        `json:"inputs,omitempty" doc:"Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern."`
-	Label       string                   `json:"label,omitempty" maxLength:"120" doc:"A name to tell connections apart by."`
+type ConnectionRequest struct {
+	ConnectorID string            `json:"connector_id" minLength:"1" doc:"A built-in, such as slack, or one of the app's own."`
+	Owner       ConnectionOwner   `json:"owner"`
+	AuthScheme  string            `json:"auth_scheme,omitempty" doc:"One of the connector's schemes. Omitted is its only one; a connector with several needs it named."`
+	Inputs      map[string]string `json:"inputs,omitempty" doc:"Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern."`
+	Label       string            `json:"label,omitempty" maxLength:"120" doc:"A name to tell connections apart by."`
 }
 
-func (*ConnectorConnectionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+func (*ConnectionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "A connection to create, pending until an account is connected. An " +
 		"unknown field is refused rather than ignored."
 	schema.AdditionalProperties = false
 	return schema
 }
 
-// ConnectorConnectionPage is a page of connections.
-type ConnectorConnectionPage struct {
-	Items      []ConnectorConnection `json:"items"`
-	HasMore    bool                  `json:"has_more"`
-	NextCursor *string               `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one."`
+// ConnectionPage is a page of connections.
+type ConnectionPage struct {
+	Items      []Connection `json:"items"`
+	HasMore    bool         `json:"has_more"`
+	NextCursor *string      `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one."`
 }
 
-type listConnectorConnectionsRequest struct {
-	OwnerType   ConnectorConnectionOwnerType `query:"owner_type" required:"true" doc:"app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id."`
-	ConnectorID string                       `query:"connector_id" doc:"Keeps one connector's."`
+type listConnectionsRequest struct {
+	OwnerType   ConnectionOwnerType `query:"owner_type" required:"true" doc:"app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id."`
+	ConnectorID string              `query:"connector_id" doc:"Keeps one connector's."`
 	// 200 and 25 are store.ConnectionLimit's.
 	Limit  int    `query:"limit" minimum:"1" maximum:"200" doc:"Up to 200. Omitted is 25."`
 	Cursor string `query:"cursor" doc:"The next_cursor of the previous page. Omitted is the first page."`
 }
 
-type listConnectorConnectionsResponse struct {
-	Body ConnectorConnectionPage
+type listConnectionsResponse struct {
+	Body ConnectionPage
 }
 
-type connectorConnectionRequest struct {
+type connectionRequest struct {
 	ID string `path:"id" doc:"The connection, as returned when it was created."`
 }
 
-type deleteConnectorConnectionRequest struct {
+type deleteConnectionRequest struct {
 	ID    string `path:"id" doc:"The connection, as returned when it was created."`
 	Force bool   `query:"force" doc:"Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists."`
 }
 
-type createConnectorConnectionRequest struct {
-	Body ConnectorConnectionRequest
+type createConnectionRequest struct {
+	Body ConnectionRequest
 }
 
-type connectorConnectionResponse struct {
-	Body ConnectorConnection
+type connectionResponse struct {
+	Body Connection
 }
 
 // registerConnections declares the connection operations. All four are server-side only:
@@ -157,7 +157,7 @@ type connectorConnectionResponse struct {
 // one-way door 7: owner identity comes only from the trusted principal).
 func (s *Server) registerConnections(api huma.API) {
 	huma.Register(api, huma.Operation{
-		OperationID:   "createConnectorConnection",
+		OperationID:   "createConnection",
 		Method:        http.MethodPost,
 		Path:          "/v1/agents/connections",
 		Summary:       "Create a connection",
@@ -171,9 +171,9 @@ func (s *Server) registerConnections(api huma.API) {
 			"end user's device.",
 		Responses: map[string]*huma.Response{"201": {Description: "The pending connection"}},
 		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
-	}, s.createConnectorConnection)
+	}, s.createConnection)
 	huma.Register(api, huma.Operation{
-		OperationID: "listConnectorConnections",
+		OperationID: "listConnections",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/connections",
 		Summary:     "List connections",
@@ -183,9 +183,9 @@ func (s *Server) registerConnections(api huma.API) {
 			"end user's device.",
 		Responses: map[string]*huma.Response{"200": {Description: "A page of connections"}},
 		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
-	}, s.listConnectorConnections)
+	}, s.listConnections)
 	huma.Register(api, huma.Operation{
-		OperationID: "getConnectorConnection",
+		OperationID: "getConnection",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/connections/{id}",
 		Summary:     "Read a connection",
@@ -195,9 +195,9 @@ func (s *Server) registerConnections(api huma.API) {
 			"end user's device.",
 		Responses: map[string]*huma.Response{"200": {Description: "The connection"}},
 		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
-	}, s.getConnectorConnection)
+	}, s.getConnection)
 	huma.Register(api, huma.Operation{
-		OperationID:   "deleteConnectorConnection",
+		OperationID:   "deleteConnection",
 		Method:        http.MethodDelete,
 		Path:          "/v1/agents/connections/{id}",
 		Summary:       "Delete a connection",
@@ -211,12 +211,12 @@ func (s *Server) registerConnections(api huma.API) {
 		Responses: map[string]*huma.Response{"204": {Description: "The connection is deleted"}},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
 			http.StatusNotFound, http.StatusConflict},
-	}, s.deleteConnectorConnection)
+	}, s.deleteConnection)
 }
 
-// createConnectorConnection records a pending connection for the app or the user the
+// createConnection records a pending connection for the app or the user the
 // backend acts for.
-func (s *Server) createConnectorConnection(ctx context.Context, request *createConnectorConnectionRequest) (*connectorConnectionResponse, error) {
+func (s *Server) createConnection(ctx context.Context, request *createConnectionRequest) (*connectionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized(missingCustomer().Error)
@@ -276,11 +276,11 @@ func (s *Server) createConnectorConnection(ctx context.Context, request *createC
 	if err != nil {
 		return nil, err
 	}
-	return &connectorConnectionResponse{Body: connectorConnectionOf(connection)}, nil
+	return &connectionResponse{Body: connectionOf(connection)}, nil
 }
 
-// listConnectorConnections lists one owner's connections, a page at a time.
-func (s *Server) listConnectorConnections(ctx context.Context, request *listConnectorConnectionsRequest) (*listConnectorConnectionsResponse, error) {
+// listConnections lists one owner's connections, a page at a time.
+func (s *Server) listConnections(ctx context.Context, request *listConnectionsRequest) (*listConnectionsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized(missingCustomer().Error)
@@ -311,29 +311,29 @@ func (s *Server) listConnectorConnections(ctx context.Context, request *listConn
 	}
 
 	kept, more := page(found, store.ConnectionLimit(request.Limit))
-	listed := ConnectorConnectionPage{Items: make([]ConnectorConnection, 0, len(kept)), HasMore: more}
+	listed := ConnectionPage{Items: make([]Connection, 0, len(kept)), HasMore: more}
 	for _, connection := range kept {
-		listed.Items = append(listed.Items, connectorConnectionOf(connection))
+		listed.Items = append(listed.Items, connectionOf(connection))
 	}
 	if more {
 		last := kept[len(kept)-1]
 		listed.NextCursor = encodeCursor(store.ConnectionPosition{CreatedAt: last.CreatedAt, ID: last.ID})
 	}
-	return &listConnectorConnectionsResponse{Body: listed}, nil
+	return &listConnectionsResponse{Body: listed}, nil
 }
 
-// getConnectorConnection reads one connection the caller may have.
-func (s *Server) getConnectorConnection(ctx context.Context, request *connectorConnectionRequest) (*connectorConnectionResponse, error) {
+// getConnection reads one connection the caller may have.
+func (s *Server) getConnection(ctx context.Context, request *connectionRequest) (*connectionResponse, error) {
 	connection, err := s.reachableConnection(ctx, request.ID)
 	if err != nil {
 		return nil, err
 	}
-	return &connectorConnectionResponse{Body: connectorConnectionOf(connection)}, nil
+	return &connectionResponse{Body: connectionOf(connection)}, nil
 }
 
-// deleteConnectorConnection soft deletes one connection the caller may have, unless an
+// deleteConnection soft deletes one connection the caller may have, unless an
 // agent config still binds it and the caller did not force it.
-func (s *Server) deleteConnectorConnection(ctx context.Context, request *deleteConnectorConnectionRequest) (*struct{}, error) {
+func (s *Server) deleteConnection(ctx context.Context, request *deleteConnectionRequest) (*struct{}, error) {
 	connection, err := s.reachableConnection(ctx, request.ID)
 	if err != nil {
 		return nil, err
@@ -398,7 +398,7 @@ func mayReach(ctx context.Context, connection store.ConnectorConnection) bool {
 }
 
 // ownerOf is the owner id a new connection is filed under, or why the owner cannot be it.
-func ownerOf(ctx context.Context, owner ConnectorConnectionOwner) (string, error) {
+func ownerOf(ctx context.Context, owner ConnectionOwner) (string, error) {
 	userID := strings.TrimSpace(owner.UserID)
 	switch owner.Type {
 	case store.OwnerApp:
@@ -431,17 +431,17 @@ func actingUser(ctx context.Context) string {
 	return CallerFrom(ctx).UserID
 }
 
-// connectorConnectionOf is the part of a stored connection a caller is shown. Each field is
+// connectionOf is the part of a stored connection a caller is shown. Each field is
 // copied by name, so a column added to the row stays hidden until it is added here. Sealed
-// material, cached tools and last_error are left out: the first is never shown, and the
+// credentials, cached tools and last_error are left out: the first is never shown, and the
 // other two are for the operations that write them (T18, T12).
-func connectorConnectionOf(connection store.ConnectorConnection) ConnectorConnection {
-	return ConnectorConnection{
+func connectionOf(connection store.ConnectorConnection) Connection {
+	return Connection{
 		ID:                 connection.ID,
 		ConnectorID:        connection.ConnectorID,
 		DefinitionRevision: connection.DefinitionRevision,
-		Owner: ConnectorConnectionOwner{
-			Type:   ConnectorConnectionOwnerType(connection.OwnerType),
+		Owner: ConnectionOwner{
+			Type:   ConnectionOwnerType(connection.OwnerType),
 			UserID: connection.OwnerID,
 		},
 		AuthScheme:    connection.AuthScheme,
@@ -449,7 +449,7 @@ func connectorConnectionOf(connection store.ConnectorConnection) ConnectorConnec
 		Metadata:      maps.Clone(connection.Metadata),
 		Label:         connection.Label,
 		AccountID:     connection.AccountID,
-		Status:        ConnectorConnectionStatus(connection.Status),
+		Status:        ConnectionStatus(connection.Status),
 		GrantedScopes: append([]string{}, connection.GrantedScopes...),
 		Revision:      connection.Revision,
 		ExpiresAt:     connection.ExpiresAt,

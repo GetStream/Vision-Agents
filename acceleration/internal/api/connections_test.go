@@ -81,7 +81,7 @@ func (s *ConnectionsSuite) TestABackendCreatesAUserOwnedConnectionForTheUserItAc
 
 	created := s.create(s.serverClient.actingFor(alice), userOwned("linear", alice))
 
-	s.Equal(ConnectorConnectionOwner{Type: "user", UserID: alice.userID}, created.Owner)
+	s.Equal(ConnectionOwner{Type: "user", UserID: alice.userID}, created.Owner)
 }
 
 func (s *ConnectionsSuite) TestAUserOwnedConnectionFromABackendActingForNobodyIsRefused() {
@@ -198,9 +198,9 @@ func (s *ConnectionsSuite) TestANewConnectionIsPendingAtTheConnectorsNewestRevis
 	s.NotEmpty(created.ID)
 	s.Equal("linear", created.ConnectorID)
 	s.Equal(linear.Revision, created.DefinitionRevision)
-	s.Equal(ConnectorConnectionOwner{Type: "app"}, created.Owner)
+	s.Equal(ConnectionOwner{Type: "app"}, created.Owner)
 	s.Equal("oauth2_code", created.AuthScheme, "Linear's only scheme")
-	s.Equal(ConnectorConnectionStatus("pending"), created.Status)
+	s.Equal(ConnectionStatus("pending"), created.Status)
 	s.Equal(1, created.Revision)
 	s.Equal("Support workspace", created.Label, "trimmed")
 	s.Empty(created.AccountID)
@@ -209,14 +209,14 @@ func (s *ConnectionsSuite) TestANewConnectionIsPendingAtTheConnectorsNewestRevis
 	s.Equal(created, s.get(s.serverClient, created.ID), "the answer to the create is the stored row")
 }
 
-func (s *ConnectionsSuite) TestAConnectionNeverShowsCredentialMaterial() {
+func (s *ConnectionsSuite) TestAConnectionNeverShowsItsStoredCredentials() {
 	created := s.create(s.serverClient, appOwned("linear"))
 
 	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connections/"+created.ID, nil)
 	s.Require().Equal(http.StatusOK, status)
 	var shown map[string]any
 	s.Require().NoError(json.Unmarshal(raw, &shown))
-	for _, withheld := range []string{"material", "material_sealed", "material_kek_version", "customer_id", "cached_tools", "deleted_at"} {
+	for _, withheld := range []string{"credentials", "credentials_sealed", "credentials_kek_version", "customer_id", "cached_tools", "deleted_at"} {
 		s.NotContains(shown, withheld)
 	}
 }
@@ -387,7 +387,7 @@ func (s *ConnectionsSuite) TestPagingWalksTheWholeListWithoutRepeatingOrSkipping
 	cursor := ""
 	for pages := 0; ; pages++ {
 		s.Require().Less(pages, len(whole), "paging does not end")
-		var listed ConnectorConnectionPage
+		var listed ConnectionPage
 		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 			"/v1/agents/connections?owner_type=app&limit=2&cursor="+url.QueryEscape(cursor), nil, &listed))
 		s.LessOrEqual(len(listed.Items), 2)
@@ -435,7 +435,7 @@ func (s *ConnectionsWithoutConnectorsSuite) TestACreateSaysConnectorsAreNotEnabl
 }
 
 func (s *ConnectionsWithoutConnectorsSuite) TestTheListStillAnswers() {
-	var listed ConnectorConnectionPage
+	var listed ConnectionPage
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app", nil, &listed))
 	s.Empty(listed.Items)
 }
@@ -472,7 +472,7 @@ inputs:
     default: us
 schemes: [oauth2_code, test_key, test_absent]
 client:
-  policy: [dcr]
+  registration: [dcr]
 sources:
   - kind: mcp
     endpoint: mcp
@@ -495,30 +495,30 @@ func (s *ConnectionsSuite) bindFixed(connectionID string) {
 	s.Require().NoError(err)
 }
 
-func (s *ConnectionsSuite) connector(id string) ConnectorDefinition {
-	var definition ConnectorDefinition
+func (s *ConnectionsSuite) connector(id string) Connector {
+	var definition Connector
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/"+id, nil, &definition))
 	return definition
 }
 
-func (s *ConnectionsSuite) create(as *testClient, body map[string]any) ConnectorConnection {
-	var created ConnectorConnection
+func (s *ConnectionsSuite) create(as *testClient, body map[string]any) Connection {
+	var created Connection
 	s.Require().Equal(http.StatusCreated, as.do(http.MethodPost, "/v1/agents/connections", body, &created))
 	return created
 }
 
-func (s *ConnectionsSuite) get(as *testClient, id string) ConnectorConnection {
-	var connection ConnectorConnection
+func (s *ConnectionsSuite) get(as *testClient, id string) Connection {
+	var connection Connection
 	s.Require().Equal(http.StatusOK, as.do(http.MethodGet, "/v1/agents/connections/"+id, nil, &connection))
 	return connection
 }
 
-func (s *ConnectionsSuite) list(as *testClient, ownerType, connectorID string) ConnectorConnectionPage {
+func (s *ConnectionsSuite) list(as *testClient, ownerType, connectorID string) ConnectionPage {
 	query := url.Values{"owner_type": {ownerType}, "limit": {"200"}}
 	if connectorID != "" {
 		query.Set("connector_id", connectorID)
 	}
-	var listed ConnectorConnectionPage
+	var listed ConnectionPage
 	s.Require().Equal(http.StatusOK, as.do(http.MethodGet, "/v1/agents/connections?"+query.Encode(), nil, &listed))
 	return listed
 }
@@ -550,7 +550,7 @@ func withScheme(sent map[string]any, scheme string) map[string]any {
 	return sent
 }
 
-func connectionIDs(connections []ConnectorConnection) []string {
+func connectionIDs(connections []Connection) []string {
 	ids := make([]string, 0, len(connections))
 	for _, connection := range connections {
 		ids = append(ids, connection.ID)

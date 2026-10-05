@@ -527,7 +527,7 @@ class TestSyncAgent:
             "search: search-fast\n"
             "greeting: Hello.\n"
             "sandbox: daytona\n"
-            "plugins:\n  - gmail\n"
+            "agent_plugins:\n  - gmail\n"
             "user_plugins:\n  - google_calendar\n"
             "keyterms:\n  - Vision Agents\n"
             "tags:\n  team: support\n"
@@ -549,7 +549,7 @@ class TestSyncAgent:
         assert stored["search"] == "search-fast"
         assert stored["greeting"] == "Hello."
         assert stored["sandbox"] == "daytona"
-        assert stored["plugins"] == ["gmail"]
+        assert stored["agent_plugins"] == ["gmail"]
         assert stored["user_plugins"] == ["google_calendar"]
         assert stored["keyterms"] == ["Vision Agents"]
         assert stored["tags"] == {"team": "support"}
@@ -598,6 +598,9 @@ class TestSyncAgent:
             "name: support\nmcp_servers:\n"
             "  - name: tablejourney\n    url: https://tablejourney.com/mcp\n"
             "    tools: [search_*]\n"
+            "  - name: crm\n    url: https://crm.example.com/mcp\n"
+            "    scopes: [contacts.read]\n"
+            "  - name: notes\n    url: https://notes.example.com/mcp\n    user: true\n"
         )
 
         result = await stream.sync_agent(
@@ -609,37 +612,70 @@ class TestSyncAgent:
                 "name": "tablejourney",
                 "url": "https://tablejourney.com/mcp",
                 "tools": ["search_*"],
-            }
+            },
+            {
+                "name": "crm",
+                "url": "https://crm.example.com/mcp",
+                "tools": [],
+                "scopes": ["contacts.read"],
+            },
+            {
+                "name": "notes",
+                "url": "https://notes.example.com/mcp",
+                "tools": [],
+                "user": True,
+            },
         ]
 
-    async def test_how_each_plugin_is_reached_is_sent(
+    async def test_the_channels_the_agent_answers_on_are_sent(
         self, router: Router, support_dir
     ):
         (support_dir / "agent.yaml").write_text(
-            "name: support\nuser_plugins: [linear, calcom]\nplugin_options:\n"
-            "  - plugin: linear\n    readonly: true\n"
-            "  - plugin: calcom\n    toolsets: [bookings]\n    tools: [get_*]\n"
+            "name: support\nchannels:\n"
+            '  whatsapp:\n    number: "+15556325550"\n'
+            '  imessage:\n    number: "+13475550100"\n'
+            "  identity: link\n"
         )
 
         result = await stream.sync_agent(
             "support", path=str(support_dir), url=router.url, customer_id="acme"
         )
 
-        assert router.configs[result.config.id]["plugin_options"] == [
-            {
-                "plugin": "linear",
-                "readonly": True,
-                "scopes": [],
-                "toolsets": [],
-                "tools": [],
-            },
-            {
-                "plugin": "calcom",
-                "readonly": False,
-                "scopes": [],
-                "toolsets": ["bookings"],
-                "tools": ["get_*"],
-            },
+        assert router.configs[result.config.id]["channels"] == {
+            "whatsapp": {"number": "+15556325550"},
+            "imessage": {"number": "+13475550100"},
+            "identity": "link",
+        }
+
+    async def test_a_file_naming_no_channels_sends_none(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\nllm: llm-fast\n")
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert "channels" not in router.configs[result.config.id]
+
+    async def test_how_each_plugin_is_reached_is_sent(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nuser_plugins:\n"
+            "  - name: linear\n    readonly: true\n"
+            "  - google_calendar\n"
+            "  - name: calcom\n    toolsets: [bookings]\n    tools: [get_*]\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["user_plugins"] == [
+            {"name": "linear", "readonly": True},
+            "google_calendar",
+            {"name": "calcom", "toolsets": ["bookings"], "tools": ["get_*"]},
         ]
 
     async def test_sts_can_be_selected_and_cleared(self, router: Router, support_dir):

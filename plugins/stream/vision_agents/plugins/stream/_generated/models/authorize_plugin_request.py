@@ -16,8 +16,7 @@ T = TypeVar("T", bound="AuthorizePluginRequest")
 class AuthorizePluginRequest:
     """
     Attributes:
-        instance_url (str | Unset): The shop hostname or Salesforce my-domain. Required for plugins that have no single
-            global URL.
+        instance_url (str | Unset): The shop hostname. Required for plugins that have no single global URL.
     """
 
     instance_url: str | Unset = UNSET

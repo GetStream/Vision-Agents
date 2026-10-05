@@ -150,7 +150,30 @@ func (s *CatalogSuite) TestGitHubIsReachedAtCopilotsMCPServer() {
 func (s *CatalogSuite) TestSlackAsksForTheScopesItsToolsNeed() {
 	plugin, ok := Lookup("slack")
 	s.Require().True(ok)
-	s.Equal([]string{"channels:history", "channels:read", "chat:write", "search:read", "users:read"}, plugin.Scopes)
+	s.Equal([]string{"channels:history", "channels:read", "chat:write", "search:read.public", "users:read"}, plugin.Scopes)
+}
+
+func (s *CatalogSuite) TestSlackScopesCanBeChosen() {
+	plugin, ok := Lookup("slack")
+	s.Require().True(ok)
+
+	chosen, err := plugin.Configured(Options{Scopes: []string{"search:read.public", "search:read.private", "channels:history"}})
+	s.Require().NoError(err)
+	s.Equal([]string{"search:read.public", "search:read.private", "channels:history"}, chosen.Scopes)
+
+	_, err = plugin.Configured(Options{Scopes: []string{"search:read"}})
+	s.ErrorContains(err, `does not accept the scope "search:read"`)
+}
+
+func (s *CatalogSuite) TestEveryDefaultScopeIsOneTheServerAccepts() {
+	for _, plugin := range Catalog() {
+		if len(plugin.ScopesSupported) == 0 {
+			continue
+		}
+		for _, scope := range plugin.Scopes {
+			s.Contains(plugin.ScopesSupported, scope, plugin.ID)
+		}
+	}
 }
 
 func (s *CatalogSuite) TestDriveAndDocsAreSeparateServersAndBothAskOnlyToRead() {
@@ -208,6 +231,17 @@ func (s *CatalogSuite) TestShopifyNeedsAnInstance() {
 	url, err := plugin.Endpoint("https://mystore.myshopify.com/")
 	s.Require().NoError(err)
 	s.Equal("https://mystore.myshopify.com/api/mcp", url)
+}
+
+func (s *CatalogSuite) TestSalesforceIsOneHostForEveryOrg() {
+	plugin, ok := Lookup("salesforce")
+	s.Require().True(ok)
+	s.False(plugin.InstanceRequired)
+
+	url, err := plugin.Endpoint("")
+	s.Require().NoError(err)
+	s.Equal("https://api.salesforce.com/platform/mcp/v1/platform/sobject-reads", url)
+	s.Equal([]string{"mcp_api", "refresh_token"}, plugin.Scopes)
 }
 
 func (s *CatalogSuite) TestAGlobalPluginIgnoresAnInstance() {

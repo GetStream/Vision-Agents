@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -49,21 +50,20 @@ type Authorization struct {
 }
 
 // UserTools are the tools an agent is offered for the plugins its end users connect.
-// An id the catalog does not have is skipped.
-func UserTools(ids []string) []harness.Tool {
+func UserTools(offered []Plugin) []harness.Tool {
 	var tools []harness.Tool
-	for _, id := range ids {
-		plugin, ok := Lookup(id)
-		if !ok {
-			continue
+	for _, plugin := range offered {
+		about := "."
+		if plugin.Description != "" {
+			about = ": " + plugin.Description
 		}
 		tools = append(tools,
 			harness.Tool{
 				Name: Prefix(plugin.ID, ListToolsSuffix),
-				Description: fmt.Sprintf("List what the user's own %s account can do: %s "+
+				Description: fmt.Sprintf("List what the user's own %s account can do%s "+
 					"Call this before %s. If the user has not connected %s yet, they are "+
 					"shown a button to connect it; tell them to press it and ask again.",
-					plugin.Name, plugin.Description, Prefix(plugin.ID, CallToolSuffix), plugin.Name),
+					plugin.Name, about, Prefix(plugin.ID, CallToolSuffix), plugin.Name),
 				Parameters: map[string]any{"type": "object", "properties": map[string]any{}},
 			},
 			harness.Tool{
@@ -111,8 +111,9 @@ func AuthorizationResult(plugin Plugin, authorizeURL, logoURL string) string {
 
 // RequestedAuthorization reads the authorization a tool result asks for, never model prose.
 // Only a result that is exactly what AuthorizationResult writes, from one of the plugin's
-// own tools, for a plugin in the catalog with an https authorize URL, asks for one.
-func RequestedAuthorization(tool, result string) (Authorization, bool) {
+// own tools, with an https authorize URL, asks for one. logins are the servers the session
+// reaches that log in: a server that does not cannot ask, whatever its tools answer.
+func RequestedAuthorization(tool, result string, logins []string) (Authorization, bool) {
 	if result == "" || len(result) > 8<<10 {
 		return Authorization{}, false
 	}
@@ -131,18 +132,20 @@ func RequestedAuthorization(tool, result string) (Authorization, bool) {
 	if !ValidAuthorization(found) {
 		return Authorization{}, false
 	}
-	if owner, _, ok := Split(tool); !ok || owner != found.PluginID {
+	owner, _, ok := Split(tool)
+	if !ok || owner != found.PluginID || !slices.Contains(logins, owner) {
 		return Authorization{}, false
 	}
 	return found, true
 }
 
-// ValidAuthorization reports whether an authorization names a catalog plugin, a short title
-// and an https URL to open.
+// ValidAuthorization reports whether an authorization names a plugin, a short title and an
+// https URL to open.
 //
 // Everything the card shows besides the title and that URL has to be what the catalog says
 // for the plugin named, so a server answering through one plugin's own tool cannot describe
 // itself as another's, and cannot put an image of its choosing in somebody's conversation.
+// A server named by URL is in no catalog, so its card says only its name.
 func ValidAuthorization(found Authorization) bool {
 	if found.Type != AuthorizationType || found.Title == "" || !utf8.ValidString(found.Title) ||
 		utf8.RuneCountInString(found.Title) > 200 || len(found.AuthorizeURL) > maxAuthorizeURL {
@@ -150,7 +153,10 @@ func ValidAuthorization(found Authorization) bool {
 	}
 	plugin, ok := Lookup(found.PluginID)
 	if !ok {
-		return false
+		if found.PluginID == "" || found.Title != "Connect "+found.PluginID || found.Text != "" || found.ThumbURL != "" {
+			return false
+		}
+		plugin = Plugin{ID: found.PluginID}
 	}
 	if found.Text != "" && found.Text != plugin.Description {
 		return false

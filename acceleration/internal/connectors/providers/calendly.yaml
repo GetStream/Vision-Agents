@@ -17,8 +17,9 @@
 # https://auth.calendly.com/oauth/token. [as] puts the MCP clients' token endpoint on
 # calendly.com instead, so every value taken from those three is # unverified for it.
 id: calendly
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 renames
+# client.policy to client.registration.
+revision: 2
 # [proto]:46-48
 name: Calendly
 category: Scheduling
@@ -40,7 +41,7 @@ client:
   # DCR only: [mcp] says console-issued credentials and «Static, pre-registered client_id
   # flows without DCR» are not supported; [as] has a registration_endpoint and no
   # client_id_metadata_document_supported, so not CIMD. [proto]:51.
-  policy: [dcr]
+  registration: [dcr]
 scopes:
   # [mcp]; [prm]; [proto]:57-59. All of [prm]'s scopes_supported, as MCP 2025-11-25 «Scope
   # Selection Strategy» asks when the server names none in a challenge. No separator, so a

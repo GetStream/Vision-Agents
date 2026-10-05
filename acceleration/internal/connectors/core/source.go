@@ -8,19 +8,19 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
-// Source discovers and runs tools of one kind: mcp, http, openapi, caller.
-type Source interface {
+// ToolSource discovers and runs tools of one kind: mcp, http, openapi, caller.
+type ToolSource interface {
 	Kind() string
 	// Discover lists what the connection offers, each tool with a schema digest, so a
-	// grant can pin the exact schema it was reviewed against.
-	Discover(ctx context.Context, b Bound) ([]ToolSpec, error)
-	// Open returns a runtime that exposes only the granted tools whose digest still
+	// ToolGrant can pin the exact schema it was reviewed against.
+	Discover(ctx context.Context, b ResolvedBinding) ([]ToolSpec, error)
+	// Open returns a Toolset that exposes only the granted tools whose digest still
 	// matches.
-	Open(ctx context.Context, b Bound, grants []ToolGrant) (Runtime, error)
+	Open(ctx context.Context, b ResolvedBinding, grants []ToolGrant) (Toolset, error)
 }
 
-// Runtime is one opened source for one session.
-type Runtime interface {
+// Toolset is the tools of one opened ToolSource, for one session.
+type Toolset interface {
 	// Tools is in llm's shape rather than harness's, so core never pulls in harness, and
 	// through it llmrouter and store, and the store can still validate against core.
 	Tools() []llm.Tool
@@ -33,12 +33,12 @@ type Result struct {
 	Parts []llm.ContentPart
 }
 
-// Bound is one binding resolved against one connection.
-type Bound struct {
+// ResolvedBinding is one binding resolved against one connection.
+type ResolvedBinding struct {
 	Binding    Binding
 	Connection Connection
-	Profile    Profile
-	// Transport already carries the resolver and the egress policy, so a Source cannot
+	Manifest   ResolvedManifest
+	// Transport already carries the resolver and the egress policy, so a ToolSource cannot
 	// get the wrapping order wrong or skip the egress check.
 	Transport func(context.Context) (http.RoundTripper, error)
 }
@@ -48,8 +48,8 @@ type Binding struct {
 	// Name is the alias the tools are exposed under.
 	Name        string
 	ConnectorID string
-	// Selection is fixed, an app-owned ConnectionID chosen in the config, or session, the
-	// verified caller's own connection chosen when the session starts.
+	// Selection is fixed, an app-owned ConnectionID chosen in the config, or session,
+	// the verified caller's own connection chosen when the session starts.
 	Selection    string
 	ConnectionID string
 	Tools        []ToolGrant

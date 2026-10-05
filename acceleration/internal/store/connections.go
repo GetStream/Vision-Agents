@@ -23,9 +23,9 @@ const (
 )
 
 // Connection statuses, the prototype's (internal/store/connectors.go on codex/connector-support
-// at cf62af0d) less failed, which nothing in the design moves a connection to: core.Grant
-// names connected, needs_reauthorization and disconnected, and pending is a connection no
-// grant was saved onto yet.
+// at cf62af0d) less failed, which nothing in the design moves a connection to:
+// core.CredentialState names connected, needs_reauthorization and disconnected, and pending
+// is a connection no credentials were saved onto yet.
 const (
 	ConnectionPending              = "pending"
 	ConnectionConnected            = "connected"
@@ -67,7 +67,7 @@ var ErrSchemeNotAllowed = errors.New("store: the connector does not allow this s
 // which.
 var ErrNoAuthorizationAttempt = errors.New("store: authorization attempt is absent, expired or already used")
 
-// ConnectorConnection is one account at one connector. Credential material is sealed by the
+// ConnectorConnection is one account at one connector. Stored credentials are sealed by the
 // caller before it reaches the store, and saved by a revisioned write (T8), never by Create.
 type ConnectorConnection struct {
 	bun.BaseModel `bun:"table:connector_connections,alias:cc"`
@@ -90,24 +90,24 @@ type ConnectorConnection struct {
 	AccountID     string            `bun:"account_id,notnull"`
 	Status        string            `bun:"status,notnull"`
 	GrantedScopes []string          `bun:"granted_scopes,type:jsonb,notnull"`
-	// Revision advances with every new material, which is sealed against it.
+	// Revision advances with every new stored credentials, which are sealed against it.
 	Revision int `bun:"revision,notnull"`
-	// MaterialSealed is core.Material sealed under MaterialKEKVersion, with customer, id and
-	// revision as AAD. Empty, with version 0, until a grant is saved.
-	MaterialSealed     []byte          `bun:"material_sealed,notnull"`
-	MaterialKEKVersion int             `bun:"material_kek_version,notnull"`
-	ExpiresAt          *time.Time      `bun:"expires_at"`
-	CachedTools        []ConnectorTool `bun:"cached_tools,type:jsonb,notnull"`
-	ToolsDigest        string          `bun:"tools_digest,notnull"`
-	ToolsCheckedAt     *time.Time      `bun:"tools_checked_at"`
-	LastError          string          `bun:"last_error,notnull"`
-	CreatedAt          time.Time       `bun:"created_at,notnull"`
-	UpdatedAt          time.Time       `bun:"updated_at,notnull"`
-	DeletedAt          *time.Time      `bun:"deleted_at"`
+	// CredentialsSealed is core.StoredCredentials sealed under CredentialsKEKVersion, with
+	// customer, id and revision as AAD. Empty, with version 0, until credentials are saved.
+	CredentialsSealed     []byte          `bun:"credentials_sealed,notnull"`
+	CredentialsKEKVersion int             `bun:"credentials_kek_version,notnull"`
+	ExpiresAt             *time.Time      `bun:"expires_at"`
+	CachedTools           []ConnectorTool `bun:"cached_tools,type:jsonb,notnull"`
+	ToolsDigest           string          `bun:"tools_digest,notnull"`
+	ToolsCheckedAt        *time.Time      `bun:"tools_checked_at"`
+	LastError             string          `bun:"last_error,notnull"`
+	CreatedAt             time.Time       `bun:"created_at,notnull"`
+	UpdatedAt             time.Time       `bun:"updated_at,notnull"`
+	DeletedAt             *time.Time      `bun:"deleted_at"`
 }
 
 // ConnectorTool is one tool a connection offered when it was last checked, with the digest
-// of the schema a grant pins.
+// of the schema a ToolGrant pins.
 type ConnectorTool struct {
 	Name         string         `json:"name"`
 	Description  string         `json:"description"`
@@ -157,8 +157,8 @@ func ConnectionLimit(asked int) int {
 	return clampLimit(asked, defaultConnectionLimit, maxConnectionLimit)
 }
 
-// CreateConnectorConnection records a new connection, pending until a grant is saved onto
-// it. Its schemes must be in registry and listed by the definition revision it pins, which
+// CreateConnectorConnection records a new connection, pending until credentials are saved
+// onto it. Its schemes must be in registry and listed by the definition revision it pins, which
 // must be one the customer can see. The registry is passed in rather than held by the store, so which
 // schemes exist is decided by whoever built it, and a test can register its own.
 func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Registry, connection *ConnectorConnection) error {
@@ -174,9 +174,9 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 	if _, found := registry.Schemes[connection.TLSScheme]; connection.TLSScheme != "" && !found {
 		return fmt.Errorf("%w: tls scheme %q", ErrUnregisteredScheme, connection.TLSScheme)
 	}
-	// The material's AAD binds the connection id, which does not exist until this returns.
-	if len(connection.MaterialSealed) > 0 {
-		return errors.New("store: material is saved onto a connection after it exists, not with it")
+	// The stored credentials' AAD binds the connection id, which does not exist until this returns.
+	if len(connection.CredentialsSealed) > 0 {
+		return errors.New("store: credentials are saved onto a connection after it exists, not with it")
 	}
 	// Definitions are never updated or deleted, so a revision found here stays.
 	definition, err := s.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
@@ -197,8 +197,8 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 	connection.ID = newID()
 	connection.Status = ConnectionPending
 	connection.Revision = 1
-	connection.MaterialSealed = []byte{}
-	connection.MaterialKEKVersion = 0
+	connection.CredentialsSealed = []byte{}
+	connection.CredentialsKEKVersion = 0
 	connection.CreatedAt = now
 	connection.UpdatedAt = now
 	connection.DeletedAt = nil
@@ -271,7 +271,7 @@ func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID stri
 	return connections, nil
 }
 
-// DeleteConnectorConnection soft deletes a live connection and drops its material at once,
+// DeleteConnectorConnection soft deletes a live connection and drops its credentials at once,
 // so nothing can use it from here on. Whether a config still binds it is the caller's to ask
 // first (ConnectorConnectionReferenced).
 func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id string) error {
@@ -281,8 +281,8 @@ func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id st
 	now := time.Now().UTC()
 	result, err := s.db.NewUpdate().Model((*ConnectorConnection)(nil)).
 		Set("status = ?", ConnectionDisconnected).
-		Set("material_sealed = ?", []byte{}).
-		Set("material_kek_version = 0").
+		Set("credentials_sealed = ?", []byte{}).
+		Set("credentials_kek_version = 0").
 		Set("expires_at = NULL").
 		Set("deleted_at = ?", now).
 		Set("updated_at = ?", now).

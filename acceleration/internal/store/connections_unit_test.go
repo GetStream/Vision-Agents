@@ -21,19 +21,23 @@ func (testScheme) Begin(context.Context, core.BeginInput) (core.BeginOutput, err
 	return core.BeginOutput{Done: true}, nil
 }
 
-func (testScheme) Complete(context.Context, core.CompleteInput) (core.Material, core.Captured, error) {
-	return core.Material{}, core.Captured{}, nil
+func (testScheme) Complete(context.Context, core.CompleteInput) (core.StoredCredentials, core.AccountInfo, error) {
+	return core.StoredCredentials{}, core.AccountInfo{}, nil
 }
 
-func (testScheme) Mint(_ context.Context, m core.Material, _ core.Profile) (core.Credential, core.Material, error) {
-	return core.Credential{}, m, nil
+func (testScheme) Retrieve(_ context.Context, stored core.StoredCredentials, _ core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+	return core.AccessCredential{}, stored, nil
 }
 
-func (testScheme) Wrap(base http.RoundTripper, _ core.Credential) http.RoundTripper { return base }
+func (testScheme) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return base
+}
 
 func (testScheme) Classify(*http.Response, []byte, error) core.Outcome { return core.Outcome{} }
 
-func (testScheme) Revoke(context.Context, core.Material, core.Profile) error { return nil }
+func (testScheme) Revoke(context.Context, core.StoredCredentials, core.ResolvedManifest) error {
+	return nil
+}
 
 // testSchemes is the registry the tests create connections against. acme lists test_key
 // and test_mtls; test_unlisted is registered but listed by no test manifest.
@@ -98,9 +102,9 @@ func TestAUserOwnedConnectionNamingNoUserIsRefused(t *testing.T) {
 	require.ErrorContains(t, err, "a user owner has one")
 }
 
-func TestAConnectionIsNotCreatedWithMaterial(t *testing.T) {
+func TestAConnectionIsNotCreatedWithCredentials(t *testing.T) {
 	connection := appConnection()
-	connection.MaterialSealed = []byte("sealed elsewhere")
+	connection.CredentialsSealed = []byte("sealed elsewhere")
 
 	err := (&Store{}).CreateConnectorConnection(context.Background(), testSchemes, connection)
 

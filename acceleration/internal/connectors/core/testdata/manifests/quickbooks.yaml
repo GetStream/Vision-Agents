@@ -28,7 +28,7 @@ endpoints:
 schemes: [oauth2_code]
 client:
   # Our policy, not a vendor fact.
-  policy: [operator, customer]
+  registration: [operator, customer]
 scopes:
   # [jsclient] OAuthClient.scopes.Accounting.
   list: [com.intuit.quickbooks.accounting]

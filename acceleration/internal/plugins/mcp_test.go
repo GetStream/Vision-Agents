@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -141,6 +142,76 @@ func (s *MCPSuite) TestAServerOpenedWithoutALoginKeepsWhatItSaidAtInitialize() {
 	s.Equal("tablejourney__search_places", tools[0].Name)
 	s.Equal("Keep booking links whole.", runtime.Instructions("tablejourney"))
 	s.Empty(runtime.Instructions("slack"))
+}
+
+func (s *MCPSuite) TestAServerDescribesItselfAtInitialize() {
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body rpcRequest
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&body))
+		methods = append(methods, body.Method)
+		writeRPC(w, body.ID, map[string]any{
+			"protocolVersion": "2025-11-25",
+			"serverInfo": map[string]any{
+				"name":        "example-crm",
+				"version":     "1.0.0",
+				"title":       " Example CRM ",
+				"description": "Search your customers, contacts, and opportunities.",
+				"icons": []map[string]any{
+					{"src": "data:image/png;base64,AAAA", "mimeType": "image/png"},
+					{"src": "https://example.com/icon.png", "mimeType": "image/png", "sizes": []string{"128x128"}},
+				},
+				"websiteUrl": "https://example.com",
+			},
+		})
+	}))
+	defer server.Close()
+
+	branding, err := Describe(context.Background(), Connection{PluginID: "crm", Endpoint: server.URL}, server.Client())
+
+	s.Require().NoError(err)
+	s.Equal(Branding{
+		Title:       "Example CRM",
+		Description: "Search your customers, contacts, and opportunities.",
+		Version:     "1.0.0",
+		IconURL:     "https://example.com/icon.png",
+		WebsiteURL:  "https://example.com",
+	}, branding)
+	s.Equal([]string{"initialize"}, methods)
+}
+
+func (s *MCPSuite) TestAServerThatOnlyNamesItselfIsTitledByItsName() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body rpcRequest
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&body))
+		writeRPC(w, body.ID, map[string]any{
+			"serverInfo": map[string]any{"name": "DeepWiki", "version": "2.14.3", "websiteUrl": "javascript:alert(1)"},
+		})
+	}))
+	defer server.Close()
+
+	branding, err := Describe(context.Background(), Connection{PluginID: "deepwiki", Endpoint: server.URL}, server.Client())
+
+	s.Require().NoError(err)
+	s.Equal(Branding{Title: "DeepWiki", Version: "2.14.3"}, branding)
+}
+
+func (s *MCPSuite) TestAServerOnAPrivateAddressIsNeverReached() {
+	var reached atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		reached.Store(true)
+	}))
+	defer server.Close()
+	conn := Connection{PluginID: "internal", Endpoint: server.URL}
+
+	runtime, tools, failures := Open(context.Background(), []Connection{conn}, nil)
+	_, described := Describe(context.Background(), conn, nil)
+
+	s.Nil(runtime)
+	s.Empty(tools)
+	s.Len(failures, 1)
+	s.Error(described)
+	s.False(reached.Load())
 }
 
 func (s *MCPSuite) TestAServerThatWillNotStartIsSkipped() {

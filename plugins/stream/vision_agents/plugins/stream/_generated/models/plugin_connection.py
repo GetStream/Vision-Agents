@@ -19,7 +19,8 @@ class PluginConnection:
     logged into yet is not_connected, which is what a dashboard reminds the app to finish.
 
         Attributes:
-            logo_url (str): Where this deployment serves the plugin's logo, as an SVG needing no credential.
+            logo_url (str): Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an
+                MCP server named by URL.
             name (str):
             plugin_id (str):
             status (PluginConnectionStatus):

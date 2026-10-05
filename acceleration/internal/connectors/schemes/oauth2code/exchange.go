@@ -44,11 +44,11 @@ type tokenResponse struct {
 
 // exchange redeems the code at the token endpoint (RFC 6749 section 4.1.3) and returns the
 // parsed response and its raw body.
-func (s *Scheme) exchange(ctx context.Context, p core.Profile, a attempt, c client, code string) (tokenResponse, json.RawMessage, error) {
+func (s *Scheme) exchange(ctx context.Context, m core.ResolvedManifest, a attempt, c client, code string) (tokenResponse, json.RawMessage, error) {
 	form := url.Values{}
 	// The manifest's token parameters go first, so none of them replaces one below.
-	for _, key := range slices.Sorted(maps.Keys(p.TokenParams)) {
-		form.Set(key, p.TokenParams[key])
+	for _, key := range slices.Sorted(maps.Keys(m.TokenParams)) {
+		form.Set(key, m.TokenParams[key])
 	}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
@@ -162,12 +162,12 @@ func parseToken(body map[string]any) (tokenResponse, error) {
 
 // scopes is what the server granted. RFC 6749 section 5.1: scope is OPTIONAL «if
 // identical to the scope requested by the client», so without it the request stands.
-func (t tokenResponse) scopes(p core.Profile, requested []string) []string {
+func (t tokenResponse) scopes(m core.ResolvedManifest, requested []string) []string {
 	if !t.HasScope {
 		return slices.Clone(requested)
 	}
 	var granted []string
-	for _, scope := range strings.Split(t.Scope, separator(p)) {
+	for _, scope := range strings.Split(t.Scope, separator(m)) {
 		if scope = strings.TrimSpace(scope); scope != "" {
 			granted = append(granted, scope)
 		}
@@ -177,20 +177,20 @@ func (t tokenResponse) scopes(p core.Profile, requested []string) []string {
 
 // expiresAt is when the access token expires: expires_in (RFC 6749 section 5.1), else the
 // manifest's refresh.access_ttl, else never as far as the scheme knows.
-func (t tokenResponse) expiresAt(p core.Profile, now time.Time) time.Time {
+func (t tokenResponse) expiresAt(m core.ResolvedManifest, now time.Time) time.Time {
 	switch {
 	case t.ExpiresIn > 0:
 		return now.Add(time.Duration(t.ExpiresIn) * time.Second)
-	case p.Refresh.AccessTTL > 0:
-		return now.Add(time.Duration(p.Refresh.AccessTTL))
+	case m.Refresh.AccessTTL > 0:
+		return now.Add(time.Duration(m.Refresh.AccessTTL))
 	}
 	return time.Time{}
 }
 
 // readsIDToken is whether a capture rule reads the id_token, which is when its claims are
 // trusted and so checked.
-func readsIDToken(p core.Profile) bool {
-	return slices.ContainsFunc(p.Capture, func(rule core.CaptureRule) bool { return rule.From == core.FromIDToken })
+func readsIDToken(m core.ResolvedManifest) bool {
+	return slices.ContainsFunc(m.Capture, func(rule core.CaptureRule) bool { return rule.From == core.FromIDToken })
 }
 
 // checkIDToken applies OpenID Connect Core 1.0 section 3.1.3.7 to an id_token from the

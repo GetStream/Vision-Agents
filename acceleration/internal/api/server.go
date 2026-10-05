@@ -32,10 +32,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -141,6 +143,17 @@ type Options struct {
 	// Absent without a database or sessions, in which case a config's plugin_events are
 	// stored but nothing subscribes to them.
 	PluginEvents *pluginevents.Service
+	// Channels answers what arrives on the app's WhatsApp, text and iMessage lines. Absent
+	// without a database, sessions or a key encryption key, in which case a line cannot be
+	// connected and nothing is delivered.
+	Channels *channels.Service
+	// DLC reviews and registers the app's 10DLC use cases. Absent without a database, in
+	// which case the 10DLC paths say so.
+	DLC *dlc.Service
+	// Gate is what the sandbox and opt-out paths read. Nil enforces nothing.
+	Gate *dlc.Gate
+	// OpsKey is what Stream staff's review paths are reached with. Empty turns them off.
+	OpsKey string
 	// Knowledge fills the bases a config's knowledge_namespace has an agent read from.
 	// Absent when the deployment has no knowledge provider, in which case there is nothing
 	// to fill and the path says so.
@@ -172,6 +185,10 @@ type Options struct {
 	// what a dashboard talking to the router without a proxy in between needs. Empty
 	// means no browser may, which is right for a deployment only servers reach.
 	CORSOrigins []string
+	// Secrets seals the credentials this API is given to keep: a channel's provider tokens.
+	// Absent when the deployment has no key encryption key, in which case the paths that
+	// would store one say so rather than holding it in the clear.
+	Secrets *auth.Sealer
 	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
 	PublicURL string
 	// DashboardURL is where a finished plugin login sends the browser.
@@ -205,7 +222,10 @@ type Options struct {
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
 	TrustedProxies []netip.Prefix
-	Logger         *slog.Logger
+	// PluginHTTP reaches plugins' MCP servers and their auth servers: a login, its callback,
+	// and a config's MCP servers describing themselves. Absent reaches only public hosts.
+	PluginHTTP *http.Client
+	Logger     *slog.Logger
 }
 
 // Server serves the router's HTTP API.
@@ -229,6 +249,7 @@ type Server struct {
 	voices        *voices.Service
 	library       *voices.Catalogue
 	dispatch      *dispatch.Pool
+	secrets       *auth.Sealer
 	streamSecret  string
 	streamKey     string
 	corsOrigins   []string
@@ -236,6 +257,10 @@ type Server struct {
 	dashboardURL  string
 	oauth         *plugins.Auth
 	pluginEvents  *pluginevents.Service
+	channels      *channels.Service
+	dlc           *dlc.Service
+	gate          *dlc.Gate
+	opsKey        string
 	authenticator auth.Authenticator
 	authMode      auth.Mode
 	dataRetention time.Duration
@@ -306,7 +331,6 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-
 	configs := options.Configs
 	if configs == nil && options.Store != nil {
 		var err error
@@ -339,6 +363,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		voices:        options.Voices,
 		library:       options.VoiceLibrary,
 		dispatch:      options.Dispatch,
+		secrets:       options.Secrets,
 		streamSecret:  options.StreamSecret,
 		streamKey:     options.StreamKey,
 		corsOrigins:   options.CORSOrigins,
@@ -353,10 +378,15 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		trusted:       options.TrustedProxies,
 		upgrader:      newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
+			HTTP:         options.PluginHTTP,
 			PublicURL:    options.PublicURL,
 			DashboardURL: options.DashboardURL,
 		},
 		pluginEvents: options.PluginEvents,
+		channels:     options.Channels,
+		dlc:          options.DLC,
+		gate:         options.Gate,
+		opsKey:       options.OpsKey,
 		popularity:   newPopularity(options.Store, logger),
 		logger:       logger,
 	}
@@ -407,6 +437,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
+	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
+	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
+	mux.HandleFunc("POST "+dlc.HookPath, s.receiveDLCReport)
 	s.newAPI(mux)
 	var handler http.Handler = mux
 	// Sentry is outermost so it sees panics from every middleware below it, not
@@ -823,7 +856,7 @@ func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
 // blocked request naming only the header, so a list covering one mode alone fails in a way
 // that looks like the origin was never allowed.
 const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth.APIKeyHeader +
-	", X-Stream-Client, " + CustomerHeader + ", Content-Type"
+	", X-Stream-Client, " + auth.UserHeader + ", " + CustomerHeader + ", Content-Type"
 
 // corsMethods are the methods this API serves. PUT belongs here because a live session's
 // instructions are replaced with one; PATCH does not, because the spec serves none.

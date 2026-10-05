@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -49,6 +50,12 @@ func (s *OAuthSuite) TestStartAuthorizeUsesDiscoveryAndDCR() {
 	s.Contains(pending.AuthorizeURL, "client_id=dyn-1")
 	s.Contains(pending.AuthorizeURL, "code_challenge")
 	s.Equal("http://auth.example/token", pending.TokenEndpoint)
+}
+
+func (s *OAuthSuite) TestDashboardRedirectNamesTheConnectedPlugin() {
+	auth := &Auth{DashboardURL: "https://dash.example/org/1/app/2/agents/"}
+	s.Equal("https://dash.example/org/1/app/2/agents/agents/cfg-1?plugin_connected=sentry",
+		auth.DashboardRedirect("cfg-1", "sentry"))
 }
 
 // GitHub publishes no RFC 8414 metadata for github.com/login/oauth, only OpenID Connect
@@ -242,4 +249,174 @@ func (s *OAuthSuite) TestTheDeploymentsOwnClientSendsItsSecret() {
 
 	s.Equal([]string{"web-secret", "web-secret", ""}, secrets,
 		"a client registered on the fly is not the one the secret belongs to")
+}
+
+// A server named by URL that publishes its metadata at neither well-known path still says
+// where it is when it refuses a request without a login (RFC 9728 section 5.1), and a login
+// given no scopes asks for the ones it advertises there.
+func (s *OAuthSuite) TestAServerNamedByURLIsFoundThroughWhatItSaysWhenItRefusesALogin() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="http://`+r.Host+`/meta/notes"`)
+		http.Error(w, "log in", http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/meta/notes", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(protectedResource{
+			AuthorizationServers: []string{"http://" + r.Host + "/issuer"},
+			ScopesSupported:      []string{"notes.read", "notes.write"},
+		})
+	})
+	mux.HandleFunc("/issuer/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://notes.example/authorize",
+			TokenEndpoint:         "https://notes.example/token",
+			RegistrationEndpoint:  "http://" + r.Host + "/register",
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		var asked map[string]any
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&asked))
+		s.Equal([]any{"https://router.example" + CallbackPath}, asked["redirect_uris"])
+		_ = json.NewEncoder(w).Encode(registration{ClientID: "notes-client"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
+	pending, err := auth.StartAuthorize(context.Background(),
+		Plugin{ID: "notes", Name: "notes", URL: server.URL + "/mcp", ByURL: true}, "")
+	s.Require().NoError(err)
+
+	authorize, err := url.Parse(pending.AuthorizeURL)
+	s.Require().NoError(err)
+	s.Equal("notes.example", authorize.Host)
+	s.Equal("notes-client", authorize.Query().Get("client_id"))
+	s.Equal("notes.read notes.write", authorize.Query().Get("scope"))
+	s.Equal(server.URL+"/mcp", authorize.Query().Get("resource"))
+	s.Equal("S256", authorize.Query().Get("code_challenge_method"))
+	s.NotEmpty(pending.CodeVerifier)
+	s.Equal("https://notes.example/token", pending.TokenEndpoint)
+}
+
+// A config names any server it likes, so its login never takes a client the deployment
+// registered for a plugin of the same name.
+func (s *OAuthSuite) TestAServerNamedByURLNeverTakesTheDeploymentsClient() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://notes.example/authorize",
+			TokenEndpoint:         "https://notes.example/token",
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	s.T().Setenv("NOTES_MCP_CLIENT_ID", "deployment-client")
+
+	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
+	_, err := auth.StartAuthorize(context.Background(),
+		Plugin{ID: "notes", Name: "notes", URL: server.URL + "/mcp", Scopes: []string{"read"}, ByURL: true}, "")
+
+	s.ErrorContains(err, "does not advertise dynamic client registration")
+}
+
+func (s *OAuthSuite) TestAServerWithALoginTheRouterCanMakePassesTheCheck() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://notes.example/authorize",
+			TokenEndpoint:         "https://notes.example/token",
+			RegistrationEndpoint:  "http://" + r.Host + "/register",
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	auth := &Auth{HTTP: server.Client()}
+
+	s.NoError(auth.CheckLogin(context.Background(), server.URL+"/mcp"))
+}
+
+func (s *OAuthSuite) TestAServerThatAnswersWithNoLoginFailsTheCheck() {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	err := (&Auth{HTTP: server.Client()}).CheckLogin(context.Background(), server.URL+"/mcp")
+
+	var unreachable *url.Error
+	s.ErrorContains(err, "oauth discovery")
+	s.False(errors.As(err, &unreachable), "the server answered, so it is not merely unreachable")
+}
+
+func (s *OAuthSuite) TestAServerThatCannotBeReachedIsToldApartFromOneWithNoLogin() {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+
+	err := (&Auth{HTTP: server.Client()}).CheckLogin(context.Background(), server.URL+"/mcp")
+
+	var unreachable *url.Error
+	s.True(errors.As(err, &unreachable), err)
+}
+
+func (s *OAuthSuite) TestAServerPublishingWhereToLogInNeedsALogin() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(protectedResource{AuthorizationServers: []string{"https://notes.example"}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	needs, err := (&Auth{HTTP: server.Client()}).NeedsLogin(context.Background(), server.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.True(needs)
+}
+
+func (s *OAuthSuite) TestAServerRefusingARequestWithoutATokenNeedsALogin() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="https://notes.example/meta"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	needs, err := (&Auth{HTTP: server.Client()}).NeedsLogin(context.Background(), server.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.True(needs)
+}
+
+func (s *OAuthSuite) TestAServerAnsweringWithoutATokenNeedsNoLogin() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":0,"result":{}}`))
+	}))
+	defer server.Close()
+
+	needs, err := (&Auth{HTTP: server.Client()}).NeedsLogin(context.Background(), server.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.False(needs)
+}
+
+func (s *OAuthSuite) TestWhetherAServerFailingOnItsSideNeedsALoginIsNotKnown() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	_, err := (&Auth{HTTP: server.Client()}).NeedsLogin(context.Background(), server.URL+"/mcp")
+
+	s.ErrorContains(err, "502")
+}
+
+func (s *OAuthSuite) TestWhetherAServerThatCannotBeReachedNeedsALoginIsNotKnown() {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+
+	_, err := (&Auth{HTTP: server.Client()}).NeedsLogin(context.Background(), server.URL+"/mcp")
+
+	var unreachable *url.Error
+	s.True(errors.As(err, &unreachable), err)
 }

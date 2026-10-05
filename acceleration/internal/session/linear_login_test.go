@@ -135,7 +135,7 @@ func (s *LinearLoginSuite) TestTheButtonOpensLinearsOwnConsentPage() {
 // The read-only endpoint is a resource of its own at Linear that accepts only read, so a
 // login for it that asked for write, or named the other resource, would be refused.
 func (s *LinearLoginSuite) TestAReadonlyLoginOpensLinearsConsentPageForTheReadOnlyServer() {
-	readonly, err := ConfiguredPlugin("linear", []store.PluginOptions{{Plugin: "linear", Readonly: true}})
+	readonly, err := ConfiguredPlugin(store.PluginEntry{Name: "linear", Readonly: true})
 	s.Require().NoError(err)
 	s.runner.named["linear"] = readonly
 
@@ -192,7 +192,8 @@ func (s *LinearLoginSuite) run(name, arguments string) string {
 // asked reads the login out of a tool result, failing the test when the tool answered
 // something else.
 func (s *LinearLoginSuite) asked(result string) plugins.Authorization {
-	found, ok := plugins.RequestedAuthorization("linear__list_tools", result)
+	found, ok := plugins.RequestedAuthorization("linear__list_tools", result,
+		Logins(Spec{UserPlugins: []store.PluginEntry{{Name: "linear"}}}))
 	s.Require().True(ok, "the tool did not ask for a login: %s", result)
 	return found
 }

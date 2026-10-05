@@ -36,11 +36,11 @@ type SyncAgentRequest struct {
 	ThinkingLlm   *string                    `json:"thinking_llm,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
 	Search        *string                    `json:"search,omitempty"`
 	Greeting      *string                    `json:"greeting,omitempty"`
-	Plugins       *[]string                  `json:"plugins,omitempty"`
-	UserPlugins   *[]string                  `json:"user_plugins,omitempty" doc:"Plugins each end user connects with their own account, from the conversation, the first time the agent needs one."`
+	AgentPlugins  *[]PluginEntry             `json:"agent_plugins,omitempty" doc:"Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached."`
+	UserPlugins   *[]PluginEntry             `json:"user_plugins,omitempty" doc:"Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins."`
 	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
-	PluginOptions *[]PluginOptions           `json:"plugin_options,omitempty" maxItems:"32" doc:"How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for."`
 	McpServers    *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
+	Channels      *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
 	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
@@ -99,6 +99,7 @@ func (*SimulationDeclaration) TransformSchema(_ huma.Registry, schema *huma.Sche
 type SyncAgentResult struct {
 	Unchanged bool        `json:"unchanged" doc:"True when the hash matched and nothing was written."`
 	Config    AgentConfig `json:"config"`
+	Warnings  []string    `json:"warnings,omitempty" doc:"What was stored but will not work yet, such as a channel line the app has not connected."`
 }
 
 type syncAgentRequest struct {
@@ -186,10 +187,19 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := pluginEventsComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
-	if message, ok := pluginOptionsComplaint(config); !ok {
+	if message, ok := pluginEntriesComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, existing.MCPServers)
+	if !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	config.MCPServers = servers
+	warnings, message, ok := s.channelsWarnings(ctx, config)
+	if !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
@@ -265,7 +275,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		}
 	}
 	s.pluginEvents.Changed(customerID, config.ID)
-	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config)}}, nil
+	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings}}, nil
 }
 
 // syncComplaint reports what is wrong with the settings a directory declared, if
@@ -412,23 +422,23 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Greeting != nil {
 		config.Greeting = *body.Greeting
 	}
-	if body.Plugins != nil {
-		config.Plugins = *body.Plugins
+	if body.AgentPlugins != nil {
+		config.AgentPlugins = pluginEntriesOf(*body.AgentPlugins)
 	}
 	if body.Connectors != nil {
 		config.Connectors = storedBindings(*body.Connectors)
 	}
 	if body.UserPlugins != nil {
-		config.UserPlugins = *body.UserPlugins
+		config.UserPlugins = pluginEntriesOf(*body.UserPlugins)
 	}
 	if body.PluginEvents != nil {
 		config.PluginEvents = pluginEventsOf(body.PluginEvents)
 	}
-	if body.PluginOptions != nil {
-		config.PluginOptions = pluginOptionsOf(body.PluginOptions)
-	}
 	if body.McpServers != nil {
 		config.MCPServers = mcpServersOf(body.McpServers)
+	}
+	if body.Channels != nil {
+		config.Channels = channelsOf(body.Channels)
 	}
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)

@@ -20,7 +20,7 @@ endpoints:
   mcp: https://mcp.slack.com/mcp
 schemes: [oauth2_code]
 client:
-  policy: [operator]
+  registration: [operator]
   # prototype internal/mcp/connectors.yaml:13-14
   auth_method: client_secret_post
   env: SLACK

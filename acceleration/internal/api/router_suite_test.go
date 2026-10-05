@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -34,10 +35,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
@@ -102,6 +105,9 @@ const (
 	suiteStreamKey    = "suite-stream-key"
 	suiteStreamSecret = "suite-stream-secret"
 )
+
+// suiteOpsKey is what Stream staff's review paths are reached with.
+const suiteOpsKey = "suite-ops-key"
 
 // RouterSuite runs the whole router against Postgres and Redis with real API key auth, for
 // suites to embed. A suite picks the app its clients call in its SetupTest:
@@ -168,8 +174,26 @@ type RouterSuite struct {
 	// pluginMCP is where every plugin's MCP server is reached, for a suite about plugin
 	// events to set before it starts the harness. Nil reaches the real ones.
 	pluginMCP *httptest.Server
+	// pluginHTTP is what the API reaches plugins with, for a suite whose stand-ins listen
+	// on loopback in each test. Nil is mcpTransport.
+	pluginHTTP *http.Client
 	// events subscribes configs to their plugins' events.
 	events *pluginevents.Service
+
+	// channelAPI is where every channel provider is reached, for a suite about channels to
+	// set before it starts the harness. Nil reaches the real WhatsApp, Telnyx and Linq.
+	channelAPI *httptest.Server
+	// inbound answers what arrives on the app's channels.
+	inbound *channels.Service
+
+	// sandbox is what an app with no approved use case may do, for a suite about the
+	// sandbox to set before it starts the harness. The zero value is off.
+	sandbox dlc.Sandbox
+	// registrar is who registers 10DLC campaigns, for a suite about registration to set
+	// before it starts the harness. Nil makes Stream's approval final.
+	registrar dlc.Registrar
+	// gate is what every text and call passes.
+	gate *dlc.Gate
 
 	utils testUtils
 	data  testData
@@ -245,8 +269,11 @@ func (s *RouterSuite) SetupSuite() {
 	listener := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(listener, logger)
 	sessions := s.sessionManager(streams, directory, logger)
-	public := &plugins.Auth{}
+	// A nil client reaches public hosts alone, and every auth server here is a local one.
+	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
+	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger)
+	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
 	s.modalities = map[routing.Modality]routing.Inspector{
@@ -274,6 +301,11 @@ func (s *RouterSuite) SetupSuite() {
 		Campaigns:     s.campaigns(sessions, logger),
 		Simulations:   s.simulations(sessions, streams, logger),
 		PluginEvents:  s.events,
+		Channels:      s.inbound,
+		DLC:           s.registrations(listener, logger),
+		Gate:          s.gate,
+		OpsKey:        suiteOpsKey,
+		Secrets:       s.sealer,
 		Knowledge:     s.knowledgeWriter(),
 		KnowledgeURLs: s.pages(redisAddr),
 		Voices:        s.voiceService(),
@@ -285,6 +317,7 @@ func (s *RouterSuite) SetupSuite() {
 		StreamKey:     suiteStreamKey,
 		StreamSecret:  suiteStreamSecret,
 		DataRetention: time.Hour,
+		PluginHTTP:    s.mcpTransport(),
 		Logger:        logger,
 	})
 	s.Require().NoError(err)
@@ -300,13 +333,7 @@ func (s *RouterSuite) SetupSuite() {
 func (s *RouterSuite) pluginEvents(sessions *session.Manager, public *plugins.Auth, logger *slog.Logger) *pluginevents.Service {
 	var transport *http.Client
 	if s.pluginMCP != nil {
-		address := s.pluginMCP.Listener.Addr().String()
-		transport = &http.Client{Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, address)
-			},
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the suite's own server
-		}}
+		transport = s.mcpTransport()
 	}
 	service, err := pluginevents.New(pluginevents.Options{
 		Store: s.store, Sessions: sessions, Auth: public, Transport: transport, Logger: logger,
@@ -314,6 +341,72 @@ func (s *RouterSuite) pluginEvents(sessions *session.Manager, public *plugins.Au
 	s.Require().NoError(err)
 	s.T().Cleanup(service.Close)
 	return service
+}
+
+// channels answers deliveries against channelAPI, whatever host a provider's API is at, so a
+// test's reply is sent to the suite's own server rather than to Meta.
+func (s *RouterSuite) channels(sessions *session.Manager, logger *slog.Logger) *channels.Service {
+	inbound, err := channels.New(channels.Options{
+		Store:     s.store,
+		Sessions:  sessions,
+		Secrets:   s.sealer,
+		Transport: redirected(s.channelAPI),
+		Gate:      s.gate,
+		Logger:    logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(inbound.Close)
+	return inbound
+}
+
+// registrations reviews use cases and registers them with the suite's registrar, which
+// reports back to the suite's own router.
+func (s *RouterSuite) registrations(listener *httptest.Server, logger *slog.Logger) *dlc.Service {
+	service, err := dlc.NewService(dlc.Options{
+		Store: s.store, Registrar: s.registrar, PublicURL: "http://" + listener.Listener.Addr().String(), Logger: logger,
+	})
+	s.Require().NoError(err)
+	return service
+}
+
+// redirected dials one server whatever host is asked for, or nothing when there is none.
+func redirected(to *httptest.Server) *http.Client {
+	if to == nil {
+		return &http.Client{Transport: &http.Transport{
+			DialContext: func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("tests reach no real provider")
+			},
+		}}
+	}
+	address := to.Listener.Addr().String()
+	return &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the suite's own server
+	}}
+}
+
+// mcpTransport reaches pluginMCP whatever host is asked for, or nothing when a suite has
+// none, so saving a config never asks a real MCP server about itself.
+func (s *RouterSuite) mcpTransport() *http.Client {
+	if s.pluginHTTP != nil {
+		return s.pluginHTTP
+	}
+	if s.pluginMCP == nil {
+		return &http.Client{Transport: &http.Transport{
+			DialContext: func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("tests reach no real MCP server")
+			},
+		}}
+	}
+	address := s.pluginMCP.Listener.Addr().String()
+	return &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the suite's own server
+	}}
 }
 
 // routers builds every modality against stubs that answer in process. What a real vendor
@@ -483,6 +576,7 @@ func (s *RouterSuite) telephony(logger *slog.Logger) *phone.Service {
 		Registry: vendors.Registry(config),
 		Store:    s.store,
 		Recorder: routing.NewRecorder(routing.Phone, s.store, s.live, logger),
+		Gate:     s.gate,
 		Logger:   logger,
 	})
 	s.Require().NoError(err)

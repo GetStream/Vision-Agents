@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"reflect"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -261,6 +263,67 @@ func documentHandWritten(api huma.API) {
 			"401": {Description: "The delivery is not signed with the subscription's secret"},
 			"410": {Description: "There is no such subscription any more; stop delivering to it"},
 			"413": {Description: "The delivery is over 256 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "verifyChannelHook",
+		Method:      http.MethodGet,
+		Path:        channels.HookPath + "{token}",
+		Summary:     "Answer a channel provider's webhook check",
+		Description: "What WhatsApp asks for before it will deliver: the verify token the line was " +
+			"connected with, answered with the challenge it sent, as text. Unauthenticated " +
+			"because Meta is not a customer; the token in the path names the line.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "hub.mode", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "hub.verify_token", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "hub.challenge", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The challenge, echoed", Content: map[string]*huma.MediaType{"text/plain": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+			"403": {Description: "That is not this line's verify token"},
+			"410": {Description: "No line is connected at this address"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receiveChannelMessage",
+		Method:      http.MethodPost,
+		Path:        channels.HookPath + "{token}",
+		Summary:     "Receive a message on a channel",
+		Description: "Where WhatsApp, Telnyx and Linq deliver what somebody wrote to one of the app's " +
+			"lines. Unauthenticated because the provider is not a customer: the token in the path " +
+			"names the line, and each delivery is checked against the signing secret that line " +
+			"was connected with. A message that has not been seen before earns a turn from " +
+			"whichever agent names the number under `channels`, and what the agent says goes " +
+			"back over the channel rather than in this response.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"202": {Description: "The delivery is taken, and the agent is answering it"},
+			"400": {Description: "The delivery is not one this provider sends"},
+			"401": {Description: "The delivery is not signed with this line's secret"},
+			"410": {Description: "No line is connected at this address; stop delivering to it"},
+			"413": {Description: "The delivery is over 256 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receiveDLCReport",
+		Method:      http.MethodPost,
+		Path:        dlc.HookPath,
+		Summary:     "Receive a 10DLC registration report",
+		Description: "Where Telnyx reports on the brands and campaigns this router registered. " +
+			"Unauthenticated because the vendor is not a customer: each report is checked " +
+			"against the vendor's Ed25519 signature, and then only names the campaign to ask the " +
+			"vendor about, so a report cannot say a campaign was approved that was not.",
+		Security: []map[string][]string{},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The report is taken"},
+			"401": {Description: "The report is not signed by the vendor"},
+			"410": {Description: "This deployment registers nothing"},
+			"413": {Description: "The report is over 64 KiB"},
 		},
 	})
 	document.AddOperation(&huma.Operation{

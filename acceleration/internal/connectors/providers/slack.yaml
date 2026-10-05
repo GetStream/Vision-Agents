@@ -11,8 +11,8 @@
 # acceleration/docs/connectors/architecture.md on connectors/planning.
 id: slack
 # A new revision for any change to what this file says; see AGENTS.md. 2 adds
-# endpoints.resource.
-revision: 2
+# endpoints.resource. 3 renames client.policy to client.registration.
+revision: 3
 # [proto]:3-5
 name: Slack
 category: Communication
@@ -36,7 +36,7 @@ endpoints:
 schemes: [oauth2_code]
 client:
   # Slack MCP needs a registered app with a fixed app id ([mcp]), so the operator owns it.
-  policy: [operator]
+  registration: [operator]
   # [proto]:13. [user] prefers HTTP Basic (client_secret_basic); the post form is what the
   # prototype ran live.
   auth_method: client_secret_post

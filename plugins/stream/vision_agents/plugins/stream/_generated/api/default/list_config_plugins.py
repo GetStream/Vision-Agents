@@ -87,8 +87,9 @@ def sync_detailed(
 ) -> Response[Error | list[PluginConnection]]:
     """The plugin logins this agent holds
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
-    user's logins, made for user_plugins, are never listed.
+     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
+    every MCP server it names by URL that needs a login and has no user, which the app logs into the
+    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -119,8 +120,9 @@ def sync(
 ) -> Error | list[PluginConnection] | None:
     """The plugin logins this agent holds
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
-    user's logins, made for user_plugins, are never listed.
+     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
+    every MCP server it names by URL that needs a login and has no user, which the app logs into the
+    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -146,8 +148,9 @@ async def asyncio_detailed(
 ) -> Response[Error | list[PluginConnection]]:
     """The plugin logins this agent holds
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
-    user's logins, made for user_plugins, are never listed.
+     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
+    every MCP server it names by URL that needs a login and has no user, which the app logs into the
+    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -176,8 +179,9 @@ async def asyncio(
 ) -> Error | list[PluginConnection] | None:
     """The plugin logins this agent holds
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected. An end
-    user's logins, made for user_plugins, are never listed.
+     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
+    every MCP server it names by URL that needs a login and has no user, which the app logs into the
+    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
 
     Args:
         id (str): The resource, as returned when it was created.

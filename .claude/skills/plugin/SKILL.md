@@ -20,42 +20,81 @@ in [`api/plugins.go`](../../../acceleration/internal/api/plugins.go).
 
 | Shape | Example | How |
 | --- | --- | --- |
-| Once per app | Sentry: the company's issues | `plugins:` in `agent.yaml`; connected on the dashboard |
+| Once per app | Sentry: the company's issues | `agent_plugins:` in `agent.yaml`; connected on the dashboard |
 | Once per end user | Google Calendar: my own day | `user_plugins:` in `agent.yaml`; connected in the chat |
 | None, or local | Blender | not a plugin: the sandbox (`sandbox:`, `sandbox_options:`) plus a skill |
 
 ```yaml
-plugins:        # the company connects it once, every conversation reads that account
+agent_plugins:  # the company connects it once, every conversation reads that account
   - sentry
 user_plugins:   # each person connects their own, the first time the agent needs it
   - google_calendar
-plugin_options: # optional: how one is reached, and what its login asks for
-  - plugin: linear
+  - name: linear    # a mapping instead of the id says how it is reached
     readonly: true  # the catalog's readonly_url and readonly_scopes
     scopes: [read]  # replaces the scopes asked for at consent
-  - plugin: calcom
+  - name: calcom
     toolsets: [bookings, availability]  # ?toolsets=bookings,availability on the URL
     tools: [get_*]  # offer only these tools, names or path.Match patterns
 ```
 
-`plugin_options` is read by `session.ConfiguredPlugin`, which every path that opens a
-server or starts a login goes through: `attachPlugins`, the user plugin runner, plugin
-events and `authorizePlugin`. `readonly` on a plugin with no `readonly_url` is a 400, and so
-is a scope missing from the entry's `scopes_supported` (copy it from the server's
-`/.well-known/oauth-protected-resource`; left out, any scope goes). `tools`, there and on
-`mcp_servers`, becomes `Connection.Tools`: `Open` drops every tool `Offered` does not match,
-so it is neither listed nor owned, and `Runtime.Call` refuses it. An
-option may name a plugin the config does not name yet, because an app's login only adds the
-plugin to `plugins` once it is made. The login does not remember the options it was made
-under, so changing them needs a fresh login; a user plugin whose server then refuses the
-old token asks again on its own.
+The API's `PluginEntry` is a `oneOf` of a string and a `PluginWithOptions`, answering as a
+bare id when it has no options; the store keeps every entry as a `store.PluginEntry` object.
+An entry goes through `session.ConfiguredPlugin`, which every path that opens a server or
+starts a login goes through: `attachPlugins`, the user plugin runner, plugin events and
+`authorizePlugin`. `session.EntryFor` picks the entry: an app login takes the one in
+`agent_plugins`, then `user_plugins`; an app login for a plugin not named yet is the
+catalog's, and its callback adds a bare id to `agent_plugins`. `pluginEntriesComplaint`
+answers 400 for an id the catalog does not have, one named twice in a list, `readonly` on a
+plugin with no `readonly_url`, and a scope missing from the entry's `scopes_supported` (copy
+it from the server's `/.well-known/oauth-protected-resource`; left out, any scope goes).
+`tools`, there and on `mcp_servers`, becomes `Connection.Tools`: `Open` drops every tool
+`Offered` does not match, so it is neither listed nor owned, and `Runtime.Call` refuses it.
+The login does not remember the options it was made under, so changing them needs a fresh
+login; a user plugin whose server then refuses the old token asks again on its own.
 
-The catalog's `auth` field is not read: every catalog plugin logs in with OAuth. A public
-MCP server with no login does not go in the catalog: the config names it under
-`mcp_servers` (`{name, url, tools}`, https, the name not a catalog id and without `__`).
-`attachPlugins` opens those with the catalog logins, with no token, as `<name>__<tool>`, and
+The catalog's `auth` field is read only by `session.Logins`; every catalog plugin is `oauth`. A server
+outside the catalog does not go in it: the config names it under `mcp_servers`
+(`{name, url, tools, scopes, user}`, https, the name not a catalog id and without `__`).
+`attachPlugins` opens those with the catalog logins as `<name>__<tool>`, and
 `serverInstructions` adds what each said at initialize to the agent's instructions (capped
-at 4000 bytes). The example's TableJourney server is this path. There are no headers or
+at 4000 bytes). The example's TableJourney server is this path, with no login.
+
+The server decides whether it logs in: `Auth.NeedsLogin` says yes for protected-resource
+metadata naming an authorization server at either well-known path, or a 401 with a
+`WWW-Authenticate` to a tokenless POST. Saving asks each server without `needs_login`
+(beside branding, same 5 seconds) and stores the answer as `store.MCPServer.NeedsLogin`,
+read-only `needs_login` in the API; nil when unreachable or a 5xx, and then every session
+start asks again without storing it. `scopes` or `user` on a server that needs none is a
+400. Who logs in mirrors `agent_plugins` and `user_plugins`. Needs none: no token. Needs one
+without `user` (`AppLogin()`): the app's login, made with the same authorize, list and
+disconnect endpoints as a catalog plugin, keyed by the server's name in
+`agent_plugin_connections` (`appPlugin` in `api/plugins.go`); the callback does not add it
+to `agent_plugins`. `user: true`: the user plugin runner offers `<name>__list_tools` and
+`<name>__call_tool`, and `scopes` left out asks for the `scopes_supported` in the server's
+protected-resource metadata. `session.ServerPlugin` turns the server into a `plugins.Plugin`
+with `ByURL` set, which is everything the login code needs: `StartAuthorize` never takes a
+deployment's `<ID>_MCP_CLIENT_ID` for it (a config may name a server anything), so the server
+must offer DCR. Discovery tries the two well-known paths and then the `resource_metadata` in
+the `WWW-Authenticate` of an unauthenticated POST. An app-login server with no login yet
+gets one stand-in tool, `<name>__list_tools`, that fails with "connect <name> on the
+dashboard". The login row's `instance_url` holds the
+server's URL, and a login at another URL is never used, so editing the URL never sends a
+token to the new host. Its authorization card has no `text` or `thumb_url` and the title
+`Connect <name>`; `ValidAuthorization` refuses anything else for a non-catalog id, and
+`RequestedAuthorization` takes one only from a server in the session's `Logins`. Saving a config runs
+`Auth.CheckLogin` on each server that needs a login: metadata
+that answers without OAuth endpoints and a `registration_endpoint` is a 400, a server that
+cannot be reached (`*url.Error`) is saved and fails at login. Saving a config asks each
+of its MCP servers without branding to describe itself (`plugins.Describe`, an `initialize`
+and nothing after), through `egress.NewClient` within 5 seconds, and stores the
+`serverInfo` as `branding` (title, or name; description, version, the first https icon,
+website). A server that does not answer keeps what it said before at the same URL.
+
+Every `plugins` call given a nil client (`Open`, `Describe`, events, `Auth.HTTP`) goes out
+through `egress.NewClient`, because a config names its MCP servers, a login its shop, and
+a server's metadata its auth servers: none may reach a private address or the metadata
+server. Pass a client only in tests. Router suites pass `PluginHTTP: s.mcpTransport()`,
+which reaches only `pluginMCP` (or `pluginHTTP`, for a suite with loopback stand-ins). There are no headers or
 secrets on one yet. Something that runs a binary (Blender, a CLI) belongs in
 the sandbox with a skill telling the subagent how to drive it, as the example does.
 
@@ -77,7 +116,10 @@ the sandbox with a skill telling the subagent how to drive it, as the example do
 - Without a login, the tool answers with `AuthorizationResult`: a message for the model and a
   `plugin_authorization` attachment (`plugin_id`, `title`, `authorize_url`) that Chat renders
   as a button. `RequestedAuthorization` only trusts exactly that JSON, from that plugin's own
-  tool, with an https URL; never model prose. See "The authorization attachment" below.
+  tool, with an https URL; never model prose. The plugin must be in `session.Logins`, which
+  the manager hands the conversation with `AcceptLogins`: the config's `user_plugins` and
+  the `mcp_servers` with `user: true`. Nothing the app logs into, nor a server with no
+  login, can put a card in the conversation, whatever its tool is called. See "The authorization attachment" below.
 - The callback stores the login under `(customer, config, user, plugin)` and shows a
   "connected, go back to the conversation" page. The next call opens the MCP session.
 - A server refusing the token (`ErrUnauthorized`) drops the login and asks again.
@@ -156,16 +198,16 @@ A plugin whose MCP server offers [MCP Events](https://developers.openai.com/plug
 waiting to be asked. The config declares what to watch and what to do:
 
 ```yaml
-plugins: [sentry]
+agent_plugins: [sentry]
 plugin_events:
-  - plugin: sentry          # named under plugins or user_plugins, or the config is refused
+  - plugin: sentry          # named under agent_plugins or user_plugins, or the config is refused
     event: issue.created    # as the server's events/list names it
     arguments: {project: web}
     instructions: Say what broke and who should look at it.
 ```
 
 - [`internal/pluginevents`](../../../acceleration/internal/pluginevents) keeps one
-  subscription per declared event and login: the app's for `plugins`, each end user's for
+  subscription per declared event and login: the app's for `agent_plugins`, each end user's for
   `user_plugins`. It runs when a config is written, when a login connects or disconnects,
   and once a minute, which refreshes a subscription 10 minutes before its `refreshBefore`
   and retries a refused one after 15.
@@ -224,14 +266,14 @@ plugin_events:
    - **Scopes:** ask for the least the tools need. Google Calendar, Drive and Docs ask
      read-only. Don't guess them: `scopes_supported` in the protected-resource document is
      what the server will accept, and asking for one it does not know is a failed consent.
-   - **No single global URL** (Shopify, Salesforce): `url: https://{instance}/...`,
+   - **No single global URL** (Shopify): `url: https://{instance}/...`,
      `instance_required: true` and an `instance_hint`. The app supplies the host when it
-     connects, so this only works under `plugins:`; user logins pass no instance.
+     connects, so this only works under `agent_plugins:`; user logins pass no instance.
    - **A read-only server:** `readonly_url` and `readonly_scopes`, for a vendor that runs
      one at its own URL, as Linear does at `/mcp/readonly` (its own resource, accepting only
-     `read`). An agent picks it with `plugin_options`; the catalog default stays `url`.
+     `read`). An agent picks it on its entry; the catalog default stays `url`.
    - **Toolsets:** `toolsets`, the names a vendor lets the server be limited to with a
-     `toolsets` query parameter, as Cal.com does. An agent picks some in `plugin_options`;
+     `toolsets` query parameter, as Cal.com does. An agent picks some on its entry;
      a name not listed is a 400. `resource` at the authorize URL leaves the query off, so
      the login is for the server and survives a change of toolsets. Check that a vendor's
      `scope` does anything before relying on it: Cal.com's MCP authorize ignores it.
@@ -246,7 +288,7 @@ plugin_events:
 5. **No API or client changes.** `plugin_id` is a plain string checked against the catalog,
    and the dashboard lists `GET /v1/agents/plugins`, so the spec does not change.
 6. **Try it for real.** Name it in an example's `agent.yaml`, run the router in `proxy` mode
-   and connect it: from the dashboard for `plugins:`, from the chat for `user_plugins:`. Unit
+   and connect it: from the dashboard for `agent_plugins:`, from the chat for `user_plugins:`. Unit
    tests use `httptest` servers (`oauth_test.go`, `mcp_test.go`); they cannot tell you the
    vendor's metadata is where you think it is. Short of a real login, a throwaway test in the
    package that calls `discoverResource` and `discoverServer` over every catalog entry against

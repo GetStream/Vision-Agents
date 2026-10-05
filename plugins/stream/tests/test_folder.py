@@ -2,7 +2,9 @@ from pathlib import Path
 
 import pytest
 from vision_agents.plugins.stream.folder import (
-    PluginOptionsSettings,
+    ChannelSettings,
+    MCPServerSettings,
+    PluginSettings,
     SandboxSettings,
     find,
     load,
@@ -122,45 +124,107 @@ class TestFolder:
         write(
             root,
             "agent.yaml",
-            "name: triage\nplugins:\n  - sentry\nuser_plugins:\n  - google_calendar\n",
+            "name: triage\nagent_plugins:\n  - sentry\nuser_plugins:\n  - google_calendar\n",
         )
 
         settings = load(root).settings
 
-        assert settings.plugins == ["sentry"]
-        assert settings.user_plugins == ["google_calendar"]
+        assert settings.agent_plugins == [PluginSettings(name="sentry")]
+        assert settings.user_plugins == [PluginSettings(name="google_calendar")]
 
     def test_the_declaration_says_how_each_plugin_is_reached(self, tmp_path: Path):
         root = tmp_path / "triage"
         write(
             root,
             "agent.yaml",
-            "name: triage\nuser_plugins: [linear, calcom]\nplugin_options:\n"
-            "  - plugin: linear\n    readonly: true\n    scopes: [read]\n"
-            "  - plugin: calcom\n    toolsets: [bookings, availability]\n"
+            "name: triage\nuser_plugins:\n"
+            "  - name: linear\n    readonly: true\n    scopes: [read]\n"
+            "  - google_drive\n"
+            "  - name: calcom\n    toolsets: [bookings, availability]\n"
             "    tools: [get_bookings]\n",
         )
 
         settings = load(root).settings
 
-        assert settings.plugin_options == [
-            PluginOptionsSettings(plugin="linear", readonly=True, scopes=["read"]),
-            PluginOptionsSettings(
-                plugin="calcom",
+        assert settings.user_plugins == [
+            PluginSettings(name="linear", readonly=True, scopes=["read"]),
+            PluginSettings(name="google_drive"),
+            PluginSettings(
+                name="calcom",
                 toolsets=["bookings", "availability"],
                 tools=["get_bookings"],
             ),
         ]
 
-    def test_a_plugin_option_nobody_knows_is_refused(self, tmp_path: Path):
+    def test_a_plugin_setting_nobody_knows_is_refused(self, tmp_path: Path):
         root = tmp_path / "triage"
         write(
             root,
             "agent.yaml",
-            "name: triage\nplugin_options:\n  - plugin: linear\n    read_only: true\n",
+            "name: triage\nuser_plugins:\n  - name: linear\n    read_only: true\n",
         )
 
         with pytest.raises(ValueError, match="read_only"):
+            load(root)
+
+    def test_a_plugin_that_is_neither_an_id_nor_a_mapping_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nagent_plugins:\n  - [sentry]\n")
+
+        with pytest.raises(ValueError, match="agent_plugins"):
+            load(root)
+
+    @pytest.mark.parametrize(
+        "declared",
+        [
+            "plugins: [sentry]\n",
+            "plugin_options:\n  - plugin: linear\n    readonly: true\n",
+        ],
+    )
+    def test_the_old_plugin_keys_are_refused(self, tmp_path: Path, declared: str):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\n" + declared)
+
+        with pytest.raises(ValueError, match="not something an agent has"):
+            load(root)
+
+    def test_the_declaration_says_who_logs_into_each_mcp_server(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nmcp_servers:\n"
+            "  - name: crm\n    url: https://crm.example.com/mcp\n    scopes: [contacts.read]\n"
+            "  - name: notes\n    url: https://notes.example.com/mcp\n    user: true\n"
+            "  - name: tablejourney\n    url: https://tablejourney.com/mcp\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.mcp_servers == [
+            MCPServerSettings(
+                name="crm", url="https://crm.example.com/mcp", scopes=["contacts.read"]
+            ),
+            MCPServerSettings(
+                name="notes", url="https://notes.example.com/mcp", user=True
+            ),
+            MCPServerSettings(name="tablejourney", url="https://tablejourney.com/mcp"),
+        ]
+
+    def test_an_mcp_server_user_that_is_not_true_or_false_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nmcp_servers:\n"
+            "  - name: notes\n    url: https://notes.example.com/mcp\n    user: alice\n",
+        )
+
+        with pytest.raises(ValueError, match="user"):
             load(root)
 
     def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
@@ -171,7 +235,7 @@ class TestFolder:
 
         assert settings.llm == ""
         assert settings.sandbox == ""
-        assert settings.plugins == []
+        assert settings.agent_plugins == []
         assert settings.user_plugins == []
         assert settings.tags == {}
 
@@ -252,6 +316,63 @@ class TestFolder:
         write(root, "agent.yaml", "name: artist\nsandbox_options:\n" + options)
 
         with pytest.raises(ValueError, match="sandbox_options"):
+            load(root)
+
+    def test_the_channels_an_agent_answers_on_round_trip(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            "name: support\nchannels:\n"
+            '  whatsapp:\n    number: "+15556325550"\n'
+            "  identity: link\n",
+        )
+
+        channels = load(root).settings.channels
+
+        assert channels is not None
+        assert channels.whatsapp == ChannelSettings(number="+15556325550")
+        assert channels.sms is None
+        assert channels.identity == "link"
+
+    def test_a_file_saying_nothing_about_channels_names_none(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(root, "agent.yaml", "name: support\nllm: llm-fast\n")
+
+        assert load(root).settings.channels is None
+
+    def test_a_channel_nobody_carries_is_refused(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            'name: support\nchannels:\n  telegram:\n    number: "+1555"\n',
+        )
+
+        with pytest.raises(ValueError, match="unknown channels setting: telegram"):
+            load(root)
+
+    def test_identifying_a_sender_any_other_way_is_refused(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            'name: support\nchannels:\n  whatsapp:\n    number: "+1555"\n'
+            "  identity: whoever\n",
+        )
+
+        with pytest.raises(ValueError, match="channels.identity is phone or link"):
+            load(root)
+
+    def test_a_channel_with_no_number_is_refused(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            'name: support\nchannels:\n  whatsapp:\n    number: ""\n',
+        )
+
+        with pytest.raises(ValueError, match="channels.whatsapp needs a number"):
             load(root)
 
     def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):

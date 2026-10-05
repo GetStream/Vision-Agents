@@ -2,12 +2,16 @@
 
 from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
+from .agent_channels import AgentChannels
 from .agent_config import AgentConfig
 from .agent_config_patch import AgentConfigPatch
 from .agent_config_patch_tags import AgentConfigPatchTags
 from .agent_config_request import AgentConfigRequest
 from .agent_config_request_tags import AgentConfigRequestTags
 from .agent_config_tags import AgentConfigTags
+from .agent_connector_binding import AgentConnectorBinding
+from .agent_connector_selection import AgentConnectorSelection
+from .agent_connector_selection_type import AgentConnectorSelectionType
 from .agent_dispatch import AgentDispatch
 from .agent_log import AgentLog
 from .agent_log_details import AgentLogDetails
@@ -28,6 +32,16 @@ from .authorize_plugin_request import AuthorizePluginRequest
 from .available_number import AvailableNumber
 from .budget import Budget
 from .budget_interval import BudgetInterval
+from .business_profile import BusinessProfile
+from .business_profile_legal_entity_type import BusinessProfileLegalEntityType
+from .business_profile_organization_type import BusinessProfileOrganizationType
+from .business_profile_request import BusinessProfileRequest
+from .business_profile_request_legal_entity_type import (
+    BusinessProfileRequestLegalEntityType,
+)
+from .business_profile_request_organization_type import (
+    BusinessProfileRequestOrganizationType,
+)
 from .buy_number_request import BuyNumberRequest
 from .buy_number_request_tags import BuyNumberRequestTags
 from .call import Call
@@ -43,6 +57,11 @@ from .campaign_request_tags import CampaignRequestTags
 from .campaign_state import CampaignState
 from .campaign_tags import CampaignTags
 from .candidate import Candidate
+from .channel_account import ChannelAccount
+from .channel_identity import ChannelIdentity
+from .channel_kind import ChannelKind
+from .channel_line_request import ChannelLineRequest
+from .channel_link import ChannelLink
 from .chat_token import ChatToken
 from .chat_token_request import ChatTokenRequest
 from .claim_guest_request import ClaimGuestRequest
@@ -60,26 +79,30 @@ from .classify_result import ClassifyResult
 from .classify_result_answers import ClassifyResultAnswers
 from .classify_usage import ClassifyUsage
 from .command_receipt import CommandReceipt
+from .connect_channel_request import ConnectChannelRequest
+from .connection import Connection
+from .connection_inputs import ConnectionInputs
+from .connection_metadata import ConnectionMetadata
+from .connection_owner import ConnectionOwner
+from .connection_owner_type import ConnectionOwnerType
+from .connection_page import ConnectionPage
+from .connection_request import ConnectionRequest
+from .connection_request_inputs import ConnectionRequestInputs
+from .connection_status import ConnectionStatus
+from .connector import Connector
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
-from .connector_client_owner import ConnectorClientOwner
-from .connector_connection import ConnectorConnection
-from .connector_connection_inputs import ConnectorConnectionInputs
-from .connector_connection_metadata import ConnectorConnectionMetadata
-from .connector_connection_owner import ConnectorConnectionOwner
-from .connector_connection_owner_type import ConnectorConnectionOwnerType
-from .connector_connection_page import ConnectorConnectionPage
-from .connector_connection_request import ConnectorConnectionRequest
-from .connector_connection_request_inputs import ConnectorConnectionRequestInputs
-from .connector_connection_status import ConnectorConnectionStatus
-from .connector_definition import ConnectorDefinition
-from .connector_definition_page import ConnectorDefinitionPage
+from .connector_client_registration_method import ConnectorClientRegistrationMethod
 from .connector_input import ConnectorInput
+from .connector_page import ConnectorPage
+from .connector_tool_grant import ConnectorToolGrant
 from .contact import Contact
 from .contact_state import ContactState
 from .contacts_request import ContactsRequest
 from .contacts_request_contacts_item import ContactsRequestContactsItem
+from .create_opt_out_request import CreateOptOutRequest
+from .create_opt_out_request_source import CreateOptOutRequestSource
 from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
@@ -112,6 +135,7 @@ from .harness import Harness
 from .health_status import HealthStatus
 from .health_status_dependencies import HealthStatusDependencies
 from .health_status_status import HealthStatusStatus
+from .i_message_profile import IMessageProfile
 from .image_content_part import ImageContentPart
 from .image_content_part_type import ImageContentPartType
 from .image_error_code import ImageErrorCode
@@ -135,6 +159,7 @@ from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
 from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
+from .link_channel_request import LinkChannelRequest
 from .list_agent_logs_severity import ListAgentLogsSeverity
 from .list_simulation_runs_state import ListSimulationRunsState
 from .llm_options import LlmOptions
@@ -143,17 +168,22 @@ from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
 from .mcp_server import McpServer
+from .mcp_server_branding import McpServerBranding
 from .modality import Modality
 from .model_call_timing import ModelCallTiming
 from .model_overwrites import ModelOverwrites
 from .model_overwrites_thinking import ModelOverwritesThinking
 from .model_overwrites_verbosity import ModelOverwritesVerbosity
 from .number_search_result import NumberSearchResult
+from .opt_out import OptOut
+from .opt_out_channel import OptOutChannel
+from .opt_out_page import OptOutPage
 from .phone_capability import PhoneCapability
 from .phone_number import PhoneNumber
 from .phone_number_tags import PhoneNumberTags
 from .phone_number_type import PhoneNumberType
 from .phone_operation import PhoneOperation
+from .phone_sandbox import PhoneSandbox
 from .phone_vendor import PhoneVendor
 from .place_call_request import PlaceCallRequest
 from .place_call_request_custom import PlaceCallRequestCustom
@@ -166,18 +196,25 @@ from .plugin_connection import PluginConnection
 from .plugin_connection_status import PluginConnectionStatus
 from .plugin_event import PluginEvent
 from .plugin_event_arguments import PluginEventArguments
-from .plugin_options import PluginOptions
+from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_tags import PolicyTags
+from .postal_address import PostalAddress
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
 from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
 from .provider_price import ProviderPrice
+from .rcs_profile import RCSProfile
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
 from .respond_request import RespondRequest
+from .review_actor import ReviewActor
+from .review_decision import ReviewDecision
+from .review_page import ReviewPage
+from .review_queue import ReviewQueue
+from .review_use_case_request import ReviewUseCaseRequest
 from .rewind_session_request import RewindSessionRequest
 from .rollup_request import RollupRequest
 from .rollup_result import RollupResult
@@ -220,6 +257,7 @@ from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
+from .set_sandbox_recipients_request import SetSandboxRecipientsRequest
 from .simulation import Simulation
 from .simulation_case import SimulationCase
 from .simulation_case_ended import SimulationCaseEnded
@@ -283,26 +321,40 @@ from .update_session_request import UpdateSessionRequest
 from .update_session_request_custom import UpdateSessionRequestCustom
 from .update_session_request_thinking import UpdateSessionRequestThinking
 from .update_session_request_verbosity import UpdateSessionRequestVerbosity
+from .use_case import UseCase
+from .use_case_channels import UseCaseChannels
+from .use_case_for_review import UseCaseForReview
+from .use_case_page import UseCasePage
+from .use_case_request import UseCaseRequest
+from .use_case_review import UseCaseReview
+from .use_case_review_vendor_payload import UseCaseReviewVendorPayload
+from .use_case_status import UseCaseStatus
 from .video_source import VideoSource
 from .voice import Voice
 from .voice_binding import VoiceBinding
 from .voice_binding_state import VoiceBindingState
 from .voice_preview import VoicePreview
 from .voice_preview_request import VoicePreviewRequest
+from .voice_profile import VoiceProfile
 from .voice_providers import VoiceProviders
 from .voice_request import VoiceRequest
 from .voice_sample import VoiceSample
 from .voice_sample_request import VoiceSampleRequest
+from .whats_app_profile import WhatsAppProfile
 
 __all__ = (
     "ActivityBucket",
     "ActivityGranularity",
+    "AgentChannels",
     "AgentConfig",
     "AgentConfigPatch",
     "AgentConfigPatchTags",
     "AgentConfigRequest",
     "AgentConfigRequestTags",
     "AgentConfigTags",
+    "AgentConnectorBinding",
+    "AgentConnectorSelection",
+    "AgentConnectorSelectionType",
     "AgentDispatch",
     "AgentLog",
     "AgentLogDetails",
@@ -323,6 +375,12 @@ __all__ = (
     "AvailableNumber",
     "Budget",
     "BudgetInterval",
+    "BusinessProfile",
+    "BusinessProfileLegalEntityType",
+    "BusinessProfileOrganizationType",
+    "BusinessProfileRequest",
+    "BusinessProfileRequestLegalEntityType",
+    "BusinessProfileRequestOrganizationType",
     "BuyNumberRequest",
     "BuyNumberRequestTags",
     "Call",
@@ -338,6 +396,11 @@ __all__ = (
     "CampaignState",
     "CampaignTags",
     "Candidate",
+    "ChannelAccount",
+    "ChannelIdentity",
+    "ChannelKind",
+    "ChannelLineRequest",
+    "ChannelLink",
     "ChatToken",
     "ChatTokenRequest",
     "ClaimGuestRequest",
@@ -355,26 +418,30 @@ __all__ = (
     "ClassifyResultAnswers",
     "ClassifyUsage",
     "CommandReceipt",
+    "ConnectChannelRequest",
+    "Connection",
+    "ConnectionInputs",
+    "ConnectionMetadata",
+    "ConnectionOwner",
+    "ConnectionOwnerType",
+    "ConnectionPage",
+    "ConnectionRequest",
+    "ConnectionRequestInputs",
+    "ConnectionStatus",
+    "Connector",
     "ConnectorClient",
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",
-    "ConnectorClientOwner",
-    "ConnectorConnection",
-    "ConnectorConnectionInputs",
-    "ConnectorConnectionMetadata",
-    "ConnectorConnectionOwner",
-    "ConnectorConnectionOwnerType",
-    "ConnectorConnectionPage",
-    "ConnectorConnectionRequest",
-    "ConnectorConnectionRequestInputs",
-    "ConnectorConnectionStatus",
-    "ConnectorDefinition",
-    "ConnectorDefinitionPage",
+    "ConnectorClientRegistrationMethod",
     "ConnectorInput",
+    "ConnectorPage",
+    "ConnectorToolGrant",
     "Contact",
     "ContactState",
     "ContactsRequest",
     "ContactsRequestContactsItem",
+    "CreateOptOutRequest",
+    "CreateOptOutRequestSource",
     "CreateResponseRequest",
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
@@ -407,6 +474,7 @@ __all__ = (
     "HealthStatus",
     "HealthStatusDependencies",
     "HealthStatusStatus",
+    "IMessageProfile",
     "ImageContentPart",
     "ImageContentPartType",
     "ImageErrorCode",
@@ -430,6 +498,7 @@ __all__ = (
     "KnowledgeUrlState",
     "LibraryVoice",
     "LibraryVoices",
+    "LinkChannelRequest",
     "ListAgentLogsSeverity",
     "ListSimulationRunsState",
     "LlmOptions",
@@ -438,17 +507,22 @@ __all__ = (
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
     "McpServer",
+    "McpServerBranding",
     "Modality",
     "ModelCallTiming",
     "ModelOverwrites",
     "ModelOverwritesThinking",
     "ModelOverwritesVerbosity",
     "NumberSearchResult",
+    "OptOut",
+    "OptOutChannel",
+    "OptOutPage",
     "PhoneCapability",
     "PhoneNumber",
     "PhoneNumberTags",
     "PhoneNumberType",
     "PhoneOperation",
+    "PhoneSandbox",
     "PhoneVendor",
     "PlaceCallRequest",
     "PlaceCallRequestCustom",
@@ -461,18 +535,25 @@ __all__ = (
     "PluginConnectionStatus",
     "PluginEvent",
     "PluginEventArguments",
-    "PluginOptions",
+    "PluginWithOptions",
     "Policy",
     "PolicyTags",
+    "PostalAddress",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
     "Provider",
     "ProviderBenchmark",
     "ProviderHealth",
     "ProviderPrice",
+    "RCSProfile",
     "RecordingSource",
     "RecordingStatus",
     "RespondRequest",
+    "ReviewActor",
+    "ReviewDecision",
+    "ReviewPage",
+    "ReviewQueue",
+    "ReviewUseCaseRequest",
     "RewindSessionRequest",
     "RollupRequest",
     "RollupResult",
@@ -515,6 +596,7 @@ __all__ = (
     "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
+    "SetSandboxRecipientsRequest",
     "Simulation",
     "SimulationCase",
     "SimulationCaseEnded",
@@ -578,14 +660,24 @@ __all__ = (
     "UpdateSessionRequestCustom",
     "UpdateSessionRequestThinking",
     "UpdateSessionRequestVerbosity",
+    "UseCase",
+    "UseCaseChannels",
+    "UseCaseForReview",
+    "UseCasePage",
+    "UseCaseRequest",
+    "UseCaseReview",
+    "UseCaseReviewVendorPayload",
+    "UseCaseStatus",
     "VideoSource",
     "Voice",
     "VoiceBinding",
     "VoiceBindingState",
     "VoicePreview",
     "VoicePreviewRequest",
+    "VoiceProfile",
     "VoiceProviders",
     "VoiceRequest",
     "VoiceSample",
     "VoiceSampleRequest",
+    "WhatsAppProfile",
 )

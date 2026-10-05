@@ -4,10 +4,10 @@
 // Begin discovers the authorization server when the manifest does not pin it, picks or
 // registers a client, and builds the authorize URL. Complete checks the callback against
 // the state Begin returned, redeems the code and applies the manifest's capture and
-// identity rules. Mint renews the access token by the manifest's refresh policy, Wrap puts
-// it on a request, Classify says what a provider's answer means, and Revoke ends the grant
-// at the provider. Nothing here knows a provider: what differs between them is a
-// core.Profile field.
+// identity rules. AccessCredential renews the access token by the manifest's refresh policy,
+// Wrap puts it on a request, Classify says what a provider's answer means, and Revoke ends
+// the grant at the provider. Nothing here knows a provider: what differs between them is a
+// core.ResolvedManifest field.
 package oauth2code
 
 import (
@@ -44,9 +44,9 @@ const (
 	// subtasks, T17) and RFC 6749 section 4.1.2's recommended maximum code lifetime, so no
 	// code is still redeemable once the attempt it belongs to is over.
 	attemptTTL = 10 * time.Minute
-	// materialVersion is the shape of material's payload. A new shape is a new version, so
+	// payloadVersion is the shape of storedPayload. A new shape is a new version, so
 	// a sealed blob is always read as what it was written as.
-	materialVersion = 1
+	payloadVersion = 1
 )
 
 // Errors Complete returns for a callback it refuses. Each one means the code, if any, was
@@ -67,7 +67,7 @@ var (
 	// ErrIssuerMissing is a callback without iss from a server whose metadata says it sends
 	// one (RFC 9207 section 2.4).
 	ErrIssuerMissing = errors.New("oauth2code: callback has no iss, and the authorization server sends one")
-	// ErrNoClient means no client the manifest's policy allows is available.
+	// ErrNoClient means no client the manifest's client.registration allows is available.
 	ErrNoClient = errors.New("oauth2code: no OAuth client available for this connector")
 )
 
@@ -105,7 +105,7 @@ type Config struct {
 	// the browser and never through the egress client, so this is the only check it gets.
 	// Tests that run against a loopback fake pass one that lets the fake's host through.
 	PublicEndpoint func(ctx context.Context, raw string) error
-	// Logger gets Mint's warning that a grant is about to need a reconnect; nil is
+	// Logger gets AccessCredential's warning that a connection is about to need a reconnect; nil is
 	// slog.Default(). Nothing logged names a token.
 	Logger *slog.Logger
 }
@@ -169,12 +169,13 @@ type attempt struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 }
 
-// material is the sealed payload of a connection's Material: everything a refresh and a
-// revocation need, so neither has to discover the server again.
-type material struct {
-	// Ref is the connection Complete ran for. Mint and Revoke look a preregistered client's
-	// secret up by it, as Complete did, since core.Scheme hands them no ConnectionRef. The
-	// core seals Material bound to that same connection, so it cannot name another.
+// storedPayload is the sealed payload of a connection's StoredCredentials: everything a
+// refresh and a revocation need, so neither has to discover the server again.
+type storedPayload struct {
+	// Ref is the connection Complete ran for. AccessCredential and Revoke look a preregistered
+	// client's secret up by it, as Complete did, since core.Scheme hands them no
+	// ConnectionRef. The core seals StoredCredentials bound to that same connection, so it
+	// cannot name another.
 	Ref                core.ConnectionRef `json:"ref"`
 	Client             client             `json:"client"`
 	TokenEndpoint      string             `json:"token_endpoint"`
@@ -197,14 +198,14 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 	if in.RedirectURI == "" {
 		return core.BeginOutput{}, errors.New("oauth2code: BeginInput.RedirectURI is required")
 	}
-	server, err := s.discover(ctx, in.Profile)
+	server, err := s.discover(ctx, in.Manifest)
 	if err != nil {
 		return core.BeginOutput{}, err
 	}
 	if err := server.checkPKCE(); err != nil {
 		return core.BeginOutput{}, err
 	}
-	c, err := s.pickClient(ctx, in.Ref, in.Profile, server, in.RedirectURI)
+	c, err := s.pickClient(ctx, in.Ref, in.Manifest, server, in.RedirectURI)
 	if err != nil {
 		return core.BeginOutput{}, err
 	}
@@ -225,8 +226,8 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 	query := authorize.Query()
 	// The manifest's extra parameters go first, so none of them can replace a protocol
 	// parameter set below.
-	for _, key := range slices.Sorted(maps.Keys(in.Profile.AuthorizeParams)) {
-		query.Set(key, in.Profile.AuthorizeParams[key])
+	for _, key := range slices.Sorted(maps.Keys(in.Manifest.AuthorizeParams)) {
+		query.Set(key, in.Manifest.AuthorizeParams[key])
 	}
 	// RFC 6749 section 4.1.1.
 	query.Set("response_type", "code")
@@ -242,8 +243,8 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 		// RFC 8707 section 2.1.
 		query.Set("resource", server.Resource)
 	}
-	if scopes := in.Profile.Scopes.List; len(scopes) > 0 {
-		query.Set("scope", strings.Join(scopes, separator(in.Profile)))
+	if scopes := in.Manifest.Scopes.List; len(scopes) > 0 {
+		query.Set("scope", strings.Join(scopes, separator(in.Manifest)))
 	}
 	authorize.RawQuery = query.Encode()
 
@@ -257,7 +258,7 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 		TokenEndpoint: server.Token,
 		Revocation:    server.Revocation,
 		Resource:      server.Resource,
-		Scopes:        slices.Clone(in.Profile.Scopes.List),
+		Scopes:        slices.Clone(in.Manifest.Scopes.List),
 		ExpiresAt:     s.cfg.Now().Add(attemptTTL),
 	})
 	if err != nil {
@@ -267,63 +268,63 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 }
 
 // Complete checks the callback against the attempt, redeems the code and applies the
-// profile's capture and identity rules to the callback and the token response.
-func (s *Scheme) Complete(ctx context.Context, in core.CompleteInput) (core.Material, core.Captured, error) {
+// resolved manifest's capture and identity rules to the callback and the token response.
+func (s *Scheme) Complete(ctx context.Context, in core.CompleteInput) (core.StoredCredentials, core.AccountInfo, error) {
 	var a attempt
 	if err := json.Unmarshal(in.State, &a); err != nil || a.State == "" {
-		return core.Material{}, core.Captured{}, ErrUnknownState
+		return core.StoredCredentials{}, core.AccountInfo{}, ErrUnknownState
 	}
 	now := s.cfg.Now()
 	if !now.Before(a.ExpiresAt) {
-		return core.Material{}, core.Captured{}, ErrExpiredState
+		return core.StoredCredentials{}, core.AccountInfo{}, ErrExpiredState
 	}
 	// RFC 6749 section 10.12: the callback must carry the state this attempt issued.
 	// Exactly one value, compared in constant time.
 	got := in.Query["state"]
 	if len(got) != 1 || subtle.ConstantTimeCompare([]byte(got[0]), []byte(a.State)) != 1 {
-		return core.Material{}, core.Captured{}, ErrUnknownState
+		return core.StoredCredentials{}, core.AccountInfo{}, ErrUnknownState
 	}
 	if !s.spend(a.State, a.ExpiresAt, now) {
-		return core.Material{}, core.Captured{}, ErrReplayedState
+		return core.StoredCredentials{}, core.AccountInfo{}, ErrReplayedState
 	}
 	// RFC 9207 section 2.4, for error responses too: until iss is checked an error may
 	// come from another server.
 	switch iss := in.Query["iss"]; {
 	case len(iss) > 1:
-		return core.Material{}, core.Captured{}, ErrIssuerMismatch
+		return core.StoredCredentials{}, core.AccountInfo{}, ErrIssuerMismatch
 	case len(iss) == 1 && iss[0] != a.Issuer:
-		return core.Material{}, core.Captured{}, ErrIssuerMismatch
+		return core.StoredCredentials{}, core.AccountInfo{}, ErrIssuerMismatch
 	case len(iss) == 0 && a.RequireIssuer:
-		return core.Material{}, core.Captured{}, ErrIssuerMissing
+		return core.StoredCredentials{}, core.AccountInfo{}, ErrIssuerMissing
 	}
 	if code := in.Query.Get("error"); code != "" {
-		return core.Material{}, core.Captured{}, &AuthorizationError{Code: code, Description: in.Query.Get("error_description")}
+		return core.StoredCredentials{}, core.AccountInfo{}, &AuthorizationError{Code: code, Description: in.Query.Get("error_description")}
 	}
 	code := in.Query["code"]
 	if len(code) != 1 || code[0] == "" {
-		return core.Material{}, core.Captured{}, errors.New("oauth2code: callback has no code")
+		return core.StoredCredentials{}, core.AccountInfo{}, errors.New("oauth2code: callback has no code")
 	}
 
-	c, err := s.clientSecret(ctx, in.Ref, in.Profile, a.Client)
+	c, err := s.clientSecret(ctx, in.Ref, in.Manifest, a.Client)
 	if err != nil {
-		return core.Material{}, core.Captured{}, err
+		return core.StoredCredentials{}, core.AccountInfo{}, err
 	}
-	token, raw, err := s.exchange(ctx, in.Profile, a, c, code[0])
+	token, raw, err := s.exchange(ctx, in.Manifest, a, c, code[0])
 	if err != nil {
-		return core.Material{}, core.Captured{}, err
+		return core.StoredCredentials{}, core.AccountInfo{}, err
 	}
-	if readsIDToken(in.Profile) {
+	if readsIDToken(in.Manifest) {
 		if err := checkIDToken(token, a.Issuer, a.Client.ID, now); err != nil {
-			return core.Material{}, core.Captured{}, err
+			return core.StoredCredentials{}, core.AccountInfo{}, err
 		}
 	}
-	captured, err := in.Profile.Apply(in.Query, raw)
+	account, err := in.Manifest.Apply(in.Query, raw)
 	if err != nil {
-		return core.Material{}, core.Captured{}, fmt.Errorf("oauth2code: %w", err)
+		return core.StoredCredentials{}, core.AccountInfo{}, fmt.Errorf("oauth2code: %w", err)
 	}
-	captured.Scopes = token.scopes(in.Profile, a.Scopes)
+	account.Scopes = token.scopes(in.Manifest, a.Scopes)
 
-	m := material{
+	stored := storedPayload{
 		Ref:                in.Ref,
 		Client:             a.Client,
 		TokenEndpoint:      a.TokenEndpoint,
@@ -333,17 +334,17 @@ func (s *Scheme) Complete(ctx context.Context, in core.CompleteInput) (core.Mate
 		AccessToken:        token.AccessToken,
 		TokenType:          token.TokenType,
 		RefreshToken:       token.RefreshToken,
-		ExpiresAt:          token.expiresAt(in.Profile, now),
-		Scopes:             captured.Scopes,
+		ExpiresAt:          token.expiresAt(in.Manifest, now),
+		Scopes:             account.Scopes,
 	}
-	if m.RefreshToken != "" {
-		m.RefreshExpiresAt = refreshExpiresAt(in.Profile, now)
+	if stored.RefreshToken != "" {
+		stored.RefreshExpiresAt = refreshExpiresAt(in.Manifest, now)
 	}
-	payload, err := json.Marshal(m)
+	payload, err := json.Marshal(stored)
 	if err != nil {
-		return core.Material{}, core.Captured{}, err
+		return core.StoredCredentials{}, core.AccountInfo{}, err
 	}
-	return core.Material{Scheme: Name, Version: materialVersion, Payload: payload}, captured, nil
+	return core.StoredCredentials{Scheme: Name, Version: payloadVersion, Payload: payload}, account, nil
 }
 
 // spend records state as used until expires and reports whether it was unused. Entries
@@ -361,11 +362,11 @@ func (s *Scheme) spend(state string, expires, now time.Time) bool {
 }
 
 // separator joins and splits scopes: the manifest's, or a space (RFC 6749 section 3.3).
-func separator(p core.Profile) string {
-	if p.Scopes.Separator == "" {
+func separator(m core.ResolvedManifest) string {
+	if m.Scopes.Separator == "" {
 		return " "
 	}
-	return p.Scopes.Separator
+	return m.Scopes.Separator
 }
 
 // random is randomBytes from crypto/rand, base64url-encoded without padding, which is the

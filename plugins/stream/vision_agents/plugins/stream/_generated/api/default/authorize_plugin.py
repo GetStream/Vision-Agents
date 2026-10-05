@@ -96,13 +96,14 @@ def sync_detailed(
 ) -> Response[Error | PluginAuthorization]:
     """Start a plugin login
 
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
-    Salesforce need an instance url, because they have no single global host.
+     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify
+    needs an instance url, because it has no single global host.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
-        plugin_id (str): A built-in catalog id such as slack or calendly.
+        plugin_id (str): A built-in catalog id such as slack or calendly, or the name of an MCP
+            server the config names by URL that the app logs into.
         body (AuthorizePluginRequest | Unset):
 
     Raises:
@@ -135,13 +136,14 @@ def sync(
 ) -> Error | PluginAuthorization | None:
     """Start a plugin login
 
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
-    Salesforce need an instance url, because they have no single global host.
+     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify
+    needs an instance url, because it has no single global host.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
-        plugin_id (str): A built-in catalog id such as slack or calendly.
+        plugin_id (str): A built-in catalog id such as slack or calendly, or the name of an MCP
+            server the config names by URL that the app logs into.
         body (AuthorizePluginRequest | Unset):
 
     Raises:
@@ -169,13 +171,14 @@ async def asyncio_detailed(
 ) -> Response[Error | PluginAuthorization]:
     """Start a plugin login
 
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
-    Salesforce need an instance url, because they have no single global host.
+     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify
+    needs an instance url, because it has no single global host.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
-        plugin_id (str): A built-in catalog id such as slack or calendly.
+        plugin_id (str): A built-in catalog id such as slack or calendly, or the name of an MCP
+            server the config names by URL that the app logs into.
         body (AuthorizePluginRequest | Unset):
 
     Raises:
@@ -206,13 +209,14 @@ async def asyncio(
 ) -> Error | PluginAuthorization | None:
     """Start a plugin login
 
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
-    Salesforce need an instance url, because they have no single global host.
+     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify
+    needs an instance url, because it has no single global host.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
-        plugin_id (str): A built-in catalog id such as slack or calendly.
+        plugin_id (str): A built-in catalog id such as slack or calendly, or the name of an MCP
+            server the config names by URL that the app logs into.
         body (AuthorizePluginRequest | Unset):
 
     Raises:

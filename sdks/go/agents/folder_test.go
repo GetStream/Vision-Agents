@@ -279,23 +279,49 @@ dispatch:
 
 func TestTheDeclarationSaysWhoConnectsEachPlugin(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "name: triage\nplugins: [sentry]\nuser_plugins: [google_calendar]\n")
+	write(t, root, "agent.yaml", "name: triage\nagent_plugins: [sentry]\nuser_plugins:\n"+
+		"  - name: linear\n    readonly: true\n    tools: [list_issues]\n  - google_calendar\n")
 
 	folder, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := folder.Settings.Plugins; len(got) != 1 || got[0] != "sentry" {
-		t.Errorf("the app's plugins read as %v", got)
+	if got := folder.Settings.AgentPlugins; len(got) != 1 || got[0].Name != "sentry" {
+		t.Errorf("the app's plugins read as %+v", got)
 	}
-	if got := folder.Settings.UserPlugins; len(got) != 1 || got[0] != "google_calendar" {
-		t.Errorf("each user's plugins read as %v", got)
+	got := folder.Settings.UserPlugins
+	if len(got) != 2 || got[0].Name != "linear" || !got[0].Readonly ||
+		strings.Join(got[0].Tools, ",") != "list_issues" || got[1].Name != "google_calendar" {
+		t.Errorf("each user's plugins read as %+v", got)
+	}
+}
+
+func TestAPluginEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nuser_plugins:\n  - name: linear\n    read_only: true\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "read_only") {
+		t.Errorf("an entry with a misspelt key loaded: %v", err)
+	}
+}
+
+func TestTheOldPluginKeysAreRefused(t *testing.T) {
+	for _, declared := range []string{
+		"plugins: [sentry]\n",
+		"plugin_options:\n  - plugin: linear\n    readonly: true\n",
+	} {
+		root := filepath.Join(t.TempDir(), "triage")
+		write(t, root, "agent.yaml", "name: triage\n"+declared)
+
+		if _, err := Load(root); err == nil {
+			t.Errorf("%q loaded", declared)
+		}
 	}
 }
 
 func TestTheDeclarationSaysWhichPluginEventsTheAgentTakes(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "name: triage\nplugins: [sentry]\nplugin_events:\n"+
+	write(t, root, "agent.yaml", "name: triage\nagent_plugins: [sentry]\nplugin_events:\n"+
 		"  - plugin: sentry\n    event: issue.created\n    arguments:\n      project: web\n"+
 		"    instructions: Triage it.\n")
 

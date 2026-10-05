@@ -45,6 +45,10 @@ type Plugin struct {
 	// Tools are the agent's own allowlist of the server's tools, as names or path.Match
 	// patterns, set by Configured. Empty offers every tool.
 	Tools []string `yaml:"-"`
+	// ByURL is an MCP server an agent config names by its URL rather than from the catalog.
+	// Its login registers a client of its own, never the deployment's, and asks for the
+	// scopes its server advertises when given none.
+	ByURL bool `yaml:"-"`
 }
 
 // Options are what an agent config changes about a catalog plugin.

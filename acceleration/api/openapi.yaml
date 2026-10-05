@@ -71,8 +71,26 @@ components:
         - daily
         - monthly
       type: string
+    AgentChannels:
+      description: The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
+      properties:
+        identity:
+          $ref: '#/components/schemas/ChannelIdentity'
+        imessage:
+          $ref: '#/components/schemas/ChannelLineRequest'
+        sms:
+          $ref: '#/components/schemas/ChannelLineRequest'
+        whatsapp:
+          $ref: '#/components/schemas/ChannelLineRequest'
+      type: object
     AgentConfig:
       properties:
+        agent_plugins:
+          items:
+            $ref: '#/components/schemas/PluginEntry'
+          type: array
+        channels:
+          $ref: '#/components/schemas/AgentChannels'
         connectors:
           description: The bindings exactly as they were written. Absent when there are none.
           items:
@@ -113,14 +131,6 @@ components:
           items:
             $ref: '#/components/schemas/PluginEvent'
           type: array
-        plugin_options:
-          items:
-            $ref: '#/components/schemas/PluginOptions'
-          type: array
-        plugins:
-          items:
-            type: string
-          type: array
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -155,7 +165,7 @@ components:
           type: string
         user_plugins:
           items:
-            type: string
+            $ref: '#/components/schemas/PluginEntry'
           type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
@@ -176,6 +186,12 @@ components:
       additionalProperties: false
       description: What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
       properties:
+        agent_plugins:
+          items:
+            $ref: '#/components/schemas/PluginEntry'
+          type: array
+        channels:
+          $ref: '#/components/schemas/AgentChannels'
         connectors:
           description: The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
           items:
@@ -217,15 +233,6 @@ components:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
-        plugin_options:
-          items:
-            $ref: '#/components/schemas/PluginOptions'
-          maxItems: 32
-          type: array
-        plugins:
-          items:
-            type: string
-          type: array
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -256,7 +263,7 @@ components:
           type: string
         user_plugins:
           items:
-            type: string
+            $ref: '#/components/schemas/PluginEntry'
           type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
@@ -271,6 +278,14 @@ components:
       type: object
     AgentConfigRequest:
       properties:
+        agent_plugins:
+          description: 'Hosted MCP servers this agent may reach with the app''s own login, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear''s read-only endpoint and the scopes its login asks for.'
+          items:
+            $ref: '#/components/schemas/PluginEntry'
+          type: array
+        channels:
+          $ref: '#/components/schemas/AgentChannels'
+          description: 'Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.'
         connectors:
           description: The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
           items:
@@ -316,17 +331,6 @@ components:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
-        plugin_options:
-          description: How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. A plugin without any is reached as the catalog has it.
-          items:
-            $ref: '#/components/schemas/PluginOptions'
-          maxItems: 32
-          type: array
-        plugins:
-          description: Hosted MCP servers this agent may reach, named from the built-in catalog.
-          items:
-            type: string
-          type: array
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -362,9 +366,9 @@ components:
         tts:
           type: string
         user_plugins:
-          description: Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+          description: Hosted MCP servers each end user connects with their own account, named from the built-in catalog like agent_plugins. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
           items:
-            type: string
+            $ref: '#/components/schemas/PluginEntry'
           type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
@@ -653,7 +657,7 @@ components:
     AuthorizePluginRequest:
       properties:
         instance_url:
-          description: The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL.
+          description: The shop hostname. Required for plugins that have no single global URL.
           type: string
       type: object
     AvailableNumber:
@@ -720,6 +724,191 @@ components:
         - weekly
         - monthly
       type: string
+    BusinessProfile:
+      description: Who the app is, and the brand a vendor registered it as.
+      properties:
+        authorized_contact_email:
+          maxLength: 255
+          type: string
+        authorized_contact_first_name:
+          maxLength: 100
+          type: string
+        authorized_contact_last_name:
+          maxLength: 100
+          type: string
+        authorized_contact_phone:
+          description: E.164.
+          maxLength: 20
+          type: string
+        authorized_contact_title:
+          maxLength: 100
+          type: string
+        brand_id:
+          description: The brand the vendor registered the app as, once a use case was sent.
+          type: string
+        brand_name:
+          description: What people know it as, shown to recipients. Omitted is the legal name.
+          maxLength: 255
+          type: string
+        brand_status:
+          description: The vendor's word for where the brand stands, such as VERIFIED.
+          type: string
+        business_registration_country:
+          description: ISO 3166-1 alpha-2.
+          maxLength: 2
+          type: string
+        business_verification_documents:
+          description: URLs of documents a reviewer may ask for, such as articles of incorporation.
+          items:
+            type: string
+          maxItems: 10
+          nullable: true
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        industry:
+          description: The registry's vertical, such as technology, healthcare or retail.
+          maxLength: 64
+          type: string
+        legal_business_name:
+          description: The name the business is registered under.
+          maxLength: 255
+          type: string
+        legal_entity_type:
+          enum:
+            - corporation
+            - llc
+            - partnership
+            - sole_proprietor
+            - other
+          type: string
+        organization_type:
+          enum:
+            - private
+            - public
+            - nonprofit
+            - government
+          type: string
+        privacy_policy_url:
+          maxLength: 2048
+          type: string
+        registered_address:
+          $ref: '#/components/schemas/PostalAddress'
+        stock_exchange:
+          description: Where it is listed, such as NASDAQ or NYSE.
+          maxLength: 20
+          type: string
+        stock_symbol:
+          description: A public company's ticker.
+          maxLength: 10
+          type: string
+        tax_id:
+          description: The EIN in the US, or the country's business number. A sole proprietor has none.
+          maxLength: 64
+          type: string
+        tax_id_issuing_country:
+          description: ISO 3166-1 alpha-2. Omitted is the registration country.
+          maxLength: 2
+          type: string
+        terms_and_conditions_url:
+          maxLength: 2048
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        website_url:
+          maxLength: 2048
+          type: string
+      required:
+        - created_at
+        - updated_at
+      type: object
+    BusinessProfileRequest:
+      description: 'Who the app is: written once and reused by every channel it registers for. Nothing is required to save it; submitting a use case says what is missing.'
+      properties:
+        authorized_contact_email:
+          maxLength: 255
+          type: string
+        authorized_contact_first_name:
+          maxLength: 100
+          type: string
+        authorized_contact_last_name:
+          maxLength: 100
+          type: string
+        authorized_contact_phone:
+          description: E.164.
+          maxLength: 20
+          type: string
+        authorized_contact_title:
+          maxLength: 100
+          type: string
+        brand_name:
+          description: What people know it as, shown to recipients. Omitted is the legal name.
+          maxLength: 255
+          type: string
+        business_registration_country:
+          description: ISO 3166-1 alpha-2.
+          maxLength: 2
+          type: string
+        business_verification_documents:
+          description: URLs of documents a reviewer may ask for, such as articles of incorporation.
+          items:
+            type: string
+          maxItems: 10
+          nullable: true
+          type: array
+        industry:
+          description: The registry's vertical, such as technology, healthcare or retail.
+          maxLength: 64
+          type: string
+        legal_business_name:
+          description: The name the business is registered under.
+          maxLength: 255
+          type: string
+        legal_entity_type:
+          enum:
+            - corporation
+            - llc
+            - partnership
+            - sole_proprietor
+            - other
+          type: string
+        organization_type:
+          enum:
+            - private
+            - public
+            - nonprofit
+            - government
+          type: string
+        privacy_policy_url:
+          maxLength: 2048
+          type: string
+        registered_address:
+          $ref: '#/components/schemas/PostalAddress'
+        stock_exchange:
+          description: Where it is listed, such as NASDAQ or NYSE.
+          maxLength: 20
+          type: string
+        stock_symbol:
+          description: A public company's ticker.
+          maxLength: 10
+          type: string
+        tax_id:
+          description: The EIN in the US, or the country's business number. A sole proprietor has none.
+          maxLength: 64
+          type: string
+        tax_id_issuing_country:
+          description: ISO 3166-1 alpha-2. Omitted is the registration country.
+          maxLength: 2
+          type: string
+        terms_and_conditions_url:
+          maxLength: 2048
+          type: string
+        website_url:
+          maxLength: 2048
+          type: string
+      type: object
     BuyNumberRequest:
       properties:
         country:
@@ -1015,6 +1204,77 @@ components:
         - model
         - provider
       type: object
+    ChannelAccount:
+      description: 'One line the app answers on: the number people write to and where its provider delivers. The credentials are write-only, so they are never shown here.'
+      properties:
+        account_id:
+          description: The provider's own id for the line, such as WhatsApp's phone number id.
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        delivering:
+          description: True when the provider was pointed at the webhook URL for you, so there is nothing left to paste.
+          type: boolean
+        id:
+          type: string
+        kind:
+          $ref: '#/components/schemas/ChannelKind'
+        number:
+          description: The number people write to, in E.164.
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        webhook_url:
+          description: Where the provider should deliver. Paste it into Meta's or Linq's webhook setup; a Telnyx number is pointed at it for you.
+          type: string
+      required:
+        - id
+        - kind
+        - number
+        - webhook_url
+        - delivering
+        - created_at
+        - updated_at
+      type: object
+    ChannelIdentity:
+      description: How a sender becomes an end user. phone makes each number an end user of its own, phone:+15551234567, so anybody who writes is answered. link answers only a number somebody tied to an end user with a code from POST /v1/agents/channels/links, which is what an agent reading a person's own calendar or orders needs. Omitted is phone.
+      enum:
+        - phone
+        - link
+      type: string
+    ChannelKind:
+      description: A channel a conversation can be carried over.
+      enum:
+        - whatsapp
+        - sms
+        - imessage
+      type: string
+    ChannelLineRequest:
+      properties:
+        number:
+          description: The number people write to, in E.164. It must be a line this app connected.
+          maxLength: 20
+          minLength: 2
+          type: string
+      required:
+        - number
+      type: object
+    ChannelLink:
+      description: A code that ties the number texting it to one end user, for one agent.
+      properties:
+        code:
+          description: The code to show the end user. They text it to the agent from the number they want answered.
+          type: string
+        expires_at:
+          description: When the code stops working.
+          format: date-time
+          type: string
+      required:
+        - code
+        - expires_at
+      type: object
     ChatToken:
       properties:
         api_key:
@@ -1226,44 +1486,35 @@ components:
         - state
         - user_message_id
       type: object
-    ConnectorClient:
-      additionalProperties: false
-      description: Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
+    ConnectChannelRequest:
+      description: Credentials for one line, connected once for the app and named by any number of agents under channels in agent.yaml. Sending a line already connected replaces its credentials and keeps its webhook URL.
       properties:
-        alg:
-          description: How a private_key_jwt assertion is signed, and set only for it.
-          enum:
-            - RS256
-            - PS256
+        account_id:
+          description: The provider's own id for the line. WhatsApp's phone number id; not needed by the others.
           type: string
-        auth_method:
-          $ref: '#/components/schemas/ConnectorClientAuthMethod'
-        policy:
-          description: Who may own the OAuth client. Empty when the connector needs none.
-          items:
-            $ref: '#/components/schemas/ConnectorClientOwner'
-          nullable: true
-          type: array
-          uniqueItems: true
+        challenge:
+          description: The verify token Meta's webhook setup echoes back. WhatsApp only.
+          type: string
+        kind:
+          description: whatsapp, sms or imessage.
+          minLength: 1
+          type: string
+        number:
+          description: The number people write to, in E.164. For sms it must be a number this app bought with POST /v1/phone/numbers.
+          maxLength: 20
+          minLength: 2
+          type: string
+        signing:
+          description: 'What the provider signs deliveries with: Meta''s app secret, Telnyx''s public key, Linq''s whsec_ secret.'
+          type: string
+        token:
+          description: 'What authenticates a send: a Meta access token, a Telnyx API key, a Linq API key.'
+          type: string
+      required:
+        - kind
+        - number
       type: object
-    ConnectorClientAuthMethod:
-      description: How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
-      enum:
-        - none
-        - client_secret_post
-        - client_secret_basic
-        - private_key_jwt
-        - tls_client_auth
-      type: string
-    ConnectorClientOwner:
-      description: operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
-      enum:
-        - operator
-        - customer
-        - dcr
-        - cimd
-      type: string
-    ConnectorConnection:
+    Connection:
       description: One account at one connector, owned by the app or by one of its users. Credentials are never shown.
       properties:
         account_id:
@@ -1312,14 +1563,14 @@ components:
           readOnly: true
           type: object
         owner:
-          $ref: '#/components/schemas/ConnectorConnectionOwner'
+          $ref: '#/components/schemas/ConnectionOwner'
         revision:
           description: Advances with every new credential, starting at 1.
           format: int64
           readOnly: true
           type: integer
         status:
-          $ref: '#/components/schemas/ConnectorConnectionStatus'
+          $ref: '#/components/schemas/ConnectionStatus'
         updated_at:
           format: date-time
           readOnly: true
@@ -1338,34 +1589,34 @@ components:
         - created_at
         - updated_at
       type: object
-    ConnectorConnectionOwner:
+    ConnectionOwner:
       additionalProperties: false
       description: 'Whose a connection is: the app''s, which any of its agents may be bound to, or one user''s.'
       properties:
         type:
-          $ref: '#/components/schemas/ConnectorConnectionOwnerType'
+          $ref: '#/components/schemas/ConnectionOwnerType'
         user_id:
           description: The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id.
           type: string
       required:
         - type
       type: object
-    ConnectorConnectionOwnerType:
+    ConnectionOwnerType:
       description: app is the app's own account, user one user's.
       enum:
         - app
         - user
       type: string
       x-enum-varnames:
-        - ConnectorConnectionOwnerTypeApp
-        - ConnectorConnectionOwnerTypeUser
-    ConnectorConnectionPage:
+        - ConnectionOwnerTypeApp
+        - ConnectionOwnerTypeUser
+    ConnectionPage:
       properties:
         has_more:
           type: boolean
         items:
           items:
-            $ref: '#/components/schemas/ConnectorConnection'
+            $ref: '#/components/schemas/Connection'
           nullable: true
           type: array
         next_cursor:
@@ -1375,7 +1626,7 @@ components:
         - items
         - has_more
       type: object
-    ConnectorConnectionRequest:
+    ConnectionRequest:
       additionalProperties: false
       description: A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
       properties:
@@ -1396,12 +1647,12 @@ components:
           maxLength: 120
           type: string
         owner:
-          $ref: '#/components/schemas/ConnectorConnectionOwner'
+          $ref: '#/components/schemas/ConnectionOwner'
       required:
         - connector_id
         - owner
       type: object
-    ConnectorConnectionStatus:
+    ConnectionStatus:
       description: pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
       enum:
         - pending
@@ -1409,7 +1660,7 @@ components:
         - needs_reauthorization
         - disconnected
       type: string
-    ConnectorDefinition:
+    Connector:
       description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
       properties:
         category:
@@ -1466,22 +1717,43 @@ components:
         - client
         - created_at
       type: object
-    ConnectorDefinitionPage:
+    ConnectorClient:
+      additionalProperties: false
+      description: How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
       properties:
-        has_more:
-          type: boolean
-        items:
+        alg:
+          description: How a private_key_jwt assertion is signed, and set only for it.
+          enum:
+            - RS256
+            - PS256
+          type: string
+        auth_method:
+          $ref: '#/components/schemas/ConnectorClientAuthMethod'
+        registration:
+          description: The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client.
           items:
-            $ref: '#/components/schemas/ConnectorDefinition'
+            $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
           nullable: true
           type: array
-        next_cursor:
-          description: Pass as cursor for the next page, with the same q. Absent on the last one.
-          type: string
-      required:
-        - items
-        - has_more
+          uniqueItems: true
       type: object
+    ConnectorClientAuthMethod:
+      description: How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
+      enum:
+        - none
+        - client_secret_post
+        - client_secret_basic
+        - private_key_jwt
+        - tls_client_auth
+      type: string
+    ConnectorClientRegistrationMethod:
+      description: operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+      enum:
+        - operator
+        - customer
+        - dcr
+        - cimd
+      type: string
     ConnectorInput:
       properties:
         default:
@@ -1500,6 +1772,22 @@ components:
           type: string
       required:
         - name
+      type: object
+    ConnectorPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/Connector'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page, with the same q. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
       type: object
     ConnectorToolGrant:
       description: One tool a binding allows.
@@ -1568,6 +1856,25 @@ components:
       oneOf:
         - $ref: '#/components/schemas/TextContentPart'
         - $ref: '#/components/schemas/ImageContentPart'
+    CreateOptOutRequest:
+      properties:
+        channel:
+          $ref: '#/components/schemas/OptOutChannel'
+        recipient:
+          description: The number, in E.164.
+          maxLength: 20
+          minLength: 2
+          type: string
+        source:
+          description: Omitted is api.
+          enum:
+            - api
+            - dashboard
+          type: string
+      required:
+        - recipient
+        - channel
+      type: object
     CreateResponseRequest:
       properties:
         command_id:
@@ -2011,6 +2318,22 @@ components:
         - status
         - dependencies
       type: object
+    IMessageProfile:
+      properties:
+        consent_method:
+          type: string
+        contact_card_image_url:
+          description: Square, at least 200 by 200.
+          type: string
+        contact_card_name:
+          type: string
+        fallback_channels:
+          description: imessage, rcs or sms, in the order to try them.
+          items:
+            type: string
+          nullable: true
+          type: array
+      type: object
     ImageContentPart:
       properties:
         image_url:
@@ -2395,6 +2718,20 @@ components:
         - providers
         - voices
       type: object
+    LinkChannelRequest:
+      properties:
+        config_id:
+          description: The agent whose channels the number is being claimed on.
+          minLength: 1
+          type: string
+        user_id:
+          description: The end user the number will belong to.
+          minLength: 1
+          type: string
+      required:
+        - config_id
+        - user_id
+      type: object
     LlmOptions:
       description: 'How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model answers under belongs to the agent asking, not to the config that decides where the asking goes.'
       properties:
@@ -2448,14 +2785,28 @@ components:
           type: string
       type: object
     McpServer:
-      description: An MCP server the plugin catalog does not have. Every session opens it at the start, with no login, and offers its tools to the model; the instructions the server gives are added to the agent's own.
+      description: An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
       properties:
+        branding:
+          $ref: '#/components/schemas/McpServerBranding'
+          description: How the server described itself when the config was saved. Absent when it did not answer.
+          readOnly: true
         name:
           description: What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
           maxLength: 32
           minLength: 1
           pattern: ^[a-z][a-z0-9_-]*$
           type: string
+        needs_login:
+          description: 'Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.'
+          readOnly: true
+          type: boolean
+        scopes:
+          description: The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
+          items:
+            type: string
+          maxItems: 32
+          type: array
         tools:
           description: Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
           items:
@@ -2467,9 +2818,28 @@ components:
           maxLength: 2048
           minLength: 1
           type: string
+        user:
+          description: Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a login may set it.
+          type: boolean
       required:
         - name
         - url
+      type: object
+    McpServerBranding:
+      description: The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
+      properties:
+        description:
+          type: string
+        icon_url:
+          description: Its first icon served over https, as the server links it.
+          type: string
+        title:
+          description: Its display title, or its name when it gives none.
+          type: string
+        version:
+          type: string
+        website_url:
+          type: string
       type: object
     MessageContent:
       oneOf:
@@ -2585,6 +2955,53 @@ components:
         - numbers
         - skipped
       type: object
+    OptOut:
+      description: Somebody who asked not to be reached. Nothing is texted or dialled to them on the channel, or on any for all, until the opt-out is revoked or they text START.
+      properties:
+        channel:
+          $ref: '#/components/schemas/OptOutChannel'
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        recipient:
+          description: The number, in E.164.
+          type: string
+        source:
+          description: keyword when they texted STOP, otherwise api or dashboard.
+          type: string
+      required:
+        - id
+        - recipient
+        - channel
+        - source
+        - created_at
+      type: object
+    OptOutChannel:
+      description: The channel a recipient opted out of, or all of them.
+      enum:
+        - sms
+        - voice
+        - whatsapp
+        - imessage
+        - all
+      type: string
+    OptOutPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/OptOut'
+          type: array
+        next_cursor:
+          description: Pass as `cursor` for the next page. Absent on the last one.
+          type: string
+      required:
+        - has_more
+        - items
+      type: object
     PhoneCapability:
       description: What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
       enum:
@@ -2658,6 +3075,47 @@ components:
         - PhoneOperationAttach
         - PhoneOperationDial
         - PhoneOperationSendDigits
+    PhoneSandbox:
+      description: What an app may text and call before a 10DLC use case of its is approved.
+      properties:
+        audio_minutes_per_day:
+          format: int64
+          type: integer
+        audio_seconds_today:
+          description: Seconds of outbound calls since midnight UTC.
+          format: int64
+          type: integer
+        enabled:
+          description: Whether this deployment sandboxes apps with no approved use case. Off on a self-hosted router.
+          type: boolean
+        max_recipients:
+          format: int64
+          type: integer
+        messages_per_day:
+          format: int64
+          type: integer
+        messages_today:
+          description: Messages sent since midnight UTC.
+          format: int64
+          type: integer
+        recipients:
+          description: The only numbers a sandboxed app may text and call.
+          items:
+            type: string
+          type: array
+        sandboxed:
+          description: 'Whether this app is held to the limits below: true until one of its use cases is approved.'
+          type: boolean
+      required:
+        - enabled
+        - sandboxed
+        - recipients
+        - max_recipients
+        - messages_today
+        - messages_per_day
+        - audio_seconds_today
+        - audio_minutes_per_day
+      type: object
     PhoneVendor:
       properties:
         capabilities:
@@ -2765,15 +3223,15 @@ components:
         name:
           type: string
         readonly:
-          description: True when the plugin has a read-only endpoint an agent may pick in plugin_options.
+          description: True when the plugin has a read-only endpoint an agent may pick on its entry.
           type: boolean
         scopes_supported:
-          description: The OAuth scopes an agent may ask for in plugin_options, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
+          description: The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
           items:
             type: string
           type: array
         toolsets:
-          description: The groups of tools an agent may limit the plugin to in plugin_options. Absent when it cannot be limited.
+          description: The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
           items:
             type: string
           type: array
@@ -2806,7 +3264,7 @@ components:
         instance_url:
           type: string
         logo_url:
-          description: Where this deployment serves the plugin's logo, as an SVG needing no credential.
+          description: Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL.
           readOnly: true
           type: string
         name:
@@ -2826,6 +3284,12 @@ components:
         - plugin_id
         - status
       type: object
+    PluginEntry:
+      description: 'One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.'
+      oneOf:
+        - minLength: 1
+          type: string
+        - $ref: '#/components/schemas/PluginWithOptions'
     PluginEvent:
       description: One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
       properties:
@@ -2841,18 +3305,18 @@ components:
           description: What the agent does with the event when it arrives, added to its instructions for that conversation.
           type: string
         plugin:
-          description: A catalog plugin the config names under plugins or user_plugins.
+          description: A catalog plugin the config names under agent_plugins or user_plugins.
           minLength: 1
           type: string
       required:
         - plugin
         - event
       type: object
-    PluginOptions:
-      description: How an agent reaches one catalog plugin it names, and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
+    PluginWithOptions:
+      description: One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
       properties:
-        plugin:
-          description: A catalog plugin id. It applies once the config names the plugin under plugins or user_plugins, and to the app's login made from the dashboard.
+        name:
+          description: A catalog plugin id, such as linear.
           minLength: 1
           type: string
         readonly:
@@ -2877,7 +3341,7 @@ components:
           maxItems: 32
           type: array
       required:
-        - plugin
+        - name
       type: object
     Policy:
       description: What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
@@ -2903,6 +3367,21 @@ components:
           example:
             application: support
           type: object
+      type: object
+    PostalAddress:
+      properties:
+        city:
+          type: string
+        country:
+          description: ISO 3166-1 alpha-2.
+          type: string
+        postal_code:
+          type: string
+        state:
+          description: State or region.
+          type: string
+        street:
+          type: string
       type: object
     PrepareVoiceRequest:
       properties:
@@ -3038,6 +3517,57 @@ components:
           format: double
           type: number
       type: object
+    RCSProfile:
+      properties:
+        agent_overview:
+          type: string
+        brand_color:
+          description: 'Hex, such as #1A73E8, with at least 4.5:1 contrast against white.'
+          type: string
+        call_to_action_text:
+          type: string
+        call_to_action_url:
+          type: string
+        company_overview:
+          type: string
+        description:
+          maxLength: 100
+          type: string
+        display_name:
+          maxLength: 40
+          type: string
+        double_opt_in:
+          type: boolean
+        hero_url:
+          description: 1440 by 448 PNG or JPEG, at most 200 KB, on public HTTPS.
+          type: string
+        interaction_types:
+          type: string
+        logo_url:
+          description: 224 by 224 PNG or JPEG, at most 50 KB, on public HTTPS.
+          type: string
+        message_examples:
+          items:
+            type: string
+          nullable: true
+          type: array
+        opt_in_confirmation_message:
+          type: string
+        opt_in_methods:
+          type: string
+        support_email:
+          type: string
+        support_label:
+          type: string
+        support_phone:
+          type: string
+        test_video_url:
+          description: Shows consent, example interactions, HELP and STOP.
+          type: string
+        use_case:
+          description: otp, transactional, promotional or multi_use.
+          type: string
+      type: object
     RecordingSource:
       description: Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first.
       properties:
@@ -3072,6 +3602,65 @@ components:
           type: string
       required:
         - text
+      type: object
+    ReviewActor:
+      description: 'Who moved a use case: the app, Stream staff or the vendor.'
+      enum:
+        - app
+        - staff
+        - vendor
+      type: string
+    ReviewDecision:
+      description: approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
+      enum:
+        - approve
+        - request_changes
+        - reject
+      type: string
+    ReviewPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/UseCaseReview'
+          type: array
+        next_cursor:
+          description: Pass as `cursor` for the next page. Absent on the last one.
+          type: string
+      required:
+        - has_more
+        - items
+      type: object
+    ReviewQueue:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/UseCaseForReview'
+          type: array
+        next_cursor:
+          description: Pass as `cursor` for the next page. Absent on the last one.
+          type: string
+      required:
+        - has_more
+        - items
+      type: object
+    ReviewUseCaseRequest:
+      properties:
+        decision:
+          $ref: '#/components/schemas/ReviewDecision'
+        notes:
+          description: What the app should change, or why it was rejected. Required unless approving.
+          maxLength: 4096
+          type: string
+        reviewer:
+          description: Who decided, as the app's timeline shows it.
+          maxLength: 255
+          type: string
+      required:
+        - decision
       type: object
     RewindSessionRequest:
       properties:
@@ -3699,6 +4288,17 @@ components:
         source:
           description: Track or processor source. Omitted requires one unambiguous available source.
           type: string
+      type: object
+    SetSandboxRecipientsRequest:
+      properties:
+        recipients:
+          description: Numbers in E.164, at most max_recipients of them.
+          items:
+            type: string
+          maxItems: 10
+          type: array
+      required:
+        - recipients
       type: object
     Simulation:
       properties:
@@ -4382,6 +4982,14 @@ components:
     SyncAgentRequest:
       description: An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
       properties:
+        agent_plugins:
+          description: 'Plugins the agent reaches with the app''s own login: a catalog id, or an object naming it with how it is reached.'
+          items:
+            $ref: '#/components/schemas/PluginEntry'
+          type: array
+        channels:
+          $ref: '#/components/schemas/AgentChannels'
+          description: Lines this agent answers on besides Stream Chat, each a number the app connected.
         connectors:
           description: The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone.
           items:
@@ -4434,16 +5042,6 @@ components:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
-        plugin_options:
-          description: How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for.
-          items:
-            $ref: '#/components/schemas/PluginOptions'
-          maxItems: 32
-          type: array
-        plugins:
-          items:
-            type: string
-          type: array
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -4479,9 +5077,9 @@ components:
         tts:
           type: string
         user_plugins:
-          description: Plugins each end user connects with their own account, from the conversation, the first time the agent needs one.
+          description: Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins.
           items:
-            type: string
+            $ref: '#/components/schemas/PluginEntry'
           type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
@@ -4498,6 +5096,12 @@ components:
         unchanged:
           description: True when the hash matched and nothing was written.
           type: boolean
+        warnings:
+          description: What was stored but will not work yet, such as a channel line the app has not connected.
+          items:
+            type: string
+          nullable: true
+          type: array
       required:
         - unchanged
         - config
@@ -5132,6 +5736,334 @@ components:
           description: The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
           type: string
       type: object
+    UseCase:
+      description: 'A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.'
+      properties:
+        age_gated:
+          type: boolean
+        approved_at:
+          format: date-time
+          type: string
+        channels:
+          $ref: '#/components/schemas/UseCaseChannels'
+          description: What RCS, WhatsApp, iMessage and voice ask for. Reviewed with the rest; not sent to a vendor yet.
+        created_at:
+          format: date-time
+          type: string
+        description:
+          description: What the messages are for, in at least 40 characters.
+          maxLength: 4096
+          type: string
+        direct_lending:
+          type: boolean
+        embedded_links:
+          type: boolean
+        embedded_phone:
+          type: boolean
+        help_message:
+          description: 'The answer to HELP: who you are and how to reach support.'
+          maxLength: 320
+          type: string
+        id:
+          type: string
+        is_default:
+          description: Send as this use case from every number assigned to no other one. An app's first use case is its default.
+          type: boolean
+        message_flow:
+          description: How a recipient opts in, and where a reviewer can see it, in at least 40 characters.
+          maxLength: 4096
+          type: string
+        message_samples:
+          description: Two to five messages as they will be sent.
+          items:
+            type: string
+          maxItems: 5
+          nullable: true
+          type: array
+        name:
+          maxLength: 120
+          minLength: 1
+          type: string
+        numbers:
+          description: The app's numbers that send as this use case, in E.164. Omitted on an update leaves them as they are; empty unassigns them all.
+          items:
+            type: string
+          maxItems: 500
+          nullable: true
+          type: array
+        opt_in_message:
+          description: The answer to START, and the first message after opting in.
+          maxLength: 320
+          type: string
+        opt_out_message:
+          description: The answer to STOP.
+          maxLength: 320
+          type: string
+        status:
+          $ref: '#/components/schemas/UseCaseStatus'
+        submitted_at:
+          format: date-time
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        use_case_type:
+          description: The campaign registry's use case, such as CUSTOMER_CARE, ACCOUNT_NOTIFICATION, 2FA, MARKETING or MIXED.
+          maxLength: 64
+          type: string
+        vendor:
+          description: Who registers the campaign, once Stream approved it.
+          type: string
+        vendor_campaign_id:
+          type: string
+        vendor_status:
+          description: The vendor's word for where the campaign stands, such as TCR_ACCEPTED.
+          type: string
+      required:
+        - id
+        - status
+        - created_at
+        - updated_at
+        - name
+      type: object
+    UseCaseChannels:
+      properties:
+        imessage:
+          $ref: '#/components/schemas/IMessageProfile'
+        rcs:
+          $ref: '#/components/schemas/RCSProfile'
+        voice:
+          $ref: '#/components/schemas/VoiceProfile'
+        whatsapp:
+          $ref: '#/components/schemas/WhatsAppProfile'
+      type: object
+    UseCaseForReview:
+      description: A use case with the app it is for and the profile it was submitted on.
+      properties:
+        age_gated:
+          type: boolean
+        approved_at:
+          format: date-time
+          type: string
+        business_profile:
+          $ref: '#/components/schemas/BusinessProfile'
+        channels:
+          $ref: '#/components/schemas/UseCaseChannels'
+          description: What RCS, WhatsApp, iMessage and voice ask for. Reviewed with the rest; not sent to a vendor yet.
+        created_at:
+          format: date-time
+          type: string
+        customer_id:
+          description: The app the use case is for.
+          type: string
+        description:
+          description: What the messages are for, in at least 40 characters.
+          maxLength: 4096
+          type: string
+        direct_lending:
+          type: boolean
+        embedded_links:
+          type: boolean
+        embedded_phone:
+          type: boolean
+        help_message:
+          description: 'The answer to HELP: who you are and how to reach support.'
+          maxLength: 320
+          type: string
+        id:
+          type: string
+        is_default:
+          description: Send as this use case from every number assigned to no other one. An app's first use case is its default.
+          type: boolean
+        message_flow:
+          description: How a recipient opts in, and where a reviewer can see it, in at least 40 characters.
+          maxLength: 4096
+          type: string
+        message_samples:
+          description: Two to five messages as they will be sent.
+          items:
+            type: string
+          maxItems: 5
+          nullable: true
+          type: array
+        name:
+          maxLength: 120
+          minLength: 1
+          type: string
+        numbers:
+          description: The app's numbers that send as this use case, in E.164. Omitted on an update leaves them as they are; empty unassigns them all.
+          items:
+            type: string
+          maxItems: 500
+          nullable: true
+          type: array
+        opt_in_message:
+          description: The answer to START, and the first message after opting in.
+          maxLength: 320
+          type: string
+        opt_out_message:
+          description: The answer to STOP.
+          maxLength: 320
+          type: string
+        reviews:
+          description: What happened to it so far, oldest first. Only on a single use case.
+          items:
+            $ref: '#/components/schemas/UseCaseReview'
+          nullable: true
+          type: array
+        status:
+          $ref: '#/components/schemas/UseCaseStatus'
+        submitted_at:
+          format: date-time
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        use_case_type:
+          description: The campaign registry's use case, such as CUSTOMER_CARE, ACCOUNT_NOTIFICATION, 2FA, MARKETING or MIXED.
+          maxLength: 64
+          type: string
+        vendor:
+          description: Who registers the campaign, once Stream approved it.
+          type: string
+        vendor_campaign_id:
+          type: string
+        vendor_status:
+          description: The vendor's word for where the campaign stands, such as TCR_ACCEPTED.
+          type: string
+      required:
+        - customer_id
+        - id
+        - status
+        - created_at
+        - updated_at
+        - name
+      type: object
+    UseCasePage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/UseCase'
+          type: array
+        next_cursor:
+          description: Pass as `cursor` for the next page. Absent on the last one.
+          type: string
+      required:
+        - has_more
+        - items
+      type: object
+    UseCaseRequest:
+      description: What an app sends texts and makes calls for. Saved as a draft and submitted for review once it and the business profile are complete.
+      properties:
+        age_gated:
+          type: boolean
+        channels:
+          $ref: '#/components/schemas/UseCaseChannels'
+          description: What RCS, WhatsApp, iMessage and voice ask for. Reviewed with the rest; not sent to a vendor yet.
+        description:
+          description: What the messages are for, in at least 40 characters.
+          maxLength: 4096
+          type: string
+        direct_lending:
+          type: boolean
+        embedded_links:
+          type: boolean
+        embedded_phone:
+          type: boolean
+        help_message:
+          description: 'The answer to HELP: who you are and how to reach support.'
+          maxLength: 320
+          type: string
+        is_default:
+          description: Send as this use case from every number assigned to no other one. An app's first use case is its default.
+          type: boolean
+        message_flow:
+          description: How a recipient opts in, and where a reviewer can see it, in at least 40 characters.
+          maxLength: 4096
+          type: string
+        message_samples:
+          description: Two to five messages as they will be sent.
+          items:
+            type: string
+          maxItems: 5
+          nullable: true
+          type: array
+        name:
+          maxLength: 120
+          minLength: 1
+          type: string
+        numbers:
+          description: The app's numbers that send as this use case, in E.164. Omitted on an update leaves them as they are; empty unassigns them all.
+          items:
+            type: string
+          maxItems: 500
+          nullable: true
+          type: array
+        opt_in_message:
+          description: The answer to START, and the first message after opting in.
+          maxLength: 320
+          type: string
+        opt_out_message:
+          description: The answer to STOP.
+          maxLength: 320
+          type: string
+        use_case_type:
+          description: The campaign registry's use case, such as CUSTOMER_CARE, ACCOUNT_NOTIFICATION, 2FA, MARKETING or MIXED.
+          maxLength: 64
+          type: string
+      required:
+        - name
+      type: object
+    UseCaseReview:
+      description: One move a use case made, and who made it. Nothing here is ever changed.
+      properties:
+        actor:
+          $ref: '#/components/schemas/ReviewActor'
+        actor_name:
+          description: 'Who exactly: the reviewer, or the vendor.'
+          type: string
+        approved_at:
+          format: date-time
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        from_status:
+          $ref: '#/components/schemas/UseCaseStatus'
+        id:
+          type: string
+        notes:
+          description: What the reviewer or vendor said.
+          type: string
+        submitted_at:
+          format: date-time
+          type: string
+        to_status:
+          $ref: '#/components/schemas/UseCaseStatus'
+        vendor_payload:
+          additionalProperties: {}
+          description: What the vendor answered, as it came.
+          type: object
+      required:
+        - id
+        - actor
+        - from_status
+        - to_status
+        - created_at
+      type: object
+    UseCaseStatus:
+      description: Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
+      enum:
+        - draft
+        - submitted
+        - changes_requested
+        - rejected
+        - vendor_pending
+        - approved
+        - vendor_rejected
+      type: string
     VideoSource:
       properties:
         max_frames:
@@ -5227,6 +6159,35 @@ components:
       required:
         - provider
       type: object
+    VoiceProfile:
+      properties:
+        call_recording_enabled:
+          type: boolean
+        caller_id_number:
+          description: A number bought here, or a verified external one.
+          type: string
+        calling_purpose:
+          description: Support, reminders, sales and so on.
+          type: string
+        consent_collection_method:
+          type: string
+        consent_disclosure_text:
+          type: string
+        consent_evidence_location:
+          type: string
+        destination_countries:
+          items:
+            type: string
+          nullable: true
+          type: array
+        expected_call_volume:
+          type: string
+        opt_out_handling:
+          type: string
+        recording_disclosure:
+          description: How a recorded call is disclosed and consented to.
+          type: string
+      type: object
     VoiceProviders:
       properties:
         providers:
@@ -5284,6 +6245,22 @@ components:
       required:
         - audio
       type: object
+    WhatsAppProfile:
+      properties:
+        business_account:
+          description: The WhatsApp Business account, existing or to create.
+          type: string
+        business_portfolio:
+          description: The Meta business portfolio, existing or to create.
+          type: string
+        display_name:
+          type: string
+        phone_number:
+          type: string
+        verification_method:
+          description: sms or voice.
+          type: string
+      type: object
   securitySchemes:
     ApiKey:
       description: The public half of a credential, which names the app and the secret to verify with. A socket sends it as the api_key query parameter, because a browser WebSocket cannot set a header.
@@ -5304,6 +6281,11 @@ components:
       description: The customer, taken at face value. Read in noauth mode, where there is nothing else to go on, and in proxy mode, where something in front has already decided who the caller is. X-Stream-App-Id and X-Stream-Organization-Id say the same thing with the organization around it. It is ignored entirely in api_key mode, where the key decides and a header would only be a way around it.
       in: header
       name: X-Customer-Id
+      type: apiKey
+    OpsKey:
+      description: Stream staff's own key, for reviewing 10DLC use cases across apps. It is held by Stream's internal tools and never by an app or a browser.
+      in: header
+      name: X-Ops-Key
       type: apiKey
 info:
   description: |
@@ -6115,6 +7097,193 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: Internal Server Error
       summary: Start ringing
+  /v1/agents/channels:
+    get:
+      description: |-
+        The lines this app has connected, oldest first. Credentials are never read back.
+
+        Server-side only.
+      operationId: listChannelAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ChannelAccount'
+                nullable: true
+                type: array
+          description: The lines
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: List channel lines
+    post:
+      description: |-
+        Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+
+        Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+
+        Server-side only: it carries provider credentials.
+      operationId: connectChannel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectChannelRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelAccount'
+          description: The line, with where to deliver
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Connect a channel line
+  /v1/agents/channels/{id}:
+    delete:
+      description: |-
+        Drops the line's credentials, so nothing is delivered or sent on it again.
+
+        Server-side only.
+      operationId: disconnectChannel
+      parameters:
+        - description: The account, as the connect answered with.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The account, as the connect answered with.
+            type: string
+      responses:
+        "204":
+          description: Disconnected
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Disconnect a channel line
+  /v1/agents/channels/hooks/{token}:
+    get:
+      description: 'What WhatsApp asks for before it will deliver: the verify token the line was connected with, answered with the challenge it sent, as text. Unauthenticated because Meta is not a customer; the token in the path names the line.'
+      operationId: verifyChannelHook
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: hub.mode
+          schema:
+            type: string
+        - in: query
+          name: hub.verify_token
+          schema:
+            type: string
+        - in: query
+          name: hub.challenge
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: The challenge, echoed
+        "403":
+          description: That is not this line's verify token
+        "410":
+          description: No line is connected at this address
+      security: []
+      summary: Answer a channel provider's webhook check
+    post:
+      description: 'Where WhatsApp, Telnyx and Linq deliver what somebody wrote to one of the app''s lines. Unauthenticated because the provider is not a customer: the token in the path names the line, and each delivery is checked against the signing secret that line was connected with. A message that has not been seen before earns a turn from whichever agent names the number under `channels`, and what the agent says goes back over the channel rather than in this response.'
+      operationId: receiveChannelMessage
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: The delivery is taken, and the agent is answering it
+        "400":
+          description: The delivery is not one this provider sends
+        "401":
+          description: The delivery is not signed with this line's secret
+        "410":
+          description: No line is connected at this address; stop delivering to it
+        "413":
+          description: The delivery is over 256 KiB
+      security: []
+      summary: Receive a message on a channel
+  /v1/agents/channels/links:
+    post:
+      description: |-
+        Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+
+        Server-side only.
+      operationId: linkChannelNumber
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkChannelRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelLink'
+          description: The code and when it stops working
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Mint a code to claim a number
   /v1/agents/chat-token:
     post:
       description: |-
@@ -6363,7 +7532,7 @@ paths:
       summary: Replace an agent config
   /v1/agents/configs/{id}/plugins:
     get:
-      description: The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
+      description: The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
       operationId: listConfigPlugins
       parameters:
         - description: The resource, as returned when it was created.
@@ -6409,12 +7578,12 @@ paths:
           schema:
             description: The resource, as returned when it was created.
             type: string
-        - description: A built-in catalog id such as slack or calendly.
+        - description: A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into.
           in: path
           name: plugin_id
           required: true
           schema:
-            description: A built-in catalog id such as slack or calendly.
+            description: A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into.
             type: string
       responses:
         "204":
@@ -6437,7 +7606,7 @@ paths:
   /v1/agents/configs/{id}/plugins/{plugin_id}/authorize:
     post:
       description: |-
-        Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+        Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: authorizePlugin
       parameters:
@@ -6448,12 +7617,12 @@ paths:
           schema:
             description: The resource, as returned when it was created.
             type: string
-        - description: A built-in catalog id such as slack or calendly.
+        - description: A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into.
           in: path
           name: plugin_id
           required: true
           schema:
-            description: A built-in catalog id such as slack or calendly.
+            description: A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into.
             type: string
       requestBody:
         content:
@@ -6488,7 +7657,7 @@ paths:
         One owner's connections, newest first: the app's own, or those of the user the backend acts for.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: listConnectorConnections
+      operationId: listConnections
       parameters:
         - description: app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
           explode: false
@@ -6496,7 +7665,7 @@ paths:
           name: owner_type
           required: true
           schema:
-            $ref: '#/components/schemas/ConnectorConnectionOwnerType'
+            $ref: '#/components/schemas/ConnectionOwnerType'
             description: app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
         - description: Keeps one connector's.
           explode: false
@@ -6527,7 +7696,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorConnectionPage'
+                $ref: '#/components/schemas/ConnectionPage'
           description: A page of connections
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -6547,19 +7716,19 @@ paths:
         A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: createConnectorConnection
+      operationId: createConnection
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ConnectorConnectionRequest'
+              $ref: '#/components/schemas/ConnectionRequest'
         required: true
       responses:
         "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorConnection'
+                $ref: '#/components/schemas/Connection'
           description: The pending connection
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -6580,7 +7749,7 @@ paths:
         Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: deleteConnectorConnection
+      operationId: deleteConnection
       parameters:
         - description: The connection, as returned when it was created.
           in: path
@@ -6625,7 +7794,7 @@ paths:
         An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: getConnectorConnection
+      operationId: getConnection
       parameters:
         - description: The connection, as returned when it was created.
           in: path
@@ -6639,7 +7808,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorConnection'
+                $ref: '#/components/schemas/Connection'
           description: The connection
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -6694,7 +7863,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorDefinitionPage'
+                $ref: '#/components/schemas/ConnectorPage'
           description: A page of connectors
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -6726,7 +7895,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorDefinition'
+                $ref: '#/components/schemas/Connector'
           description: The connector as stored
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -6761,7 +7930,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorDefinition'
+                $ref: '#/components/schemas/Connector'
           description: The connector
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -9578,6 +10747,213 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: Internal Server Error
       summary: Draw pictures from a prompt, and return them
+  /v1/ops/use-cases:
+    get:
+      description: |-
+        Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
+
+        Stream staff only: it needs the ops key.
+      operationId: listUseCasesForReview
+      parameters:
+        - description: 'Omitted is submitted: what waits on Stream.'
+          explode: false
+          in: query
+          name: status
+          schema:
+            $ref: '#/components/schemas/UseCaseStatus'
+            description: 'Omitted is submitted: what waits on Stream.'
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page, sent with the same status.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page, sent with the same status.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewQueue'
+          description: A page of use cases
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      security:
+        - OpsKey: []
+      summary: List use cases waiting on Stream
+  /v1/ops/use-cases/{id}:
+    get:
+      description: |-
+        A use case with its app, profile and history.
+
+        Stream staff only: it needs the ops key.
+      operationId: getUseCaseForReview
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UseCaseForReview'
+          description: The use case
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      security:
+        - OpsKey: []
+      summary: Get a use case to review
+  /v1/ops/use-cases/{id}/review:
+    post:
+      description: |-
+        Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+
+        Stream staff only: it needs the ops key.
+      operationId: reviewUseCase
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewUseCaseRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UseCaseForReview'
+          description: The use case as reviewed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      security:
+        - OpsKey: []
+      summary: Review a submitted use case
+  /v1/phone/business-profile:
+    get:
+      description: |-
+        Who the app said it is, and the brand a vendor registered it as.
+
+        Server-side only.
+      operationId: getBusinessProfile
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessProfile'
+          description: The profile
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Get the business profile
+    put:
+      description: |-
+        Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+
+        Server-side only.
+      operationId: saveBusinessProfile
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BusinessProfileRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessProfile'
+          description: The profile as saved
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Save the business profile
   /v1/phone/calls:
     post:
       description: Stream's SIP is inbound only, so the vendor originates the call and connects it to a trunk the agent is already on, rather than Stream dialling out.
@@ -9676,6 +11052,21 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: Internal Server Error
       summary: Bring a human onto a call that is already happening
+  /v1/phone/hooks/10dlc:
+    post:
+      description: 'Where Telnyx reports on the brands and campaigns this router registered. Unauthenticated because the vendor is not a customer: each report is checked against the vendor''s Ed25519 signature, and then only names the campaign to ask the vendor about, so a report cannot say a campaign was approved that was not.'
+      operationId: receiveDLCReport
+      responses:
+        "204":
+          description: The report is taken
+        "401":
+          description: The report is not signed by the vendor
+        "410":
+          description: This deployment registers nothing
+        "413":
+          description: The report is over 64 KiB
+      security: []
+      summary: Receive a 10DLC registration report
   /v1/phone/numbers:
     get:
       operationId: listPhoneNumbers
@@ -9898,6 +11289,454 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: Internal Server Error
       summary: Search for numbers to buy, at one vendor or all of them
+  /v1/phone/opt-outs:
+    get:
+      description: |-
+        The people who asked not to be reached, newest first.
+
+        Server-side only.
+      operationId: listOptOuts
+      parameters:
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OptOutPage'
+          description: A page of opt-outs
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: List opt-outs
+    post:
+      description: |-
+        Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+
+        Server-side only.
+      operationId: createOptOut
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOptOutRequest'
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OptOut'
+          description: The opt-out, or the one already recorded
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Record an opt-out
+  /v1/phone/opt-outs/{id}:
+    delete:
+      description: |-
+        Lifts an opt-out. The record of it is kept.
+
+        Server-side only.
+      operationId: revokeOptOut
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Revoked
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Revoke an opt-out
+  /v1/phone/sandbox:
+    get:
+      description: |-
+        What the app may text and call before a use case is approved, and how much of today's allowance it used.
+
+        Server-side only.
+      operationId: getPhoneSandbox
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneSandbox'
+          description: The sandbox
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Get the sandbox
+  /v1/phone/sandbox/recipients:
+    put:
+      description: |-
+        Replaces the numbers a sandboxed app may text and call.
+
+        Server-side only.
+      operationId: setSandboxRecipients
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSandboxRecipientsRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneSandbox'
+          description: The sandbox
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Set the sandbox recipients
+  /v1/phone/use-cases:
+    get:
+      description: |-
+        The app's use cases, newest first.
+
+        Server-side only.
+      operationId: listUseCases
+      parameters:
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UseCasePage'
+          description: A page of use cases
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: List 10DLC use cases
+    post:
+      description: |-
+        Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+
+        Server-side only.
+      operationId: createUseCase
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UseCaseRequest'
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UseCase'
+          description: The draft
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Create a 10DLC use case
+  /v1/phone/use-cases/{id}:
+    delete:
+      description: |-
+        Refused once the vendor holds it.
+
+        Server-side only.
+      operationId: deleteUseCase
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Delete a 10DLC use case
+    get:
+      description: Server-side only.
+      operationId: getUseCase
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UseCase'
+          description: The use case
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Get a 10DLC use case
+    put:
+      description: |-
+        Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+
+        Server-side only.
+      operationId: updateUseCase
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UseCaseRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UseCase'
+          description: The use case
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Update a 10DLC use case
+  /v1/phone/use-cases/{id}/reviews:
+    get:
+      description: |-
+        Every move the use case made and who made it, oldest first.
+
+        Server-side only.
+      operationId: listUseCaseReviews
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewPage'
+          description: A page of moves
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: List a use case's review history
+  /v1/phone/use-cases/{id}/submit:
+    post:
+      description: |-
+        Sends a use case to Stream's review, once it and the business profile have everything the registry asks for; a 400 says what is missing. Stream approving it registers it with the vendor.
+
+        Server-side only.
+      operationId: submitUseCase
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UseCase'
+          description: The submitted use case
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Submit a 10DLC use case for review
   /v1/phone/vendors:
     get:
       description: Every vendor this service knows about. A vendor that is declared but not implemented is listed rather than hidden, so what is missing is visible before a number is bought.

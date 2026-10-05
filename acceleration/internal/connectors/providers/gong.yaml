@@ -14,8 +14,9 @@
 #         refresh_token], token_endpoint_auth_methods_supported [client_secret_basic,
 #         client_secret_post], code_challenge_methods_supported [S256], no revocation_endpoint.
 id: gong
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 renames
+# client.policy to client.registration.
+revision: 2
 # [proto]:86-88
 name: Gong
 category: Revenue
@@ -34,7 +35,7 @@ client:
   # registration_endpoint. [proto]:91 (customer_dcr) is the same pair. No auth_method: [as]
   # lists client_secret_basic and client_secret_post and oauth2_code picks basic, which is
   # what [proto]:94 pinned.
-  policy: [customer, dcr]
+  registration: [customer, dcr]
 scopes:
   # All of [prm]'s scopes_supported, as MCP 2025-11-25 «Scope Selection Strategy» asks; [as]
   # lists the same two. [about] says «The MCP server is read-only», so what mcp:write grants

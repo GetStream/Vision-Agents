@@ -171,14 +171,14 @@ type Spec struct {
 	// config's own, or one of the built-in think, recall and explain. Empty means the
 	// built-in set, which is only loaded when there is a subagent to run them.
 	SkillNames []string
-	// Plugins are hosted MCP servers this session may reach, named from the catalog.
-	Plugins []string
+	// AgentPlugins are hosted MCP servers this session may reach, named from the catalog
+	// with how each is reached.
+	AgentPlugins []store.PluginEntry
 	// UserPlugins are hosted MCP servers the caller reaches with their own account, named
 	// from the catalog. A session with no caller is offered none of them.
-	UserPlugins []string
-	// PluginOptions change how those plugins are reached and what their logins ask for.
-	PluginOptions []store.PluginOptions
-	// MCPServers are MCP servers outside the catalog, opened by their URL with no login.
+	UserPlugins []store.PluginEntry
+	// MCPServers are MCP servers outside the catalog, opened by their URL with no login, the
+	// app's, or each caller's own.
 	MCPServers []store.MCPServer
 	// ServerInstructions are what those servers said at initialize about using their
 	// tools, added after Instructions. The session fills it in once they are open.
@@ -268,9 +268,8 @@ func FromConfig(config store.AgentConfig) Spec {
 		Greeting:           config.Greeting,
 		Guardrail:          config.Guardrail,
 		SkillNames:         config.Skills,
-		Plugins:            config.Plugins,
+		AgentPlugins:       config.AgentPlugins,
 		UserPlugins:        config.UserPlugins,
-		PluginOptions:      config.PluginOptions,
 		MCPServers:         config.MCPServers,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,

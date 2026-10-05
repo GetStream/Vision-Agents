@@ -18,6 +18,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/hibiken/asynq"
+	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
@@ -26,12 +27,15 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -277,8 +281,8 @@ const connectorHTTPTimeout = 10 * time.Second
 //
 // ClientMetadataURL is left empty, which turns CIMD off. The client metadata document it
 // would name is served by the consent flow (AI-844), and a client_id URL that answers 404
-// fails every consent that tries it. Until then a policy naming cimd falls through to the
-// next owner it names. Clients is nil too, so no operator or customer client is found until
+// fails every consent that tries it. Until then a client.registration naming cimd falls through to
+// the next source it names. Clients is nil too, so no operator or customer client is found until
 // client records exist (AI-846); only dcr can supply a client.
 func newConnectorRegistry(settings config.Config) (core.Registry, error) {
 	if !settings.Connectors.Enabled {
@@ -667,7 +671,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 		streams.Image = imaging
 	}
 
-	telephony, err := buildPhone(settings, pgStore, liveClient, logger)
+	registrations, dlcGate, err := buildDLC(settings, pgStore, liveClient, logger)
+	if err != nil {
+		return err
+	}
+	if registrations != nil {
+		go registrations.Run(ctx, dlcPollEvery)
+	}
+	telephony, err := buildPhone(settings, pgStore, liveClient, dlcGate, logger)
 	if err != nil {
 		return err
 	}
@@ -850,6 +861,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Campaigns:      campaigns,
 		Simulations:    simulations,
 		PluginEvents:   events,
+		DLC:            registrations,
+		Gate:           dlcGate,
+		OpsKey:         settings.Auth.OpsKey,
 		Dispatch:       workers,
 		Quota:          limiter,
 		Policies:       policies,
@@ -878,6 +892,34 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// to stay absent rather than becoming a value that says it is there.
 	if base != nil {
 		options.Knowledge = base
+	}
+	// A channel's provider credentials are sealed under the same key as the stored key
+	// secrets. Without one the channel paths refuse to hold them, which is better than
+	// keeping a WhatsApp token in the clear, and nothing is delivered because nothing can
+	// be connected. A message that arrives opens a conversation from a row, so answering
+	// one needs a database and sessions as well.
+	if settings.Auth.KEK != "" {
+		if options.Secrets, err = auth.NewSealer(settings.Auth.KEK); err != nil {
+			return err
+		}
+		if pgStore != nil && sessions != nil {
+			inbound, err := channels.New(channels.Options{
+				Store:    pgStore,
+				Sessions: sessions,
+				Secrets:  options.Secrets,
+				Gate:     dlcGate,
+				Logger:   logger,
+			})
+			if err != nil {
+				return err
+			}
+			options.Channels = inbound
+			defer inbound.Close()
+		}
+	} else {
+		logger.Warn("no auth.kek set, so no channel can be connected: "+
+			"there is nowhere safe to keep a provider's credentials",
+			"endpoint", "POST /v1/agents/channels")
 	}
 
 	server, err := api.NewServer(options)
@@ -1194,6 +1236,7 @@ func buildPhone(
 	settings config.Config,
 	pgStore *store.Store,
 	liveClient *live.Client,
+	gate *dlc.Gate,
 	logger *slog.Logger,
 ) (*phone.Service, error) {
 	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
@@ -1218,7 +1261,53 @@ func buildPhone(
 		Store:     pgStore,
 		Stream:    stream,
 		Recorder:  recorder,
+		Gate:      gate,
 		PublicURL: settings.PublicURL,
 		Logger:    logger,
 	})
+}
+
+// dlcPollEvery is how often the use cases a vendor holds are asked after, for the reports
+// its hook missed. A campaign takes days, so this is not what makes one quick.
+const dlcPollEvery = 15 * time.Minute
+
+// buildDLC wires 10DLC review and the gate every text and call passes. Without a database
+// there is nothing to register or enforce. Without a Telnyx key Stream's approval is final,
+// which is a deployment registering with no vendor of ours.
+func buildDLC(
+	settings config.Config,
+	pgStore *store.Store,
+	liveClient *live.Client,
+	logger *slog.Logger,
+) (*dlc.Service, *dlc.Gate, error) {
+	if pgStore == nil {
+		return nil, nil, nil
+	}
+	var counters rueidis.Client
+	if liveClient != nil {
+		counters = liveClient.Redis()
+	}
+	gate := dlc.NewGate(pgStore, counters, dlc.Sandbox{
+		Enabled:            settings.Sandbox.Enabled,
+		Recipients:         settings.Sandbox.Recipients,
+		MessagesPerDay:     settings.Sandbox.MessagesPerDay,
+		AudioMinutesPerDay: settings.Sandbox.AudioMinutesPerDay,
+	}, logger)
+	if settings.Sandbox.Enabled {
+		logger.Info("sandboxing apps with no approved 10DLC use case",
+			"recipients", settings.Sandbox.Recipients, "messages", settings.Sandbox.MessagesPerDay,
+			"audio_minutes", settings.Sandbox.AudioMinutesPerDay)
+	}
+
+	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Logger: logger}
+	if registrar, err := dlctelnyx.New(dlctelnyx.Options{}); err == nil {
+		options.Registrar = registrar
+	} else {
+		logger.Debug("no 10DLC registrar, Stream's approval of a use case is final", "error", err)
+	}
+	service, err := dlc.NewService(options)
+	if err != nil {
+		return nil, nil, err
+	}
+	return service, gate, nil
 }

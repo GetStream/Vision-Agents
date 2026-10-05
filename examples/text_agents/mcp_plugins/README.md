@@ -3,7 +3,8 @@
 A text agent that reads the team's issues in Sentry, GitHub and Linear, the customer in
 HubSpot and Salesforce, and your own calendar, Drive, Docs, Calendly, Cal.com and Slack. It
 makes 3D renders with Blender and knows where to eat from TableJourney's MCP server. The
-conversation can carry on in Slack, Teams, WhatsApp, RCS, by text or in iMessage.
+same agent answers on WhatsApp, on a text message and in iMessage, with no code for it here:
+`channels` in `agent.yaml` names the numbers and the router does the rest.
 
 ```bash
 cd examples/text_agents/mcp_plugins
@@ -16,13 +17,13 @@ The directory is the agent, and nothing in `mcp_plugins.py` sets up a plugin. `a
 connects each kind in a different way:
 
 ```yaml
-plugins:        # connected once by the company, on the dashboard
+agent_plugins:  # connected once by the company, on the dashboard
   - sentry
   - github
-  - linear
   - hubspot
   - salesforce
 user_plugins:   # connected by each person, in the chat, when the agent needs it
+  - linear
   - google_calendar
   - google_drive
   - google_docs
@@ -41,23 +42,80 @@ is the router's `public_url` followed by `/v1/agents/plugins/callback`:
 | `github` | `GITHUB_MCP_CLIENT_ID`, `GITHUB_MCP_CLIENT_SECRET` from a GitHub OAuth app |
 | `hubspot` | `HUBSPOT_MCP_CLIENT_ID`, `HUBSPOT_MCP_CLIENT_SECRET` from a HubSpot app |
 | `slack` | `SLACK_MCP_CLIENT_ID`, `SLACK_MCP_CLIENT_SECRET` from a Slack app |
+| `salesforce` | `SALESFORCE_MCP_CLIENT_ID`, `SALESFORCE_MCP_CLIENT_SECRET` from an External Client App |
 | `google_calendar` | `GOOGLE_CALENDAR_MCP_CLIENT_ID`, `GOOGLE_CALENDAR_MCP_CLIENT_SECRET`, `calendarmcp.googleapis.com` enabled |
 | `google_drive` | `GOOGLE_DRIVE_MCP_CLIENT_ID`, `GOOGLE_DRIVE_MCP_CLIENT_SECRET`, `drivemcp.googleapis.com` enabled |
 | `google_docs` | `GOOGLE_DOCS_MCP_CLIENT_ID`, `GOOGLE_DOCS_MCP_CLIENT_SECRET`, `docsmcp.googleapis.com` enabled |
 
 The three Google entries can carry the same client id and secret: they are separate because
 the router reads one pair per plugin, and the Cloud project has to have each API enabled.
-`salesforce` has no single global host, so its login is given the org's `instance_url`.
+
+### Salesforce
+
+`salesforce` is Salesforce's hosted `sobject-reads` server, which reads any object in the
+org and changes none: ask it "what are the top 10 opportunities for Q4?" and it answers
+with a SOQL query on `Opportunity`. One URL serves every production org, so the login
+needs no org host. Set the org up once, as an admin
+([Salesforce's guide](https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html)):
+
+1. In Setup, open **MCP Servers**, then **Salesforce Servers**, and activate `sobject-reads`.
+2. In **External Client App Manager**, create an app with OAuth on. Its callback URL is
+   the router's `public_url` + `/v1/agents/plugins/callback`, such as
+   `http://localhost:8080/v1/agents/plugins/callback`. Its scopes are `mcp_api` and
+   `refresh_token`. Require PKCE, and issue JWT-based access tokens for named users.
+3. Put the app's consumer key and secret in `.env` as `SALESFORCE_MCP_CLIENT_ID` and
+   `SALESFORCE_MCP_CLIENT_SECRET`, restart the router and connect Salesforce on the dashboard.
+
+The agent reads the org as the person who connected it, so it sees what they see.
+
+### Slack
+
+`slack` is [Slack's MCP server](https://docs.slack.dev/ai/slack-mcp-server/). Each person
+connects their own account, and the agent searches and posts as them. Slack registers no
+client by itself, and only an internal app or one published in the Slack Marketplace may use
+MCP:
+
+1. At [api.slack.com/apps](https://api.slack.com/apps), create an app in your workspace.
+   Under **OAuth & Permissions**, add the redirect URL
+   `http://localhost:8080/v1/agents/plugins/callback` (the router's `public_url` +
+   `/v1/agents/plugins/callback`) and the **user token** scopes the agent will ask for.
+2. Put its client id and secret in `.env` as `SLACK_MCP_CLIENT_ID` and
+   `SLACK_MCP_CLIENT_SECRET`, and restart the router.
+
+By default the login asks for `channels:history`, `channels:read`, `chat:write`,
+`search:read.public` and `users:read`: search and read public channels, post, and look
+people up. `scopes` replaces that list, say to search private channels and DMs as well, or
+to drop `chat:write` so the agent can only read:
+
+```yaml
+user_plugins:
+  - name: slack
+    scopes:
+      - search:read.public
+      - search:read.private
+      - search:read.im
+      - channels:history
+      - users:read
+```
+
+[Slack's docs](https://docs.slack.dev/ai/slack-mcp-server/#oauth-scopes) list which tool
+needs which scope. The router refuses one Slack's server does not offer, and the app must
+have every scope asked for. A tool whose scope was not granted fails when it is called, so
+pair `scopes` with `tools` to keep the model from seeing it:
+
+```yaml
+    tools: [slack_search_*, slack_read_*]
+```
 
 ### Read-only, and which scopes a login asks for
 
-`plugin_options` changes how a plugin is reached and what its login asks for. Left out,
-the plugin is reached as the catalog has it, which for Linear is `https://mcp.linear.app/mcp`
-asking for `read` and `write`:
+A plugin named by its id alone is reached as the catalog has it, which for Linear is
+`https://mcp.linear.app/mcp` asking for `read` and `write`. Name it with a mapping instead
+to change how it is reached and what its login asks for. Either form goes in either list:
 
 ```yaml
-plugin_options:
-  - plugin: linear
+user_plugins:
+  - name: linear
     readonly: true   # https://mcp.linear.app/mcp/readonly: no tool that writes, asks for read
     scopes: [read]   # replaces the scopes the login asks for
 ```
@@ -70,8 +128,8 @@ was granted, so connect the plugin again after changing either.
 does, and offers every tool when none are picked:
 
 ```yaml
-plugin_options:
-  - plugin: calcom
+user_plugins:
+  - name: calcom
     toolsets: [bookings, availability, event-types]
 ```
 
@@ -93,8 +151,8 @@ was given. `scopes` must be ones the server advertises; for Drive those are `dri
 `drive.readonly` and `drive.file`:
 
 ```yaml
-plugin_options:
-  - plugin: google_drive
+user_plugins:
+  - name: google_drive
     scopes:
       - https://www.googleapis.com/auth/drive.readonly
       - https://www.googleapis.com/auth/drive.file
@@ -107,13 +165,13 @@ take less context and give the agent less it may do. `tools` takes names or patt
 as `get_*`, works on any plugin and on `mcp_servers`, and needs no new login:
 
 ```yaml
-plugin_options:
-  - plugin: linear
+user_plugins:
+  - name: linear
     tools: [list_issues, get_issue, save_comment]
 mcp_servers:
   - name: tablejourney
     url: https://tablejourney.com/mcp
-    tools: [search_*]
+    tools: [search_places, place, dishes]
 ```
 
 A tool left out is not listed, and the router refuses to run it.
@@ -195,7 +253,7 @@ script prints. The router needs `DAYTONA_API_KEY` for this.
 ## TableJourney: an MCP server the router does not know
 
 Sentry and Google Calendar are in the router's catalog, which is what lets `agent.yaml` name
-them under `plugins` and `user_plugins`. Any other MCP server goes under `mcp_servers`, by
+them under `agent_plugins` and `user_plugins`. Any other MCP server goes under `mcp_servers`, by
 its URL:
 
 ```yaml
@@ -215,88 +273,111 @@ they are affiliate links, cite its pages) reach the model.
 uv run mcp_plugins.py "I'm in Rome tonight. Where should I go for cacio e pepe?"
 ```
 
-What the catalog does and this does not: there is no login, so only a server that needs
-none can be named (TableJourney's optional `X-API-Key` is not sent), and the URL has to be
-https.
+The URL has to be https, and no headers are sent (TableJourney's optional `X-API-Key` is
+not). The server says whether it needs an OAuth login, and the router asks it when the
+config is saved: by its `/.well-known/oauth-protected-resource`, or by a 401 that says how
+to authenticate. The answer is the read-only `needs_login`. The app connects such a server
+once, on the dashboard, unless `user: true` has each person connect their own in the chat,
+as `user_plugins` do for the catalog:
 
-## Slack, Teams, WhatsApp, RCS, texting and iMessage: carrying the conversation over
+```yaml
+mcp_servers:
+  - name: crm                  # the app connects it once, on the dashboard
+    url: https://crm.example.com/mcp
+  - name: notes                # each person connects their own, in the chat
+    url: https://notes.example.com/mcp
+    user: true
+    scopes: [notes.read]       # left out, asks for what the server advertises
+```
+
+The login is the one the MCP authorization spec describes: the authorization server's
+metadata, a client the router registers there itself, PKCE and `resource`. A server that
+needs a login the router cannot make is refused when the config is saved, and so is
+`scopes` or `user` on one that needs none. Until the app connects it, the server's tools
+fail with "connect crm on the dashboard". The app's login is listed and connected with the
+same `/v1/agents/configs/{id}/plugins` endpoints as Sentry's below. A login is only good at
+the URL it was made at, and one made before a change of scopes keeps what it was granted,
+so connect again after changing either.
+
+## WhatsApp, texting and iMessage: the agent on a phone number
 
 A plugin is an account the agent reads. A channel is somewhere the conversation happens.
 Slack is both, and they are not the same thing: `slack` under `user_plugins` lets the agent
-search your workspace, while the Slack channel below is you talking to the agent in Slack.
+search your workspace; the channels here are a person writing to the agent from their phone.
 
-With any of `SLACK_BOT_TOKEN`, `TEAMS_APP_ID`, `RBM_AGENT_ID`, `WHATSAPP_ACCESS_TOKEN`,
-`TELNYX_SMS_NUMBER` or `LINQ_API_KEY` set, the script keeps the conversation open after its
-first answer and prints how to reach it. Send the code it gives (`link <code>`) from that
-channel. That ties you to this conversation, and from then on what you write there is asked
-in it, as `MCP_PLUGINS_USER_ID`, and the answers come back to you. It is the same session,
-so the dashboard shows every channel at once, and the calendar you connected in the terminal
-is the one the agent reads in Slack. A login the agent asks for arrives as whatever that
-channel has: a Block Kit button on Slack, a hero card with the plugin's logo in Teams, a
-*Connect* button on WhatsApp, a suggestion over RCS and a link in a text.
+There is no code for this in the example. The router answers the lines, so it takes three
+steps and the third is the only one in `agent.yaml`.
 
-`channels.py` is all of it. Each channel checks its provider's signature, reads the webhook
-with the `omni` plugin (`SlackProvider`, `TeamsProvider`, `GoogleRBMProvider`,
-`WhatsAppProvider`, `TelnyxProvider`, `LinqProvider`) and sends replies to the provider's
-API. They are served on one port (`INBOX_PORT`, 8090), at `/slack`, `/teams`, `/rcs`,
-`/whatsapp`, `/sms` and `/imessage`, so one tunnel carries them all.
+**1. Connect the line once, for the app.** This hands the router the provider's credentials
+and answers with the URL that provider should deliver to. They are sealed under the router's
+`auth.kek` and never read back, so a deployment without one refuses to hold them.
 
-### Setting up Slack's side
+```bash
+curl -X POST -H "X-Customer-Id: $STREAM_ACCELERATION_CUSTOMER_ID" \
+  -H "Content-Type: application/json" $STREAM_ACCELERATION_URL/v1/agents/channels \
+  -d '{"kind": "whatsapp", "number": "+15556325550",
+       "account_id": "'$WHATSAPP_PHONE_NUMBER_ID'", "token": "'$WHATSAPP_ACCESS_TOKEN'",
+       "signing": "'$WHATSAPP_APP_SECRET'", "challenge": "'$WHATSAPP_VERIFY_TOKEN'"}'
+# {"id":"...","kind":"whatsapp","number":"+15556325550","delivering":false,
+#  "webhook_url":"https://<public_url>/v1/agents/channels/hooks/<token>"}
+```
 
-1. At [api.slack.com/apps](https://api.slack.com/apps), create an app. Under *OAuth &
-   Permissions*, give the bot `chat:write`, `im:history`, `channels:history` and
-   `app_mentions:read`, and install it.
-2. Under *Event Subscriptions*, set the request URL to `https://<tunnel>/slack`. Slack
-   checks it as you save, so start the script first. Subscribe the bot to `message.im` and
-   `app_mention`.
-3. Copy the bot token and the signing secret (*Basic Information → App Credentials*) into
-   the repo's `.env`:
+What each credential is, per channel:
 
-   ```bash
-   SLACK_BOT_TOKEN=xoxb-...
-   SLACK_SIGNING_SECRET=...
-   ```
+| Channel | `kind` | `token` | `signing` | `account_id` |
+| --- | --- | --- | --- | --- |
+| WhatsApp | `whatsapp` | a Meta access token | the app secret | the phone number id |
+| Texting | `sms` | a Telnyx API key | the account's public key | the Telnyx number's id |
+| iMessage | `imessage` | a Linq API key | the subscription's `whsec_...` | — |
 
-Then message the app directly, or mention it in a channel it is in.
+WhatsApp also takes `challenge`, the verify token Meta echoes while saving a webhook.
+Connecting a line that is already connected replaces its credentials and keeps its
+`webhook_url`, so rotating a token does not mean setting the webhook up again. `GET
+/v1/agents/channels` lists the lines; `DELETE /v1/agents/channels/{id}` drops one.
 
-### Setting up Teams' side
+**2. Point the provider at that URL.** Paste it into Meta's or Linq's webhook setup, below.
+A `sms` line is the exception: the number was bought through the router, so the router points
+it at the URL itself and answers `"delivering": true` with nothing left to do.
 
-1. In the Azure portal, create an *Azure Bot* with a multi-tenant Microsoft App ID, and add
-   the Microsoft Teams channel to it.
-2. Set its messaging endpoint to `https://<tunnel>/teams`.
-3. Create a client secret for the app registration and put both in the repo's `.env`. A
-   single-tenant bot also needs its tenant:
+**3. Name the number in `agent.yaml`.** This is what makes the agent the one that answers:
 
-   ```bash
-   TEAMS_APP_ID=...
-   TEAMS_APP_PASSWORD=...
-   # TEAMS_TENANT_ID=...     # single-tenant bots only
-   ```
+```yaml
+channels:
+  whatsapp:
+    number: "+15556325550"
+  sms:
+    number: "+12187021098"
+  identity: link
+```
 
-Every delivery carries a Bot Framework token, which `channels.py` checks against
-`login.botframework.com`'s keys. Where the reply is sent comes from that token's
-`serviceurl` claim rather than from the body, so a delivery cannot point the agent's answers
-at a host of its own. The keys are fetched once at startup, so a key rotation mid-run means
-a restart.
+The number has to be a line the app connected, and only one agent may answer on it. A message
+that arrives earns a turn in the writer's own persistent conversation, so it is in Stream Chat
+like anything else -- the dashboard shows it, and `custom.channel`, `custom.channel_number`
+and `custom.channel_from` say where it came from. A second message carries on the first one's
+conversation rather than starting over.
 
-### Setting up Google's side (RCS)
+### Who is writing
 
-RCS Business Messaging needs a registered RBM agent, which Google approves per carrier.
+`identity` decides what a phone number means to the agent.
 
-1. In the RBM developer console, create an agent and note its id.
-2. Set its webhook to `https://<tunnel>/rcs` with a client token of your choosing. RBM
-   sends that token back on every delivery, which is what `channels.py` compares.
-3. Download a service account key with the *RCS Business Messaging* role and point at the
-   file:
+`phone`, the default, makes each number an end user of its own, `phone:+13475550100`. Anybody
+who writes is answered and what they say is kept as theirs, which is what a support agent or
+this example's TableJourney questions want.
 
-   ```bash
-   RBM_AGENT_ID=...
-   RBM_SERVICE_ACCOUNT=/path/to/service-account.json
-   RBM_CLIENT_TOKEN=pick-anything
-   ```
+`link` answers a number only once somebody already signed in has tied it to themselves. Ask
+for a code, show it to them, and the number they text it from is theirs from then on:
 
-The service account signs its own way to an access token, so there is nothing else to
-install. Only a test device added to the agent can message it before it is launched.
+```bash
+curl -X POST -H "X-Customer-Id: $STREAM_ACCELERATION_CUSTOMER_ID" \
+  -H "Content-Type: application/json" $STREAM_ACCELERATION_URL/v1/agents/channels/links \
+  -d '{"config_id": "'$CONFIG_ID'", "user_id": "on-call-engineer"}'
+# {"code":"418702","expires_at":"..."}
+```
+
+Text that code to the agent and it answers that the number is yours. This example uses `link`
+because its agent reads your Linear issues and your calendar: the Google Calendar you
+connected in the terminal is the one it reads over WhatsApp, because both are the same end
+user. Until a number is linked, every message gets the same answer asking for a code.
 
 ### Setting up Meta's side
 
@@ -306,102 +387,71 @@ install. Only a test device added to the agent can message it before it is launc
    an access token. Add your own phone as a recipient and confirm it with the code WhatsApp
    sends: a test number only talks to up to five numbers confirmed this way.
 3. Under *App settings → Basic*, copy the **App secret**. Webhooks are signed with it.
-4. Put them in the repo's `.env`, with any string you like as the verify token:
-
-   ```bash
-   WHATSAPP_ACCESS_TOKEN=...
-   WHATSAPP_PHONE_NUMBER_ID=...
-   WHATSAPP_APP_SECRET=...
-   WHATSAPP_VERIFY_TOKEN=pick-anything
-   # INBOX_PORT=8090
-   ```
-
-5. Give the webhook a public https URL. Meta has to reach it, so a laptop needs a tunnel,
-   such as `ngrok http 8090` (its free static domain saves re-registering each run) or
-   `cloudflared tunnel --url http://localhost:8090`.
-6. Start the script, since Meta checks the URL while you save it. Then under
-   *WhatsApp → Configuration → Webhook*, set the callback URL to `https://<tunnel>/whatsapp`
-   and the verify token to `WHATSAPP_VERIFY_TOKEN`, then **Verify and save**. Under
-   *Webhook fields*, subscribe to `messages`.
+4. Connect the line with those three and any string you like as the verify token, as above.
+5. The router has to be reachable by Meta, so a laptop needs a tunnel: `ngrok http 8080` (its
+   free static domain saves re-registering each run) or
+   `cloudflared tunnel --url http://localhost:8080`. Set the router's `public_url` to it, so
+   the `webhook_url` it answers with is the one Meta can reach.
+6. Under *WhatsApp → Configuration → Webhook*, set the callback URL to the `webhook_url` and
+   the verify token to what you connected the line with, then **Verify and save**. Meta
+   checks it as you save, which is the router answering the GET. Under *Webhook fields*,
+   subscribe to `messages`.
 
 The token from *API Setup* lasts a day. For one that does not expire, add a system user in
 *Business settings → Users → System users*, give it the app and the WhatsApp account, and
-generate a token with `whatsapp_business_messaging` and `whatsapp_business_management`.
+generate a token with `whatsapp_business_messaging` and `whatsapp_business_management`. Then
+connect the line again with the new token; the webhook URL does not change.
 
-If messages arrive at nobody although the webhook verified, check that the WhatsApp
-Business Account is subscribed to the app (`GET /{waba-id}/subscribed_apps`, and `POST` it
-if the app is missing) and that the app's subscription lists the `messages` field.
+If messages arrive at nobody although the webhook verified, check that the WhatsApp Business
+Account is subscribed to the app (`GET /{waba-id}/subscribed_apps`, and `POST` it if the app
+is missing) and that the app's subscription lists the `messages` field.
 
 ### Setting up Telnyx's side
 
-Texting uses the same Telnyx account as the router's phone numbers (`TELNYX_API_KEY`).
+Texting uses the same Telnyx account as the router's phone numbers, and the number has to be
+one the app bought through the router (`POST /v1/phone/numbers`) with the `sms` capability.
+Connecting the line points that number's messaging at the webhook, so there is nothing to do
+in the portal. The `signing` credential is the account's webhook signing key (*Keys &
+Credentials → Public Key*, or `GET /v2/public_key`).
 
-1. Create a messaging profile whose webhook is `https://<tunnel>/sms`, in the portal under
-   *Messaging*, or with `POST /v2/messaging_profiles` (`webhook_url`, `webhook_api_version`
-   `2`, `whitelisted_destinations` such as `["US"]`).
-2. Assign one of the account's numbers to it, in the portal or with
-   `PATCH /v2/phone_numbers/{id}/messaging` and the profile's id. A number can text and take
-   calls at once: the messaging profile and the voice connection are separate.
-3. Put the number and the account's webhook signing key (*Keys & Credentials → Public Key*,
-   or `GET /v2/public_key`) in the repo's `.env`:
-
-   ```bash
-   TELNYX_SMS_NUMBER=+1...
-   TELNYX_PUBLIC_KEY=...
-   ```
-
-**Texts to US phones need 10DLC registration.** Carriers block business texts from a US
-local number that is not on a registered 10DLC campaign, so until the account has a brand
-and a campaign with the number on it, texts reach the agent but its replies are refused.
-Register both under *Messaging → 10DLC* in the Telnyx portal; approval takes days. A
-toll-free number needs toll-free verification instead.
+**Texts to US phones need 10DLC registration.** Carriers block business texts from a US local
+number that is not on a registered 10DLC campaign, so until the account has a brand and a
+campaign with the number on it, texts reach the agent but its replies are refused. Register
+both under *Messaging → 10DLC* in the Telnyx portal; approval takes days. A toll-free number
+needs toll-free verification instead.
 
 ### Setting up Linq's side (iMessage)
 
-Linq carries iMessage, and falls back to RCS or SMS for a phone Apple cannot reach. It
-needs a Linq partner account.
+Linq carries iMessage, and falls back to RCS or SMS for a phone Apple cannot reach. It needs
+a Linq partner account.
 
 1. Create an API token at
    [dashboard.linqapp.com/api-tooling](https://dashboard.linqapp.com/api-tooling), and note
    the line to message (`GET /v3/phone_numbers`).
-2. Subscribe to `message.received`, pinning the payload version the `omni` provider reads:
+2. Connect the line with that token, to get a `webhook_url`.
+3. Subscribe to `message.received` at that URL, pinning the payload version the router reads:
 
    ```bash
    curl -X POST https://api.linqapp.com/api/partner/v3/webhook-subscriptions \
      -H "Authorization: Bearer $LINQ_API_KEY" -H "Content-Type: application/json" \
-     -d '{"target_url": "https://<tunnel>/imessage?version=2026-02-03",
+     -d '{"target_url": "<webhook_url>?version=2026-02-03",
           "subscribed_events": ["message.received"]}'
    ```
 
-   The response's `signing_secret` (`whsec_...`) is what deliveries are signed with.
-3. Put them in the repo's `.env`:
-
-   ```bash
-   LINQ_API_KEY=...
-   LINQ_NUMBER=+1...
-   LINQ_WEBHOOK_SECRET=whsec_...
-   ```
+4. Connect the line again with the response's `signing_secret` (`whsec_...`) as `signing`.
+   The `webhook_url` does not change, so the subscription stays good.
 
 ### Where this runs out
 
-Each channel needs configuring at both levels the plugins do, and the router has neither for
-a channel, so this example holds both itself:
-
-- **Once for the app.** The Slack app, the Azure bot, the RBM agent, the WhatsApp business
-  number and the Telnyx number all belong to the company, like the Sentry login. There is no
-  `channels:` beside `plugins:` in `agent.yaml` and nowhere on the dashboard to connect one,
-  so they live in this script's environment, and only this process can answer them.
-- **Once per person.** Which end user a phone number is lives in this process's memory, for
-  one conversation. The router has no record of it, so a second run needs a new code, and a
-  number writing in when the script is not running reaches nobody. A Chat channel already
-  starts a session by itself; a phone number cannot.
-- **One direction.** Only answers to what was written on a channel are sent there. A reply
-  to something typed on the dashboard stays on the dashboard.
-- **Meta's 24-hour window.** A business may only write freely within 24 hours of the
-  person's last message, and needs an approved template after that. The agent only ever
-  answers, so this holds, but nothing could start a WhatsApp conversation.
+- **Meta's 24-hour window.** A business may only write freely within 24 hours of the person's
+  last message, and needs an approved template after that. The agent only ever answers, so
+  this holds, but nothing could start a WhatsApp conversation.
+- **One direction.** Only what the agent says while answering a channel message goes back
+  there. A reply to something typed on the dashboard stays on the dashboard.
 - **Formatting.** The agent writes Markdown, which WhatsApp reads as its own `*bold*` and a
-  text not at all, so a heading or a table arrives as typed.
+  text message not at all, so a heading or a table arrives as typed.
+- **Media in.** A photo or a voice note sent to the agent is not read; only text, a pressed
+  button and a list choice are.
 
 Needs a router: see `acceleration/README.md`, then `STREAM_ACCELERATION_URL` and
 `STREAM_ACCELERATION_CUSTOMER_ID`, plus the Stream app's `STREAM_API_KEY` and

@@ -7,7 +7,6 @@ import webbrowser
 from dotenv import load_dotenv
 from vision_agents.core import Agent
 from vision_agents.plugins import stream
-from channels import Inbox
 
 logging.basicConfig(level=logging.INFO)
 # What this example prints is the point of it, and a request per HTTP call would bury that.
@@ -20,12 +19,12 @@ A text agent on most of the router's plugin catalog, plus Blender in the router'
 TableJourney, which knows where to eat, is an MCP server the router has never heard of.
 
 `agent.yaml` is where all of it is set up, and each kind is set up differently. Sentry,
-GitHub, Linear, HubSpot and Salesforce are under `plugins`: the company connects each once,
-on the dashboard, and every conversation reads the same accounts. Google Calendar, Drive and
-Docs, Calendly, Cal.com and Slack are under `user_plugins`: each person connects their own,
-and the agent asks for one in the conversation the first time it needs it. In a chat that
-request is a `plugin_authorization` attachment, a button with the plugin's logo on it; here
-it is the URL, printed. Blender is no MCP server at all: `sandbox_options` builds it into the
+GitHub, HubSpot and Salesforce are under `agent_plugins`: the company connects each once,
+on the dashboard, and every conversation reads the same accounts. Linear, Google Calendar,
+Drive and Docs, Calendly, Cal.com and Slack are under `user_plugins`: each person connects
+their own, and the agent asks for one in the conversation the first time it needs it. In a
+chat that request is a `plugin_authorization` attachment, a button with the plugin's logo on
+it; here it is the URL, printed. Blender is no MCP server at all: `sandbox_options` builds it into the
 router's Daytona sandbox, and `skills/render.md` is what the subagent writes its scene
 under. The render comes back as a file of run_code, attached to the reply.
 
@@ -37,11 +36,9 @@ the agent's instructions.
 A calendar belongs to somebody, so the conversation is opened for an end user. Without one
 the agent is offered no calendar at all.
 
-With SLACK_BOT_TOKEN, TEAMS_APP_ID, RBM_AGENT_ID, WHATSAPP_ACCESS_TOKEN, TELNYX_SMS_NUMBER
-or LINQ_API_KEY set, the conversation can move to Slack, Teams, WhatsApp, RCS, text messages
-or iMessage once the first answer is in: send the code it prints from there. That ties you to
-this conversation and its end user, so the calendar you connected here is the one the agent
-reads there. See channels.py, and the README for setting up each provider's side.
+The same agent answers on WhatsApp, on a text message and on iMessage, and there is no code
+for that here: `channels` in `agent.yaml` names the numbers, the app connected each line once
+on the router, and the router answers what arrives. The README has the three steps.
 
 Needs a router: see acceleration/README.md, then point STREAM_ACCELERATION_URL at it. Sentry,
 Linear, Calendly and Cal.com register their own clients; GitHub, HubSpot, Slack and the three
@@ -60,7 +57,6 @@ What are my open Linear issues?
 async def main(question: str) -> None:
     llm = stream.Accelerated(config="mcp_plugins", user_id=USER_ID)
     agent = Agent(config="mcp_plugins", llm=llm)
-    inbox = Inbox.from_env(agent)
 
     async with agent.chat():
         dashboard = os.environ.get("DASHBOARD_BASE_URL")
@@ -69,17 +65,7 @@ async def main(question: str) -> None:
             print(f"[watch it on the dashboard: {url}]", flush=True)
             webbrowser.open(url, 2)
 
-        if inbox is None:
-            await ask_here(agent, question)
-            return
-        try:
-            await inbox.start()
-            await ask_here(agent, question)
-            for invitation in inbox.invitations:
-                print(f"[{invitation}]", flush=True)
-            await asyncio.Event().wait()
-        finally:
-            await inbox.stop()
+        await ask_here(agent, question)
 
 
 async def ask_here(agent: Agent, question: str) -> None:

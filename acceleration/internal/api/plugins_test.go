@@ -25,6 +25,13 @@ func TestPluginsSuite(t *testing.T) {
 	runSuite(t, new(PluginsSuite))
 }
 
+// SetupSuite lets the API reach the token servers the tests stand up on loopback, which
+// the router's own client refuses.
+func (s *PluginsSuite) SetupSuite() {
+	s.pluginHTTP = &http.Client{}
+	s.RouterSuite.SetupSuite()
+}
+
 func (s *PluginsSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 }
@@ -90,9 +97,9 @@ func (s *PluginsSuite) TestAPluginTheAgentNamesThatNobodyConnectedIsLeftToRemind
 	var agent AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
 		AgentConfigRequest{
-			Name:        "on-call-" + s.utils.uuid(),
-			Plugins:     pointerTo([]string{"sentry"}),
-			UserPlugins: pointerTo([]string{"google_calendar"}),
+			Name:         "on-call-" + s.utils.uuid(),
+			AgentPlugins: pointerTo([]PluginEntry{{Name: "sentry"}}),
+			UserPlugins:  pointerTo([]PluginEntry{{Name: "google_calendar"}}),
 		}, &agent))
 
 	var connections []PluginConnection
@@ -102,7 +109,7 @@ func (s *PluginsSuite) TestAPluginTheAgentNamesThatNobodyConnectedIsLeftToRemind
 	s.Require().Len(connections, 1, "each user connects their own calendar, so the app has nothing to finish for it")
 	s.Equal("sentry", connections[0].PluginId)
 	s.Equal(PluginConnectionStatusNotConnected, connections[0].Status)
-	s.Equal([]string{"google_calendar"}, *agent.UserPlugins)
+	s.Equal([]PluginEntry{{Name: "google_calendar"}}, *agent.UserPlugins)
 }
 
 func (s *PluginsSuite) TestAnEndUsersLoginIsTheirsAloneAndSendsThemBackToTheConversation() {
@@ -142,7 +149,7 @@ func (s *PluginsSuite) TestAnEndUsersLoginIsTheirsAloneAndSendsThemBackToTheConv
 	s.Equal(PluginConnectionStatusPending, connections[0].Status)
 	var stored AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id, nil, &stored))
-	s.Nil(stored.Plugins, "a user's login does not hand the plugin to every session")
+	s.Nil(stored.AgentPlugins, "a user's login does not hand the plugin to every session")
 }
 
 func (s *PluginsSuite) TestTheLoginsOfAnAgentThatIsNotThereAreNotFound() {

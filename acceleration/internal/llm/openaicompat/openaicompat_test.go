@@ -718,6 +718,24 @@ func (s *OpenAICompatSuite) TestSeveralToolCallsKeepTheirOwnArguments() {
 	s.Equal(`{"to":"+15550001111"}`, response.ToolCalls[1].Arguments)
 }
 
+func (s *OpenAICompatSuite) TestParallelCallsStreamedUnderOneIndexStayApart() {
+	// Gemini streams each parallel call whole, all under index 0, told apart by id.
+	s.frames = []string{
+		toolFrame(0, "call-1", "search_issues", `{"query":"timeout"}`),
+		toolFrame(0, "call-2", "search_issues", `{"query":"crash"}`),
+		usageFrame(20, 0, 12, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Require().Len(response.ToolCalls, 2)
+	s.Equal("call-1", response.ToolCalls[0].ID)
+	s.Equal(`{"query":"timeout"}`, response.ToolCalls[0].Arguments)
+	s.Equal("call-2", response.ToolCalls[1].ID)
+	s.Equal(`{"query":"crash"}`, response.ToolCalls[1].Arguments)
+}
+
 func (s *OpenAICompatSuite) TestSpeechAndAToolCallArriveTogether() {
 	// A model told to keep the caller company while it acts says something and calls the
 	// tool in the same reply, and both halves have to survive.

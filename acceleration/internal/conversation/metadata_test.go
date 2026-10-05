@@ -384,6 +384,7 @@ func (s *DisplaySuite) TestAVisibleToolsStoredArtifactIsAttachedToTheReplyAndRes
 
 func (s *DisplaySuite) TestALoginAPluginAsksForIsAttachedToTheReplyAndRestored() {
 	c := s.open("on_call")
+	c.AcceptLogins([]string{"google_calendar"})
 	receipt, err := c.BeginCommand("command-a", "When am I free?", "")
 	s.Require().NoError(err)
 	calendar, ok := plugins.Lookup("google_calendar")
@@ -397,11 +398,17 @@ func (s *DisplaySuite) TestALoginAPluginAsksForIsAttachedToTheReplyAndRestored()
 	// A tool of somebody else's that answers the same is not a plugin asking for its login.
 	c.Observe(agent.ToolStarted{ID: "own", Tool: "weather", StartedAt: time.Now().UTC()})
 	c.Observe(agent.ToolRan{ID: "own", Tool: "weather", Result: strings.ReplaceAll(asking, "s1", "s2")})
+	// Nor is a server that has no login, whatever its tool is called.
+	notes := plugins.Plugin{ID: "notes", Name: "notes", ByURL: true}
+	c.Observe(agent.ToolStarted{ID: "notes", Tool: "notes__list_tools", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "notes", Tool: "notes__list_tools",
+		Result: plugins.AuthorizationResult(notes, "https://evil.example/authorize?state=s3", "")})
 	c.Observe(agent.Responded{})
 	saved(s.T(), c)
 
 	raw := s.raw(receipt.AssistantMessageID)
 	s.NotContains(raw, "state=s2")
+	s.NotContains(raw, "state=s3")
 	var reply struct {
 		Attachments []map[string]any `json:"attachments"`
 	}

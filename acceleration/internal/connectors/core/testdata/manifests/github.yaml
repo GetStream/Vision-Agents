@@ -20,7 +20,7 @@ endpoints:
 # github_app for installation tokens; the hosted MCP stays oauth2_code: row 6.
 schemes: [github_app, oauth2_code]
 client:
-  policy: [operator]
+  registration: [operator]
   # prototype internal/mcp/connectors.yaml:84
   env: GITHUB
 capture:

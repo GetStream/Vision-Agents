@@ -381,6 +381,50 @@ sandbox_options:
 	}
 }
 
+func TestSyncSendsTheChannelsTheAgentAnswersOn(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `channels:
+  whatsapp:
+    number: "+15556325550"
+  sms:
+    number: "+12187021098"
+  identity: link
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	named := router.syncs[0].Channels
+	if named == nil || named.Whatsapp == nil || named.Whatsapp.Number != "+15556325550" ||
+		named.Sms == nil || named.Sms.Number != "+12187021098" || named.Imessage != nil ||
+		named.Identity == nil || *named.Identity != acceleration.ChannelIdentityLink {
+		t.Errorf("the channels went as %+v", named)
+	}
+}
+
+// A file saying nothing about channels leaves the agent reachable in Stream Chat alone.
+func TestSyncSendsNoChannelsWhenTheFileNamesNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "llm: llm-fast\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if router.syncs[0].Channels != nil {
+		t.Errorf("the channels went as %+v", router.syncs[0].Channels)
+	}
+}
+
 func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `mcp_servers:
@@ -404,14 +448,46 @@ func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
 	}
 }
 
+func TestSyncSendsWhoLogsIntoEachMCPServer(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `mcp_servers:
+  - name: crm
+    url: https://crm.example.com/mcp
+    scopes: [contacts.read]
+  - name: notes
+    url: https://notes.example.com/mcp
+    user: true
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	servers := router.syncs[0].McpServers
+	if servers == nil || len(*servers) != 2 {
+		t.Fatalf("the MCP servers went as %+v", servers)
+	}
+	crm, notes := (*servers)[0], (*servers)[1]
+	if crm.Scopes == nil || strings.Join(*crm.Scopes, ",") != "contacts.read" || crm.User != nil {
+		t.Errorf("the app's server went as %+v", crm)
+	}
+	if notes.User == nil || !*notes.User || notes.Scopes != nil {
+		t.Errorf("each user's server went as %+v", notes)
+	}
+}
+
 func TestSyncSendsHowEachPluginIsReached(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", `user_plugins: [linear, calcom]
-plugin_options:
-  - plugin: linear
+	write(t, root, "agent.yaml", `agent_plugins: [sentry]
+user_plugins:
+  - name: linear
     readonly: true
     scopes: [read]
-  - plugin: calcom
+  - name: calcom
     toolsets: [bookings, availability]
     tools: [get_bookings, get_availability]
 `)
@@ -424,17 +500,26 @@ plugin_options:
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	options := router.syncs[0].PluginOptions
-	if options == nil || len(*options) != 2 || (*options)[0].Plugin != "linear" ||
-		(*options)[0].Readonly == nil || !*(*options)[0].Readonly ||
-		(*options)[0].Scopes == nil || len(*(*options)[0].Scopes) != 1 || (*(*options)[0].Scopes)[0] != "read" {
-		t.Fatalf("the plugin options went as %+v", options)
+	app := router.syncs[0].AgentPlugins
+	if app == nil || len(*app) != 1 {
+		t.Fatalf("the app's plugins went as %+v", app)
 	}
-	if toolsets := (*options)[1].Toolsets; toolsets == nil || strings.Join(*toolsets, ",") != "bookings,availability" {
-		t.Errorf("calcom's toolsets went as %+v", toolsets)
+	if sentry, err := (*app)[0].AsPluginEntry0(); err != nil || sentry != "sentry" {
+		t.Errorf("a plugin with nothing said about it went as %q (%v), not its id", sentry, err)
 	}
-	if tools := (*options)[1].Tools; tools == nil || strings.Join(*tools, ",") != "get_bookings,get_availability" {
-		t.Errorf("calcom's tools went as %+v", tools)
+	users := router.syncs[0].UserPlugins
+	if users == nil || len(*users) != 2 {
+		t.Fatalf("each user's plugins went as %+v", users)
+	}
+	linear, err := (*users)[0].AsPluginWithOptions()
+	if err != nil || linear.Name != "linear" || linear.Readonly == nil || !*linear.Readonly ||
+		linear.Scopes == nil || strings.Join(*linear.Scopes, ",") != "read" {
+		t.Errorf("linear went as %+v (%v)", linear, err)
+	}
+	calcom, err := (*users)[1].AsPluginWithOptions()
+	if err != nil || calcom.Toolsets == nil || strings.Join(*calcom.Toolsets, ",") != "bookings,availability" ||
+		calcom.Tools == nil || strings.Join(*calcom.Tools, ",") != "get_bookings,get_availability" {
+		t.Errorf("calcom went as %+v (%v)", calcom, err)
 	}
 }
 

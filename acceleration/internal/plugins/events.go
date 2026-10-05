@@ -124,7 +124,7 @@ func Unsubscribe(ctx context.Context, conn Connection, event string, arguments m
 // offers events.
 func discover(ctx context.Context, conn Connection, transport *http.Client) (*client, error) {
 	if transport == nil {
-		transport = http.DefaultClient
+		transport = publicClient
 	}
 	opened := &client{
 		pluginID: conn.PluginID,

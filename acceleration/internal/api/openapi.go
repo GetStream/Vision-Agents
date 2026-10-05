@@ -36,6 +36,13 @@ var specSecurity = []map[string][]string{
 }
 
 var securitySchemes = map[string]*huma.SecurityScheme{
+	"OpsKey": {
+		Type: "apiKey",
+		In:   "header",
+		Name: opsKeyHeader,
+		Description: "Stream staff's own key, for reviewing 10DLC use cases across apps. It is " +
+			"held by Stream's internal tools and never by an app or a browser.",
+	},
 	"CustomerId": {
 		Type: "apiKey",
 		In:   "header",
@@ -234,6 +241,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	config.AllowAdditionalPropertiesByDefault = true
 
 	api := humachi.New(router, config)
+	api.UseMiddleware(s.requireOpsKey(api))
 	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
 	s.registerPolicies(api)
@@ -267,6 +275,8 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerSync(api)
 	s.registerConnectors(api)
 	s.registerConnections(api)
+	s.registerChannels(api)
+	s.registerDLC(api)
 	return api
 }
 
@@ -275,7 +285,8 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 // An operation declaring no security at all is reached before there is a caller to ask for.
 func requireCustomer(api huma.API) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		public := ctx.Operation().Security != nil && len(ctx.Operation().Security) == 0
+		// A staff operation is answered for no customer: requireOpsKey let it through.
+		public := ctx.Operation().Security != nil && len(ctx.Operation().Security) == 0 || staffOperation(ctx.Operation())
 		if _, known := CustomerFrom(ctx.Context()); !known && !public {
 			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, missingCustomer().Error)
 			return

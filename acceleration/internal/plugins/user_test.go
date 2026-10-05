@@ -27,7 +27,7 @@ func (s *UserSuite) SetupTest() {
 }
 
 func (s *UserSuite) TestEachUserPluginIsOfferedAsTwoToolsWhoseNamesNeedNoLogin() {
-	tools := UserTools([]string{"google_calendar", "carrier-pigeon"})
+	tools := UserTools([]Plugin{s.calendar})
 
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
@@ -40,7 +40,7 @@ func (s *UserSuite) TestEachUserPluginIsOfferedAsTwoToolsWhoseNamesNeedNoLogin()
 func (s *UserSuite) TestTheResultAskingForALoginIsReadBackAsTheAttachment() {
 	result := AuthorizationResult(s.calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=abc&scope=x", s.logo)
 
-	found, ok := RequestedAuthorization("google_calendar__list_tools", result)
+	found, ok := RequestedAuthorization("google_calendar__list_tools", result, []string{"google_calendar"})
 
 	s.Require().True(ok)
 	s.Equal(Authorization{
@@ -63,7 +63,7 @@ func (s *UserSuite) TestOnlyThePluginsOwnToolMayAskForItsLogin() {
 	result := AuthorizationResult(s.calendar, "https://accounts.google.com/auth", s.logo)
 
 	for _, tool := range []string{"sentry__list_tools", "weather", "google_calendar"} {
-		_, ok := RequestedAuthorization(tool, result)
+		_, ok := RequestedAuthorization(tool, result, []string{"google_calendar", "sentry"})
 		s.False(ok, tool)
 	}
 }
@@ -77,7 +77,7 @@ func (s *UserSuite) TestAnythingButExactlyTheResultAsksForNothing() {
 		`{"status":"authorization_required","message":"","attachment":{"type":"plugin_authorization","plugin_id":"notion","title":"Connect","authorize_url":"https://accounts.google.com/auth"}}`,
 		`{"status":"answered","message":"","attachment":{"type":"plugin_authorization","plugin_id":"google_calendar","title":"Connect","authorize_url":"https://accounts.google.com/auth"}}`,
 	} {
-		_, ok := RequestedAuthorization("google_calendar__list_tools", result)
+		_, ok := RequestedAuthorization("google_calendar__list_tools", result, []string{"google_calendar"})
 		s.False(ok, result)
 	}
 }
@@ -126,4 +126,49 @@ func (s *UserSuite) TestListedToolsAreNamedAsCallToolTakesThem() {
 	}})
 
 	s.JSONEq(`{"tools":[{"name":"list_events","description":"Events in a range","input_schema":{"type":"object"}}]}`, listed)
+}
+
+func (s *UserSuite) TestAServerNamedByURLAsksForItsLoginByItsNameAlone() {
+	notes := Plugin{ID: "notes", Name: "notes", URL: "https://notes.example.com/mcp", ByURL: true}
+	result := AuthorizationResult(notes, "https://notes.example.com/authorize?state=abc", "")
+
+	found, ok := RequestedAuthorization("notes__list_tools", result, []string{"notes"})
+
+	s.Require().True(ok, result)
+	s.Equal(Authorization{
+		Type:         AuthorizationType,
+		PluginID:     "notes",
+		Title:        "Connect notes",
+		AuthorizeURL: "https://notes.example.com/authorize?state=abc",
+		TitleLink:    "https://notes.example.com/authorize?state=abc",
+	}, found)
+}
+
+func (s *UserSuite) TestAServerNamedByURLCannotDressItsLoginUp() {
+	asked := Authorization{
+		Type: AuthorizationType, PluginID: "notes", Title: "Connect notes",
+		AuthorizeURL: "https://notes.example.com/authorize",
+	}
+	for name, wrong := range map[string]func(*Authorization){
+		"a title naming something else": func(a *Authorization) { a.Title = "Connect Google Calendar" },
+		"a description":                 func(a *Authorization) { a.Text = "Totally safe." },
+		"an image":                      func(a *Authorization) { a.ThumbURL = "https://notes.example.com/pixel.png" },
+	} {
+		refused := asked
+		wrong(&refused)
+		s.False(ValidAuthorization(refused), name)
+	}
+	s.True(ValidAuthorization(asked))
+}
+
+func (s *UserSuite) TestOnlyAServerThatLogsInMayAskForALogin() {
+	notes := Plugin{ID: "notes", Name: "notes", ByURL: true}
+	result := AuthorizationResult(notes, "https://notes.example.com/authorize", "")
+
+	for _, tool := range []string{"notes__list_tools", "notes__call_tool", "notes__search"} {
+		_, ok := RequestedAuthorization(tool, result, []string{"google_calendar"})
+		s.False(ok, "%s: a server with no login cannot ask for one, whatever its tool is called", tool)
+		_, ok = RequestedAuthorization(tool, result, []string{"notes"})
+		s.True(ok, "%s: a server that logs in is not told apart by its tool's name", tool)
+	}
 }

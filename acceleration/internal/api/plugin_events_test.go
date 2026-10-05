@@ -129,9 +129,9 @@ func (s *PluginEventsSuite) subscribedAgent(userID *string) AgentConfig {
 		}},
 	}
 	if userID == nil {
-		request.Plugins = &[]string{"sentry"}
+		request.AgentPlugins = &[]PluginEntry{{Name: "sentry"}}
 	} else {
-		request.UserPlugins = &[]string{"sentry"}
+		request.UserPlugins = &[]PluginEntry{{Name: "sentry"}}
 	}
 	var config AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", request, &config))

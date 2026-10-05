@@ -12,11 +12,13 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.agent_channels import AgentChannels
     from ..models.agent_config_patch_tags import AgentConfigPatchTags
+    from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
-    from ..models.plugin_options import PluginOptions
+    from ..models.plugin_with_options import PluginWithOptions
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
 
@@ -30,6 +32,14 @@ class AgentConfigPatch:
     ignored.
 
         Attributes:
+            agent_plugins (list[PluginWithOptions | str] | Unset):
+            channels (AgentChannels | Unset): The lines this agent answers on besides its Stream Chat channel. Each names a
+                number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
+                that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
+                of it is.
+            connectors (list[AgentConnectorBinding] | Unset): The connectors whose tools the agent may call, each under an
+                alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null
+                is the same as leaving them out.
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
             greeting (str | Unset):
@@ -48,8 +58,6 @@ class AgentConfigPatch:
                 speech target and a session created from it needs no call to join.
             name (str | Unset): What the config is called, which is unique among the customer's own.
             plugin_events (list[PluginEvent] | Unset):
-            plugin_options (list[PluginOptions] | Unset):
-            plugins (list[str] | Unset):
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
                 everything out in its head.
@@ -63,7 +71,7 @@ class AgentConfigPatch:
             tags (AgentConfigPatchTags | Unset):
             thinking_llm (str | Unset): Only a voice agent names one. Switching an agent to text drops it.
             tts (str | Unset):
-            user_plugins (list[str] | Unset):
+            user_plugins (list[PluginWithOptions | str] | Unset):
             video (SessionVideo | Unset):
             visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as
                 tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its
@@ -72,6 +80,9 @@ class AgentConfigPatch:
             voice (str | Unset):
     """
 
+    agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
+    channels: AgentChannels | Unset = UNSET
+    connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
@@ -84,8 +95,6 @@ class AgentConfigPatch:
     mode: AgentMode | Unset = UNSET
     name: str | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
-    plugin_options: list[PluginOptions] | Unset = UNSET
-    plugins: list[str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
@@ -96,12 +105,36 @@ class AgentConfigPatch:
     tags: AgentConfigPatchTags | Unset = UNSET
     thinking_llm: str | Unset = UNSET
     tts: str | Unset = UNSET
-    user_plugins: list[str] | Unset = UNSET
+    user_plugins: list[PluginWithOptions | str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.plugin_with_options import PluginWithOptions
+
+        agent_plugins: list[dict[str, Any] | str] | Unset = UNSET
+        if not isinstance(self.agent_plugins, Unset):
+            agent_plugins = []
+            for agent_plugins_item_data in self.agent_plugins:
+                agent_plugins_item: dict[str, Any] | str
+                if isinstance(agent_plugins_item_data, PluginWithOptions):
+                    agent_plugins_item = agent_plugins_item_data.to_dict()
+                else:
+                    agent_plugins_item = agent_plugins_item_data
+                agent_plugins.append(agent_plugins_item)
+
+        channels: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.channels, Unset):
+            channels = self.channels.to_dict()
+
+        connectors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connectors, Unset):
+            connectors = []
+            for connectors_item_data in self.connectors:
+                connectors_item = connectors_item_data.to_dict()
+                connectors.append(connectors_item)
+
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
@@ -144,17 +177,6 @@ class AgentConfigPatch:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
 
-        plugin_options: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.plugin_options, Unset):
-            plugin_options = []
-            for plugin_options_item_data in self.plugin_options:
-                plugin_options_item = plugin_options_item_data.to_dict()
-                plugin_options.append(plugin_options_item)
-
-        plugins: list[str] | Unset = UNSET
-        if not isinstance(self.plugins, Unset):
-            plugins = self.plugins
-
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
             sandbox = self.sandbox.value
@@ -183,9 +205,16 @@ class AgentConfigPatch:
 
         tts = self.tts
 
-        user_plugins: list[str] | Unset = UNSET
+        user_plugins: list[dict[str, Any] | str] | Unset = UNSET
         if not isinstance(self.user_plugins, Unset):
-            user_plugins = self.user_plugins
+            user_plugins = []
+            for user_plugins_item_data in self.user_plugins:
+                user_plugins_item: dict[str, Any] | str
+                if isinstance(user_plugins_item_data, PluginWithOptions):
+                    user_plugins_item = user_plugins_item_data.to_dict()
+                else:
+                    user_plugins_item = user_plugins_item_data
+                user_plugins.append(user_plugins_item)
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
@@ -200,6 +229,12 @@ class AgentConfigPatch:
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
+        if agent_plugins is not UNSET:
+            field_dict["agent_plugins"] = agent_plugins
+        if channels is not UNSET:
+            field_dict["channels"] = channels
+        if connectors is not UNSET:
+            field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
         if greeting is not UNSET:
@@ -224,10 +259,6 @@ class AgentConfigPatch:
             field_dict["name"] = name
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
-        if plugin_options is not UNSET:
-            field_dict["plugin_options"] = plugin_options
-        if plugins is not UNSET:
-            field_dict["plugins"] = plugins
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -261,17 +292,60 @@ class AgentConfigPatch:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.agent_channels import AgentChannels
         from ..models.agent_config_patch_tags import (
             AgentConfigPatchTags,
+        )
+        from ..models.agent_connector_binding import (
+            AgentConnectorBinding,
         )
         from ..models.agent_dispatch import AgentDispatch
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
-        from ..models.plugin_options import PluginOptions
+        from ..models.plugin_with_options import PluginWithOptions
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
+        _agent_plugins = d.pop("agent_plugins", UNSET)
+        agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
+        if _agent_plugins is not UNSET:
+            agent_plugins = []
+            for agent_plugins_item_data in _agent_plugins:
+
+                def _parse_agent_plugins_item(data: object) -> PluginWithOptions | str:
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        componentsschemas_plugin_entry_type_1 = (
+                            PluginWithOptions.from_dict(data)
+                        )
+
+                        return componentsschemas_plugin_entry_type_1
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    return cast(PluginWithOptions | str, data)
+
+                agent_plugins_item = _parse_agent_plugins_item(agent_plugins_item_data)
+
+                agent_plugins.append(agent_plugins_item)
+
+        _channels = d.pop("channels", UNSET)
+        channels: AgentChannels | Unset
+        if isinstance(_channels, Unset):
+            channels = UNSET
+        else:
+            channels = AgentChannels.from_dict(_channels)
+
+        _connectors = d.pop("connectors", UNSET)
+        connectors: list[AgentConnectorBinding] | Unset = UNSET
+        if _connectors is not UNSET:
+            connectors = []
+            for connectors_item_data in _connectors:
+                connectors_item = AgentConnectorBinding.from_dict(connectors_item_data)
+
+                connectors.append(connectors_item)
+
         _dispatch = d.pop("dispatch", UNSET)
         dispatch: AgentDispatch | Unset
         if isinstance(_dispatch, Unset):
@@ -325,17 +399,6 @@ class AgentConfigPatch:
 
                 plugin_events.append(plugin_events_item)
 
-        _plugin_options = d.pop("plugin_options", UNSET)
-        plugin_options: list[PluginOptions] | Unset = UNSET
-        if _plugin_options is not UNSET:
-            plugin_options = []
-            for plugin_options_item_data in _plugin_options:
-                plugin_options_item = PluginOptions.from_dict(plugin_options_item_data)
-
-                plugin_options.append(plugin_options_item)
-
-        plugins = cast(list[str], d.pop("plugins", UNSET))
-
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
@@ -371,7 +434,28 @@ class AgentConfigPatch:
 
         tts = d.pop("tts", UNSET)
 
-        user_plugins = cast(list[str], d.pop("user_plugins", UNSET))
+        _user_plugins = d.pop("user_plugins", UNSET)
+        user_plugins: list[PluginWithOptions | str] | Unset = UNSET
+        if _user_plugins is not UNSET:
+            user_plugins = []
+            for user_plugins_item_data in _user_plugins:
+
+                def _parse_user_plugins_item(data: object) -> PluginWithOptions | str:
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        componentsschemas_plugin_entry_type_1 = (
+                            PluginWithOptions.from_dict(data)
+                        )
+
+                        return componentsschemas_plugin_entry_type_1
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    return cast(PluginWithOptions | str, data)
+
+                user_plugins_item = _parse_user_plugins_item(user_plugins_item_data)
+
+                user_plugins.append(user_plugins_item)
 
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
@@ -385,6 +469,9 @@ class AgentConfigPatch:
         voice = d.pop("voice", UNSET)
 
         agent_config_patch = cls(
+            agent_plugins=agent_plugins,
+            channels=channels,
+            connectors=connectors,
             dispatch=dispatch,
             greeting=greeting,
             guardrail=guardrail,
@@ -397,8 +484,6 @@ class AgentConfigPatch:
             mode=mode,
             name=name,
             plugin_events=plugin_events,
-            plugin_options=plugin_options,
-            plugins=plugins,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -178,12 +179,10 @@ func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, plugi
 	if err != nil {
 		return err
 	}
-	for _, named := range config.Plugins {
-		if named == pluginID {
-			return nil
-		}
+	if NamesPlugin(config.AgentPlugins, pluginID) {
+		return nil
 	}
-	config.Plugins = append(config.Plugins, pluginID)
+	config.AgentPlugins = append(config.AgentPlugins, PluginEntry{Name: pluginID})
 	return s.UpdateAgentConfig(ctx, &config)
 }
 
@@ -193,13 +192,7 @@ func (s *Store) RemoveConfigPlugin(ctx context.Context, customerID, configID, pl
 	if err != nil {
 		return err
 	}
-	kept := make([]string, 0, len(config.Plugins))
-	for _, named := range config.Plugins {
-		if named != pluginID {
-			kept = append(kept, named)
-		}
-	}
-	config.Plugins = kept
+	config.AgentPlugins = slices.DeleteFunc(config.AgentPlugins, func(entry PluginEntry) bool { return entry.Name == pluginID })
 	return s.UpdateAgentConfig(ctx, &config)
 }
 
