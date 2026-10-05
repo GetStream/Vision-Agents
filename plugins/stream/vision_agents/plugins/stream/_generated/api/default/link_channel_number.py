@@ -1,40 +1,41 @@
 from http import HTTPStatus
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.channel_link import ChannelLink
 from ...models.error import Error
-from ...models.plugin_connection import PluginConnection
-from ...types import Response
+from ...models.link_channel_request import LinkChannelRequest
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    id: str,
+    *,
+    body: LinkChannelRequest | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/agents/configs/{id}/plugins".format(
-            id=quote(str(id), safe=""),
-        ),
+        "method": "post",
+        "url": "/v1/agents/channels/links",
     }
 
+    if not isinstance(body, Unset):
+        _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[PluginConnection] | None:
+) -> ChannelLink | Error | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for response_200_item_data in _response_200:
-            response_200_item = PluginConnection.from_dict(response_200_item_data)
-
-            response_200.append(response_200_item)
+        response_200 = ChannelLink.from_dict(response.json())
 
         return response_200
 
@@ -71,7 +72,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[PluginConnection]]:
+) -> Response[ChannelLink | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -81,29 +82,32 @@ def _build_response(
 
 
 def sync_detailed(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+    body: LinkChannelRequest | Unset = UNSET,
+) -> Response[ChannelLink | Error]:
+    """Mint a code to claim a number
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     Answers with a code to show somebody already signed in. The number that texts it to the agent
+    belongs to that end user from then on, which is what an agent reading a person's own calendar or
+    orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything
+    to link.
+
+    Server-side only.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        body (LinkChannelRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[ChannelLink | Error]
     """
 
     kwargs = _get_kwargs(
-        id=id,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -114,57 +118,63 @@ def sync_detailed(
 
 
 def sync(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+    body: LinkChannelRequest | Unset = UNSET,
+) -> ChannelLink | Error | None:
+    """Mint a code to claim a number
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     Answers with a code to show somebody already signed in. The number that texts it to the agent
+    belongs to that end user from then on, which is what an agent reading a person's own calendar or
+    orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything
+    to link.
+
+    Server-side only.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        body (LinkChannelRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        ChannelLink | Error
     """
 
     return sync_detailed(
-        id=id,
         client=client,
+        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+    body: LinkChannelRequest | Unset = UNSET,
+) -> Response[ChannelLink | Error]:
+    """Mint a code to claim a number
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     Answers with a code to show somebody already signed in. The number that texts it to the agent
+    belongs to that end user from then on, which is what an agent reading a person's own calendar or
+    orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything
+    to link.
+
+    Server-side only.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        body (LinkChannelRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[ChannelLink | Error]
     """
 
     kwargs = _get_kwargs(
-        id=id,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -173,30 +183,33 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+    body: LinkChannelRequest | Unset = UNSET,
+) -> ChannelLink | Error | None:
+    """Mint a code to claim a number
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     Answers with a code to show somebody already signed in. The number that texts it to the agent
+    belongs to that end user from then on, which is what an agent reading a person's own calendar or
+    orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything
+    to link.
+
+    Server-side only.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        body (LinkChannelRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        ChannelLink | Error
     """
 
     return (
         await asyncio_detailed(
-            id=id,
             client=client,
+            body=body,
         )
     ).parsed

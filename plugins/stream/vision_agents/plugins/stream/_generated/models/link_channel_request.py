@@ -7,43 +7,51 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..types import UNSET, Unset
-
-T = TypeVar("T", bound="AuthorizePluginRequest")
+T = TypeVar("T", bound="LinkChannelRequest")
 
 
 @_attrs_define
-class AuthorizePluginRequest:
+class LinkChannelRequest:
     """
     Attributes:
-        instance_url (str | Unset): The shop hostname. Required for plugins that have no single global URL.
+        config_id (str): The agent whose channels the number is being claimed on.
+        user_id (str): The end user the number will belong to.
     """
 
-    instance_url: str | Unset = UNSET
+    config_id: str
+    user_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        instance_url = self.instance_url
+        config_id = self.config_id
+
+        user_id = self.user_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if instance_url is not UNSET:
-            field_dict["instance_url"] = instance_url
+        field_dict.update(
+            {
+                "config_id": config_id,
+                "user_id": user_id,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        instance_url = d.pop("instance_url", UNSET)
+        config_id = d.pop("config_id")
 
-        authorize_plugin_request = cls(
-            instance_url=instance_url,
+        user_id = d.pop("user_id")
+
+        link_channel_request = cls(
+            config_id=config_id,
+            user_id=user_id,
         )
 
-        authorize_plugin_request.additional_properties = d
-        return authorize_plugin_request
+        link_channel_request.additional_properties = d
+        return link_channel_request
 
     @property
     def additional_keys(self) -> list[str]:

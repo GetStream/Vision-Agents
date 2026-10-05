@@ -9,17 +9,16 @@ from typing_extensions import Self
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="PluginOptions")
+T = TypeVar("T", bound="PluginWithOptions")
 
 
 @_attrs_define
-class PluginOptions:
-    """How an agent reaches one catalog plugin it names, and what its login asks for. A login made before a change keeps
-    what it was granted, so connect it again for the change to take.
+class PluginWithOptions:
+    """One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change
+    keeps what it was granted, so connect it again for the change to take.
 
         Attributes:
-            plugin (str): A catalog plugin id. It applies once the config names the plugin under plugins or user_plugins,
-                and to the app's login made from the dashboard.
+            name (str): A catalog plugin id, such as linear.
             readonly (bool | Unset): Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks
                 for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
             scopes (list[str] | Unset): The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for
@@ -31,7 +30,7 @@ class PluginOptions:
                 login.
     """
 
-    plugin: str
+    name: str
     readonly: bool | Unset = UNSET
     scopes: list[str] | Unset = UNSET
     tools: list[str] | Unset = UNSET
@@ -39,7 +38,7 @@ class PluginOptions:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        plugin = self.plugin
+        name = self.name
 
         readonly = self.readonly
 
@@ -59,7 +58,7 @@ class PluginOptions:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "plugin": plugin,
+                "name": name,
             }
         )
         if readonly is not UNSET:
@@ -76,7 +75,7 @@ class PluginOptions:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        plugin = d.pop("plugin")
+        name = d.pop("name")
 
         readonly = d.pop("readonly", UNSET)
 
@@ -86,16 +85,16 @@ class PluginOptions:
 
         toolsets = cast(list[str], d.pop("toolsets", UNSET))
 
-        plugin_options = cls(
-            plugin=plugin,
+        plugin_with_options = cls(
+            name=name,
             readonly=readonly,
             scopes=scopes,
             tools=tools,
             toolsets=toolsets,
         )
 
-        plugin_options.additional_properties = d
-        return plugin_options
+        plugin_with_options.additional_properties = d
+        return plugin_with_options
 
     @property
     def additional_keys(self) -> list[str]:

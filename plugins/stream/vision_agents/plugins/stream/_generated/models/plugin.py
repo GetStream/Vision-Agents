@@ -24,11 +24,11 @@ class Plugin:
         name (str):
         instance_hint (str | Unset):
         instance_required (bool | Unset):
-        readonly (bool | Unset): True when the plugin has a read-only endpoint an agent may pick in plugin_options.
-        scopes_supported (list[str] | Unset): The OAuth scopes an agent may ask for in plugin_options, as the server
+        readonly (bool | Unset): True when the plugin has a read-only endpoint an agent may pick on its entry.
+        scopes_supported (list[str] | Unset): The OAuth scopes an agent may ask for on its entry, as the server
             advertises them. Absent when the server says nothing, and any scope is then passed through.
-        toolsets (list[str] | Unset): The groups of tools an agent may limit the plugin to in plugin_options. Absent
-            when it cannot be limited.
+        toolsets (list[str] | Unset): The groups of tools an agent may limit the plugin to on its entry. Absent when it
+            cannot be limited.
     """
 
     category: str

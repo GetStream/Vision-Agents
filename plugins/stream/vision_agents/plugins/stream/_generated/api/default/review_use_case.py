@@ -7,34 +7,39 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error import Error
-from ...models.plugin_connection import PluginConnection
-from ...types import Response
+from ...models.review_use_case_request import ReviewUseCaseRequest
+from ...models.use_case_for_review import UseCaseForReview
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     id: str,
+    *,
+    body: ReviewUseCaseRequest | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/agents/configs/{id}/plugins".format(
+        "method": "post",
+        "url": "/v1/ops/use-cases/{id}/review".format(
             id=quote(str(id), safe=""),
         ),
     }
 
+    if not isinstance(body, Unset):
+        _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[PluginConnection] | None:
+) -> Error | UseCaseForReview | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for response_200_item_data in _response_200:
-            response_200_item = PluginConnection.from_dict(response_200_item_data)
-
-            response_200.append(response_200_item)
+        response_200 = UseCaseForReview.from_dict(response.json())
 
         return response_200
 
@@ -48,15 +53,15 @@ def _parse_response(
 
         return response_401
 
-    if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
-
-        return response_403
-
     if response.status_code == 404:
         response_404 = Error.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Error.from_dict(response.json())
+
+        return response_409
 
     if response.status_code == 500:
         response_500 = Error.from_dict(response.json())
@@ -71,7 +76,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[PluginConnection]]:
+) -> Response[Error | UseCaseForReview]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -83,27 +88,31 @@ def _build_response(
 def sync_detailed(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+    client: AuthenticatedClient,
+    body: ReviewUseCaseRequest | Unset = UNSET,
+) -> Response[Error | UseCaseForReview]:
+    """Review a submitted use case
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign
+    with the vendor, which approves it in turn.
+
+    Stream staff only: it needs the ops key.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str):
+        body (ReviewUseCaseRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[Error | UseCaseForReview]
     """
 
     kwargs = _get_kwargs(
         id=id,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -116,55 +125,63 @@ def sync_detailed(
 def sync(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+    client: AuthenticatedClient,
+    body: ReviewUseCaseRequest | Unset = UNSET,
+) -> Error | UseCaseForReview | None:
+    """Review a submitted use case
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign
+    with the vendor, which approves it in turn.
+
+    Stream staff only: it needs the ops key.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str):
+        body (ReviewUseCaseRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        Error | UseCaseForReview
     """
 
     return sync_detailed(
         id=id,
         client=client,
+        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+    client: AuthenticatedClient,
+    body: ReviewUseCaseRequest | Unset = UNSET,
+) -> Response[Error | UseCaseForReview]:
+    """Review a submitted use case
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign
+    with the vendor, which approves it in turn.
+
+    Stream staff only: it needs the ops key.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str):
+        body (ReviewUseCaseRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[Error | UseCaseForReview]
     """
 
     kwargs = _get_kwargs(
         id=id,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -175,28 +192,32 @@ async def asyncio_detailed(
 async def asyncio(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+    client: AuthenticatedClient,
+    body: ReviewUseCaseRequest | Unset = UNSET,
+) -> Error | UseCaseForReview | None:
+    """Review a submitted use case
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign
+    with the vendor, which approves it in turn.
+
+    Stream staff only: it needs the ops key.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str):
+        body (ReviewUseCaseRequest | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        Error | UseCaseForReview
     """
 
     return (
         await asyncio_detailed(
             id=id,
             client=client,
+            body=body,
         )
     ).parsed

@@ -1,49 +1,49 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..types import UNSET, Unset
-
-T = TypeVar("T", bound="AuthorizePluginRequest")
+T = TypeVar("T", bound="SetSandboxRecipientsRequest")
 
 
 @_attrs_define
-class AuthorizePluginRequest:
+class SetSandboxRecipientsRequest:
     """
     Attributes:
-        instance_url (str | Unset): The shop hostname. Required for plugins that have no single global URL.
+        recipients (list[str]): Numbers in E.164, at most max_recipients of them.
     """
 
-    instance_url: str | Unset = UNSET
+    recipients: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        instance_url = self.instance_url
+        recipients = self.recipients
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if instance_url is not UNSET:
-            field_dict["instance_url"] = instance_url
+        field_dict.update(
+            {
+                "recipients": recipients,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        instance_url = d.pop("instance_url", UNSET)
+        recipients = cast(list[str], d.pop("recipients"))
 
-        authorize_plugin_request = cls(
-            instance_url=instance_url,
+        set_sandbox_recipients_request = cls(
+            recipients=recipients,
         )
 
-        authorize_plugin_request.additional_properties = d
-        return authorize_plugin_request
+        set_sandbox_recipients_request.additional_properties = d
+        return set_sandbox_recipients_request
 
     @property
     def additional_keys(self) -> list[str]:

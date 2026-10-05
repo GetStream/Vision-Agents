@@ -7,7 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error import Error
-from ...models.plugin_connection import PluginConnection
+from ...models.use_case_for_review import UseCaseForReview
 from ...types import Response
 
 
@@ -17,7 +17,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/agents/configs/{id}/plugins".format(
+        "url": "/v1/ops/use-cases/{id}".format(
             id=quote(str(id), safe=""),
         ),
     }
@@ -27,14 +27,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[PluginConnection] | None:
+) -> Error | UseCaseForReview | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for response_200_item_data in _response_200:
-            response_200_item = PluginConnection.from_dict(response_200_item_data)
-
-            response_200.append(response_200_item)
+        response_200 = UseCaseForReview.from_dict(response.json())
 
         return response_200
 
@@ -48,15 +43,15 @@ def _parse_response(
 
         return response_401
 
-    if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
-
-        return response_403
-
     if response.status_code == 404:
         response_404 = Error.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Error.from_dict(response.json())
+
+        return response_409
 
     if response.status_code == 500:
         response_500 = Error.from_dict(response.json())
@@ -71,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[PluginConnection]]:
+) -> Response[Error | UseCaseForReview]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -83,23 +78,23 @@ def _build_response(
 def sync_detailed(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+    client: AuthenticatedClient,
+) -> Response[Error | UseCaseForReview]:
+    """Get a use case to review
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     A use case with its app, profile and history.
+
+    Stream staff only: it needs the ops key.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[Error | UseCaseForReview]
     """
 
     kwargs = _get_kwargs(
@@ -116,23 +111,23 @@ def sync_detailed(
 def sync(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+    client: AuthenticatedClient,
+) -> Error | UseCaseForReview | None:
+    """Get a use case to review
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     A use case with its app, profile and history.
+
+    Stream staff only: it needs the ops key.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        Error | UseCaseForReview
     """
 
     return sync_detailed(
@@ -144,23 +139,23 @@ def sync(
 async def asyncio_detailed(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Response[Error | list[PluginConnection]]:
-    """The plugin logins this agent holds
+    client: AuthenticatedClient,
+) -> Response[Error | UseCaseForReview]:
+    """Get a use case to review
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     A use case with its app, profile and history.
+
+    Stream staff only: it needs the ops key.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[PluginConnection]]
+        Response[Error | UseCaseForReview]
     """
 
     kwargs = _get_kwargs(
@@ -175,23 +170,23 @@ async def asyncio_detailed(
 async def asyncio(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Error | list[PluginConnection] | None:
-    """The plugin logins this agent holds
+    client: AuthenticatedClient,
+) -> Error | UseCaseForReview | None:
+    """Get a use case to review
 
-     The app's own logins, then every plugin the config names that has none yet, as not_connected, then
-    every MCP server it names by URL that needs a login and has no user, which the app logs into the
-    same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+     A use case with its app, profile and history.
+
+    Stream staff only: it needs the ops key.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[PluginConnection]
+        Error | UseCaseForReview
     """
 
     return (

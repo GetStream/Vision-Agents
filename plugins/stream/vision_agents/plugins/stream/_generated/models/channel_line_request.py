@@ -7,43 +7,43 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..types import UNSET, Unset
-
-T = TypeVar("T", bound="AuthorizePluginRequest")
+T = TypeVar("T", bound="ChannelLineRequest")
 
 
 @_attrs_define
-class AuthorizePluginRequest:
+class ChannelLineRequest:
     """
     Attributes:
-        instance_url (str | Unset): The shop hostname. Required for plugins that have no single global URL.
+        number (str): The number people write to, in E.164. It must be a line this app connected.
     """
 
-    instance_url: str | Unset = UNSET
+    number: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        instance_url = self.instance_url
+        number = self.number
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if instance_url is not UNSET:
-            field_dict["instance_url"] = instance_url
+        field_dict.update(
+            {
+                "number": number,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        instance_url = d.pop("instance_url", UNSET)
+        number = d.pop("number")
 
-        authorize_plugin_request = cls(
-            instance_url=instance_url,
+        channel_line_request = cls(
+            number=number,
         )
 
-        authorize_plugin_request.additional_properties = d
-        return authorize_plugin_request
+        channel_line_request.additional_properties = d
+        return channel_line_request
 
     @property
     def additional_keys(self) -> list[str]:
