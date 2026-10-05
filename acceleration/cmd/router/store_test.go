@@ -54,7 +54,7 @@ func (s *OpenStoreSuite) SetupTest() {
 
 func (s *OpenStoreSuite) TestARouterStartingOnAnEmptyDatabaseHasTheBuiltInsAtTheRevisionsTheyName() {
 	revisions := map[string]int{}
-	for _, id := range []string{"linear", "slack"} {
+	for _, id := range []string{"calcom", "calendly", "github", "gong", "linear", "salesforce", "slack"} {
 		raw, err := fs.ReadFile(providers.FS, id+".yaml")
 		s.Require().NoError(err)
 		manifest, err := core.ParseManifest(raw)
@@ -68,8 +68,8 @@ func (s *OpenStoreSuite) TestARouterStartingOnAnEmptyDatabaseHasTheBuiltInsAtThe
 
 		definitions, err := opened.ListConnectorDefinitions(s.ctx, "acme", store.ConnectorDefinitionFilter{})
 		s.Require().NoError(err)
-		s.Require().Len(definitions, 2, "a restart adds no revision")
-		for i, id := range []string{"linear", "slack"} {
+		s.Require().Len(definitions, 7, "a restart adds no revision")
+		for i, id := range []string{"calcom", "calendly", "github", "gong", "linear", "salesforce", "slack"} {
 			s.Equal(id, definitions[i].ID)
 			s.Equal(revisions[id], definitions[i].Revision)
 		}

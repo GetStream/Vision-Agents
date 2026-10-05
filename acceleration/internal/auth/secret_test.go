@@ -68,7 +68,8 @@ func (s *KeyringSuite) TestAVersionNotInTheKeyringFailsToOpen() {
 	s.Require().NoError(err)
 
 	_, err = sealer.OpenWithAADVersion(sealed, nil, 2)
-	s.ErrorContains(err, "version 2 is unavailable")
+	s.ErrorIs(err, ErrKeyVersionUnavailable)
+	s.ErrorContains(err, "version 2")
 }
 
 func (s *KeyringSuite) TestTheCurrentVersionMustBeInTheKeyring() {

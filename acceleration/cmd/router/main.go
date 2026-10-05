@@ -28,8 +28,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
@@ -262,6 +265,32 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 	return auth.NewSealerWithKeyring(current, keys)
 }
 
+// connectorHTTPTimeout bounds one outbound request oauth2_code makes: a discovery fetch, a
+// client registration or a code exchange. 10 s is the prototype's (defaultHTTPClient in
+// internal/mcp/oauth.go on codex/connector-support at cf62af0d), not a measured one.
+const connectorHTTPTimeout = 10 * time.Second
+
+// newConnectorRegistry is the connector adapters this deployment has: none when connectors
+// are off, so no connection and no custom connector can name a scheme, and oauth2_code when
+// they are on. It follows the sealer: without a keyring no attempt or grant can be sealed,
+// so a scheme registered without one would take connections nothing could ever authorize.
+//
+// ClientMetadataURL is left empty, which turns CIMD off. The client metadata document it
+// would name is served by the consent flow (AI-844), and a client_id URL that answers 404
+// fails every consent that tries it. Until then a policy naming cimd falls through to the
+// next owner it names. Clients is nil too, so no operator or customer client is found until
+// client records exist (AI-846); only dcr can supply a client.
+func newConnectorRegistry(settings config.Config) (core.Registry, error) {
+	if !settings.Connectors.Enabled {
+		return core.Registry{}, nil
+	}
+	scheme, err := oauth2code.New(oauth2code.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+	if err != nil {
+		return core.Registry{}, err
+	}
+	return core.Registry{Schemes: map[string]core.Scheme{scheme.Name(): scheme}}, nil
+}
+
 // newAuthenticator builds the authenticator the deployment's mode asks for.
 //
 // api_key needs both a store to look keys up in and the key that unseals their secrets, and
@@ -328,6 +357,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Checked before anything is opened, so a deployment that turned connectors on without
 	// a keyring is refused at startup rather than on its first connection.
 	if _, err := newConnectorSealer(settings); err != nil {
+		return err
+	}
+	connectors, err := newConnectorRegistry(settings)
+	if err != nil {
 		return err
 	}
 
@@ -820,6 +853,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Dispatch:       workers,
 		Quota:          limiter,
 		Policies:       policies,
+		Connectors:     connectors,
 		TrustedProxies: trustedProxies,
 		AuthMode:       authMode,
 		DataRetention:  settings.DataMove.Retention,
