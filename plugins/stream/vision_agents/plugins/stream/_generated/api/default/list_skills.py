@@ -58,6 +58,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -83,7 +88,8 @@ def sync_detailed(
     """The skills the calling customer has defined
 
     Args:
-        config_id (str | Unset):
+        config_id (str | Unset): Only the skills belonging to this agent config. Omit for every
+            skill the customer has, across all of their agents.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,7 +118,8 @@ def sync(
     """The skills the calling customer has defined
 
     Args:
-        config_id (str | Unset):
+        config_id (str | Unset): Only the skills belonging to this agent config. Omit for every
+            skill the customer has, across all of their agents.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -136,7 +143,8 @@ async def asyncio_detailed(
     """The skills the calling customer has defined
 
     Args:
-        config_id (str | Unset):
+        config_id (str | Unset): Only the skills belonging to this agent config. Omit for every
+            skill the customer has, across all of their agents.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,7 +171,8 @@ async def asyncio(
     """The skills the calling customer has defined
 
     Args:
-        config_id (str | Unset):
+        config_id (str | Unset): Only the skills belonging to this agent config. Omit for every
+            skill the customer has, across all of their agents.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

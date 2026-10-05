@@ -24,7 +24,7 @@ func TestPartsSuite(t *testing.T) { suite.Run(t, new(PartsSuite)) }
 // SetupTest is a reply to a command from Alice's phone, in a conversation whose agent config
 // shows its athena_* tools and web search (visible_tools), with one tool her device runs.
 func (s *PartsSuite) SetupTest() {
-	s.c = &Conversation{data: disk{
+	s.c = &Conversation{data: ledger{
 		Commands:     map[string]commandRecord{"command": {Initiator: "emp_alice", ClientID: "ios-7F3A"}},
 		VisibleTools: []string{"athena_*", "web_search"},
 	}}

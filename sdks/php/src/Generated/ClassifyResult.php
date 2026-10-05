@@ -11,11 +11,11 @@ use GetStream\VisionAgents\Json;
 final readonly class ClassifyResult
 {
     public function __construct(
-        public string $provider,
-        // The version that answered, which is worth recording when the target was an alias.
-        public string $model,
         /** @var array<string, mixed> */
         public array $answers,
+        // The version that answered, which is worth recording when the target was an alias.
+        public string $model,
+        public string $provider,
         public ClassifyUsage $usage,
     ) {
     }
@@ -26,9 +26,9 @@ final readonly class ClassifyResult
     public static function fromArray(array $data): self
     {
         return new self(
-            provider: Json::string($data, 'provider'),
-            model: Json::string($data, 'model'),
             answers: Json::object($data, 'answers'),
+            model: Json::string($data, 'model'),
+            provider: Json::string($data, 'provider'),
             usage: ClassifyUsage::fromArray(Json::object($data, 'usage')),
         );
     }
@@ -41,9 +41,9 @@ final readonly class ClassifyResult
     public function toArray(): array
     {
         $out = [];
-        $out['provider'] = $this->provider;
-        $out['model'] = $this->model;
         $out['answers'] = Json::objectValue($this->answers);
+        $out['model'] = $this->model;
+        $out['provider'] = $this->provider;
         $out['usage'] = $this->usage->toArray();
         return $out;
     }

@@ -11,19 +11,19 @@ use GetStream\VisionAgents\Json;
 final readonly class Provider
 {
     public function __construct(
-        public string $provider,
-        public string $model,
+        public ProviderHealth $health,
         /** @var list<string> */
         public array $languages,
+        public string $model,
+        public string $provider,
         public bool $realtime,
         public Tier|string $tier,
-        public ProviderHealth $health,
+        public ?ProviderBenchmark $benchmark = null,
         // What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none.
         public ?string $description = null,
+        public ?ProviderPrice $price = null,
         // This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1....
         public ?float $usageShare = null,
-        public ?ProviderBenchmark $benchmark = null,
-        public ?ProviderPrice $price = null,
     ) {
     }
 
@@ -33,16 +33,16 @@ final readonly class Provider
     public static function fromArray(array $data): self
     {
         return new self(
-            provider: Json::string($data, 'provider'),
-            model: Json::string($data, 'model'),
+            health: ProviderHealth::fromArray(Json::object($data, 'health')),
             languages: Json::strings($data, 'languages'),
+            model: Json::string($data, 'model'),
+            provider: Json::string($data, 'provider'),
             realtime: Json::bool($data, 'realtime'),
             tier: Json::enum($data, 'tier', Tier::class),
-            health: ProviderHealth::fromArray(Json::object($data, 'health')),
-            description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
-            usageShare: array_key_exists('usage_share', $data) && $data['usage_share'] !== null ? Json::float($data, 'usage_share') : null,
             benchmark: array_key_exists('benchmark', $data) && $data['benchmark'] !== null ? ProviderBenchmark::fromArray(Json::object($data, 'benchmark')) : null,
+            description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             price: array_key_exists('price', $data) && $data['price'] !== null ? ProviderPrice::fromArray(Json::object($data, 'price')) : null,
+            usageShare: array_key_exists('usage_share', $data) && $data['usage_share'] !== null ? Json::float($data, 'usage_share') : null,
         );
     }
 
@@ -54,23 +54,23 @@ final readonly class Provider
     public function toArray(): array
     {
         $out = [];
-        $out['provider'] = $this->provider;
-        $out['model'] = $this->model;
+        $out['health'] = $this->health->toArray();
         $out['languages'] = $this->languages;
+        $out['model'] = $this->model;
+        $out['provider'] = $this->provider;
         $out['realtime'] = $this->realtime;
         $out['tier'] = Json::enumValue($this->tier);
-        $out['health'] = $this->health->toArray();
-        if ($this->description !== null) {
-            $out['description'] = $this->description;
-        }
-        if ($this->usageShare !== null) {
-            $out['usage_share'] = $this->usageShare;
-        }
         if ($this->benchmark !== null) {
             $out['benchmark'] = $this->benchmark->toArray();
         }
+        if ($this->description !== null) {
+            $out['description'] = $this->description;
+        }
         if ($this->price !== null) {
             $out['price'] = $this->price->toArray();
+        }
+        if ($this->usageShare !== null) {
+            $out['usage_share'] = $this->usageShare;
         }
         return $out;
     }

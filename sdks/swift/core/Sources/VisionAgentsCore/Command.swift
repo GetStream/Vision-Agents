@@ -2,13 +2,12 @@ import Foundation
 
 /// One thing a client can do to a running conversation over its socket.
 ///
-/// These are the six commands `readCommands` in the router accepts. Everything else a caller
-/// might want is a request rather than a frame.
+/// The commands `readCommands` in the router accepts, but for `respond`: asking is
+/// `responses.create`, which names the turn it starts. Everything else a caller might want is
+/// a request rather than a frame.
 public enum Command: Sendable, Hashable {
     /// Speak this without going through the model.
     case say(String)
-    /// Answer this as though it had been heard.
-    case respond(String)
     /// Abandon the reply in flight.
     case interrupt
     /// Replace the system prompt, from the next turn on.
@@ -32,9 +31,6 @@ extension Command: Encodable {
         switch self {
         case .say(let text):
             try container.encode("say", forKey: .type)
-            try container.encode(text, forKey: .text)
-        case .respond(let text):
-            try container.encode("respond", forKey: .type)
             try container.encode(text, forKey: .text)
         case .interrupt:
             try container.encode("interrupt", forKey: .type)

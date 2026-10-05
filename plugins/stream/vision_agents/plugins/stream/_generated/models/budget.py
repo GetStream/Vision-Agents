@@ -21,52 +21,50 @@ class Budget:
     overshoot by what it spends in that time.
 
         Attributes:
-            limit_micros (int): The cap, in millionths of a dollar. Example: 100000000.
             interval (BudgetInterval): How often a budget resets. A week starts on Monday.
-            spent_micros (int | Unset): What has been spent in the current interval.
+            limit_micros (int): The cap, in millionths of a dollar. Example: 100000000.
             resets_at (datetime.datetime | Unset): When the current interval ends.
+            spent_micros (int | Unset): What has been spent in the current interval.
     """
 
-    limit_micros: int
     interval: BudgetInterval
-    spent_micros: int | Unset = UNSET
+    limit_micros: int
     resets_at: datetime.datetime | Unset = UNSET
+    spent_micros: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        limit_micros = self.limit_micros
-
         interval = self.interval.value
 
-        spent_micros = self.spent_micros
+        limit_micros = self.limit_micros
 
         resets_at: str | Unset = UNSET
         if not isinstance(self.resets_at, Unset):
             resets_at = self.resets_at.isoformat()
 
+        spent_micros = self.spent_micros
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "limit_micros": limit_micros,
                 "interval": interval,
+                "limit_micros": limit_micros,
             }
         )
-        if spent_micros is not UNSET:
-            field_dict["spent_micros"] = spent_micros
         if resets_at is not UNSET:
             field_dict["resets_at"] = resets_at
+        if spent_micros is not UNSET:
+            field_dict["spent_micros"] = spent_micros
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        limit_micros = d.pop("limit_micros")
-
         interval = BudgetInterval(d.pop("interval"))
 
-        spent_micros = d.pop("spent_micros", UNSET)
+        limit_micros = d.pop("limit_micros")
 
         _resets_at = d.pop("resets_at", UNSET)
         resets_at: datetime.datetime | Unset
@@ -75,11 +73,13 @@ class Budget:
         else:
             resets_at = datetime.datetime.fromisoformat(_resets_at)
 
+        spent_micros = d.pop("spent_micros", UNSET)
+
         budget = cls(
-            limit_micros=limit_micros,
             interval=interval,
-            spent_micros=spent_micros,
+            limit_micros=limit_micros,
             resets_at=resets_at,
+            spent_micros=spent_micros,
         )
 
         budget.additional_properties = d

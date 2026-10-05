@@ -51,6 +51,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -76,7 +81,7 @@ def sync_detailed(
     """Give a number back, which stops its monthly charge
 
     Args:
-        e164 (str):
+        e164 (str): The number in +15551234567 form.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,7 +110,7 @@ def sync(
     """Give a number back, which stops its monthly charge
 
     Args:
-        e164 (str):
+        e164 (str): The number in +15551234567 form.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -129,7 +134,7 @@ async def asyncio_detailed(
     """Give a number back, which stops its monthly charge
 
     Args:
-        e164 (str):
+        e164 (str): The number in +15551234567 form.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,7 +161,7 @@ async def asyncio(
     """Give a number back, which stops its monthly charge
 
     Args:
-        e164 (str):
+        e164 (str): The number in +15551234567 form.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

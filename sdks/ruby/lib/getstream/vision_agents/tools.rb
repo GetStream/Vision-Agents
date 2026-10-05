@@ -14,19 +14,26 @@ module GetStream
     # The model asks for one over the session socket and waits. What the block returns is
     # sent back: a String as it is, anything else as JSON.
     class Tools
-      Tool = Data.define(:name, :description, :parameters, :run)
+      Tool = Data.define(:name, :description, :parameters, :executor, :display_title, :run)
 
       def initialize
         @tools = {}
         @lock = Mutex.new
       end
 
-      def register(name, description:, parameters: { type: "object", properties: {} }, &run)
+      # @param executor [String] who runs it: "server", the default, or "client" for a tool a
+      #   person's device runs. This process still answers it, once the device has reported.
+      # @param display_title [String] what a call is doing, in words for the people in the
+      #   conversation, such as "Checking your location". At most 80 characters.
+      def register(name, description:, parameters: { type: "object", properties: {} }, executor: nil,
+                   display_title: nil, &run)
         raise ConfigurationError, "a tool needs a name" if name.to_s.empty?
         raise ConfigurationError, "#{name} needs a description, since it is all the model sees" if description.to_s.empty?
         raise ConfigurationError, "#{name} needs a block to run" unless run
 
-        @lock.synchronize { @tools[name.to_s] = Tool.new(name.to_s, description, parameters, run) }
+        @lock.synchronize do
+          @tools[name.to_s] = Tool.new(name.to_s, description, parameters, executor, display_title, run)
+        end
         self
       end
 
@@ -41,7 +48,10 @@ module GetStream
       # The tools as a session request declares them.
       def declarations
         @lock.synchronize do
-          @tools.values.map { |tool| { name: tool.name, description: tool.description, parameters: tool.parameters } }
+          @tools.values.map do |tool|
+            { name: tool.name, description: tool.description, parameters: tool.parameters, executor: tool.executor,
+              display_title: tool.display_title }.compact
+          end
         end
       end
 

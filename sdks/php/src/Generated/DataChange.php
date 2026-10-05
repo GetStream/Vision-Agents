@@ -14,15 +14,15 @@ use GetStream\VisionAgents\Json;
 final readonly class DataChange
 {
     public function __construct(
+        public \DateTimeImmutable $at,
+        // What identifies the row, which is all a delete has.
+        /** @var array<string, mixed> */
+        public array $key,
+        public string $op,
         // Where this sits in the order changes happened, and the cursor to resume from.
         public int $seq,
         // Which table the row is in.
         public string $table,
-        public string $op,
-        // What identifies the row, which is all a delete has.
-        /** @var array<string, mixed> */
-        public array $key,
-        public \DateTimeImmutable $at,
         // The row as it now reads, absent for a delete and never carrying a credential.
         /** @var array<string, mixed>|null */
         public ?array $row = null,
@@ -35,11 +35,11 @@ final readonly class DataChange
     public static function fromArray(array $data): self
     {
         return new self(
+            at: Json::date($data, 'at'),
+            key: Json::object($data, 'key'),
+            op: Json::string($data, 'op'),
             seq: Json::int($data, 'seq'),
             table: Json::string($data, 'table'),
-            op: Json::string($data, 'op'),
-            key: Json::object($data, 'key'),
-            at: Json::date($data, 'at'),
             row: array_key_exists('row', $data) && $data['row'] !== null ? Json::object($data, 'row') : null,
         );
     }
@@ -52,11 +52,11 @@ final readonly class DataChange
     public function toArray(): array
     {
         $out = [];
+        $out['at'] = Json::dateValue($this->at);
+        $out['key'] = Json::objectValue($this->key);
+        $out['op'] = $this->op;
         $out['seq'] = $this->seq;
         $out['table'] = $this->table;
-        $out['op'] = $this->op;
-        $out['key'] = Json::objectValue($this->key);
-        $out['at'] = Json::dateValue($this->at);
         if ($this->row !== null) {
             $out['row'] = Json::objectValue($this->row);
         }

@@ -11,10 +11,10 @@ use GetStream\VisionAgents\Json;
 final readonly class VoicePreview
 {
     public function __construct(
-        public string $provider,
-        public string $contentType,
         // The spoken line, base64 encoded.
         public string $audio,
+        public string $contentType,
+        public string $provider,
     ) {
     }
 
@@ -24,9 +24,9 @@ final readonly class VoicePreview
     public static function fromArray(array $data): self
     {
         return new self(
-            provider: Json::string($data, 'provider'),
-            contentType: Json::string($data, 'content_type'),
             audio: Json::string($data, 'audio'),
+            contentType: Json::string($data, 'content_type'),
+            provider: Json::string($data, 'provider'),
         );
     }
 
@@ -38,9 +38,9 @@ final readonly class VoicePreview
     public function toArray(): array
     {
         $out = [];
-        $out['provider'] = $this->provider;
-        $out['content_type'] = $this->contentType;
         $out['audio'] = $this->audio;
+        $out['content_type'] = $this->contentType;
+        $out['provider'] = $this->provider;
         return $out;
     }
 }

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -21,7 +22,7 @@ const EnvBucketURL = "ROUTER_VOICES_BUCKET_URL"
 // Service is the control plane for a customer's own voices: it holds the rows, the
 // recordings behind them and the ids each provider gave them back.
 type Service struct {
-	store   *store.Store
+	store   *appconfig.Store
 	bucket  *blob.Bucket
 	cloners *Registry
 	logger  *slog.Logger
@@ -30,7 +31,7 @@ type Service struct {
 // Options configures a Service. All three dependencies are required, since a voice with
 // nowhere to keep its recordings and nobody to teach them to is not a voice.
 type Options struct {
-	Store   *store.Store
+	Store   *appconfig.Store
 	Bucket  *blob.Bucket
 	Cloners *Registry
 	Logger  *slog.Logger
@@ -91,7 +92,7 @@ func (s *Service) AddSample(ctx context.Context, customerID, voiceID string, sam
 		Bytes:       written,
 		Transcript:  sample.Transcript,
 	}
-	if err := s.store.AddVoiceSample(ctx, &stored); err != nil {
+	if err := s.store.DB().AddVoiceSample(ctx, &stored); err != nil {
 		// The row is what makes the object findable, so an orphan is swept up here rather
 		// than left in the bucket costing money nobody can account for.
 		if err := s.bucket.Delete(ctx, key); err != nil {
@@ -143,7 +144,7 @@ func (s *Service) Delete(ctx context.Context, customerID, voiceID string) error 
 		return err
 	}
 
-	bindings, err := s.store.VoiceBindings(ctx, voice.ID)
+	bindings, err := s.store.DB().VoiceBindings(ctx, voice.ID)
 	if err != nil {
 		return err
 	}
@@ -162,7 +163,7 @@ func (s *Service) Delete(ctx context.Context, customerID, voiceID string) error 
 		}
 	}
 
-	samples, err := s.store.VoiceSamples(ctx, voice.ID)
+	samples, err := s.store.DB().VoiceSamples(ctx, voice.ID)
 	if err != nil {
 		return err
 	}
@@ -201,12 +202,12 @@ func (s *Service) Speak(ctx context.Context, customerID, voiceID, provider, text
 
 // Samples returns a voice's recordings, oldest first.
 func (s *Service) Samples(ctx context.Context, voiceID string) ([]store.VoiceSample, error) {
-	return s.store.VoiceSamples(ctx, voiceID)
+	return s.store.DB().VoiceSamples(ctx, voiceID)
 }
 
 // Bindings returns what each provider made of a voice.
 func (s *Service) Bindings(ctx context.Context, voiceID string) ([]store.VoiceBinding, error) {
-	return s.store.VoiceBindings(ctx, voiceID)
+	return s.store.DB().VoiceBindings(ctx, voiceID)
 }
 
 // prepareOne sends the recordings to one provider and writes down what came back. It marks
@@ -229,7 +230,7 @@ func (s *Service) prepareOne(
 	pending := store.VoiceBinding{
 		VoiceID: voice.ID, Provider: provider, State: store.VoicePending, ExternalID: previous,
 	}
-	if err := s.store.SaveVoiceBinding(ctx, &pending); err != nil {
+	if err := s.store.SaveVoiceBinding(ctx, &pending, voice.CustomerID); err != nil {
 		s.logger.Warn("could not record that a voice is being prepared",
 			"voice", voice.ID, "provider", provider, "error", err)
 		return
@@ -247,7 +248,7 @@ func (s *Service) prepareOne(
 		binding.ExternalID = externalID
 	}
 
-	if err := s.store.SaveVoiceBinding(ctx, &binding); err != nil {
+	if err := s.store.SaveVoiceBinding(ctx, &binding, voice.CustomerID); err != nil {
 		s.logger.Warn("could not record what a provider made of a voice",
 			"voice", voice.ID, "provider", provider, "error", err)
 		return
@@ -262,7 +263,7 @@ func (s *Service) prepareOne(
 
 // externalID is the id a provider last gave the voice, or empty when it never had it.
 func (s *Service) externalID(ctx context.Context, voiceID, provider string) (string, error) {
-	bindings, err := s.store.VoiceBindings(ctx, voiceID)
+	bindings, err := s.store.DB().VoiceBindings(ctx, voiceID)
 	if err != nil {
 		return "", err
 	}
@@ -276,7 +277,7 @@ func (s *Service) externalID(ctx context.Context, voiceID, provider string) (str
 
 // request reads the recordings back out of the bucket, which is what every cloner is given.
 func (s *Service) request(ctx context.Context, voice store.Voice) (Request, error) {
-	stored, err := s.store.VoiceSamples(ctx, voice.ID)
+	stored, err := s.store.DB().VoiceSamples(ctx, voice.ID)
 	if err != nil {
 		return Request{}, err
 	}

@@ -11,8 +11,8 @@ use GetStream\VisionAgents\Json;
 final readonly class RollupResult
 {
     public function __construct(
-        public Granularity|string $granularity,
         public int $bucketsWritten,
+        public Granularity|string $granularity,
     ) {
     }
 
@@ -22,8 +22,8 @@ final readonly class RollupResult
     public static function fromArray(array $data): self
     {
         return new self(
-            granularity: Json::enum($data, 'granularity', Granularity::class),
             bucketsWritten: Json::int($data, 'buckets_written'),
+            granularity: Json::enum($data, 'granularity', Granularity::class),
         );
     }
 
@@ -35,8 +35,8 @@ final readonly class RollupResult
     public function toArray(): array
     {
         $out = [];
-        $out['granularity'] = Json::enumValue($this->granularity);
         $out['buckets_written'] = $this->bucketsWritten;
+        $out['granularity'] = Json::enumValue($this->granularity);
         return $out;
     }
 }

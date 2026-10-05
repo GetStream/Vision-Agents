@@ -11,11 +11,11 @@ use GetStream\VisionAgents\Json;
 final readonly class CampaignRequest
 {
     public function __construct(
-        public string $name,
         // The agent config the calls are made with.
         public string $configId,
         // One of your own numbers, which is what the person sees.
         public string $fromNumber,
+        public string $name,
         // How many of these calls may be happening at once.
         public ?int $concurrency = null,
         /** @var array<string, string>|null */
@@ -29,9 +29,9 @@ final readonly class CampaignRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            name: Json::string($data, 'name'),
             configId: Json::string($data, 'config_id'),
             fromNumber: Json::string($data, 'from_number'),
+            name: Json::string($data, 'name'),
             concurrency: array_key_exists('concurrency', $data) && $data['concurrency'] !== null ? Json::int($data, 'concurrency') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
@@ -45,9 +45,9 @@ final readonly class CampaignRequest
     public function toArray(): array
     {
         $out = [];
-        $out['name'] = $this->name;
         $out['config_id'] = $this->configId;
         $out['from_number'] = $this->fromNumber;
+        $out['name'] = $this->name;
         if ($this->concurrency !== null) {
             $out['concurrency'] = $this->concurrency;
         }

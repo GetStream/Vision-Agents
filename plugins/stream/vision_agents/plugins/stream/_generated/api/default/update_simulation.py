@@ -62,6 +62,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -93,7 +98,7 @@ def sync_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         body (SimulationRequest):
 
     Raises:
@@ -130,7 +135,7 @@ def sync(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         body (SimulationRequest):
 
     Raises:
@@ -162,7 +167,7 @@ async def asyncio_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         body (SimulationRequest):
 
     Raises:
@@ -197,7 +202,7 @@ async def asyncio(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         body (SimulationRequest):
 
     Raises:

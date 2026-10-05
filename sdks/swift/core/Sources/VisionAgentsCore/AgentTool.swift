@@ -15,19 +15,36 @@ public struct AgentTool: Sendable {
     /// A JSON Schema object describing the arguments, or nil for a tool that takes none.
     public let parameters: JSONValue?
 
+    /// Who runs it, as the people in a persistent conversation are shown. Nil is the server.
+    public let executor: Executor?
+
+    /// What a call is doing, in words for the people in the conversation, such as "Checking
+    /// your location". At most 80 characters.
+    public let displayTitle: String?
+
     /// Runs the tool. What it returns is given to the model as the result; throwing tells the
     /// model the tool failed and why.
     public let run: @Sendable ([String: JSONValue]) async throws -> String
+
+    public enum Executor: String, Sendable {
+        case server
+        /// A person's device: the call is shown as awaiting it until it answers.
+        case client
+    }
 
     public init(
         name: String,
         description: String,
         parameters: JSONValue? = nil,
+        executor: Executor? = nil,
+        displayTitle: String? = nil,
         run: @escaping @Sendable ([String: JSONValue]) async throws -> String
     ) {
         self.name = name
         self.description = description
         self.parameters = parameters
+        self.executor = executor
+        self.displayTitle = displayTitle
         self.run = run
     }
 }

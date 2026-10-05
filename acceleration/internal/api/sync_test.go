@@ -60,14 +60,13 @@ func (s *SyncSuite) TestSyncingAnAgentStoresItsInstructionsAndSkills() {
 func (s *SyncSuite) TestSyncingAnAgentStoresWhatItsDeclarationRunsItOn() {
 	result := s.sync(map[string]any{
 		"name": "analyst", "hash": "v1", "mode": "text",
-		"llm": "llm-flow", "subagent": "llm-flow", "tts": "en-low-latency", "voice": "aurora",
+		"llm": "llm-flow", "tts": "en-low-latency", "voice": "aurora",
 		"greeting": "Hello.", "keyterms": []string{"Vision Agents"}, "sandbox": "daytona",
 		"tags": map[string]string{"project": "analyst"},
 	})
 
 	s.Equal(AgentModeText, result.Config.Mode)
 	s.Equal("llm-flow", value(result.Config.Llm))
-	s.Equal("llm-flow", value(result.Config.Subagent))
 	s.Equal("aurora", value(result.Config.Voice))
 	s.Equal("Hello.", value(result.Config.Greeting))
 	s.Equal([]string{"Vision Agents"}, value(result.Config.Keyterms))
@@ -83,6 +82,52 @@ func (s *SyncSuite) TestSyncingAnAgentStoresWhatItLeavesToDispatch() {
 
 	s.Equal(Enabled, value(value(result.Config.Dispatch).IncomingCall))
 	s.Equal(Enabled, value(value(result.Config.Dispatch).Text))
+}
+
+func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
+	result := s.sync(map[string]any{
+		"name": "artist", "hash": "v1", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"setup": []string{"pip install bpy==5.2.2"}, "timeout_ms": 300000},
+	})
+	s.Equal([]string{"pip install bpy==5.2.2"}, value(value(result.Config.SandboxOptions).Setup))
+
+	// A directory that stops saying how is not one that wants the build thrown away.
+	again := s.sync(map[string]any{"name": "artist", "hash": "v2", "sandbox": "daytona"})
+	s.Equal(300000, value(value(again.Config.SandboxOptions).TimeoutMs))
+}
+
+func (s *SyncSuite) TestSyncingAnAgentStoresTheMCPServersItNamesByURL() {
+	result := s.sync(map[string]any{
+		"name": "concierge", "hash": "v1",
+		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+	})
+
+	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(result.Config.McpServers))
+}
+
+func (s *SyncSuite) TestSyncingAVoiceAgentStoresItsThinkingLlm() {
+	result := s.sync(map[string]any{
+		"name": "support", "hash": "v1", "mode": "voice", "thinking_llm": "llm-flow",
+	})
+
+	s.Equal("llm-flow", value(result.Config.ThinkingLlm))
+}
+
+func (s *SyncSuite) TestASyncGivingATextAgentAThinkingLlmIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "analyst", "hash": "v1", "mode": "text", "thinking_llm": "llm-flow"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "thinking_llm")
+}
+
+func (s *SyncSuite) TestASyncAskingForTooMuchMemoryIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "artist", "hash": "v1", "sandbox": "daytona",
+			"sandbox_options": map[string]any{"memory_gb": 1024}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "memory_gb")
 }
 
 func (s *SyncSuite) TestASyncThatNamesNoModelLeavesTheOneStored() {

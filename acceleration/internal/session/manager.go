@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
@@ -23,7 +24,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
@@ -32,7 +35,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
-	"os"
 )
 
 // EdgeFactory opens the transport a session's agent talks over.
@@ -98,9 +100,20 @@ type ManagerOptions struct {
 	// Without one the manager opens its own over the configured outbox directory.
 	Conversations *persistent.Service
 
-	Store  *store.Store
-	Live   *live.Client
-	Logger *slog.Logger
+	Store *store.Store
+	// Configs reads what a session is opened from -- the skills it names -- through
+	// whatever cache is in front of Postgres. Built over Store when it is not given, in
+	// which case every read is a query, which is what a deployment without Redis does.
+	Configs *appconfig.Store
+	Live    *live.Client
+	// Directory is where this node says which sessions it is running, so the deployment's
+	// other nodes can forward what only this one can answer. Nil keeps a session
+	// reachable on this node alone.
+	Directory *node.Directory
+	// PluginAuth signs an end user into the plugins an agent names per user, sending the
+	// provider back to this deployment's public URL. Nil sends it to localhost.
+	PluginAuth *plugins.Auth
+	Logger     *slog.Logger
 }
 
 // Manager owns the sessions this process is running.
@@ -147,17 +160,19 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		conversations: options.Conversations,
 	}
 	if options.Store != nil {
+		if options.Configs == nil {
+			configs, err := appconfig.New(appconfig.Options{Store: options.Store, Logger: options.Logger})
+			if err != nil {
+				return nil, err
+			}
+			manager.options.Configs = configs
+		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
 		manager.records = newSessionRecorder(options.Store, options.Logger)
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 	}
 	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
-	if os.Getenv("CHAT_OUTBOX_DIR") != "" {
-		if _, err := manager.Conversations(); err != nil {
-			return nil, err
-		}
-	}
 	return manager, nil
 }
 
@@ -359,10 +374,17 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 	mcp, pluginTools := attachPlugins(ctx, spec, m.options.Store, m.logger)
 	tools = append(tools, pluginTools...)
+	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
+	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
 	if mcp != nil {
 		runner = &pluginRunner{mcp: mcp, next: runner}
 		created.closers = append(created.closers, mcp.Close)
+	}
+	if own := m.userPlugins(spec, runner); own != nil {
+		tools = append(tools, plugins.UserTools(spec.UserPlugins)...)
+		runner = own
+		created.closers = append(created.closers, own.Close)
 	}
 
 	var toolStarted func(agent.ToolStarted)
@@ -409,6 +431,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		ToolRunner:         runner,
 		Tools:              harness.Tools{Tools: tools},
 		Sandbox:            box,
+		Publish:            publisher(conv),
 		Tasks:              spec.Tasks,
 		Duplex:             spec.duplex(),
 		VideoSource:        spec.VideoSource,
@@ -546,6 +569,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.sessions[created.id] = created
 	m.mu.Unlock()
 
+	// Said after the session is here to be found, so a peer that forwards a request on
+	// the strength of it has somewhere to forward it to.
+	if m.options.Directory != nil {
+		m.options.Directory.Hold(ctx, created.id, spec.AgentID)
+	}
+
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
 	opened = true
@@ -569,6 +598,10 @@ func (m *Manager) supersede(spec Spec) {
 		}
 	}
 	m.mu.Unlock()
+
+	for _, found := range left {
+		m.release(found.id)
+	}
 
 	for _, found := range left {
 		m.logger.Info("ending the session this agent left behind in the call",
@@ -860,6 +893,8 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 	switch {
 	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
 		return false
+	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
+		return false
 	case filter.AgentName != "" && spec.AgentName != filter.AgentName:
 		return false
 	case filter.Project != "" && spec.Project != filter.Project:
@@ -871,8 +906,25 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 	case filter.State == store.SessionRunning && live.State() != Live,
 		filter.State == store.SessionClosed && live.State() != Ended:
 		return false
+	case !filter.After.IsZero() && live.CreatedAt().Before(filter.After):
+		return false
+	case !filter.Before.IsZero() && !live.CreatedAt().Before(filter.Before):
+		return false
+	case !contains(spec.Custom, filter.Custom):
+		return false
 	case filter.Cursor != nil && !before(live.CreatedAt(), live.ID(), *filter.Cursor):
 		return false
+	}
+	return true
+}
+
+// contains is the store's custom @> ?::jsonb, for a session that has no row to ask.
+func contains(custom map[string]any, wanted map[string]string) bool {
+	for key, value := range wanted {
+		held, ok := custom[key]
+		if !ok || fmt.Sprint(held) != value {
+			return false
+		}
 	}
 	return true
 }
@@ -896,8 +948,37 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	m.mu.Lock()
 	delete(m.sessions, id)
 	m.mu.Unlock()
+	m.release(id)
 
 	return true, found.Close()
+}
+
+// releaseTimeout bounds taking back this node's claim on a session. Short, because a
+// claim that is not taken back expires on its own.
+const releaseTimeout = 2 * time.Second
+
+// release stops telling this deployment's other nodes that a session is here.
+func (m *Manager) release(id string) {
+	if m.options.Directory == nil {
+		return
+	}
+	// Not the caller's context: a session is let go of on paths that have none, and one
+	// cancelled the moment the answer is written would leave the claim behind.
+	ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+	defer cancel()
+	m.options.Directory.Release(ctx, id)
+}
+
+// Running reports whether this process is running a session, whoever it belongs to.
+//
+// No owner is asked for, unlike Get, because which node holds a session is not a question
+// about who may see it: the node that answers checks that for itself.
+func (m *Manager) Running(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, running := m.sessions[id]
+	return running
 }
 
 // Delete stops a session if it is running and deletes it: its row, its turns, and what it
@@ -989,7 +1070,7 @@ func (m *Manager) box(spec Spec) (sandbox.Sandbox, error) {
 	if spec.Sandbox != daytonaProvider {
 		return nil, fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox)
 	}
-	return daytona.New(daytona.Options{Logger: m.logger})
+	return daytona.New(daytona.Options{Config: spec.SandboxOptions, Logger: m.logger})
 }
 
 // reading reports whether this session has anything to look things up in, which is a
@@ -1085,10 +1166,19 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 	defer m.mu.Unlock()
 	if m.conversations == nil {
 		var err error
-		m.conversations, err = persistent.New(os.Getenv("CHAT_OUTBOX_DIR"))
+		m.conversations, err = persistent.New()
 		if err != nil {
 			return nil, err
 		}
 	}
 	return m.conversations, nil
+}
+
+// publisher is where files the subagent's code hands back are shown: the conversation's
+// channel when the session is kept in one, and nowhere when it is not.
+func publisher(conv *persistent.Conversation) sandbox.Publisher {
+	if conv == nil {
+		return nil
+	}
+	return conv.Publish
 }

@@ -61,22 +61,45 @@ async fn a_session_declares_its_tools_and_watches_its_events() {
 }
 
 #[tokio::test]
+async fn a_tool_declared_whole_carries_its_title_and_who_runs_it() {
+    let server = Server::start().await;
+    let tools = Tools::new();
+    tools.register_tool(
+        types::SessionTool {
+            name: "locate".into(),
+            description: "Where the person is".into(),
+            display_title: Some("Finding you".into()),
+            executor: Some(types::SessionToolExecutor::Client),
+            ..Default::default()
+        },
+        |_| async { Ok::<_, String>("Oslo") },
+    );
+    let (_session, mut socket) = open(&server, tools).await;
+
+    let sent = server.request(Method::POST, "/v1/agents/sessions").body;
+    assert_eq!(
+        sent["tools"],
+        json!([{"name": "locate", "description": "Where the person is",
+                "display_title": "Finding you", "executor": "client"}])
+    );
+    socket
+        .send(json!({"type": "tool_call", "id": "t1", "name": "locate", "arguments": "{}"}))
+        .await;
+    assert_eq!(socket.expect("tool_result").await["output"], "Oslo");
+}
+
+#[tokio::test]
 async fn commands_are_sent_on_the_socket() {
     let server = Server::start().await;
     let (session, mut socket) = open(&server, Tools::new()).await;
 
     session.say("hello").await.unwrap();
-    session.respond("what is new").await.unwrap();
     session.interrupt().await.unwrap();
     session.set_instructions("be brief").await.unwrap();
 
     assert_eq!(
         socket.next().await.unwrap(),
         json!({"type": "say", "text": "hello"})
-    );
-    assert_eq!(
-        socket.next().await.unwrap(),
-        json!({"type": "respond", "text": "what is new"})
     );
     assert_eq!(socket.next().await.unwrap(), json!({"type": "interrupt"}));
     assert_eq!(
@@ -200,10 +223,15 @@ async fn within_closes_the_session_once_the_scope_is_done() {
 }
 
 #[tokio::test]
-async fn a_socket_that_cannot_open_closes_the_session_it_was_for() {
+async fn a_socket_that_cannot_open_stops_the_session_it_was_for() {
     let server = Server::start().await;
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
-    server.route(Method::DELETE, "/v1/agents/sessions/s1", 204, json!(null));
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/s1/stop",
+        204,
+        json!(null),
+    );
     server.route(
         Method::GET,
         "/v1/agents/sessions/s1/events",
@@ -222,7 +250,53 @@ async fn a_socket_that_cannot_open_closes_the_session_it_was_for() {
 
     assert_eq!(refused.status(), Some(403));
     assert!(refused.to_string().contains("not yours"), "{refused}");
-    server.request(Method::DELETE, "/v1/agents/sessions/s1");
+    server.request(Method::POST, "/v1/agents/sessions/s1/stop");
+    assert!(
+        server
+            .requests(Method::DELETE, "/v1/agents/sessions/s1")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_conversation_and_its_memories_are_deleted_apart_from_stopping_it() {
+    let server = Server::start().await;
+    let (session, _socket) = open(&server, Tools::new()).await;
+    server.route(Method::DELETE, "/v1/agents/sessions/*", 204, json!(null));
+    server.route(Method::DELETE, "/v1/agents/users/*", 204, json!(null));
+    let client = server.client();
+
+    session.delete_memories().await.unwrap();
+    session.delete().await.unwrap();
+    client
+        .agent("jean")
+        .sessions
+        .delete_memories("s2")
+        .await
+        .unwrap();
+    client.agent("jean").sessions.delete("s2").await.unwrap();
+    client.memories().truncate("ada").await.unwrap();
+
+    let deleted: Vec<_> = server
+        .seen()
+        .into_iter()
+        .filter(|seen| seen.method == Method::DELETE)
+        .map(|seen| seen.path)
+        .collect();
+    assert_eq!(
+        deleted,
+        [
+            "/v1/agents/sessions/s1/memories",
+            "/v1/agents/sessions/s1",
+            "/v1/agents/sessions/s2/memories",
+            "/v1/agents/sessions/s2",
+            "/v1/agents/users/ada/memories",
+        ]
+    );
+    assert!(matches!(
+        client.memories().truncate("").await,
+        Err(vision_agents::Error::Configuration(_))
+    ));
 }
 
 #[tokio::test]
@@ -239,13 +313,13 @@ async fn a_turn_is_created_and_read_back() {
         Method::GET,
         "/v1/agents/sessions/s1/responses",
         200,
-        json!([response("r1", "s1")]),
+        json!({"items": [response("r1", "s1")], "has_more": false}),
     );
     server.route(
         Method::GET,
         "/v1/agents/sessions/s1/responses/items",
         200,
-        json!([item(0, "r1"), item(1, "r1")]),
+        json!({"items": [item(0, "r1"), item(1, "r1")], "has_more": false}),
     );
 
     let turn = session.responses.create("what is on today").await.unwrap();
@@ -253,7 +327,8 @@ async fn a_turn_is_created_and_read_back() {
     let items = turn.items.all().await.unwrap();
 
     assert_eq!(turn.id(), "r1");
-    assert_eq!(listed.len(), 1);
+    assert_eq!(listed.items.len(), 1);
+    assert!(!listed.has_more);
     assert_eq!(items.len(), 2);
     assert_eq!(
         server
@@ -265,7 +340,7 @@ async fn a_turn_is_created_and_read_back() {
         server
             .request(Method::GET, "/v1/agents/sessions/s1/responses/items")
             .query,
-        "response_id=r1&limit=200&offset=0"
+        "response_id=r1&limit=200"
     );
 }
 
@@ -277,13 +352,13 @@ async fn a_whole_conversation_is_read_a_page_at_a_time() {
         Method::GET,
         "/v1/agents/sessions/s1/responses/items",
         200,
-        json!(page),
+        json!({"items": page, "has_more": true, "next_cursor": "c2"}),
     );
     server.route(
         Method::GET,
         "/v1/agents/sessions/s1/responses/items",
         200,
-        json!([item(200, "r2")]),
+        json!({"items": [item(200, "r2")], "has_more": false}),
     );
 
     let items = server
@@ -302,7 +377,7 @@ async fn a_whole_conversation_is_read_a_page_at_a_time() {
         .into_iter()
         .map(|seen| seen.query)
         .collect();
-    assert_eq!(queries, ["limit=200&offset=0", "limit=200&offset=200"]);
+    assert_eq!(queries, ["limit=200", "limit=200&cursor=c2"]);
 }
 
 #[tokio::test]
@@ -351,31 +426,43 @@ async fn a_rewind_to_nothing_is_refused_before_it_is_sent() {
 }
 
 #[tokio::test]
-async fn settings_are_changed_with_only_what_was_set() {
+async fn a_session_is_updated_with_only_what_was_set() {
     let server = Server::start().await;
     let (chat, _socket) = open(&server, weather()).await;
-    server.route(
-        Method::PATCH,
-        "/v1/agents/sessions/s1/settings",
-        200,
-        session("s1"),
-    );
+    server.route(Method::PATCH, "/v1/agents/sessions/s1", 200, session("s1"));
+    server.route(Method::PATCH, "/v1/agents/sessions/s9", 200, session("s9"));
 
     let updated = chat
-        .update_settings(types::SessionSettingsRequest {
+        .update(&types::UpdateSessionRequest {
             llm: Some("llm-thinking".into()),
-            thinking: Some(types::SessionSettingsRequestThinking::High),
+            thinking: Some(types::UpdateSessionRequestThinking::High),
             ..Default::default()
         })
         .await
         .unwrap();
+    let renamed = server
+        .client()
+        .agent("jean")
+        .sessions
+        .update(
+            "s9",
+            &types::UpdateSessionRequest {
+                title: Some("Pricing".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
 
     assert_eq!(updated.id, "s1");
+    assert_eq!(renamed.id, "s9");
     assert_eq!(
-        server
-            .request(Method::PATCH, "/v1/agents/sessions/s1/settings")
-            .body,
+        server.request(Method::PATCH, "/v1/agents/sessions/s1").body,
         json!({"llm": "llm-thinking", "thinking": "high"})
+    );
+    assert_eq!(
+        server.request(Method::PATCH, "/v1/agents/sessions/s9").body,
+        json!({"title": "Pricing"})
     );
 }
 
@@ -422,24 +509,20 @@ async fn a_fork_at_a_response_runs_the_same_functions() {
 async fn an_agents_conversations_are_listed_searched_and_opened_by_name() {
     let server = Server::start().await;
     server.route(
-        Method::GET,
-        "/v1/agents/sessions",
+        Method::POST,
+        "/v1/agents/sessions/query",
         200,
-        json!([session("s1")]),
-    );
-    server.route(
-        Method::GET,
-        "/v1/agents/sessions/search",
-        200,
-        json!([session("s1")]),
+        json!({"items": [session("s1")], "has_more": true, "next_cursor": "c2"}),
     );
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s3"));
     let agent = server.client().agent("docs");
 
-    agent
+    let page = agent
         .sessions
-        .query(vision_agents::ListSessionsQuery {
-            project: Some("p".into()),
+        .query(vision_agents::Query {
+            project_id: Some("p".into()),
+            state: Some("live".into()),
+            cursor: Some("c1".into()),
             ..Default::default()
         })
         .await
@@ -467,15 +550,19 @@ async fn an_agents_conversations_are_listed_searched_and_opened_by_name() {
     let _socket = server.accept().await;
     opening.await.unwrap().unwrap();
 
+    assert_eq!(page.items[0].id, "s1");
+    assert_eq!(page.next_cursor.as_deref(), Some("c2"));
+    let queries: Vec<_> = server
+        .requests(Method::POST, "/v1/agents/sessions/query")
+        .into_iter()
+        .map(|seen| seen.body)
+        .collect();
     assert_eq!(
-        server.request(Method::GET, "/v1/agents/sessions").query,
-        "agent=docs&project=p"
-    );
-    assert_eq!(
-        server
-            .request(Method::GET, "/v1/agents/sessions/search")
-            .query,
-        "q=pricing&agent=docs"
+        queries,
+        [
+            json!({"filter": {"agent": "docs", "project_id": "p", "state": "live"}, "cursor": "c1"}),
+            json!({"filter": {"agent": "docs", "text": {"$q": "pricing"}}}),
+        ]
     );
     assert_eq!(
         server.request(Method::POST, "/v1/agents/sessions").body,

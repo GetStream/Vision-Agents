@@ -149,8 +149,8 @@ impl Session {
             Ok(socket) => socket,
             Err(error) => {
                 // The session is live in the backend even though nothing here can watch it,
-                // so it is closed rather than left holding a call nobody is listening to.
-                let _ = client.close_session(&created.id).await;
+                // so it is stopped rather than left holding a call nobody is listening to.
+                let _ = client.stop_session(&created.id).await;
                 return Err(error);
             }
         };
@@ -243,13 +243,6 @@ impl Session {
         self.command(json!({"type": "say", "text": text})).await
     }
 
-    /// Answers text through the model, as though it had been said on the call.
-    ///
-    /// [`Responses::create`] is the same thing with an id back.
-    pub async fn respond(&self, text: &str) -> Result<()> {
-        self.command(json!({"type": "respond", "text": text})).await
-    }
-
     /// Abandons the reply being spoken.
     pub async fn interrupt(&self) -> Result<()> {
         self.command(json!({"type": "interrupt"})).await
@@ -261,13 +254,23 @@ impl Session {
             .await
     }
 
-    /// Changes the models and how they answer, from the next turn. A field left `None` is
-    /// left as it is.
-    pub async fn update_settings(
-        &self,
-        settings: types::SessionSettingsRequest,
-    ) -> Result<types::Session> {
-        self.client.set_session_settings(self.id(), &settings).await
+    /// Changes this session: its title, description, custom labels, instructions, models or
+    /// voice, from the next turn. A field left `None` is left as it is. Returns the session
+    /// as it now is.
+    pub async fn update(&self, update: &types::UpdateSessionRequest) -> Result<types::Session> {
+        self.client.update_session(self.id(), update).await
+    }
+
+    /// Deletes this conversation: it is stopped, and its turns and what it remembered are
+    /// deleted with it.
+    pub async fn delete(&self) -> Result<()> {
+        self.client.delete_session(self.id()).await
+    }
+
+    /// Deletes what this conversation remembered, leaving the user's other memories alone.
+    /// Server side only.
+    pub async fn delete_memories(&self) -> Result<()> {
+        self.client.delete_session_memories(self.id()).await
     }
 
     /// Continues this conversation as a new one.
@@ -294,12 +297,13 @@ impl Session {
         let _ = ended.wait_for(|ended| *ended).await;
     }
 
-    /// Ends the conversation. Safe to call after it has already ended.
+    /// Stops the conversation. Safe to call after it has already ended. What it recorded and
+    /// remembered is kept; [`Session::delete`] takes it away.
     pub async fn close(&self) {
         if self.sender.open() {
             let _ = self.sender.send(&json!({"type": "close"})).await;
         } else if self.live() {
-            let _ = self.client.close_session(self.id()).await;
+            let _ = self.client.stop_session(self.id()).await;
         }
         if tokio::time::timeout(CLOSE_GRACE, self.wait())
             .await

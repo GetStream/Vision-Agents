@@ -7,6 +7,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 // Request is one recorded unit of work, stored so billing, cost and health can all be
@@ -343,6 +344,18 @@ type AgentConfig struct {
 	Plugins []string `bun:"plugins,type:jsonb"`
 	// Connectors are the connectors this agent may call tools of, each under an alias.
 	Connectors []ConnectorBinding `bun:"connectors,type:jsonb"`
+	// UserPlugins names catalog plugins each end user connects with their own account, from
+	// the conversation, when the model first needs one.
+	UserPlugins []string `bun:"user_plugins,type:jsonb"`
+	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
+	// a conversation of its own when it arrives.
+	PluginEvents []PluginEvent `bun:"plugin_events,type:jsonb"`
+	// PluginOptions change how a plugin the config names is reached and what its login
+	// asks for. A plugin without any is the catalog's.
+	PluginOptions []PluginOptions `bun:"plugin_options,type:jsonb"`
+	// MCPServers are MCP servers outside the catalog that the agent's sessions open by
+	// their URL, with no login.
+	MCPServers []MCPServer `bun:"mcp_servers,type:jsonb"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
@@ -353,6 +366,8 @@ type AgentConfig struct {
 	// Sandbox is where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none.
 	Sandbox string `bun:"sandbox,notnull"`
+	// SandboxOptions is how the sandbox is built and how long code may run in it.
+	SandboxOptions sandbox.Config `bun:"sandbox_options,type:jsonb,notnull"`
 	// Harness is which harness the agent's sessions run, "default" being the one there is.
 	Harness string            `bun:"harness,notnull"`
 	Tags    map[string]string `bun:"tags,type:jsonb"`
@@ -526,7 +541,8 @@ const (
 	PluginFailed = "failed"
 )
 
-// PluginConnection is one hosted MCP server authorized for one agent config.
+// PluginConnection is one hosted MCP server authorized for one agent config, by the app
+// or by one of its end users.
 type PluginConnection struct {
 	bun.BaseModel `bun:"table:agent_plugin_connections,alias:apc"`
 
@@ -534,6 +550,9 @@ type PluginConnection struct {
 	CustomerID string `bun:"customer_id,notnull"`
 	ConfigID   string `bun:"config_id,notnull"`
 	PluginID   string `bun:"plugin_id,notnull"`
+	// UserID is the end user whose account this is. Empty is the app's own login, made once
+	// on the dashboard and used by every session of the config.
+	UserID string `bun:"user_id,notnull"`
 	// InstanceURL is the shop or org hostname for plugins that have no single global URL.
 	InstanceURL  string     `bun:"instance_url,notnull"`
 	AccessToken  string     `bun:"access_token,notnull"`
@@ -546,6 +565,81 @@ type PluginConnection struct {
 	CodeVerifier  string     `bun:"code_verifier,notnull"`
 	ClientID      string     `bun:"client_id,notnull"`
 	TokenEndpoint string     `bun:"token_endpoint,notnull"`
+	CreatedAt     time.Time  `bun:"created_at,notnull"`
+	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
+	DeletedAt     *time.Time `bun:"deleted_at"`
+}
+
+// MCPServer is an MCP server an agent reaches by its URL rather than from the catalog.
+type MCPServer struct {
+	// Name prefixes its tools, as a plugin's id does.
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	// Empty offers every tool.
+	Tools []string `json:"tools,omitempty"`
+}
+
+// PluginOptions is what an agent config changes about one catalog plugin it names.
+type PluginOptions struct {
+	Plugin string `json:"plugin"`
+	// Readonly reaches the plugin's read-only endpoint.
+	Readonly bool `json:"readonly,omitempty"`
+	// Scopes are asked for at consent in place of the catalog's.
+	Scopes []string `json:"scopes,omitempty"`
+	// Toolsets limit the server to these groups of tools. Empty offers every tool.
+	Toolsets []string `json:"toolsets,omitempty"`
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	// Empty offers every tool.
+	Tools []string `json:"tools,omitempty"`
+}
+
+// PluginEvent is one MCP event an agent config subscribes to on a plugin it names.
+type PluginEvent struct {
+	Plugin string `json:"plugin"`
+	Event  string `json:"event"`
+	// Arguments are the event's filters, as its inputSchema describes them.
+	Arguments map[string]any `json:"arguments,omitempty"`
+	// Instructions say what the agent does with the event when it arrives.
+	Instructions string `json:"instructions,omitempty"`
+}
+
+// How far a plugin event subscription has got.
+const (
+	// PluginEventPending means the server has not yet accepted it.
+	PluginEventPending = "pending"
+	// PluginEventActive means the server accepted it and delivers to its callback.
+	PluginEventActive = "active"
+	// PluginEventFailed means the server refused it, and Error says why.
+	PluginEventFailed = "failed"
+)
+
+// PluginEventSubscription is one declared event subscribed to with one login: the app's
+// own, or one end user's.
+type PluginEventSubscription struct {
+	bun.BaseModel `bun:"table:agent_plugin_event_subscriptions,alias:apes"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	ConfigID   string `bun:"config_id,notnull"`
+	PluginID   string `bun:"plugin_id,notnull"`
+	// UserID is whose login subscribed. Empty is the app's own.
+	UserID    string         `bun:"user_id,notnull"`
+	Event     string         `bun:"event,notnull"`
+	Arguments map[string]any `bun:"arguments,type:jsonb,notnull"`
+	// Key is the event and its arguments as canonical JSON, hashed, so the same filters
+	// in another key order are the same subscription.
+	Key string `bun:"key,notnull"`
+	// Token is the callback's path segment and Secret what deliveries to it are signed with.
+	Token  string `bun:"token,notnull"`
+	Secret string `bun:"secret,notnull"`
+	// RemoteID is the id the server gave the subscription.
+	RemoteID string `bun:"remote_id,notnull"`
+	// RefreshBefore is when the server stops delivering unless subscribed to again. Nil
+	// is a subscription that does not expire.
+	RefreshBefore *time.Time `bun:"refresh_before"`
+	Status        string     `bun:"status,notnull"`
+	Error         string     `bun:"error,notnull"`
 	CreatedAt     time.Time  `bun:"created_at,notnull"`
 	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
 	DeletedAt     *time.Time `bun:"deleted_at"`
@@ -1244,13 +1338,21 @@ type ItemPosition struct {
 // filter at all.
 type SessionFilter struct {
 	UserID    string
+	ConfigID  string
 	AgentName string
 	AgentID   string
 	Project   string
 	Modality  string
 	// State is SessionRunning or SessionClosed.
 	State string
-	Limit int
+	// Custom matches sessions whose custom object contains every one of these pairs, which
+	// is what makes custom worth writing: a caller that labelled a session can find it
+	// again by the label.
+	Custom map[string]string
+	// After and Before bound when the session started, After inclusive and Before not.
+	After  time.Time
+	Before time.Time
+	Limit  int
 	// Cursor starts the page after this session. Nil is the first page.
 	Cursor *SessionPosition
 }
@@ -1333,22 +1435,33 @@ type AgentResponseItem struct {
 	At      time.Time      `bun:"at,notnull"`
 }
 
-// GuestUser is somebody who talked to an agent before they had an account.
-//
-// The row is not what makes them work -- a guest is a real Stream user with role guest, and
-// chat and video need nothing here -- it is what makes claiming them possible. Claiming
-// moves what a guest said onto a real account, so it has to be an operation only a backend
-// may ask for, and that needs a record of which ids were ever guests and which have already
-// been claimed.
-type GuestUser struct {
-	bun.BaseModel `bun:"table:guest_users,alias:gu"`
+// The kinds of end user a row records. They are the verified kinds of auth.Kind: an
+// anonymous caller goes by a name nobody checked, so recording it would be recording the
+// claim rather than the person.
+const (
+	UserKindGuest         = "guest"
+	UserKindAuthenticated = "authenticated"
+)
 
+// User is an end user an app has been seen acting for.
+//
+// The row is not what makes them work -- a user is a real Stream user, and chat and video
+// need nothing here -- it is what lets an app ask who its users are, and what makes
+// claiming a guest possible. Claiming moves what a guest said onto a real account, so it
+// has to be an operation only a backend may ask for, and that needs a record of which ids
+// were ever guests and which have already been claimed.
+type User struct {
+	bun.BaseModel `bun:"table:users,alias:u"`
+
+	CustomerID string `bun:"customer_id,pk"`
 	// ID is the Stream user id, which the caller holds and sends back to claim.
-	ID         string         `bun:"id,pk"`
-	CustomerID string         `bun:"customer_id,notnull"`
-	Name       string         `bun:"name,notnull"`
-	Custom     map[string]any `bun:"custom,type:jsonb,nullzero"`
-	CreatedAt  time.Time      `bun:"created_at,notnull"`
+	ID string `bun:"id,pk"`
+	// Kind is what the credential proved them to be, UserKindGuest or
+	// UserKindAuthenticated. Only a guest may be claimed.
+	Kind      string         `bun:"kind,notnull"`
+	Name      string         `bun:"name,notnull"`
+	Custom    map[string]any `bun:"custom,type:jsonb,nullzero"`
+	CreatedAt time.Time      `bun:"created_at,notnull"`
 	// ClaimedBy is the real user this guest turned out to be, empty while they are still a
 	// guest. A guest is claimed once: a second claim naming somebody else would move one
 	// person's conversations onto another's account.

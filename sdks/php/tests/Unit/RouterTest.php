@@ -25,7 +25,17 @@ final class RouterTest extends TestCase
     protected function setUp(): void
     {
         $this->local = new LocalRouter();
-        $this->router = new Router('healthcare', ['team' => 'clinical'], $this->local->client());
+        $this->router = $this->local->client()->router('healthcare', ['team' => 'clinical']);
+    }
+
+    public function testTheRouterIsTheClients(): void
+    {
+        $client = $this->local->client('acme');
+        $router = $client->router('clinic');
+
+        self::assertSame($client, $router->client);
+        self::assertSame('clinic', $router->config);
+        self::assertSame([], $router->tags);
     }
 
     protected function tearDown(): void
@@ -108,6 +118,17 @@ final class RouterTest extends TestCase
             ['namespace' => 'jean', 'url' => 'https://example.com/plans', 'title' => 'Plans'],
             $this->local->to('POST', '/v1/agents/knowledge/urls')[0]->json(),
         );
+    }
+
+    public function testKnowledgeAddUrlCarriesTheRefreshSchedule(): void
+    {
+        $this->local->answer('POST', '/v1/agents/knowledge/urls', 202, Rows::page('indexed', 2) + ['refresh_hours' => 24]);
+        $knowledge = (new Agent(name: 'jean', client: $this->local->client()))->knowledge();
+
+        $page = $knowledge->addUrl('https://example.com/plans', refreshHours: 24);
+
+        self::assertSame(24, $page->refreshHours);
+        self::assertSame(24, $this->local->to('POST', '/v1/agents/knowledge/urls')[0]->json()['refresh_hours']);
     }
 
     public function testKnowledgeReturnsAPendingPageAtTheTimeout(): void

@@ -65,7 +65,7 @@ void main() {
             .where((event) => event.kind == AgentEventKind.responseDelta)
             .first;
 
-        session.send('What are your opening hours? Answer in one sentence.');
+        await session.responses.create('What are your opening hours? Answer in one sentence.');
 
         await deltas.timeout(const Duration(seconds: 30));
         await _until(() => session.state == ConversationState.idle && session.turns.length >= 2);
@@ -95,7 +95,7 @@ void main() {
           ),
         );
 
-        session.send('Look up order A-1042 and tell me what is in it.');
+        await session.responses.create('Look up order A-1042 and tell me what is in it.');
 
         await _until(() => asked.isNotEmpty, seconds: 45);
         expect(asked.first.toUpperCase(), 'A-1042');
@@ -105,20 +105,20 @@ void main() {
 
       test('a fork at a response branches off it and leaves the original as it was', () async {
         final session = await chat();
-        session.send('My name is Ada. Reply with one word.');
+        await session.responses.create('My name is Ada. Reply with one word.');
         await _until(() => session.state == ConversationState.idle && session.turns.length >= 2);
-        session.send('What is my name? Reply with one word.');
+        await session.responses.create('What is my name? Reply with one word.');
         await _until(() => session.state == ConversationState.idle && session.turns.length >= 4);
-        await _until(() async => (await session.responses.list()).length == 2);
+        await _until(() async => (await session.responses.list()).items.length == 2);
 
-        final kept = (await session.responses.list()).first;
+        final kept = (await session.responses.list()).items.first;
         expect(kept.said, contains('Ada'));
 
         final fork = await session.fork(ForkOptions(responseId: kept.id));
         opened.add(fork);
         expect(fork.id, isNot(session.id));
         expect((await agents.sessions.get(fork.id)).forkedFrom, session.id);
-        expect(await session.responses.list(), hasLength(2));
+        expect((await session.responses.list()).items, hasLength(2));
       });
 
       test('a response created over HTTP is read back item by item', () async {
@@ -130,7 +130,7 @@ void main() {
 
         await _until(() async {
           final items = await session.responses.items(responseId: response.id);
-          return items.any((item) => item.kind == ItemKind.answer);
+          return items.items.any((item) => item.kind == ItemKind.answer);
         }, seconds: 45);
         final items = await session.responses.unwind(responseId: response.id).toList();
         expect(items.first.kind, ItemKind.said);
@@ -139,32 +139,69 @@ void main() {
 
       test('a conversation is found again by what it was called', () async {
         final title = 'dart live ${DateTime.now().microsecondsSinceEpoch}';
-        final session = await chat(SessionOptions(title: title, project: 'dart-sdk'));
+        final session = await chat(SessionOptions(title: title, projectId: 'dart-sdk'));
 
-        await _until(() async => (await agents.sessions.search(title)).isNotEmpty);
+        await _until(() async => (await agents.sessions.search(title)).items.isNotEmpty);
         final found = await agents.sessions.search(title);
         final listed = await agents
             .agent(_agent)
             .sessions
-            .query(const SessionQuery(project: 'dart-sdk'));
+            .query(const SessionQuery(projectId: 'dart-sdk'));
 
-        expect(found.first.id, session.id);
-        expect(listed.map((s) => s.id), contains(session.id));
+        expect(found.items.first.id, session.id);
+        expect(listed.items.map((s) => s.id), contains(session.id));
         expect((await agents.sessions.get(session.id)).title, title);
       });
 
-      test('closing a session ends it for the router too', () async {
+      test('a device renames its conversation and reads the new title back', () async {
+        final session = await chat();
+        final title = 'renamed ${DateTime.now().microsecondsSinceEpoch}';
+
+        final renamed = await session.update(title: title, custom: {'topic': 'billing'});
+
+        expect(renamed.title, title);
+        expect(session.session.title, title);
+        final read = await agents.sessions.get(session.id);
+        expect(read.title, title);
+        expect(read.custom, {'topic': 'billing'});
+      });
+
+      test('an ended conversation is renamed without a live handle', () async {
+        final session = await chat();
+        await session.close();
+        final title = 'ended ${DateTime.now().microsecondsSinceEpoch}';
+
+        expect((await agents.sessions.update(session.id, title: title)).title, title);
+        await _until(() async {
+          final ended = await agents.sessions.query(
+            const SessionQuery(state: SessionState.ended, limit: 50),
+          );
+          return ended.items.any((s) => s.id == session.id && s.title == title);
+        });
+      });
+
+      test('closing a session stops it for the router too, and keeps it', () async {
         final session = await chat();
 
         await session.close();
 
-        // Only a running session is found by id, so an ended one is looked for among the closed.
         await _until(() async {
-          final closed = await agents.sessions.query(
-            const SessionQuery(state: SessionFilter.closed, limit: 50),
+          final ended = await agents.sessions.query(
+            const SessionQuery(state: SessionState.ended, limit: 50),
           );
-          return closed.any((s) => s.id == session.id);
+          return ended.items.any((s) => s.id == session.id);
         });
+      });
+
+      test('deleting a session takes it away', () async {
+        final session = await chat();
+
+        await session.delete();
+
+        await expectLater(
+          agents.sessions.get(session.id),
+          throwsA(isA<RouterException>().having((e) => e.status, 'status', 404)),
+        );
       });
 
       test('a guest holds a conversation of its own', () async {
@@ -178,7 +215,7 @@ void main() {
         final session = await asGuest.agent(_agent).chat();
         opened.add(session);
 
-        expect((await asGuest.sessions.query()).map((s) => s.id), contains(session.id));
+        expect((await asGuest.sessions.query()).items.map((s) => s.id), contains(session.id));
         asGuest.close();
       });
 

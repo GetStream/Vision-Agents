@@ -16,26 +16,26 @@ T = TypeVar("T", bound="TranscriptWord")
 class TranscriptWord:
     """
     Attributes:
-        text (str):
-        start_ms (int):
         end_ms (int):
+        start_ms (int):
+        text (str):
         confidence (float | Unset):
         speaker (str | Unset): Who said it, when diarization was asked for.
     """
 
-    text: str
-    start_ms: int
     end_ms: int
+    start_ms: int
+    text: str
     confidence: float | Unset = UNSET
     speaker: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        text = self.text
+        end_ms = self.end_ms
 
         start_ms = self.start_ms
 
-        end_ms = self.end_ms
+        text = self.text
 
         confidence = self.confidence
 
@@ -45,9 +45,9 @@ class TranscriptWord:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "text": text,
-                "start_ms": start_ms,
                 "end_ms": end_ms,
+                "start_ms": start_ms,
+                "text": text,
             }
         )
         if confidence is not UNSET:
@@ -60,20 +60,20 @@ class TranscriptWord:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        text = d.pop("text")
+        end_ms = d.pop("end_ms")
 
         start_ms = d.pop("start_ms")
 
-        end_ms = d.pop("end_ms")
+        text = d.pop("text")
 
         confidence = d.pop("confidence", UNSET)
 
         speaker = d.pop("speaker", UNSET)
 
         transcript_word = cls(
-            text=text,
-            start_ms=start_ms,
             end_ms=end_ms,
+            start_ms=start_ms,
+            text=text,
             confidence=confidence,
             speaker=speaker,
         )

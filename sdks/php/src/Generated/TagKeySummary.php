@@ -11,16 +11,16 @@ use GetStream\VisionAgents\Json;
 final readonly class TagKeySummary
 {
     public function __construct(
-        public string $key,
-        // How many distinct values the key was used with. One means it is context rather than a breakdown; hundreds m...
-        public int $valueCount,
         public int $costMicrosTotal,
-        public int $requestCount,
         // The share of the window's requests that carry this key, from 0 to 1. A key on half the traffic breaks down...
         public float $coverage,
+        public string $key,
+        public int $requestCount,
         // The ten largest values, biggest spend first.
         /** @var list<TagValueSummary> */
         public array $topValues,
+        // How many distinct values the key was used with. One means it is context rather than a breakdown; hundreds m...
+        public int $valueCount,
     ) {
     }
 
@@ -30,12 +30,12 @@ final readonly class TagKeySummary
     public static function fromArray(array $data): self
     {
         return new self(
-            key: Json::string($data, 'key'),
-            valueCount: Json::int($data, 'value_count'),
             costMicrosTotal: Json::int($data, 'cost_micros_total'),
-            requestCount: Json::int($data, 'request_count'),
             coverage: Json::float($data, 'coverage'),
+            key: Json::string($data, 'key'),
+            requestCount: Json::int($data, 'request_count'),
             topValues: array_map(TagValueSummary::fromArray(...), Json::objects($data, 'top_values')),
+            valueCount: Json::int($data, 'value_count'),
         );
     }
 
@@ -47,12 +47,12 @@ final readonly class TagKeySummary
     public function toArray(): array
     {
         $out = [];
-        $out['key'] = $this->key;
-        $out['value_count'] = $this->valueCount;
         $out['cost_micros_total'] = $this->costMicrosTotal;
-        $out['request_count'] = $this->requestCount;
         $out['coverage'] = $this->coverage;
+        $out['key'] = $this->key;
+        $out['request_count'] = $this->requestCount;
         $out['top_values'] = array_map(static fn (TagValueSummary $each): array => $each->toArray(), $this->topValues);
+        $out['value_count'] = $this->valueCount;
         return $out;
     }
 }

@@ -31,6 +31,7 @@ members = [
     "vision-agents-plugins-mistral",
     "vision-agents-plugins-moondream",
     "vision-agents-plugins-nvidia",
+    "vision-agents-plugins-omni",
     "vision-agents-plugins-openai",
     "vision-agents-plugins-openrouter",
     "vision-agents-plugins-pocket",
@@ -6519,6 +6520,9 @@ moondream = [
 nvidia = [
     { name = "vision-agents-plugins-nvidia" },
 ]
+omni = [
+    { name = "vision-agents-plugins-omni" },
+]
 openai = [
     { name = "vision-agents-plugins-openai" },
 ]
@@ -6621,6 +6625,7 @@ requires-dist = [
     { name = "vision-agents-plugins-mistral", marker = "extra == 'mistral'", editable = "plugins/mistral" },
     { name = "vision-agents-plugins-moondream", marker = "extra == 'moondream'", editable = "plugins/moondream" },
     { name = "vision-agents-plugins-nvidia", marker = "extra == 'nvidia'", editable = "plugins/nvidia" },
+    { name = "vision-agents-plugins-omni", marker = "extra == 'omni'", editable = "plugins/omni" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openrouter", marker = "extra == 'openrouter'", editable = "plugins/openrouter" },
     { name = "vision-agents-plugins-pocket", marker = "extra == 'pocket'", editable = "plugins/pocket" },
@@ -6641,7 +6646,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "stream", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "local", "minimax", "mistral", "moondream", "nvidia", "omni", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "stream", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -7226,6 +7231,28 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "vision-agents", editable = "sdks/python" },
 ]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-omni"
+source = { editable = "plugins/omni" }
+dependencies = [
+    { name = "getstream" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "getstream", specifier = ">=4.1.0,<5" }]
 
 [package.metadata.requires-dev]
 dev = [

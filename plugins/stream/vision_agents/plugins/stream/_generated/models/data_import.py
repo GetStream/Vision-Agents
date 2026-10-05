@@ -21,23 +21,23 @@ class DataImport:
     """
     Attributes:
         rows (int): How many rows were written.
-        tables (DataImportTables | Unset): How many of them went into each table.
         cursor (int | Unset): The cursor the export named, to ask the other deployment for changes from.
+        tables (DataImportTables | Unset): How many of them went into each table.
     """
 
     rows: int
-    tables: DataImportTables | Unset = UNSET
     cursor: int | Unset = UNSET
+    tables: DataImportTables | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         rows = self.rows
 
+        cursor = self.cursor
+
         tables: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tables, Unset):
             tables = self.tables.to_dict()
-
-        cursor = self.cursor
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -46,10 +46,10 @@ class DataImport:
                 "rows": rows,
             }
         )
-        if tables is not UNSET:
-            field_dict["tables"] = tables
         if cursor is not UNSET:
             field_dict["cursor"] = cursor
+        if tables is not UNSET:
+            field_dict["tables"] = tables
 
         return field_dict
 
@@ -60,6 +60,8 @@ class DataImport:
         d = dict(src_dict)
         rows = d.pop("rows")
 
+        cursor = d.pop("cursor", UNSET)
+
         _tables = d.pop("tables", UNSET)
         tables: DataImportTables | Unset
         if isinstance(_tables, Unset):
@@ -67,12 +69,10 @@ class DataImport:
         else:
             tables = DataImportTables.from_dict(_tables)
 
-        cursor = d.pop("cursor", UNSET)
-
         data_import = cls(
             rows=rows,
-            tables=tables,
             cursor=cursor,
+            tables=tables,
         )
 
         data_import.additional_properties = d

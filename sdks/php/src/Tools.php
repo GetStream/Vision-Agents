@@ -22,20 +22,23 @@ use JsonException;
  */
 final class Tools
 {
-    /** @var array<string, array{description: string, parameters: array<string, mixed>, run: Closure(array<string, mixed>): mixed}> */
+    /** @var array<string, array{description: string, parameters: array<string, mixed>, run: Closure(array<string, mixed>): mixed, displayTitle: ?string, executor: ?string}> */
     private array $tools = [];
 
     /**
      * @param array<string, mixed> $parameters a JSON Schema for the arguments
      * @param callable(array<string, mixed>): mixed $run given the decoded arguments; what it
      *     returns is sent back as the output, JSON encoded unless it is already a string
+     * @param ?string $displayTitle what the reply's tool call attachment shows, at most 80 characters
+     * @param 'server'|'client'|null $executor who runs it: `server`, the router's default, or
+     *     `client`, a person's device
      */
-    public function register(string $name, string $description, array $parameters, callable $run): self
+    public function register(string $name, string $description, array $parameters, callable $run, ?string $displayTitle = null, ?string $executor = null): self
     {
         if ($name === '' || $description === '') {
             throw new ConfigurationException('a tool needs a name and a description, since the description is all the model chooses it by');
         }
-        $this->tools[$name] = ['description' => $description, 'parameters' => $parameters, 'run' => $run(...)];
+        $this->tools[$name] = ['description' => $description, 'parameters' => $parameters, 'run' => $run(...), 'displayTitle' => $displayTitle, 'executor' => $executor];
         return $this;
     }
 
@@ -48,7 +51,13 @@ final class Tools
     {
         $declared = [];
         foreach ($this->tools as $name => $tool) {
-            $declared[] = new SessionTool($name, $tool['description'], $tool['parameters'] === [] ? null : $tool['parameters']);
+            $declared[] = new SessionTool(
+                description: $tool['description'],
+                name: $name,
+                displayTitle: $tool['displayTitle'],
+                executor: $tool['executor'],
+                parameters: $tool['parameters'] === [] ? null : $tool['parameters'],
+            );
         }
         return $declared;
     }

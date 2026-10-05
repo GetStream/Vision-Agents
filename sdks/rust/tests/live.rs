@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use vision_agents::{Agent, Ask, Client, ClientOptions, Router, StreamApp, WatchOptions, types};
+use vision_agents::{Agent, Ask, Client, ClientOptions, StreamApp, WatchOptions, types};
 
 fn client() -> Option<Client> {
     let url = std::env::var("VISION_AGENTS_URL")
@@ -53,7 +53,8 @@ async fn the_router_is_up() {
 async fn a_question_is_searched() {
     let client = live!();
 
-    let answer = Router::new(client)
+    let answer = client
+        .router("")
         .search("What is the capital of France?", None)
         .await
         .unwrap();
@@ -68,7 +69,7 @@ async fn a_model_answers_over_its_socket() {
         target: Some("llm-fast".into()),
         ..Default::default()
     };
-    let mut model = Router::new(client).completions(options).await.unwrap();
+    let mut model = client.router("").completions(options).await.unwrap();
 
     let mut written = String::new();
     let complete = tokio::time::timeout(
@@ -99,7 +100,7 @@ async fn a_voice_speaks_over_its_socket() {
         target: Some("en-low-latency".into()),
         ..Default::default()
     };
-    let mut voice = Router::new(client).voice(options).await.unwrap();
+    let mut voice = client.router("").voice(options).await.unwrap();
 
     let mut bytes = 0;
     tokio::time::timeout(
@@ -128,7 +129,11 @@ async fn a_text_conversation_answers() {
         })
         .await
         .unwrap();
-    session.respond("What colour is the sky?").await.unwrap();
+    session
+        .responses
+        .create("What colour is the sky?")
+        .await
+        .unwrap();
     let answered =
         tokio::time::timeout(Duration::from_secs(60), session.wait_for_event("responded"))
             .await

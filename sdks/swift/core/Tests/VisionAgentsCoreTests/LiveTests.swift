@@ -47,7 +47,7 @@ struct LiveTests {
         await session.start()
         defer { Task { await session.close() } }
 
-        try await session.send("What are your opening hours? Answer in one sentence.")
+        _ = try await session.responses.create("What are your opening hours? Answer in one sentence.")
 
         try await until(20) { session.state == .idle && session.turns.count >= 2 }
 
@@ -73,7 +73,7 @@ struct LiveTests {
         await session.start()
         defer { Task { await session.close() } }
 
-        try await session.send("Look up order A-1042 and tell me what is in it.")
+        _ = try await session.responses.create("Look up order A-1042 and tell me what is in it.")
 
         try await until(30) { await asked.orders.isEmpty == false }
 
@@ -87,11 +87,11 @@ struct LiveTests {
 
         let turn = try await session.responses.create("What are your opening hours? Answer in one sentence.")
         try await until(30) {
-            (try? await session.responses.list().first { $0.id == turn.id }?.status) == .completed
+            (try? await session.responses.list().items.first { $0.id == turn.id }?.status) == .completed
         }
 
         // A guardrail refusing the question is a reply too, and is written down the same way.
-        let reply = try await session.responses.items(responseID: turn.id)
+        let reply = try await session.responses.items(responseID: turn.id).items
             .filter { $0.kind == .answer || $0.kind == .blocked }.map(\.text).joined()
         #expect(!reply.isEmpty)
     }
@@ -103,19 +103,43 @@ struct LiveTests {
         await session.start()
         defer { Task { await session.close() } }
 
-        try await session.send("My name is Ada. Reply with one word.")
+        _ = try await session.responses.create("My name is Ada. Reply with one word.")
         try await until(20) { session.state == .idle && session.turns.count >= 2 }
-        try await session.send("What is my name? Reply with one word.")
+        _ = try await session.responses.create("What is my name? Reply with one word.")
         try await until(20) { session.state == .idle && session.turns.count >= 4 }
-        try await until(10) { (try? await agents.responses(sessionID: session.id).count) == 2 }
+        try await until(10) { (try? await agents.responses(sessionID: session.id).items.count) == 2 }
 
-        let kept = try #require(try await agents.responses(sessionID: session.id).first)
+        let kept = try #require(try await agents.responses(sessionID: session.id).items.first)
         #expect(kept.said.contains("Ada"))
 
         let fork = try await agents.fork(sessionID: session.id, ForkOptions(responseID: kept.id))
         #expect(fork.id != session.id)
-        #expect(try await agents.responses(sessionID: session.id).count == 2)
-        try await agents.close(sessionID: fork.id)
+        #expect(try await agents.responses(sessionID: session.id).items.count == 2)
+        try await agents.sessions.delete(fork.id)
+        await #expect(throws: AgentsError.self) { try await agents.sessions.get(fork.id) }
+    }
+
+    /// A query narrowed to the sessions still running finds the one just opened.
+    @Test func aQueryFindsTheLiveSessionItWasNarrowedTo() async throws {
+        let session = try await Live.agents.chat(agent: Live.agent)
+        defer { Task { await session.close() } }
+
+        var query = SessionQuery(limit: 200)
+        query.state = .live
+        let page = try await Live.agents.agent(Live.agent).sessions.query(query)
+
+        #expect(page.items.contains { $0.id == session.id })
+        #expect(page.items.allSatisfy { $0.state == .live })
+    }
+
+    @Test func aRenamedSessionReadsBackItsNewTitle() async throws {
+        let session = try await Live.agents.chat(agent: Live.agent)
+        defer { Task { await session.close() } }
+
+        try await session.update(title: "Renamed from Swift")
+
+        #expect(session.session.title == "Renamed from Swift")
+        #expect(try await Live.agents.sessions.get(session.id).title == "Renamed from Swift")
     }
 
     /// Runs until the condition holds, so a test waits for what the model does rather than for

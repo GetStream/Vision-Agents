@@ -6,7 +6,7 @@ socket, and the conversation as state. Pure Dart, so it runs in Flutter, a CLI o
 ```dart
 final agents = VisionAgents(url: Uri.parse('https://your-router'), customerId: 'acme');
 final chat = await agents.agent('support').chat();
-chat.send('What are your opening hours?');
+await chat.responses.create('What are your opening hours?');
 chat.conversation.stream.listen((conversation) => print(conversation.turns.last.text));
 ```
 

@@ -6,13 +6,14 @@ import OpenAPIRuntime
 /// Search is the one routed modality a device may reach: a question and its answer are one
 /// round trip, and the answer is for whoever asked rather than for the app.
 ///
-///     let router = Router(url: url, customerID: "acme", config: "healthcare")
+///     let router = agents.router(config: "healthcare")  // the config holds the target
 ///     let answer = try await router.search("what changed in the pricing page")
 ///
-/// Transcription, a voice and a model are not here. Those run over the per-modality socket,
-/// which the router refuses to a device, so a pipeline of your own belongs to a backend and
-/// has the Go or the Python SDK. Everything the named config holds is a default that a
-/// per-call option overrides.
+/// It comes from `VisionAgents.router(config:tags:)`, which is where the URL and credentials
+/// were settled. Transcription, a voice and a model are not here. Those run over the
+/// per-modality socket, which the router refuses to a device, so a pipeline of your own
+/// belongs to a backend and has the Go or the Python SDK. Everything the named config holds is
+/// a default that a per-call option overrides.
 public struct Router: Sendable {
     public let backend: Backend
 
@@ -23,19 +24,7 @@ public struct Router: Sendable {
     /// Cost labels carried onto everything routed here, on top of the config's own.
     public var tags: [String: String]
 
-    public init(
-        url: URL,
-        customerID: String,
-        config: String = "",
-        tags: [String: String] = [:],
-        urlSession: URLSession = .shared
-    ) {
-        backend = Backend(url: url, customerID: customerID, urlSession: urlSession)
-        self.config = config
-        self.tags = tags
-    }
-
-    public init(backend: Backend, config: String = "", tags: [String: String] = [:]) {
+    init(backend: Backend, config: String = "", tags: [String: String] = [:]) {
         self.backend = backend
         self.config = config
         self.tags = tags
@@ -48,8 +37,8 @@ public struct Router: Sendable {
     ) async throws -> SearchAnswer {
         let body = Components.Schemas.SearchRequest(
             configId: named(),
-            query: query,
             options: options.schema,
+            query: query,
             tags: labels().map { .init(additionalProperties: $0) })
 
         let output = try await call { try await $0.search(body: .json(body)) }

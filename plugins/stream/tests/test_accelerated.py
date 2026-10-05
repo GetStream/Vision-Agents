@@ -12,7 +12,12 @@ from PIL import Image
 from vision_agents.core import Agent, User
 from vision_agents.core.harness import Daytona, DefaultHarness
 from vision_agents.core.llm.llm import ImageContent
-from vision_agents.core.llm.remote import RemoteCall, RemoteEvent, RemotePipelineError
+from vision_agents.core.llm.remote import (
+    RemoteCall,
+    RemoteEvent,
+    RemoteFile,
+    RemotePipelineError,
+)
 from vision_agents.plugins import stream, getstream
 
 SETTLE = 2.0
@@ -36,6 +41,7 @@ class Router:
 
     def __init__(self):
         self.created: Optional[dict[str, Any]] = None
+        self.created_for = ""
         self.synced: Optional[dict[str, Any]] = None
         self.closed: list[str] = []
         self.commands: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -47,7 +53,7 @@ class Router:
         app = web.Application()
         app.router.add_post("/v1/agents/sessions", self._create)
         app.router.add_get("/v1/agents/sessions/{id}/events", self._events)
-        app.router.add_delete("/v1/agents/sessions/{id}", self._close)
+        app.router.add_post("/v1/agents/sessions/{id}/stop", self._close)
         app.router.add_get("/v1/agents/configs", self._configs)
         app.router.add_post("/v1/agents/sync", self._sync)
         return app
@@ -71,6 +77,7 @@ class Router:
 
     async def _create(self, request: web.Request) -> web.Response:
         self.created = await request.json()
+        self.created_for = request.headers.get("X-Stream-User-Id", "")
         return web.json_response(
             status=201,
             data={
@@ -79,6 +86,8 @@ class Router:
                 "call_type": self.created.get("call_type", "default"),
                 "user_id": self.created.get("user_id", ""),
                 "agent_id": self.created.get("agent_id", ""),
+                "conversation_id": "agent:kept" if self.created.get("text") else "",
+                "modality": "voice",
                 "state": "live",
                 "created_at": "2026-01-01T00:00:00Z",
             },
@@ -158,12 +167,14 @@ class TestAccelerated:
         assert router.created["call_id"] == "call-1"
         assert router.created["instructions"] == "be brief"
 
-        async def test_the_session_carries_the_harness_the_agent_was_given(
-            self, router: Router, joined: stream.Accelerated
-        ):
-            assert router.created is not None
-            assert router.created["subagent"] == "llm-smart"
-            assert router.created["sandbox"] == "daytona"
+    async def test_the_harness_is_left_to_the_agent_config(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        # The router takes the harness from the config a session runs under, never from
+        # the session itself.
+        assert router.created is not None
+        for field in ("subagent", "sandbox", "tasks", "skills"):
+            assert field not in router.created
 
     async def test_named_keyterms_reach_the_session(
         self, router: Router, call: RemoteCall
@@ -630,6 +641,31 @@ class TestAccelerated:
         assert delta == RemoteEvent(type="agent_speech_delta", text="Routing picks ")
         assert answer.type == "agent_speech"
         assert answer.text == "Routing picks a provider."
+        assert not answer.pending_work
+
+    async def test_a_reply_that_left_a_tool_running_says_more_follows(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send(
+            {"type": "responded", "text": "Rendering it now.", "pending_work": True}
+        )
+
+        answer = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert answer == RemoteEvent(
+            type="agent_speech", text="Rendering it now.", pending_work=True
+        )
+
+    async def test_a_reply_followed_by_tools_says_it_is_not_over(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send({"type": "responded", "text": "", "pending_work": True})
+
+        event = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert event == RemoteEvent(type="agent_speech", pending_work=True)
 
     async def test_work_handed_to_a_skill_is_reported_going_out_and_coming_back(
         self, router: Router, writing: stream.Accelerated
@@ -660,6 +696,38 @@ class TestAccelerated:
             type="task_settled", skill="explain", text="It retries."
         )
 
+    async def test_work_that_made_a_file_says_where_it_was_put(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send(
+            {
+                "type": "task_settled",
+                "task_id": "task-1",
+                "skill": "render",
+                "text": "A teapot.",
+                "files": [
+                    {
+                        "name": "teapot.png",
+                        "mime_type": "image/png",
+                        "url": "https://cdn.example/teapot.png",
+                        "size": 3,
+                    }
+                ],
+            }
+        )
+
+        back = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert back.files == [
+            RemoteFile(
+                name="teapot.png",
+                url="https://cdn.example/teapot.png",
+                mime_type="image/png",
+                size=3,
+            )
+        ]
+
     async def test_what_was_looked_up_is_reported_with_what_it_found(
         self, router: Router, writing: stream.Accelerated
     ):
@@ -673,3 +741,92 @@ class TestAccelerated:
         assert event == RemoteEvent(
             type="looked_up", query="delivery cost", documents=3
         )
+
+    async def test_a_login_a_plugin_asks_for_is_reported_with_where_to_make_it(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send(
+            {"type": "tool_ran", "tool": "weather", "result": "it is raining"}
+        )
+        await router.send(
+            {
+                "type": "tool_ran",
+                "tool": "google_calendar__list_tools",
+                "result": json.dumps(
+                    {
+                        "status": "authorization_required",
+                        "message": "The user has not connected Google Calendar.",
+                        "attachment": {
+                            "type": "plugin_authorization",
+                            "plugin_id": "google_calendar",
+                            "title": "Connect Google Calendar",
+                            "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=1",
+                            "text": "Read calendars, events and free time.",
+                            "thumb_url": "https://router.example/v1/agents/plugins/google_calendar/logo",
+                            "title_link": "https://accounts.google.com/o/oauth2/v2/auth?state=1",
+                        },
+                    }
+                ),
+            }
+        )
+
+        event = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert event == RemoteEvent(
+            type="authorization_required",
+            text="Connect Google Calendar",
+            url="https://accounts.google.com/o/oauth2/v2/auth?state=1",
+            image_url="https://router.example/v1/agents/plugins/google_calendar/logo",
+        )
+
+    async def test_a_login_asked_for_without_a_logo_is_still_reported(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send(
+            {
+                "type": "tool_ran",
+                "tool": "google_calendar__list_tools",
+                "result": json.dumps(
+                    {
+                        "status": "authorization_required",
+                        "message": "The user has not connected Google Calendar.",
+                        "attachment": {
+                            "type": "plugin_authorization",
+                            "plugin_id": "google_calendar",
+                            "title": "Connect Google Calendar",
+                            "authorize_url": "https://accounts.google.com/auth",
+                        },
+                    }
+                ),
+            }
+        )
+
+        event = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert event == RemoteEvent(
+            type="authorization_required",
+            text="Connect Google Calendar",
+            url="https://accounts.google.com/auth",
+        )
+
+    async def test_the_end_user_is_who_the_session_is_opened_for(self, router: Router):
+        llm = stream.Accelerated(url=router.url, customer_id="acme", user_id="alice")
+        await llm.join_remote(
+            RemoteCall(
+                call_type="default", call_id="", agent_user_id="agent", instructions=""
+            )
+        )
+        try:
+            assert router.created_for == "alice"
+
+            # The router keeps an end user's conversation, and takes each message to it
+            # once, by its id.
+            await llm.respond_remote("when am I free?", interrupt=False)
+            command = await router.answered()
+            assert command["type"] == "respond"
+            assert command["text"] == "when am I free?"
+            assert command["command_id"]
+        finally:
+            await llm.leave_remote()

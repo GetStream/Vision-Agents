@@ -18,30 +18,30 @@ T = TypeVar("T", bound="Candidate")
 class Candidate:
     """
     Attributes:
-        provider (str):
-        model (str):
         health (ProviderHealth):
+        model (str):
+        provider (str):
     """
 
-    provider: str
-    model: str
     health: ProviderHealth
+    model: str
+    provider: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        provider = self.provider
+        health = self.health.to_dict()
 
         model = self.model
 
-        health = self.health.to_dict()
+        provider = self.provider
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "provider": provider,
-                "model": model,
                 "health": health,
+                "model": model,
+                "provider": provider,
             }
         )
 
@@ -52,16 +52,16 @@ class Candidate:
         from ..models.provider_health import ProviderHealth
 
         d = dict(src_dict)
-        provider = d.pop("provider")
+        health = ProviderHealth.from_dict(d.pop("health"))
 
         model = d.pop("model")
 
-        health = ProviderHealth.from_dict(d.pop("health"))
+        provider = d.pop("provider")
 
         candidate = cls(
-            provider=provider,
-            model=model,
             health=health,
+            model=model,
+            provider=provider,
         )
 
         candidate.additional_properties = d

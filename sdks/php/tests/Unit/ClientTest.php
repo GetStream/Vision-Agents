@@ -8,8 +8,10 @@ use GetStream\VisionAgents\Backend;
 use GetStream\VisionAgents\Client;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
+use GetStream\VisionAgents\Generated\SimulationRequest;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
+use GetStream\VisionAgents\Tests\Support\Rows;
 use GuzzleHttp\Client as Guzzle;
 use GuzzleHttp\Psr7\HttpFactory;
 use PHPUnit\Framework\TestCase;
@@ -183,6 +185,63 @@ final class ClientTest extends TestCase
 
         self::assertSame(2, $claimed->sessionsMoved);
         self::assertSame(['guest_id' => 'guest_1', 'user_id' => 'ada'], $this->router->received()[0]->json());
+    }
+
+    public function testTruncatesEverythingRememberedAboutAUser(): void
+    {
+        $this->router->answer('DELETE', '/v1/agents/users/u%201/memories', 204);
+
+        $this->router->client()->memories->truncate('u 1');
+
+        self::assertCount(1, $this->router->to('DELETE', '/v1/agents/users/u%201/memories'));
+    }
+
+    public function testTruncatingNobodyIsRefusedBeforeTheRouter(): void
+    {
+        try {
+            $this->router->client()->memories->truncate('');
+            self::fail('an empty user id was sent');
+        } catch (ConfigurationException) {
+            self::assertSame([], $this->router->received());
+        }
+    }
+
+    public function testSimulations(): void
+    {
+        $simulation = ['id' => 'sim_1', 'name' => 'lunch', 'config_id' => 'cfg_1', 'scenario' => 'Order a club.', 'assertion' => 'One club.', 'created_at' => Rows::AT, 'updated_at' => Rows::AT];
+        $run = ['id' => 'run_1', 'simulation_id' => 'sim_1', 'state' => 'running', 'created_at' => Rows::AT, 'updated_at' => Rows::AT];
+        $this->router->answer('POST', '/v1/agents/simulations', 201, $simulation);
+        $this->router->answer('PUT', '/v1/agents/simulations/sim_1', 200, ['scenario' => 'Order two.'] + $simulation);
+        $this->router->answer('GET', '/v1/agents/simulations', 200, [$simulation]);
+        $this->router->answer('POST', '/v1/agents/simulations/sim_1/run', 202, $run);
+        $this->router->answer('GET', '/v1/agents/simulation-runs/run_1', 200, ['state' => 'passed'] + $run);
+        $this->router->answer('GET', '/v1/agents/simulation-runs', 200, [$run]);
+        $this->router->answer('POST', '/v1/agents/simulation-runs/run_1/cancel', 200, ['state' => 'cancelled'] + $run);
+        $this->router->answer('DELETE', '/v1/agents/simulations/sim_1', 204);
+        $simulations = $this->router->client()->simulations;
+        $request = new SimulationRequest(assertion: 'One club.', configId: 'cfg_1', name: 'lunch', scenario: 'Order a club.', variations: 2);
+
+        $created = $simulations->create($request);
+        $updated = $simulations->update($created->id, new SimulationRequest(assertion: 'One club.', configId: 'cfg_1', name: 'lunch', scenario: 'Order two.'));
+        $listed = $simulations->list();
+        $started = $simulations->run($created->id);
+        $finished = $simulations->runs->get($started->id);
+        $runs = $simulations->runs->list(simulationId: 'sim_1', limit: 5);
+        $cancelled = $simulations->runs->cancel($started->id);
+        $simulations->delete($created->id);
+
+        self::assertSame('sim_1', $created->id);
+        self::assertSame(
+            ['assertion' => 'One club.', 'config_id' => 'cfg_1', 'name' => 'lunch', 'scenario' => 'Order a club.', 'variations' => 2],
+            $this->router->to('POST', '/v1/agents/simulations')[0]->json(),
+        );
+        self::assertSame('Order two.', $updated->scenario);
+        self::assertSame(['sim_1'], array_map(static fn ($each) => $each->id, $listed));
+        self::assertSame('passed', $finished->state);
+        self::assertSame(['simulation_id' => 'sim_1', 'limit' => '5'], $this->router->to('GET', '/v1/agents/simulation-runs')[0]->params());
+        self::assertSame(['run_1'], array_map(static fn ($each) => $each->id, $runs));
+        self::assertSame('cancelled', $cancelled->state);
+        self::assertCount(1, $this->router->to('DELETE', '/v1/agents/simulations/sim_1'));
     }
 
     /**

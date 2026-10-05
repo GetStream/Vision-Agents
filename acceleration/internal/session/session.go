@@ -122,7 +122,7 @@ type Session struct {
 	// awaiting are the commands accepted for a dispatch worker and not yet answered, which
 	// the server may still have the model answer. Guarded by commandMu.
 	awaiting map[string]struct{}
-	mu        sync.Mutex
+	mu       sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
 	watchers    map[uint64]*watcher
@@ -662,6 +662,9 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		}
 	}
 	set(&next.LLMTarget, settings.LLM)
+	if next.Text {
+		next.SubagentTarget = next.LLMTarget
+	}
 	set(&next.STTTarget, settings.STT)
 	set(&next.TTSTarget, settings.TTS)
 	set(&next.STSTarget, settings.STS)
@@ -871,7 +874,9 @@ func (s *Session) record(event Event) {
 
 	switch typed := event.(type) {
 	case agent.Responding:
-		s.openTurn(typed.TurnID, typed.Prompt)
+		if !s.continueTurn(typed.TurnID, typed.Continues) {
+			s.openTurn(typed.TurnID, typed.Prompt)
+		}
 	case agent.ToolStarted:
 		s.item(typed.TurnID, store.ItemToolCall, "", typed.Tool, map[string]any{
 			"call_id": typed.ID, "product": typed.Product, "sdk": typed.SDK,
@@ -952,6 +957,21 @@ func (s *Session) openTurn(turnID, said string) string {
 		s.item(turnID, store.ItemSaid, said, "", nil)
 	}
 	return turn.id
+}
+
+// continueTurn records a reply delivering an earlier turn's tools or delegated work as more
+// of that turn's response, reporting whether the earlier turn was still open to continue.
+func (s *Session) continueTurn(turnID, continues string) bool {
+	if continues == "" {
+		return false
+	}
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	held, open := s.turns[continues]
+	if open {
+		s.turns[turnID] = held
+	}
+	return open
 }
 
 // item queues one thing that happened, against whichever response the turn is being
@@ -1036,8 +1056,11 @@ func (s *Session) failTurns(where string, cause error) {
 func (s *Session) endTurn(turnID, status, failure string) {
 	s.turnsMu.Lock()
 	turn, open := s.turns[turnID]
-	if open {
-		delete(s.turns, turnID)
+	// A continued turn is held under the id of every reply that continued it.
+	for id, held := range s.turns {
+		if held == turn {
+			delete(s.turns, id)
+		}
 	}
 	s.turnsMu.Unlock()
 
@@ -1187,7 +1210,7 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 
 	defined := map[string]harness.Skill{}
 	if m.options.Store != nil {
-		stored, err := m.options.Store.SkillsNamed(ctx, customerID, configID, names)
+		stored, err := m.options.Configs.SkillsNamed(ctx, customerID, configID, names)
 		if err != nil {
 			return harness.Skills{}, err
 		}
@@ -1207,7 +1230,7 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 	resolved := harness.Skills{Skills: make([]harness.Skill, 0, len(names))}
 	if m.options.Store != nil {
 		resolved.Load = func(ctx context.Context, name string) (string, error) {
-			found, err := m.options.Store.SkillsNamed(ctx, customerID, configID, []string{name})
+			found, err := m.options.Configs.SkillsNamed(ctx, customerID, configID, []string{name})
 			if err != nil {
 				return "", err
 			}

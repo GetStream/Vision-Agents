@@ -1,8 +1,6 @@
 // Package api serves the router's HTTP surface on a chi router. Operations are declared
 // in Go with Huma, and the Go structs are the source of truth: api/openapi.yaml is
-// rendered from them by cmd/openapi. The operations not yet moved to Go are still
-// generated into generated.go from api/legacy.yaml; change that file and regenerate
-// rather than editing generated.go.
+// rendered from them by cmd/openapi and never edited by hand.
 //
 // Every routing path is scoped by modality. The server holds one router per modality it
 // serves and looks the right one up per request, so adding a modality is a matter of
@@ -11,10 +9,12 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -26,7 +26,10 @@ import (
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
@@ -36,16 +39,24 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
 )
+
+// tracer records the spans this package opens around work a route pattern does not say.
+var tracer = tracing.Tracer("api")
 
 // CustomerHeader names the tenant directly, with no organization around it. It is what a
 // local deployment with no proxy and no keys uses, and it is read in noauth and proxy
@@ -90,13 +101,29 @@ type Options struct {
 	// Routers is the router serving each modality. A modality that is absent is a 404.
 	Routers map[routing.Modality]routing.Inspector
 	Store   *store.Store
-	Live    *live.Client
+	// Configs reads and writes the tenant's configuration -- keys, policies, agent and
+	// router configs, voices -- through whatever cache is in front of Postgres. Built
+	// over Store when it is not given, in which case every read is a query.
+	Configs *appconfig.Store
+	// Users writes down the end users each app is seen acting for. Built over Store when
+	// it is not given, in which case it caches in this process alone.
+	Users *users.Recorder
+	Live  *live.Client
 	// Phone serves the telephony paths. Absent when the deployment has no vendors, in
 	// which case those paths say so rather than pretending numbers can be bought.
 	Phone *phone.Service
 	// Sessions runs conversations. Absent when the deployment only inspects routing, in
 	// which case the session paths report that there are none rather than 500ing.
 	Sessions *session.Manager
+	// Relay reaches the sessions the other nodes of this deployment are running, so a
+	// watcher's socket need not land on the node holding the conversation. Absent when
+	// there is no Redis to carry it, in which case this node is the whole deployment as
+	// far as a socket is concerned.
+	Relay *relay.Bus
+	// Directory says which node of this deployment is running which session, so a request
+	// only that node can answer is carried to it rather than answered with a 404. Absent
+	// when there is no Redis to keep it in, or no address this node's peers reach it at.
+	Directory *node.Directory
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
@@ -110,6 +137,10 @@ type Options struct {
 	// how it went. Absent without sessions or model routing, in which case a simulation
 	// can be written down but not run.
 	Simulations *simulation.Runner
+	// PluginEvents subscribes agents to their plugins' MCP events and answers deliveries.
+	// Absent without a database or sessions, in which case a config's plugin_events are
+	// stored but nothing subscribes to them.
+	PluginEvents *pluginevents.Service
 	// Knowledge fills the bases a config's knowledge_namespace has an agent read from.
 	// Absent when the deployment has no knowledge provider, in which case there is nothing
 	// to fill and the path says so.
@@ -177,13 +208,18 @@ type Options struct {
 	Logger         *slog.Logger
 }
 
-// Server implements the generated StrictServerInterface.
+// Server serves the router's HTTP API.
 type Server struct {
 	routers       map[routing.Modality]routing.Inspector
 	store         *store.Store
+	configs       *appconfig.Store
+	users         *users.Recorder
 	live          *live.Client
 	phone         *phone.Service
 	sessions      *session.Manager
+	relayed       *relayed
+	directory     *node.Directory
+	forwarder     *node.Forwarder
 	streams       *Streams
 	transcripts   *chatlog.Reader
 	campaigns     *campaign.Runner
@@ -199,6 +235,7 @@ type Server struct {
 	publicURL     string
 	dashboardURL  string
 	oauth         *plugins.Auth
+	pluginEvents  *pluginevents.Service
 	authenticator auth.Authenticator
 	authMode      auth.Mode
 	dataRetention time.Duration
@@ -269,12 +306,30 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	configs := options.Configs
+	if configs == nil && options.Store != nil {
+		var err error
+		if configs, err = appconfig.New(appconfig.Options{Store: options.Store, Logger: logger}); err != nil {
+			return nil, err
+		}
+	}
+	recorder := options.Users
+	if recorder == nil && options.Store != nil {
+		var err error
+		if recorder, err = users.New(users.Options{Store: options.Store, Logger: logger}); err != nil {
+			return nil, err
+		}
+	}
 	server := &Server{
 		routers:       options.Routers,
 		store:         options.Store,
+		configs:       configs,
+		users:         recorder,
 		live:          options.Live,
 		phone:         options.Phone,
 		sessions:      options.Sessions,
+		directory:     options.Directory,
 		streams:       options.Streams,
 		transcripts:   options.Transcripts,
 		campaigns:     options.Campaigns,
@@ -301,25 +356,38 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			PublicURL:    options.PublicURL,
 			DashboardURL: options.DashboardURL,
 		},
-		popularity: newPopularity(options.Store, logger),
-		logger:     logger,
+		pluginEvents: options.PluginEvents,
+		popularity:   newPopularity(options.Store, logger),
+		logger:       logger,
 	}
 	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
 		return nil, err
 	}
 	server.serverSide = serverSide
+
+	// The subscriptions outlive every request, so they are held against the process
+	// rather than against a context a handler brought with it. Closing the Redis client
+	// is what ends them, which is what shutting the deployment down already does.
+	if options.Relay != nil {
+		if server.relayed, err = server.newRelayed(context.Background(), options.Relay); err != nil {
+			return nil, fmt.Errorf("api: subscribe to the session relay: %w", err)
+		}
+	}
+	if options.Directory != nil {
+		server.forwarder = node.NewForwarder(logger)
+	}
 	return server, nil
 }
 
 // Handler returns the HTTP handler for the whole API.
 //
-// The three sockets, the answer host and the call hook are registered first, on a router
-// the Huma operations and then the generated routes are added to. The sockets are excluded from generation because a
-// strict server returns a response object and an upgrade returns a connection, so there is
-// nothing for it to hand back. The answer host is excluded because it serves a vendor's XML
-// rather than this API's JSON, and the call hook because both are reached by somebody other
-// than a customer: a telephony vendor and Stream.
+// The routes served by hand are registered first, on the router the Huma operations are then
+// added to. The sockets are written by hand because an operation returns a response and an
+// upgrade returns a connection, and the logs, exports and imports because they stream;
+// documentHandWritten declares them in the spec. The answer host serves a vendor's XML rather
+// than this API's JSON, and the call and message hooks are reached by somebody other than a
+// customer, a telephony vendor and Stream, so those three are not in the spec at all.
 func (s *Server) Handler() http.Handler {
 	mux := chi.NewRouter()
 	mux.HandleFunc("GET /v1/agents/logs", s.listAgentLogs)
@@ -337,10 +405,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
+	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
+	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	s.newAPI(mux)
-	handler := HandlerFromMux(NewStrictHandler(s, nil), mux)
+	var handler http.Handler = mux
 	// Sentry is outermost so it sees panics from every middleware below it, not
 	// only from the route handlers.
+	//
+	// Tracing sits directly inside it, so a span covers authentication and the quota
+	// as well as the handler, which is the whole of what a caller waited for.
 	//
 	// Repanic is false, which is a change in behaviour worth knowing about: this
 	// service had no recovery anywhere, so a panic in one request used to take
@@ -355,8 +428,137 @@ func (s *Server) Handler() http.Handler {
 		Repanic:         false,
 		WaitForDelivery: false,
 	})
-	return instrumented.Handle(withCORS(s.corsOrigins,
-		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))
+	served := instrumented.Handle(withTrace(withTiming(withCORS(s.corsOrigins,
+		s.onOwningNode(s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))))))
+	if s.directory == nil {
+		return served
+	}
+	// Peers reach this node on the same port its callers do, so what they forward is
+	// served beside everything else rather than on a listener of its own.
+	return node.Serve(served)
+}
+
+// withTiming reports how long the server itself spent, so a caller timing a call can tell
+// a slow API from a slow network rather than having to guess which it is looking at.
+//
+// It is said twice because the two readers are different. Server-Timing is what a
+// browser's network panel reads with nothing taught to it, beside the time on the wire.
+// The duration field is what the rest of Stream's API already answers with, so an SDK
+// reads it the way it reads every other response.
+//
+// Outermost of our own middlewares, so the number covers authentication, the quota and
+// the policies as well as the handler: all of it is time the caller waited.
+func withTiming(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&timedResponse{ResponseWriter: w, started: time.Now()}, r)
+	})
+}
+
+// timedResponse stamps the header and names the duration in the body, both at the moment
+// the answer begins rather than when it ends: what is reported is how long the caller
+// waited to be answered, which for a streamed response is not how long the stream ran.
+type timedResponse struct {
+	http.ResponseWriter
+	started time.Time
+	stamped bool
+	opened  bool
+}
+
+func (t *timedResponse) WriteHeader(code int) {
+	t.stamp()
+	t.ResponseWriter.WriteHeader(code)
+}
+
+func (t *timedResponse) Write(body []byte) (int, error) {
+	if !t.opened {
+		t.opened = true
+		if opening, ok := t.opening(body); ok {
+			t.stamp()
+			if _, err := t.ResponseWriter.Write(opening); err != nil {
+				return 0, err
+			}
+			// The brace the body starts with has just been written as part of the
+			// opening, so what is left is everything after it. A short write is reported
+			// as it happened; a complete one consumed the whole of what was handed in.
+			written, err := t.ResponseWriter.Write(body[1:])
+			if err != nil {
+				return written, err
+			}
+			return len(body), nil
+		}
+	}
+	t.stamp()
+	return t.ResponseWriter.Write(body)
+}
+
+// Unwrap lets flushing, deadlines and a socket upgrade reach the writer underneath through
+// http.ResponseController.
+func (t *timedResponse) Unwrap() http.ResponseWriter { return t.ResponseWriter }
+
+func (t *timedResponse) stamp() {
+	if t.stamped {
+		return
+	}
+	t.stamped = true
+	t.ResponseWriter.Header().Set("Server-Timing", fmt.Sprintf("app;dur=%.2f", t.spent()))
+}
+
+// spent is how long the server has had the request, in milliseconds.
+func (t *timedResponse) spent() float64 {
+	return float64(time.Since(t.started).Microseconds()) / 1000
+}
+
+// opening returns what to write in place of the brace a JSON object starts with, naming
+// the duration as its first field.
+//
+// Only a JSON object gets one: an array has nowhere to put it, and a stream, a recording
+// and a socket are not documents. A response that declared its length is left alone too,
+// since lengthening it afterwards would make the header a lie.
+func (t *timedResponse) opening(body []byte) ([]byte, bool) {
+	header := t.ResponseWriter.Header()
+	if header.Get("Content-Length") != "" {
+		return nil, false
+	}
+	media, _, err := mime.ParseMediaType(header.Get("Content-Type"))
+	if err != nil || media != "application/json" {
+		return nil, false
+	}
+	if len(body) < 2 || body[0] != '{' {
+		return nil, false
+	}
+
+	// What follows the brace says whether the field needs a comma after it, so a body
+	// that has not got that far yet is left alone rather than guessed at.
+	rest := bytes.TrimLeft(body[1:], " \t\r\n")
+	if len(rest) == 0 {
+		return nil, false
+	}
+	opening := fmt.Sprintf(`{"duration":"%.2fms"`, t.spent())
+	if rest[0] == '}' {
+		return []byte(opening), true
+	}
+	return []byte(opening + ","), true
+}
+
+// withTrace opens a span for the whole request and names it after the route that served
+// it.
+//
+// The name is settled afterwards because the pattern is not known until chi has matched
+// one, and a span per session id is a trace nobody can group by. A route context is seeded
+// here so that the mux fills in the one this can read back; chi only makes its own when
+// there is none.
+func withTrace(next http.Handler) http.Handler {
+	traced := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routes := chi.NewRouteContext()
+		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, routes))
+		next.ServeHTTP(w, r)
+		if pattern := routes.RoutePattern(); pattern != "" {
+			trace.SpanFromContext(r.Context()).SetName(r.Method + " " + pattern)
+		}
+	}), "router", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+		return r.Method
+	}))
+	return traced
 }
 
 // withRequestLog records one line per request served.
@@ -471,28 +673,6 @@ func (l *loggedResponse) Unwrap() http.ResponseWriter {
 	return l.ResponseWriter
 }
 
-// unspecifiedRoutes are the hand-written handlers, and whether a client may reach each.
-//
-// They are named here because they are excluded from generation — a strict server can
-// express neither an upgrade nor a stream — and excluding an operation drops it from the
-// embedded spec. An operation the spec cannot see is the one place an inverted default
-// could fail open, so this is the complement's other half rather than a note about
-// sockets. A test holds it to naming exactly what api/oapi-codegen.yaml excludes.
-var unspecifiedRoutes = map[string]bool{
-	"GET /v1/agents/sessions/{id}/events": true,
-	"GET /v1/{modality}/stream":           false,
-	"GET /v1/dispatch":                    false,
-	"GET /v1/agents/logs":                 false,
-	"GET /v1/agents/logs/stream":          false,
-	"GET /v1/agents/logs/{id}":            false,
-	"GET /v1/data/export":                 false,
-	"POST /v1/data/import":                false,
-	"GET /v1/data/changes":                false,
-	// Reached before there is a caller to classify: the browser arrives from the identity
-	// provider and the state parameter is the secret.
-	"GET /v1/agents/plugins/callback": true,
-}
-
 // serverSideRoutes builds the matcher for every operation an end user's device may not
 // reach, which is every operation the spec does not mark client-accessible.
 //
@@ -505,10 +685,7 @@ var unspecifiedRoutes = map[string]bool{
 // before there is a caller to classify — the health check and the plugin redirect, where
 // the browser arrives from the identity provider — so there is nobody to refuse.
 func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
-	operations, err := specifiedOperations(document)
-	if err != nil {
-		return nil, err
-	}
+	operations := specifiedOperations(document)
 
 	routes := http.NewServeMux()
 	nothing := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
@@ -517,11 +694,6 @@ func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 			continue
 		}
 		routes.Handle(operation.method+" "+operation.path, nothing)
-	}
-	for route, open := range unspecifiedRoutes {
-		if !open {
-			routes.Handle(route, nothing)
-		}
 	}
 	return routes, nil
 }
@@ -584,7 +756,9 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 // withQuota looks at whether the caller is server-side rather than at whether there is one.
 func (s *Server) withCustomer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		principal, err := s.authenticator.Authenticate(r.Context(), r)
+		ctx, span := tracer.Start(r.Context(), "auth.authenticate")
+		principal, err := s.authenticator.Authenticate(ctx, r)
+		span.End()
 		if errors.Is(err, auth.ErrLevelRefused) {
 			s.logger.Debug("refused a level of user this app turns away",
 				"method", r.Method, "path", r.URL.Path, "kind", principal.Kind)
@@ -603,9 +777,38 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			})
 			r = r.WithContext(ctx)
 			s.policies.Join(principal.AppID, principal.OrganizationID)
+			s.recordUser(ctx, principal)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// recordUser writes down the end user a request is for, so an app can ask who its users
+// are rather than only which of them it minted as guests.
+//
+// Only a verified caller is recorded. An anonymous one goes by a name nobody checked, so
+// a table filled with those names would be a table of what callers asked to be called. A
+// backend naming one of its users is recorded as an authenticated user, because a caller
+// holding the secret could mint that user a token and so has nothing to gain by lying.
+//
+// A failure is logged rather than returned. Writing down who called is not what the
+// caller asked for, and refusing the request they did ask for because of it would be the
+// wrong trade.
+func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
+	if s.users == nil || principal.UserID == "" {
+		return
+	}
+	kind := store.UserKindAuthenticated
+	switch principal.Kind {
+	case auth.KindGuest:
+		kind = store.UserKindGuest
+	case auth.KindAnonymous:
+		return
+	}
+	if err := s.users.Seen(ctx, principal.AppID, principal.UserID, kind); err != nil {
+		s.logger.Error("could not record an end user",
+			"customer", principal.AppID, "user", principal.UserID, "error", err)
+	}
 }
 
 // corsRequestHeaders are the request headers a browser may send.
@@ -649,6 +852,7 @@ func withCORS(allowed []string, next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
 			w.Header().Set("Access-Control-Allow-Methods", corsMethods)
+			w.Header().Set("Access-Control-Expose-Headers", "Server-Timing")
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing
@@ -795,14 +999,14 @@ func (s *Server) getHealth(ctx context.Context, _ *struct{}) (*healthResponse, e
 	}, nil
 }
 
-// ListProviders returns the providers configured for a modality and their live health.
-func (s *Server) ListProviders(ctx context.Context, request ListProvidersRequestObject) (ListProvidersResponseObject, error) {
+// listProviders returns the providers configured for a modality and their live health.
+func (s *Server) listProviders(ctx context.Context, request *listProvidersRequest) (*listProvidersResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return ListProviders401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	router, ok := s.routerFor(request.Modality)
 	if !ok {
-		return ListProviders404JSONResponse{unknownModality(request.Modality)}, nil
+		return nil, huma.Error404NotFound(unknownModality(request.Modality).Error)
 	}
 
 	candidates := router.Providers(ctx)
@@ -823,17 +1027,17 @@ func (s *Server) ListProviders(ctx context.Context, request ListProvidersRequest
 			Price:       providerPrice(candidate.Config.Price),
 		})
 	}
-	return ListProviders200JSONResponse(providers), nil
+	return &listProvidersResponse{Body: providers}, nil
 }
 
-// ListRoutes returns the shortcuts offered as a choice and what each resolves to now.
-func (s *Server) ListRoutes(ctx context.Context, request ListRoutesRequestObject) (ListRoutesResponseObject, error) {
+// listRoutes returns the shortcuts offered as a choice and what each resolves to now.
+func (s *Server) listRoutes(ctx context.Context, request *listRoutesRequest) (*listRoutesResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return ListRoutes401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	router, ok := s.routerFor(request.Modality)
 	if !ok {
-		return ListRoutes404JSONResponse{unknownModality(request.Modality)}, nil
+		return nil, huma.Error404NotFound(unknownModality(request.Modality).Error)
 	}
 
 	config := router.Config()
@@ -860,27 +1064,27 @@ func (s *Server) ListRoutes(ctx context.Context, request ListRoutesRequestObject
 			Candidates:  resolved,
 		})
 	}
-	return ListRoutes200JSONResponse(routes), nil
+	return &listRoutesResponse{Body: routes}, nil
 }
 
-// ResolveTarget explains which providers would serve a target, best first.
-func (s *Server) ResolveTarget(ctx context.Context, request ResolveTargetRequestObject) (ResolveTargetResponseObject, error) {
+// resolveTarget explains which providers would serve a target, best first.
+func (s *Server) resolveTarget(ctx context.Context, request *resolveTargetRequest) (*resolveTargetResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return ResolveTarget401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	router, ok := s.routerFor(request.Modality)
 	if !ok {
-		return ResolveTarget404JSONResponse{unknownModality(request.Modality)}, nil
+		return nil, huma.Error404NotFound(unknownModality(request.Modality).Error)
 	}
 
 	var languageHints []string
-	if request.Params.Language != nil {
-		languageHints = *request.Params.Language
+	if request.Language.ptr() != nil {
+		languageHints = *request.Language.ptr()
 	}
 
 	candidates, err := router.Resolve(ctx, request.Target, languageHints)
 	if err != nil {
-		return ResolveTarget404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, huma.Error404NotFound(err.Error())
 	}
 
 	resolved := make([]Candidate, 0, len(candidates))
@@ -891,31 +1095,31 @@ func (s *Server) ResolveTarget(ctx context.Context, request ResolveTargetRequest
 			Health:   providerHealth(candidate.Health),
 		})
 	}
-	return ResolveTarget200JSONResponse(resolved), nil
+	return &resolveTargetResponse{Body: resolved}, nil
 }
 
-// GetStats returns the calling customer's aggregated usage for one modality.
-func (s *Server) GetStats(ctx context.Context, request GetStatsRequestObject) (GetStatsResponseObject, error) {
+// getStats returns the calling customer's aggregated usage for one modality.
+func (s *Server) getStats(ctx context.Context, request *getStatsRequest) (*getStatsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetStats401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	// Statistics are not limited to the routed modalities: memory and phone are recorded
 	// the same way and cost the same customer money.
-	if !request.Params.To.After(request.Params.From) {
-		return GetStats400JSONResponse{badRequest("to must be after from")}, nil
+	if !request.To.After(request.From) {
+		return nil, huma.Error400BadRequest("to must be after from")
 	}
-	tags, err := parseTagFilter(request.Params.Tag)
+	tags, err := parseTagFilter(request.Tag.ptr())
 	if err != nil {
-		return GetStats400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 	if s.store == nil {
-		return GetStats400JSONResponse{badRequest("statistics are not available: no database configured")}, nil
+		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
 	}
 
-	granularity := granularityOf(request.Params.Granularity)
+	granularity := granularityOf(request.Granularity.ptr())
 	buckets, err := s.store.CustomerStats(
-		ctx, string(request.Modality), customerID, granularity, request.Params.From, request.Params.To, tags)
+		ctx, string(request.Modality), customerID, granularity, request.From, request.To, tags)
 	if err != nil {
 		return nil, err
 	}
@@ -940,27 +1144,27 @@ func (s *Server) GetStats(ctx context.Context, request GetStatsRequestObject) (G
 			Uptime:                 bucket.Uptime,
 		})
 	}
-	return GetStats200JSONResponse(stats), nil
+	return &getStatsResponse{Body: stats}, nil
 }
 
-// GetTagStats returns the calling customer's usage broken down by one cost label.
-func (s *Server) GetTagStats(ctx context.Context, request GetTagStatsRequestObject) (GetTagStatsResponseObject, error) {
+// getTagStats returns the calling customer's usage broken down by one cost label.
+func (s *Server) getTagStats(ctx context.Context, request *getTagStatsRequest) (*getTagStatsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetTagStats401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
-	if !request.Params.To.After(request.Params.From) {
-		return GetTagStats400JSONResponse{badRequest("to must be after from")}, nil
+	if !request.To.After(request.From) {
+		return nil, huma.Error400BadRequest("to must be after from")
 	}
 	if s.store == nil {
-		return GetTagStats400JSONResponse{badRequest("statistics are not available: no database configured")}, nil
+		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
 	}
 
-	granularity := granularityOf(request.Params.Granularity)
+	granularity := granularityOf(request.Granularity.ptr())
 	buckets, err := s.store.CustomerTagStats(ctx, string(request.Modality), customerID,
-		request.Params.Key, granularity, request.Params.From, request.Params.To)
+		request.Key, granularity, request.From, request.To)
 	if err != nil {
-		return GetTagStats400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	stats := make([]TagStatsBucket, 0, len(buckets))
@@ -983,30 +1187,30 @@ func (s *Server) GetTagStats(ctx context.Context, request GetTagStatsRequestObje
 			Uptime:                 bucket.Uptime,
 		})
 	}
-	return GetTagStats200JSONResponse(stats), nil
+	return &getTagStatsResponse{Body: stats}, nil
 }
 
-// GetTurnStats returns the calling customer's conversational latency.
-func (s *Server) GetTurnStats(ctx context.Context, request GetTurnStatsRequestObject) (GetTurnStatsResponseObject, error) {
+// getTurnStats returns the calling customer's conversational latency.
+func (s *Server) getTurnStats(ctx context.Context, request *getTurnStatsRequest) (*getTurnStatsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetTurnStats401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
-	if !request.Params.To.After(request.Params.From) {
-		return GetTurnStats400JSONResponse{badRequest("to must be after from")}, nil
+	if !request.To.After(request.From) {
+		return nil, huma.Error400BadRequest("to must be after from")
 	}
 	if s.store == nil {
-		return GetTurnStats400JSONResponse{badRequest("statistics are not available: no database configured")}, nil
+		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
 	}
 
 	var agentID string
-	if request.Params.AgentId != nil {
-		agentID = *request.Params.AgentId
+	if request.AgentId.ptr() != nil {
+		agentID = *request.AgentId.ptr()
 	}
 
-	granularity := granularityOf(request.Params.Granularity)
+	granularity := granularityOf(request.Granularity.ptr())
 	buckets, err := s.store.CustomerTurnStats(
-		ctx, customerID, agentID, granularity, request.Params.From, request.Params.To)
+		ctx, customerID, agentID, granularity, request.From, request.To)
 	if err != nil {
 		return nil, err
 	}
@@ -1030,39 +1234,39 @@ func (s *Server) GetTurnStats(ctx context.Context, request GetTurnStatsRequestOb
 			RoundtripP99Ms:   bucket.RoundtripP99Ms,
 		})
 	}
-	return GetTurnStats200JSONResponse(stats), nil
+	return &getTurnStatsResponse{Body: stats}, nil
 }
 
-// GetSpend returns what the calling customer spent, grouped.
-func (s *Server) GetSpend(ctx context.Context, request GetSpendRequestObject) (GetSpendResponseObject, error) {
+// getSpend returns what the calling customer spent, grouped.
+func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSpendResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetSpend401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
-	if !request.Params.To.After(request.Params.From) {
-		return GetSpend400JSONResponse{badRequest("to must be after from")}, nil
+	if !request.To.After(request.From) {
+		return nil, huma.Error400BadRequest("to must be after from")
 	}
-	tags, err := parseTagFilter(request.Params.Tag)
+	tags, err := parseTagFilter(request.Tag.ptr())
 	if err != nil {
-		return GetSpend400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 	if s.store == nil {
-		return GetSpend400JSONResponse{badRequest("statistics are not available: no database configured")}, nil
+		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
 	}
 
 	groupBy := defaultSpendGroupBy
-	if request.Params.GroupBy != nil && *request.Params.GroupBy != "" {
-		groupBy = *request.Params.GroupBy
+	if request.GroupBy.ptr() != nil && *request.GroupBy.ptr() != "" {
+		groupBy = *request.GroupBy.ptr()
 	}
 	limit := defaultSpendGroups
-	if request.Params.Limit != nil {
-		limit = *request.Params.Limit
+	if request.Limit.ptr() != nil {
+		limit = *request.Limit.ptr()
 	}
 
 	buckets, err := s.store.CustomerSpend(ctx, customerID, groupBy,
-		granularityOf(request.Params.Granularity), request.Params.From, request.Params.To, limit, tags)
+		granularityOf(request.Granularity.ptr()), request.From, request.To, limit, tags)
 	if err != nil {
-		return GetSpend400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	spend := make([]SpendBucket, 0, len(buckets))
@@ -1074,27 +1278,27 @@ func (s *Server) GetSpend(ctx context.Context, request GetSpendRequestObject) (G
 			RequestCount:    bucket.RequestCount,
 		})
 	}
-	return GetSpend200JSONResponse(spend), nil
+	return &getSpendResponse{Body: spend}, nil
 }
 
-// GetTagKeys returns which cost labels the calling customer's spend carries.
-func (s *Server) GetTagKeys(ctx context.Context, request GetTagKeysRequestObject) (GetTagKeysResponseObject, error) {
+// getTagKeys returns which cost labels the calling customer's spend carries.
+func (s *Server) getTagKeys(ctx context.Context, request *getTagKeysRequest) (*getTagKeysResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetTagKeys401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
-	if !request.Params.To.After(request.Params.From) {
-		return GetTagKeys400JSONResponse{badRequest("to must be after from")}, nil
+	if !request.To.After(request.From) {
+		return nil, huma.Error400BadRequest("to must be after from")
 	}
-	tags, err := parseTagFilter(request.Params.Tag)
+	tags, err := parseTagFilter(request.Tag.ptr())
 	if err != nil {
-		return GetTagKeys400JSONResponse{badRequest(err.Error())}, nil
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 	if s.store == nil {
-		return GetTagKeys400JSONResponse{badRequest("statistics are not available: no database configured")}, nil
+		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
 	}
 
-	found, err := s.store.CustomerTagKeys(ctx, customerID, request.Params.From, request.Params.To, tags)
+	found, err := s.store.CustomerTagKeys(ctx, customerID, request.From, request.To, tags)
 	if err != nil {
 		return nil, err
 	}
@@ -1119,24 +1323,24 @@ func (s *Server) GetTagKeys(ctx context.Context, request GetTagKeysRequestObject
 			TopValues:       values,
 		})
 	}
-	return GetTagKeys200JSONResponse(keys), nil
+	return &getTagKeysResponse{Body: keys}, nil
 }
 
-// GetActivity returns who used the calling customer's agents, and how much.
-func (s *Server) GetActivity(ctx context.Context, request GetActivityRequestObject) (GetActivityResponseObject, error) {
+// getActivity returns who used the calling customer's agents, and how much.
+func (s *Server) getActivity(ctx context.Context, request *getActivityRequest) (*getActivityResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetActivity401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
-	if !request.Params.To.After(request.Params.From) {
-		return GetActivity400JSONResponse{badRequest("to must be after from")}, nil
+	if !request.To.After(request.From) {
+		return nil, huma.Error400BadRequest("to must be after from")
 	}
 	if s.store == nil {
-		return GetActivity400JSONResponse{badRequest("statistics are not available: no database configured")}, nil
+		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
 	}
 
 	buckets, err := s.store.CustomerActivity(ctx, customerID,
-		activityGranularityOf(request.Params.Granularity), request.Params.From, request.Params.To)
+		activityGranularityOf(request.Granularity.ptr()), request.From, request.To)
 	if err != nil {
 		return nil, err
 	}
@@ -1153,22 +1357,22 @@ func (s *Server) GetActivity(ctx context.Context, request GetActivityRequestObje
 			PhoneMinutes: bucket.PhoneMinutes,
 		})
 	}
-	return GetActivity200JSONResponse(activity), nil
+	return &getActivityResponse{Body: activity}, nil
 }
 
-// RunRollup aggregates request rows into a rollup table.
-func (s *Server) RunRollup(ctx context.Context, request RunRollupRequestObject) (RunRollupResponseObject, error) {
+// runRollup aggregates request rows into a rollup table.
+func (s *Server) runRollup(ctx context.Context, request *runRollupRequest) (*runRollupResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return RunRollup401JSONResponse{missingCustomer()}, nil
+		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 	if request.Body == nil {
-		return RunRollup400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, huma.Error400BadRequest("a request body is required")
 	}
 	if !request.Body.To.After(request.Body.From) {
-		return RunRollup400JSONResponse{badRequest("to must be after from")}, nil
+		return nil, huma.Error400BadRequest("to must be after from")
 	}
 	if s.store == nil {
-		return RunRollup400JSONResponse{badRequest("rollups are not available: no database configured")}, nil
+		return nil, huma.Error400BadRequest("rollups are not available: no database configured")
 	}
 
 	granularity := granularityOf(request.Body.Granularity)
@@ -1177,10 +1381,8 @@ func (s *Server) RunRollup(ctx context.Context, request RunRollupRequestObject) 
 		return nil, err
 	}
 
-	return RunRollup200JSONResponse{
-		Granularity:    Granularity(granularity),
-		BucketsWritten: written,
-	}, nil
+	return &runRollupResponse{Body: RollupResult{Granularity: Granularity(granularity),
+		BucketsWritten: written}}, nil
 }
 
 // parseTagFilter turns repeated "key:value" query parameters into a label filter. A tag
@@ -1284,14 +1486,490 @@ func providerPrice(price routing.Price) *ProviderPrice {
 	}
 }
 
-func missingCustomer() UnauthorizedJSONResponse {
-	return UnauthorizedJSONResponse{Error: "the " + CustomerHeader + " header is required"}
+func missingCustomer() Error {
+	return Error{Error: "the " + CustomerHeader + " header is required"}
 }
 
-func unknownModality(modality Modality) NotFoundJSONResponse {
-	return NotFoundJSONResponse{Error: "this deployment does not route " + string(modality)}
+func unknownModality(modality Modality) Error {
+	return Error{Error: "this deployment does not route " + string(modality)}
 }
 
-func badRequest(message string) BadRequestJSONResponse {
-	return BadRequestJSONResponse{Error: message}
+func badRequest(message string) Error {
+	return Error{Error: message}
+}
+
+// registerServer declares the operations served in server.go.
+func (s *Server) registerServer(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listProviders",
+		Method:      http.MethodGet,
+		Path:        "/v1/{modality}/providers",
+		Summary:     "List the providers configured for a modality and their live health",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The configured providers"},
+		},
+		Errors: []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.listProviders)
+	huma.Register(api, huma.Operation{
+		OperationID: "listRoutes",
+		Method:      http.MethodGet,
+		Path:        "/v1/{modality}/routes",
+		Summary:     "List the capability shortcuts offered as a choice, each with the models it resolves to",
+		Description: "The shortcuts a person picking a model is shown, in the order the deployment offers " +
+			"them, so the first is the one a conversation gets by default. Shortcuts that exist only " +
+			"for the router's own use are left out, though they can still be named as a target.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The offered shortcuts, default first"},
+		},
+		Errors: []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.listRoutes)
+	huma.Register(api, huma.Operation{
+		OperationID: "resolveTarget",
+		Method:      http.MethodGet,
+		Path:        "/v1/{modality}/routes/{target}",
+		Summary:     "Resolve a provider name or capability shortcut to a ranked candidate list",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Candidates in preference order, best first"},
+		},
+		Errors: []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.resolveTarget)
+	huma.Register(api, huma.Operation{
+		OperationID: "getStats",
+		Method:      http.MethodGet,
+		Path:        "/v1/{modality}/stats",
+		Summary:     "Aggregated usage for the calling customer",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "One row per bucket, provider and model"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getStats)
+	huma.Register(api, huma.Operation{
+		OperationID: "getTagStats",
+		Method:      http.MethodGet,
+		Path:        "/v1/{modality}/stats/tags",
+		Summary:     "Aggregated usage broken down by the values of one cost label",
+		Description: "What drives the spend. Requests are labelled with whatever keys the customer chooses, " +
+			"so asking for key=project returns one row per project per bucket.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "One row per bucket and label value"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getTagStats)
+	huma.Register(api, huma.Operation{
+		OperationID: "getTurnStats",
+		Method:      http.MethodGet,
+		Path:        "/v1/turns/stats",
+		Summary:     "Conversational latency for the calling customer",
+		Description: "One row per bucket and agent. A request row measures one provider call; a turn measures " +
+			"what the caller felt, from finishing a sentence to hearing the answer start, with the " +
+			"transcription, model and voice legs kept apart so a slow conversation can be attributed.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "One row per bucket and agent"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.getTurnStats)
+	huma.Register(api, huma.Operation{
+		OperationID: "getSpend",
+		Method:      http.MethodGet,
+		Path:        "/v1/stats/spend",
+		Summary:     "What the calling customer spent, grouped",
+		Description: "Spend across every modality at once, which is what a bill is. group_by decides what the " +
+			"series are: \"modality\" for where the money went, or a cost label for what it was spent " +
+			"on.\n" +
+			"Only the biggest values keep a series of their own, because a label such as customer_id " +
+			"has as many values as the customer has customers. The rest are summed into \"other\", and " +
+			"spend carrying no such label at all into the empty value, so the rows still add up to " +
+			"the total.\n" +
+			"Reads the request rows rather than the rollups, so today's spend is there without a " +
+			"rollup having run.",
+		// Declared rather than read off the input, so the default is documented without
+		// being filled in: the handler tells a parameter left out from one sent.
+		Parameters: []*huma.Param{
+			{Name: "group_by", In: "query", Description: "\"modality\", or the cost label to group by.", Schema: &huma.Schema{Type: huma.TypeString, Default: "modality"}},
+			{Name: "limit", In: "query", Description: "How many values keep a series of their own.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Maximum: bound(50), Default: 6}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "One row per bucket and group, oldest bucket first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.getSpend)
+	huma.Register(api, huma.Operation{
+		OperationID: "getTagKeys",
+		Method:      http.MethodGet,
+		Path:        "/v1/stats/tags/keys",
+		Summary:     "Which cost labels the calling customer's spend carries",
+		Description: "Cost labels are the customer's own, so nothing here knows in advance whether spend is " +
+			"broken down by product, by environment or by the end customer it was incurred for. This " +
+			"reports the keys in use and what each covers, so a reader can be shown the breakdown " +
+			"that means something rather than a list to guess from.\n" +
+			"A key every request carries with a single value -- environment: production and nothing " +
+			"else -- is context rather than a breakdown, and value_count says so.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "One row per label key, largest spend first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.getTagKeys)
+	huma.Register(api, huma.Operation{
+		OperationID: "getActivity",
+		Method:      http.MethodGet,
+		Path:        "/v1/stats/activity",
+		Summary:     "Who used the calling customer's agents, and how much",
+		Description: "Sessions opened, responses produced and calls held, counted per bucket, alongside how " +
+			"many distinct people were behind them.\n" +
+			"Distinct users are counted rather than summed, which is why the granularity here is " +
+			"days or months rather than the hours the spend paths take: a month's active users are " +
+			"the people who came back, not the sum of its days, so a month has to be asked for as a " +
+			"month.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "One row per bucket, oldest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.getActivity)
+	huma.Register(api, huma.Operation{
+		OperationID: "runRollup",
+		Method:      http.MethodPost,
+		Path:        "/v1/stats/rollup",
+		Summary:     "Aggregate request rows into a rollup table",
+		Description: "Covers every modality and customer in the window. Idempotent: re-running it over the " +
+			"same window recomputes those buckets, so a missed run is fixed by running it again.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The rollup completed"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.runRollup)
+}
+
+type listProvidersRequest struct {
+	Modality Modality `path:"modality" doc:"Which kind of model to route."`
+}
+
+type listProvidersResponse struct {
+	Body []Provider `nullable:"false"`
+}
+
+type listRoutesRequest struct {
+	Modality Modality `path:"modality" doc:"Which kind of model to route."`
+}
+
+type listRoutesResponse struct {
+	Body []Route `nullable:"false"`
+}
+
+type resolveTargetRequest struct {
+	Modality Modality                `path:"modality" doc:"Which kind of model to route."`
+	Target   string                  `path:"target" doc:"A \"provider/model\" name or a capability shortcut such as en-low-latency."`
+	Language optionalParam[[]string] `query:"language,explode" doc:"Language hints that candidates must cover. Repeat for several."`
+}
+
+type resolveTargetResponse struct {
+	Body []Candidate `nullable:"false"`
+}
+
+type getStatsRequest struct {
+	Modality    Modality                   `path:"modality" doc:"Which kind of model to route."`
+	Granularity optionalParam[Granularity] `query:"granularity"`
+	From        time.Time                  `query:"from" doc:"Start of the window, inclusive." required:"true"`
+	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
+	Tag         optionalParam[[]string]    `query:"tag,explode" doc:"Only count requests carrying every one of these cost labels, each written \"key:value\". Repeat for several. Filtering reads the request rows rather than the rollups, since a rollup bucket no longer knows which labels its requests carried."`
+}
+
+type getStatsResponse struct {
+	Body []StatsBucket `nullable:"false"`
+}
+
+type getTagStatsRequest struct {
+	Modality    Modality                   `path:"modality" doc:"Which kind of model to route."`
+	Key         string                     `query:"key" doc:"The cost label to group by." required:"true"`
+	Granularity optionalParam[Granularity] `query:"granularity"`
+	From        time.Time                  `query:"from" doc:"Start of the window, inclusive." required:"true"`
+	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
+}
+
+type getTagStatsResponse struct {
+	Body []TagStatsBucket `nullable:"false"`
+}
+
+type getTurnStatsRequest struct {
+	AgentId     optionalParam[string]      `query:"agent_id" doc:"Narrow to one agent. Omit for every agent the customer runs."`
+	Granularity optionalParam[Granularity] `query:"granularity"`
+	From        time.Time                  `query:"from" doc:"Start of the window, inclusive." required:"true"`
+	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
+}
+
+type getTurnStatsResponse struct {
+	Body []TurnStatsBucket `nullable:"false"`
+}
+
+type getSpendRequest struct {
+	GroupBy     optionalParam[string]      `query:"group_by" doc:"\"modality\", or the cost label to group by."`
+	Granularity optionalParam[Granularity] `query:"granularity"`
+	From        time.Time                  `query:"from" doc:"Start of the window, inclusive." required:"true"`
+	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
+	Limit       optionalParam[int]         `query:"limit" doc:"How many values keep a series of their own." minimum:"1" maximum:"50"`
+	Tag         optionalParam[[]string]    `query:"tag,explode" doc:"Only count requests carrying every one of these cost labels, each written \"key:value\". Repeat for several."`
+}
+
+type getSpendResponse struct {
+	Body []SpendBucket `nullable:"false"`
+}
+
+type getTagKeysRequest struct {
+	From time.Time               `query:"from" doc:"Start of the window, inclusive." required:"true"`
+	To   time.Time               `query:"to" doc:"End of the window, exclusive." required:"true"`
+	Tag  optionalParam[[]string] `query:"tag,explode" doc:"Only consider requests carrying every one of these cost labels, each written \"key:value\". Repeat for several."`
+}
+
+type getTagKeysResponse struct {
+	Body []TagKeySummary `nullable:"false"`
+}
+
+type getActivityRequest struct {
+	Granularity optionalParam[ActivityGranularity] `query:"granularity"`
+	From        time.Time                          `query:"from" doc:"Start of the window, inclusive." required:"true"`
+	To          time.Time                          `query:"to" doc:"End of the window, exclusive." required:"true"`
+}
+
+type getActivityResponse struct {
+	Body []ActivityBucket `nullable:"false"`
+}
+
+type runRollupRequest struct {
+	Body *RollupRequest `required:"true"`
+}
+
+type runRollupResponse struct {
+	Body RollupResult
+}
+
+// ActivityBucket is the ActivityBucket schema.
+type ActivityBucket struct {
+	ActiveUsers  int64     `json:"active_users" doc:"Distinct end users who opened a session or asked something of an agent in the bucket. A guest who later turned out to be a known user counts as that user.\nA caller that named nobody is not counted, and neither is an anonymous one: an anonymous name is a claim nothing verified, so counting it would make guessing a name enough to inflate this."`
+	Bucket       time.Time `json:"bucket"`
+	Calls        int64     `json:"calls"`
+	Messages     int64     `json:"messages" doc:"Responses the agents produced, which is one per thing asked of them."`
+	PhoneMinutes float64   `json:"phone_minutes" doc:"The part of voice_minutes that arrived over a phone number."`
+	Sessions     int64     `json:"sessions"`
+	VoiceMinutes float64   `json:"voice_minutes" doc:"How long those calls lasted. One still running counts up to now."`
+}
+
+// ActivityGranularity Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
+type ActivityGranularity string
+
+// Defines values for ActivityGranularity.
+const (
+	ActivityGranularityDaily   ActivityGranularity = "daily"
+	ActivityGranularityMonthly ActivityGranularity = "monthly"
+)
+
+// Valid indicates whether the value is a known member of the ActivityGranularity enum.
+func (e ActivityGranularity) Valid() bool {
+	switch e {
+	case ActivityGranularityDaily:
+		return true
+	case ActivityGranularityMonthly:
+		return true
+	default:
+		return false
+	}
+}
+
+func (ActivityGranularity) Schema(registry huma.Registry) *huma.Schema {
+	ref := namedEnum(registry, "ActivityGranularity", "Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.", "daily", "monthly")
+	registry.Map()["ActivityGranularity"].Default = "daily"
+	return ref
+}
+
+// Candidate is the Candidate schema.
+type Candidate struct {
+	Health   ProviderHealth `json:"health"`
+	Model    string         `json:"model"`
+	Provider string         `json:"provider"`
+}
+
+// Granularity is the Granularity schema.
+type Granularity string
+
+// Defines values for Granularity.
+const (
+	GranularityDaily  Granularity = "daily"
+	GranularityHourly Granularity = "hourly"
+)
+
+// Valid indicates whether the value is a known member of the Granularity enum.
+func (e Granularity) Valid() bool {
+	switch e {
+	case GranularityDaily:
+		return true
+	case GranularityHourly:
+		return true
+	default:
+		return false
+	}
+}
+
+func (Granularity) Schema(registry huma.Registry) *huma.Schema {
+	ref := namedEnum(registry, "Granularity", "", "hourly", "daily")
+	registry.Map()["Granularity"].Default = "hourly"
+	return ref
+}
+
+// ProviderBenchmark What Artificial Analysis measured for this model, refreshed by hand rather than live. A field is absent when the model was not measured on it.
+type ProviderBenchmark struct {
+	CharactersPerSecond   *float64 `json:"characters_per_second,omitempty" doc:"Characters a text-to-speech model synthesises per second on the vendor's API." example:"115"`
+	CostPerTask           *float64 `json:"cost_per_task,omitempty" doc:"US dollars one task of the search benchmark cost, searches and the answering model's tokens together." example:"0.127"`
+	Elo                   *int     `json:"elo,omitempty" doc:"Speech arena Elo rating of a text-to-speech model." example:"1273"`
+	IntelligenceIndex     *int     `json:"intelligence_index,omitempty" doc:"Artificial Analysis Intelligence Index of a text model at the reasoning effort the router asks for." example:"33"`
+	LatencyMs             *int     `json:"latency_ms,omitempty" doc:"Milliseconds a speech-to-text model takes to its final transcript after speech ends." example:"490"`
+	OutputTokensPerSecond *float64 `json:"output_tokens_per_second,omitempty" doc:"Tokens a text model writes per second on the host the router calls." example:"330"`
+	SearchIndex           *int     `json:"search_index,omitempty" doc:"Artificial Analysis Search Index of a search provider, from 0 to 100." example:"74"`
+	WordErrorRate         *float64 `json:"word_error_rate,omitempty" doc:"Streaming AA-WER of a speech-to-text model, from 0 to 1." example:"0.027"`
+}
+
+func (*ProviderBenchmark) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["elo"].Format = ""
+	schema.Properties["intelligence_index"].Format = ""
+	schema.Properties["latency_ms"].Format = ""
+	schema.Properties["search_index"].Format = ""
+	schema.Description = "What Artificial Analysis measured for this model, refreshed by hand rather than live. A field is absent when the model was not measured on it."
+	return schema
+}
+
+// ProviderHealth is the ProviderHealth schema.
+type ProviderHealth struct {
+	Available    bool    `json:"available" doc:"False once the error rate crosses the configured threshold."`
+	ErrorRate    float64 `json:"error_rate"`
+	Errors       int64   `json:"errors"`
+	LatencyMsAvg float64 `json:"latency_ms_avg"`
+	Requests     int64   `json:"requests" doc:"Requests seen in the current health window."`
+}
+
+// ProviderPrice What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit.
+type ProviderPrice struct {
+	PerMillionInputTokens  *float64 `json:"per_million_input_tokens,omitempty" example:"0.75"`
+	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty" example:"3.75"`
+}
+
+func (*ProviderPrice) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit."
+	return schema
+}
+
+// RollupRequest is the RollupRequest schema.
+type RollupRequest struct {
+	From        time.Time    `json:"from"`
+	Granularity *Granularity `json:"granularity,omitempty"`
+	To          time.Time    `json:"to"`
+}
+
+// RollupResult is the RollupResult schema.
+type RollupResult struct {
+	BucketsWritten int64       `json:"buckets_written"`
+	Granularity    Granularity `json:"granularity"`
+}
+
+// SpendBucket is the SpendBucket schema.
+type SpendBucket struct {
+	Bucket          time.Time `json:"bucket"`
+	CostMicrosTotal int64     `json:"cost_micros_total" doc:"Millionths of a dollar, priced from the configured rates."`
+	RequestCount    int64     `json:"request_count"`
+	Value           string    `json:"value" doc:"The modality or label value this row is for. \"other\" is everything outside the biggest few, and the empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see which part." example:"support"`
+}
+
+// StatsBucket is the StatsBucket schema.
+type StatsBucket struct {
+	AudioMsTotal           int64     `json:"audio_ms_total" doc:"Billable audio, transcribed or produced."`
+	Bucket                 time.Time `json:"bucket"`
+	CachedInputTokensTotal int64     `json:"cached_input_tokens_total" doc:"The part of the prompt served from the provider's cache."`
+	CharactersTotal        int64     `json:"characters_total" doc:"Billable text. Zero for providers that bill by audio."`
+	CostMicrosTotal        int64     `json:"cost_micros_total" doc:"Millionths of a dollar, priced from the configured rates."`
+	ErrorCount             int64     `json:"error_count"`
+	ImagesTotal            int64     `json:"images_total" doc:"Pictures drawn. Zero outside image."`
+	InputTokensTotal       int64     `json:"input_tokens_total" doc:"Prompt tokens read, cached ones included. Zero outside llm."`
+	LatencyP50Ms           *float64  `json:"latency_p50_ms,omitempty" nullable:"true"`
+	LatencyP95Ms           *float64  `json:"latency_p95_ms,omitempty" nullable:"true"`
+	Model                  string    `json:"model"`
+	OutputTokensTotal      int64     `json:"output_tokens_total" doc:"Generated tokens, reasoning included. Zero outside llm."`
+	Provider               string    `json:"provider"`
+	RequestCount           int64     `json:"request_count"`
+	Uptime                 *float64  `json:"uptime,omitempty" doc:"Successes over total requests in the bucket." nullable:"true"`
+}
+
+// TagKeySummary is the TagKeySummary schema.
+type TagKeySummary struct {
+	CostMicrosTotal int64             `json:"cost_micros_total"`
+	Coverage        float64           `json:"coverage" doc:"The share of the window's requests that carry this key, from 0 to 1. A key on half the traffic breaks down half the bill, which is worth knowing before it is read as the whole of it."`
+	Key             string            `json:"key" example:"product"`
+	RequestCount    int64             `json:"request_count"`
+	TopValues       []TagValueSummary `json:"top_values" doc:"The ten largest values, biggest spend first." nullable:"false"`
+	ValueCount      int64             `json:"value_count" doc:"How many distinct values the key was used with. One means it is context rather than a breakdown; hundreds mean it identifies something, such as an end customer, and only its largest values are worth a chart."`
+}
+
+// TagStatsBucket is the TagStatsBucket schema.
+type TagStatsBucket struct {
+	AudioMsTotal           int64     `json:"audio_ms_total"`
+	Bucket                 time.Time `json:"bucket"`
+	CachedInputTokensTotal int64     `json:"cached_input_tokens_total"`
+	CharactersTotal        int64     `json:"characters_total"`
+	CostMicrosTotal        int64     `json:"cost_micros_total" doc:"Millionths of a dollar, priced from the configured rates."`
+	ErrorCount             int64     `json:"error_count"`
+	ImagesTotal            int64     `json:"images_total"`
+	InputTokensTotal       int64     `json:"input_tokens_total"`
+	LatencyP50Ms           *float64  `json:"latency_p50_ms,omitempty" nullable:"true"`
+	LatencyP95Ms           *float64  `json:"latency_p95_ms,omitempty" nullable:"true"`
+	OutputTokensTotal      int64     `json:"output_tokens_total"`
+	RequestCount           int64     `json:"request_count"`
+	TagKey                 string    `json:"tag_key" example:"project"`
+	TagValue               string    `json:"tag_value" example:"moderation"`
+	Uptime                 *float64  `json:"uptime,omitempty" nullable:"true"`
+}
+
+// TagValueSummary is the TagValueSummary schema.
+type TagValueSummary struct {
+	CostMicrosTotal int64   `json:"cost_micros_total"`
+	RequestCount    int64   `json:"request_count"`
+	Share           float64 `json:"share" doc:"This value's share of what the key covers, from 0 to 1."`
+	Value           string  `json:"value" example:"support"`
+}
+
+// Tier What the model optimises for.
+type Tier string
+
+// Defines values for Tier.
+const (
+	HighQuality Tier = "high-quality"
+	LowLatency  Tier = "low-latency"
+)
+
+// Valid indicates whether the value is a known member of the Tier enum.
+func (e Tier) Valid() bool {
+	switch e {
+	case HighQuality:
+		return true
+	case LowLatency:
+		return true
+	default:
+		return false
+	}
+}
+
+func (Tier) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "Tier", "What the model optimises for.", "low-latency", "high-quality")
+}
+
+// TurnStatsBucket is the TurnStatsBucket schema.
+type TurnStatsBucket struct {
+	AgentId          string    `json:"agent_id"`
+	AudioOutMsTotal  float64   `json:"audio_out_ms_total" doc:"How much speech the agent published in the bucket."`
+	Bucket           time.Time `json:"bucket"`
+	InterruptedCount int64     `json:"interrupted_count" doc:"Turns a participant talked over before they finished."`
+	LlmTtftP50Ms     *float64  `json:"llm_ttft_p50_ms,omitempty" nullable:"true"`
+	LlmTtftP95Ms     *float64  `json:"llm_ttft_p95_ms,omitempty" nullable:"true"`
+	RoundtripP50Ms   *float64  `json:"roundtrip_p50_ms,omitempty" doc:"Settled transcript to first audio published." nullable:"true"`
+	RoundtripP95Ms   *float64  `json:"roundtrip_p95_ms,omitempty" nullable:"true"`
+	RoundtripP99Ms   *float64  `json:"roundtrip_p99_ms,omitempty" nullable:"true"`
+	SttLatencyP50Ms  *float64  `json:"stt_latency_p50_ms,omitempty" nullable:"true"`
+	SttLatencyP95Ms  *float64  `json:"stt_latency_p95_ms,omitempty" nullable:"true"`
+	TtsTtfbP50Ms     *float64  `json:"tts_ttfb_p50_ms,omitempty" nullable:"true"`
+	TtsTtfbP95Ms     *float64  `json:"tts_ttfb_p95_ms,omitempty" nullable:"true"`
+	TurnCount        int64     `json:"turn_count"`
 }

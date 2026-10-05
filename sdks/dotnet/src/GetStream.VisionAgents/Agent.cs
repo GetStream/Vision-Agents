@@ -18,13 +18,14 @@ public sealed record Sandbox(string Provider)
 /// What stands between what a caller said and the model that answers them.
 /// </summary>
 /// <remarks>
-/// The loop runs in the backend, so this is configuration rather than behaviour: it is
-/// serialized into the session and the decisions are taken there.
+/// The loop runs in the backend and is part of the agent's stored config, never of a
+/// session: <see cref="Agent.SyncAsync"/> writes it, and every session opened under that
+/// config runs it.
 /// </remarks>
 public sealed record Harness
 {
-    /// <summary>Offers the backend's built-in skills. Setting <see cref="Skills"/> replaces them.</summary>
-    public bool UseSkills { get; init; } = true;
+    /// <summary>Which harness the backend runs. Null is <c>default</c>, the only one there is.</summary>
+    public string? Name { get; init; }
 
     /// <summary>
     /// Model targets for the work handed over, keyed by name. The entry under
@@ -35,11 +36,8 @@ public sealed record Harness
     /// <summary>Where delegated code runs.</summary>
     public Sandbox? Sandbox { get; init; }
 
-    /// <summary>Skills of your own, replacing the built-in set.</summary>
+    /// <summary>Skills of your own, stored and named by the config in place of the built-in set.</summary>
     public IReadOnlyList<Skill>? Skills { get; init; }
-
-    /// <summary>How much delegated work may run at once. Zero leaves the backend's default.</summary>
-    public int Tasks { get; init; }
 
     /// <summary>The model that runs delegated work, or empty when nothing is delegated.</summary>
     public string Subagent => Subagents switch
@@ -50,18 +48,11 @@ public sealed record Harness
         _ => "",
     };
 
-    /// <summary>
-    /// Whether the built-in set is turned off, by naming skills of its own or by asking for
-    /// none. An absent list and an empty one differ: one leaves the defaults alone, the
-    /// other turns delegation off.
-    /// </summary>
-    internal bool ReplacesSkills => Skills is { Count: > 0 } || !UseSkills;
-
     internal void Validate()
     {
-        if (Tasks < 0)
+        if (Name is { Length: > 0 } && Name != "default")
         {
-            throw new ConfigurationException("tasks cannot be negative");
+            throw new ConfigurationException($"there is no harness called {Name}");
         }
         if (Subagents is { Count: > 1 } && !Subagents.ContainsKey("default"))
         {
@@ -99,9 +90,6 @@ public sealed record Pipeline
     /// <summary>A provider-specific voice id.</summary>
     public string? Voice { get; init; }
 
-    /// <summary>The model delegated work runs on, when the harness names none.</summary>
-    public string? Subagent { get; init; }
-
     /// <summary>A hint, which narrows the candidates in every modality.</summary>
     public string? Language { get; init; }
 
@@ -124,6 +112,12 @@ public sealed record Pipeline
 /// <summary>What one conversation is about, as opposed to the agent behind it.</summary>
 public sealed record SessionOptions
 {
+    /// <summary>
+    /// The UUID to hold the session by, for a caller that wants to know it before the session
+    /// exists. Null lets the router generate one; one already taken is refused with a 409.
+    /// </summary>
+    public string? Id { get; init; }
+
     /// <summary>A Stream Chat CID to resume.</summary>
     public string? ConversationId { get; init; }
 
@@ -140,7 +134,7 @@ public sealed record SessionOptions
     public string? Description { get; init; }
 
     /// <summary>Groups conversations, and is carried as a cost label too.</summary>
-    public string? Project { get; init; }
+    public string? ProjectId { get; init; }
 
     /// <summary>Anything of the caller's own, which a later query can match on.</summary>
     public Dictionary<string, object?>? Custom { get; init; }
@@ -179,7 +173,10 @@ public sealed record AgentOptions
     /// <summary>The models the backend runs.</summary>
     public Pipeline? Pipeline { get; init; }
 
-    /// <summary>Skills, subagents and the sandbox. Null sends nothing, which leaves the defaults.</summary>
+    /// <summary>
+    /// Skills, subagents and the sandbox, written onto the stored config by
+    /// <see cref="Agent.SyncAsync"/>. Null sends nothing, which leaves what is stored.
+    /// </summary>
     public Harness? Harness { get; init; }
 
     /// <summary>Cost labels, carried onto every request the agent's sessions make.</summary>
@@ -302,16 +299,27 @@ public sealed class Knowledge
     /// <remarks>
     /// It stays a subscription rather than a one-off: the passages are keyed by the url, and
     /// reading it again replaces them. What comes back says whether it worked, or is still
-    /// pending if it was not read within three minutes.
+    /// pending if it was not read within three minutes. Adding a page again replaces it, so
+    /// adding it without <paramref name="refreshHours"/> turns its schedule off.
     /// </remarks>
-    public async Task<KnowledgeUrl> AddUrlAsync(string url, string? title = null, string? description = null, CancellationToken cancellationToken = default)
+    /// <param name="url">The page.</param>
+    /// <param name="title">What the page is, for a reader of the subscription.</param>
+    /// <param name="description">What it holds.</param>
+    /// <param name="refreshHours">How many hours between reads; null is never.</param>
+    /// <param name="cancellationToken">Stops waiting.</param>
+    public async Task<KnowledgeUrl> AddUrlAsync(string url, string? title = null, string? description = null, int? refreshHours = null, CancellationToken cancellationToken = default)
     {
+        if (refreshHours is < 1)
+        {
+            throw new ConfigurationException("refresh_hours is how many hours between reads, so it is at least 1; leave it out for never");
+        }
         var page = await _client.PostAsync<KnowledgeUrl>("/v1/agents/knowledge/urls", new KnowledgeUrlRequest
         {
             Namespace = Namespace,
             Url = url,
             Title = VisionAgentsClient.Blank(title),
             Description = VisionAgentsClient.Blank(description),
+            RefreshHours = refreshHours,
         }, cancellationToken).ConfigureAwait(false);
 
         var deadline = DateTimeOffset.UtcNow + ReadTimeout;
@@ -412,6 +420,9 @@ public sealed class Agent : IAsyncDisposable
     /// <summary>The agent's knowledge base.</summary>
     public Knowledge Knowledge { get; }
 
+    /// <summary>The conversations held under the config of the agent's name: queried, updated and deleted.</summary>
+    public Sessions Sessions => new(Client, Name);
+
     /// <summary>The conversation the agent opened last, or null before the first.</summary>
     public Session? Session => Volatile.Read(ref _session);
 
@@ -429,27 +440,26 @@ public sealed class Agent : IAsyncDisposable
     /// <remarks>
     /// What the code set wins over what the directory says, and is part of the fingerprint,
     /// so changing either syncs again. A directory unchanged since its last sync, according
-    /// to <c>.agent_sync</c>, is only read back.
+    /// to <c>.agent_sync</c>, is only read back. The sessions the agent opens afterwards run
+    /// under the stored config, which is where the harness is.
     /// </remarks>
     public async Task<AgentConfig> SyncAsync(CancellationToken cancellationToken = default)
     {
         var skills = _options.Harness?.Skills ?? [];
+        var harness = _options.Harness?.Name ?? "";
         var subagent = _options.Harness?.Subagent ?? "";
+        var sandbox = _options.Harness?.Sandbox?.Provider ?? "";
         var hash = Folder.Fingerprint(Folder?.Source ?? "", Instructions, _options.Guardrail ?? "",
-            skills, Folder?.Knowledge ?? [], Folder?.KnowledgeUrls ?? []);
-        if (subagent != "" || _options.CostTracking is { Count: > 0 })
+            skills, Folder?.Knowledge ?? [], Folder?.KnowledgeUrls ?? [], Folder?.Simulations);
+        if (harness != "" || subagent != "" || sandbox != "" || _options.CostTracking is { Count: > 0 })
         {
-            hash = Folder.Fingerprint(hash, subagent, Folder.GoMap(_options.CostTracking), [], [], []);
+            hash = Folder.Fingerprint(hash, harness + subagent + sandbox, Folder.GoMap(_options.CostTracking), [], [], [], null);
         }
 
-        if (Folder is not null && Folder.ReadStamp() == hash)
+        if (Folder is not null && Folder.ReadStamp() == hash && await StoredAsync(cancellationToken).ConfigureAwait(false) is { } stored)
         {
-            var listed = await Client.GetAsync<List<AgentConfig>>("/v1/agents/configs",
-                new Dictionary<string, string?> { ["name"] = Name }, cancellationToken).ConfigureAwait(false);
-            if (listed.Find(config => config.Name == Name) is { } stored)
-            {
-                return stored;
-            }
+            _configId = stored.Id;
+            return stored;
         }
 
         var request = new SyncAgentRequest
@@ -464,7 +474,9 @@ public sealed class Agent : IAsyncDisposable
         {
             Declare(request, Folder);
         }
+        request.Harness = VisionAgentsClient.Blank(harness) ?? request.Harness;
         request.Subagent = VisionAgentsClient.Blank(subagent) ?? request.Subagent;
+        request.Sandbox = VisionAgentsClient.Blank(sandbox) ?? request.Sandbox;
         if (_options.CostTracking is { Count: > 0 } costs)
         {
             request.Tags ??= [];
@@ -476,7 +488,23 @@ public sealed class Agent : IAsyncDisposable
 
         var synced = await Client.PostAsync<SyncAgentResult>("/v1/agents/sync", request, cancellationToken).ConfigureAwait(false);
         Folder?.WriteStamp(hash);
+        _configId = synced.Config.Id;
         return synced.Config;
+    }
+
+    /// <summary>
+    /// Changes some of how the agent is configured and returns the config as it now is. A
+    /// field left null keeps what is stored, so setting a guardrail leaves the instructions,
+    /// skills and models alone. Server side only.
+    /// </summary>
+    /// <exception cref="ConfigurationException">Nothing is stored under the agent's name.</exception>
+    public async Task<AgentConfig> UpdateConfigAsync(AgentConfigPatch patch, CancellationToken cancellationToken = default)
+    {
+        var id = _configId != "" ? _configId
+            : (await StoredAsync(cancellationToken).ConfigureAwait(false))?.Id
+                ?? throw new ConfigurationException($"there is no agent called {Name} to update");
+        return await Client.PatchAsync<AgentConfig>($"/v1/agents/configs/{VisionAgentsClient.Escape(id)}", patch, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -585,11 +613,10 @@ public sealed class Agent : IAsyncDisposable
     internal CreateSessionRequest Request(Call? call, SessionOptions? options, SessionPhone? phone, bool navigating)
     {
         var pipeline = _options.Pipeline ?? new Pipeline();
-        var harness = _options.Harness;
         options ??= new SessionOptions();
-        var subagent = harness?.Subagent is { Length: > 0 } delegated ? delegated : pipeline.Subagent;
         return new CreateSessionRequest
         {
+            Id = VisionAgentsClient.Blank(options.Id),
             CallId = call?.Id,
             CallType = call?.Type,
             Text = call is null ? true : null,
@@ -603,7 +630,7 @@ public sealed class Agent : IAsyncDisposable
             ConversationId = VisionAgentsClient.Blank(options.ConversationId),
             Title = VisionAgentsClient.Blank(options.Title),
             Description = VisionAgentsClient.Blank(options.Description),
-            Project = VisionAgentsClient.Blank(options.Project),
+            ProjectId = VisionAgentsClient.Blank(options.ProjectId),
             Custom = options.Custom is { Count: > 0 } ? options.Custom : null,
             ModelOverwrites = options.ModelOverwrites,
             Llm = VisionAgentsClient.Blank(pipeline.Llm),
@@ -616,10 +643,6 @@ public sealed class Agent : IAsyncDisposable
             MaxTokens = pipeline.MaxTokens is > 0 ? pipeline.MaxTokens : null,
             ToolTimeoutMs = pipeline.ToolTimeout is { } timeout && timeout > TimeSpan.Zero ? (int)timeout.TotalMilliseconds : null,
             Video = pipeline.Video,
-            Subagent = VisionAgentsClient.Blank(subagent),
-            Tasks = harness is { Tasks: > 0 } ? harness.Tasks : null,
-            Sandbox = harness?.Sandbox?.Provider,
-            Skills = harness is { ReplacesSkills: true } ? [.. (harness.Skills ?? []).Select(SessionSkillOf)] : null,
             Tags = _options.CostTracking is { Count: > 0 } costs ? new Dictionary<string, string>(costs) : null,
             Memory = MemoryOf(_options.MemoryFilter),
             Phone = phone,
@@ -664,7 +687,7 @@ public sealed class Agent : IAsyncDisposable
             {
                 if (_configId == "")
                 {
-                    _configId = (await SyncAsync(cancellationToken).ConfigureAwait(false)).Id;
+                    await SyncAsync(cancellationToken).ConfigureAwait(false);
                 }
             }
             finally
@@ -679,6 +702,14 @@ public sealed class Agent : IAsyncDisposable
         return session;
     }
 
+    /// <summary>The config stored under the agent's name, or null when there is none.</summary>
+    private async Task<AgentConfig?> StoredAsync(CancellationToken cancellationToken)
+    {
+        var listed = await Client.GetAsync<List<AgentConfig>>("/v1/agents/configs",
+            new Dictionary<string, string?> { ["name"] = Name }, cancellationToken).ConfigureAwait(false);
+        return listed.Find(config => config.Name == Name);
+    }
+
     private static void Declare(SyncAgentRequest request, Folder folder)
     {
         var declared = folder.Declaration;
@@ -691,15 +722,21 @@ public sealed class Agent : IAsyncDisposable
                 Url = page.Url,
                 Title = VisionAgentsClient.Blank(page.Title),
                 Description = VisionAgentsClient.Blank(page.Description),
+                RefreshHours = page.RefreshHours > 0 ? page.RefreshHours : null,
             })]
             : null;
+        // Sent only when there is a simulations/, and empty when it holds none: what is sent
+        // is the whole of the agent's simulations, and leaving it out leaves the stored ones.
+        request.Simulations = folder.Simulations is { } simulations ? [.. simulations] : null;
         // Only what the file names is sent, so the router leaves whatever is stored for the rest.
         request.Mode = VisionAgentsClient.Blank(declared.Mode);
         request.Stt = VisionAgentsClient.Blank(declared.Stt);
         request.Tts = VisionAgentsClient.Blank(declared.Tts);
         request.Sts = declared.Sts;
         request.Voice = VisionAgentsClient.Blank(declared.Voice);
+        request.Speed = declared.Speed != 0 ? declared.Speed : null;
         request.Llm = VisionAgentsClient.Blank(declared.Llm);
+        request.Harness = VisionAgentsClient.Blank(declared.Harness);
         request.Subagent = VisionAgentsClient.Blank(declared.Subagent);
         request.Search = VisionAgentsClient.Blank(declared.Search);
         request.Greeting = VisionAgentsClient.Blank(declared.Greeting);
@@ -718,15 +755,6 @@ public sealed class Agent : IAsyncDisposable
     private static SkillRequest SkillRequestOf(Skill skill) => new()
     {
         ConfigId = "",
-        Name = skill.Name,
-        Description = skill.Description,
-        Instructions = skill.Instructions,
-        CaptureVideo = skill.CaptureVideo,
-        DeadlineMs = skill.Deadline is { } deadline && deadline > TimeSpan.Zero ? (long)deadline.TotalMilliseconds : null,
-    };
-
-    private static SessionSkill SessionSkillOf(Skill skill) => new()
-    {
         Name = skill.Name,
         Description = skill.Description,
         Instructions = skill.Instructions,

@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.agent_response_item import AgentResponseItem
+from ...models.agent_response_item_page import AgentResponseItemPage
 from ...models.error import Error
 from ...types import UNSET, Response, Unset
 
@@ -16,7 +16,7 @@ def _get_kwargs(
     *,
     response_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
-    offset: int | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -25,7 +25,7 @@ def _get_kwargs(
 
     params["limit"] = limit
 
-    params["offset"] = offset
+    params["cursor"] = cursor
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -42,16 +42,16 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[AgentResponseItem] | None:
+) -> AgentResponseItemPage | Error | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for response_200_item_data in _response_200:
-            response_200_item = AgentResponseItem.from_dict(response_200_item_data)
-
-            response_200.append(response_200_item)
+        response_200 = AgentResponseItemPage.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = Error.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Error.from_dict(response.json())
@@ -68,6 +68,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -76,7 +81,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[AgentResponseItem]]:
+) -> Response[AgentResponseItemPage | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -91,8 +96,8 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     response_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
-    offset: int | Unset = UNSET,
-) -> Response[Error | list[AgentResponseItem]]:
+    cursor: str | Unset = UNSET,
+) -> Response[AgentResponseItemPage | Error]:
     """What the agent did, turn by turn, in the order it happened
 
      One flat stream across every turn rather than a list per turn, because that is how a conversation
@@ -104,24 +109,26 @@ def sync_detailed(
     Nothing is returned for an incognito session, which has no items to return.
 
     Args:
-        id (str):
-        response_id (str | Unset):
-        limit (int | Unset):
-        offset (int | Unset):
+        id (str): The session, as returned when it was created.
+        response_id (str | Unset): Narrow to one turn's items. Omitted is every turn in the
+            session.
+        limit (int | Unset): Up to 1000. Omitted is 200.
+        cursor (str | Unset): The `next_cursor` of the previous page, sent with the same filters.
+            Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[AgentResponseItem]]
+        Response[AgentResponseItemPage | Error]
     """
 
     kwargs = _get_kwargs(
         id=id,
         response_id=response_id,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
     )
 
     response = client.get_httpx_client().request(
@@ -137,8 +144,8 @@ def sync(
     client: AuthenticatedClient | Client,
     response_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
-    offset: int | Unset = UNSET,
-) -> Error | list[AgentResponseItem] | None:
+    cursor: str | Unset = UNSET,
+) -> AgentResponseItemPage | Error | None:
     """What the agent did, turn by turn, in the order it happened
 
      One flat stream across every turn rather than a list per turn, because that is how a conversation
@@ -150,17 +157,19 @@ def sync(
     Nothing is returned for an incognito session, which has no items to return.
 
     Args:
-        id (str):
-        response_id (str | Unset):
-        limit (int | Unset):
-        offset (int | Unset):
+        id (str): The session, as returned when it was created.
+        response_id (str | Unset): Narrow to one turn's items. Omitted is every turn in the
+            session.
+        limit (int | Unset): Up to 1000. Omitted is 200.
+        cursor (str | Unset): The `next_cursor` of the previous page, sent with the same filters.
+            Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[AgentResponseItem]
+        AgentResponseItemPage | Error
     """
 
     return sync_detailed(
@@ -168,7 +177,7 @@ def sync(
         client=client,
         response_id=response_id,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
     ).parsed
 
 
@@ -178,8 +187,8 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     response_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
-    offset: int | Unset = UNSET,
-) -> Response[Error | list[AgentResponseItem]]:
+    cursor: str | Unset = UNSET,
+) -> Response[AgentResponseItemPage | Error]:
     """What the agent did, turn by turn, in the order it happened
 
      One flat stream across every turn rather than a list per turn, because that is how a conversation
@@ -191,24 +200,26 @@ async def asyncio_detailed(
     Nothing is returned for an incognito session, which has no items to return.
 
     Args:
-        id (str):
-        response_id (str | Unset):
-        limit (int | Unset):
-        offset (int | Unset):
+        id (str): The session, as returned when it was created.
+        response_id (str | Unset): Narrow to one turn's items. Omitted is every turn in the
+            session.
+        limit (int | Unset): Up to 1000. Omitted is 200.
+        cursor (str | Unset): The `next_cursor` of the previous page, sent with the same filters.
+            Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[AgentResponseItem]]
+        Response[AgentResponseItemPage | Error]
     """
 
     kwargs = _get_kwargs(
         id=id,
         response_id=response_id,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -222,8 +233,8 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     response_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
-    offset: int | Unset = UNSET,
-) -> Error | list[AgentResponseItem] | None:
+    cursor: str | Unset = UNSET,
+) -> AgentResponseItemPage | Error | None:
     """What the agent did, turn by turn, in the order it happened
 
      One flat stream across every turn rather than a list per turn, because that is how a conversation
@@ -235,17 +246,19 @@ async def asyncio(
     Nothing is returned for an incognito session, which has no items to return.
 
     Args:
-        id (str):
-        response_id (str | Unset):
-        limit (int | Unset):
-        offset (int | Unset):
+        id (str): The session, as returned when it was created.
+        response_id (str | Unset): Narrow to one turn's items. Omitted is every turn in the
+            session.
+        limit (int | Unset): Up to 1000. Omitted is 200.
+        cursor (str | Unset): The `next_cursor` of the previous page, sent with the same filters.
+            Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[AgentResponseItem]
+        AgentResponseItemPage | Error
     """
 
     return (
@@ -254,6 +267,6 @@ async def asyncio(
             client=client,
             response_id=response_id,
             limit=limit,
-            offset=offset,
+            cursor=cursor,
         )
     ).parsed

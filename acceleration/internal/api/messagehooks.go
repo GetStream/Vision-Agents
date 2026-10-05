@@ -96,7 +96,7 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not read that message event", http.StatusBadRequest)
 			return
 		}
-		s.routeArrivingMessage(r, event)
+		s.routeArrivingMessage(r, body, event)
 	} else {
 		s.logger.Debug("ignoring a message event", "type", eventType)
 	}
@@ -128,7 +128,10 @@ func addressed(event messageEvent) bool {
 
 // routeArrivingMessage answers a message from the session running on its channel, or hands
 // it to a worker to start one.
-func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
+//
+// The body is carried in rather than read again because the session may be running on
+// another node, which has to be handed the delivery exactly as Stream signed it.
+func (s *Server) routeArrivingMessage(r *http.Request, body []byte, event messageEvent) {
 	if !addressed(event) {
 		return
 	}
@@ -160,6 +163,10 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 			go s.answerMessage(found, event)
 			return
 		}
+	}
+
+	if s.forwardedMessage(r, body, event) {
+		return
 	}
 
 	if s.store == nil || s.dispatch == nil {

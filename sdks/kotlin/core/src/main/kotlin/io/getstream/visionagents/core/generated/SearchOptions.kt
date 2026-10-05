@@ -37,63 +37,63 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * How this config finds out today's answers.
  *
- * @param target A provider/model or a capability shortcut.
- * @param providers A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it. 
- * @param depth 
- * @param results How many hits to return.
- * @param includeDomains Only answer from these domains.
- * @param excludeDomains 
  * @param category The kind of source to prefer - news, papers, company, github - for the providers that classify their index. 
- * @param maxAgeHours How stale a cached page may be. Zero forces a live crawl, which is slower and costs more. 
- * @param location Country or region to answer from, for queries whose answer depends on where.
  * @param contents What to return alongside each hit.
+ * @param depth 
+ * @param excludeDomains 
+ * @param includeDomains Only answer from these domains.
+ * @param location Country or region to answer from, for queries whose answer depends on where.
+ * @param maxAgeHours How stale a cached page may be. Zero forces a live crawl, which is slower and costs more. 
  * @param outputSchema A JSON schema the answer must fit, for the providers that can be asked to structure what they found. 
+ * @param providers A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it. 
+ * @param results How many hits to return.
+ * @param target A provider/model or a capability shortcut.
  */
 @Serializable
 
 internal data class SearchOptions (
 
-    /* A provider/model or a capability shortcut. */
-    @SerialName(value = "target")
-    val target: kotlin.String? = null,
-
-    /* A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.  */
-    @SerialName(value = "providers")
-    val providers: kotlin.collections.List<kotlin.String>? = null,
-
-    @Contextual @SerialName(value = "depth")
-    val depth: SearchDepth? = null,
-
-    /* How many hits to return. */
-    @SerialName(value = "results")
-    val results: kotlin.Int? = null,
-
-    /* Only answer from these domains. */
-    @SerialName(value = "include_domains")
-    val includeDomains: kotlin.collections.List<kotlin.String>? = null,
-
-    @SerialName(value = "exclude_domains")
-    val excludeDomains: kotlin.collections.List<kotlin.String>? = null,
-
     /* The kind of source to prefer - news, papers, company, github - for the providers that classify their index.  */
     @SerialName(value = "category")
     val category: kotlin.String? = null,
-
-    /* How stale a cached page may be. Zero forces a live crawl, which is slower and costs more.  */
-    @SerialName(value = "max_age_hours")
-    val maxAgeHours: kotlin.Int? = null,
-
-    /* Country or region to answer from, for queries whose answer depends on where. */
-    @SerialName(value = "location")
-    val location: kotlin.String? = null,
 
     /* What to return alongside each hit. */
     @SerialName(value = "contents")
     val contents: kotlin.collections.List<SearchOptions.Contents>? = null,
 
+    @Contextual @SerialName(value = "depth")
+    val depth: SearchDepth? = null,
+
+    @SerialName(value = "exclude_domains")
+    val excludeDomains: kotlin.collections.List<kotlin.String>? = null,
+
+    /* Only answer from these domains. */
+    @SerialName(value = "include_domains")
+    val includeDomains: kotlin.collections.List<kotlin.String>? = null,
+
+    /* Country or region to answer from, for queries whose answer depends on where. */
+    @SerialName(value = "location")
+    val location: kotlin.String? = null,
+
+    /* How stale a cached page may be. Zero forces a live crawl, which is slower and costs more.  */
+    @SerialName(value = "max_age_hours")
+    val maxAgeHours: kotlin.Int? = null,
+
     /* A JSON schema the answer must fit, for the providers that can be asked to structure what they found.  */
     @Contextual @SerialName(value = "output_schema")
-    val outputSchema: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null
+    val outputSchema: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null,
+
+    /* A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.  */
+    @SerialName(value = "providers")
+    val providers: kotlin.collections.List<kotlin.String>? = null,
+
+    /* How many hits to return. */
+    @SerialName(value = "results")
+    val results: kotlin.Int? = null,
+
+    /* A provider/model or a capability shortcut. */
+    @SerialName(value = "target")
+    val target: kotlin.String? = null
 
 ) {
 

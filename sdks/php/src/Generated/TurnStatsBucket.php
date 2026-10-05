@@ -12,22 +12,22 @@ final readonly class TurnStatsBucket
 {
     public function __construct(
         public string $agentId,
-        public \DateTimeImmutable $bucket,
-        public int $turnCount,
-        // Turns a participant talked over before they finished.
-        public int $interruptedCount,
         // How much speech the agent published in the bucket.
         public float $audioOutMsTotal,
-        public ?float $sttLatencyP50Ms = null,
-        public ?float $sttLatencyP95Ms = null,
+        public \DateTimeImmutable $bucket,
+        // Turns a participant talked over before they finished.
+        public int $interruptedCount,
+        public int $turnCount,
         public ?float $llmTtftP50Ms = null,
         public ?float $llmTtftP95Ms = null,
-        public ?float $ttsTtfbP50Ms = null,
-        public ?float $ttsTtfbP95Ms = null,
         // Settled transcript to first audio published.
         public ?float $roundtripP50Ms = null,
         public ?float $roundtripP95Ms = null,
         public ?float $roundtripP99Ms = null,
+        public ?float $sttLatencyP50Ms = null,
+        public ?float $sttLatencyP95Ms = null,
+        public ?float $ttsTtfbP50Ms = null,
+        public ?float $ttsTtfbP95Ms = null,
     ) {
     }
 
@@ -38,19 +38,19 @@ final readonly class TurnStatsBucket
     {
         return new self(
             agentId: Json::string($data, 'agent_id'),
-            bucket: Json::date($data, 'bucket'),
-            turnCount: Json::int($data, 'turn_count'),
-            interruptedCount: Json::int($data, 'interrupted_count'),
             audioOutMsTotal: Json::float($data, 'audio_out_ms_total'),
-            sttLatencyP50Ms: array_key_exists('stt_latency_p50_ms', $data) && $data['stt_latency_p50_ms'] !== null ? Json::float($data, 'stt_latency_p50_ms') : null,
-            sttLatencyP95Ms: array_key_exists('stt_latency_p95_ms', $data) && $data['stt_latency_p95_ms'] !== null ? Json::float($data, 'stt_latency_p95_ms') : null,
+            bucket: Json::date($data, 'bucket'),
+            interruptedCount: Json::int($data, 'interrupted_count'),
+            turnCount: Json::int($data, 'turn_count'),
             llmTtftP50Ms: array_key_exists('llm_ttft_p50_ms', $data) && $data['llm_ttft_p50_ms'] !== null ? Json::float($data, 'llm_ttft_p50_ms') : null,
             llmTtftP95Ms: array_key_exists('llm_ttft_p95_ms', $data) && $data['llm_ttft_p95_ms'] !== null ? Json::float($data, 'llm_ttft_p95_ms') : null,
-            ttsTtfbP50Ms: array_key_exists('tts_ttfb_p50_ms', $data) && $data['tts_ttfb_p50_ms'] !== null ? Json::float($data, 'tts_ttfb_p50_ms') : null,
-            ttsTtfbP95Ms: array_key_exists('tts_ttfb_p95_ms', $data) && $data['tts_ttfb_p95_ms'] !== null ? Json::float($data, 'tts_ttfb_p95_ms') : null,
             roundtripP50Ms: array_key_exists('roundtrip_p50_ms', $data) && $data['roundtrip_p50_ms'] !== null ? Json::float($data, 'roundtrip_p50_ms') : null,
             roundtripP95Ms: array_key_exists('roundtrip_p95_ms', $data) && $data['roundtrip_p95_ms'] !== null ? Json::float($data, 'roundtrip_p95_ms') : null,
             roundtripP99Ms: array_key_exists('roundtrip_p99_ms', $data) && $data['roundtrip_p99_ms'] !== null ? Json::float($data, 'roundtrip_p99_ms') : null,
+            sttLatencyP50Ms: array_key_exists('stt_latency_p50_ms', $data) && $data['stt_latency_p50_ms'] !== null ? Json::float($data, 'stt_latency_p50_ms') : null,
+            sttLatencyP95Ms: array_key_exists('stt_latency_p95_ms', $data) && $data['stt_latency_p95_ms'] !== null ? Json::float($data, 'stt_latency_p95_ms') : null,
+            ttsTtfbP50Ms: array_key_exists('tts_ttfb_p50_ms', $data) && $data['tts_ttfb_p50_ms'] !== null ? Json::float($data, 'tts_ttfb_p50_ms') : null,
+            ttsTtfbP95Ms: array_key_exists('tts_ttfb_p95_ms', $data) && $data['tts_ttfb_p95_ms'] !== null ? Json::float($data, 'tts_ttfb_p95_ms') : null,
         );
     }
 
@@ -63,27 +63,15 @@ final readonly class TurnStatsBucket
     {
         $out = [];
         $out['agent_id'] = $this->agentId;
-        $out['bucket'] = Json::dateValue($this->bucket);
-        $out['turn_count'] = $this->turnCount;
-        $out['interrupted_count'] = $this->interruptedCount;
         $out['audio_out_ms_total'] = $this->audioOutMsTotal;
-        if ($this->sttLatencyP50Ms !== null) {
-            $out['stt_latency_p50_ms'] = $this->sttLatencyP50Ms;
-        }
-        if ($this->sttLatencyP95Ms !== null) {
-            $out['stt_latency_p95_ms'] = $this->sttLatencyP95Ms;
-        }
+        $out['bucket'] = Json::dateValue($this->bucket);
+        $out['interrupted_count'] = $this->interruptedCount;
+        $out['turn_count'] = $this->turnCount;
         if ($this->llmTtftP50Ms !== null) {
             $out['llm_ttft_p50_ms'] = $this->llmTtftP50Ms;
         }
         if ($this->llmTtftP95Ms !== null) {
             $out['llm_ttft_p95_ms'] = $this->llmTtftP95Ms;
-        }
-        if ($this->ttsTtfbP50Ms !== null) {
-            $out['tts_ttfb_p50_ms'] = $this->ttsTtfbP50Ms;
-        }
-        if ($this->ttsTtfbP95Ms !== null) {
-            $out['tts_ttfb_p95_ms'] = $this->ttsTtfbP95Ms;
         }
         if ($this->roundtripP50Ms !== null) {
             $out['roundtrip_p50_ms'] = $this->roundtripP50Ms;
@@ -93,6 +81,18 @@ final readonly class TurnStatsBucket
         }
         if ($this->roundtripP99Ms !== null) {
             $out['roundtrip_p99_ms'] = $this->roundtripP99Ms;
+        }
+        if ($this->sttLatencyP50Ms !== null) {
+            $out['stt_latency_p50_ms'] = $this->sttLatencyP50Ms;
+        }
+        if ($this->sttLatencyP95Ms !== null) {
+            $out['stt_latency_p95_ms'] = $this->sttLatencyP95Ms;
+        }
+        if ($this->ttsTtfbP50Ms !== null) {
+            $out['tts_ttfb_p50_ms'] = $this->ttsTtfbP50Ms;
+        }
+        if ($this->ttsTtfbP95Ms !== null) {
+            $out['tts_ttfb_p95_ms'] = $this->ttsTtfbP95Ms;
         }
         return $out;
     }

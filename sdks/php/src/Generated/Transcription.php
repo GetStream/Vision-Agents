@@ -11,32 +11,32 @@ use GetStream\VisionAgents\Json;
 final readonly class Transcription
 {
     public function __construct(
+        public \DateTimeImmutable $createdAt,
         public string $id,
         public RecordingStatus|string $status,
-        public \DateTimeImmutable $createdAt,
         public \DateTimeImmutable $updatedAt,
-        public ?string $provider = null,
-        public ?string $model = null,
+        // How long the recording was, which is what it was billed on.
+        public ?int $audioDurationMs = null,
+        public ?\DateTimeImmutable $completedAt = null,
+        /** @var list<TranscriptEntity>|null */
+        public ?array $entities = null,
+        // Why the job failed, if it did.
+        public ?string $error = null,
         // What was spoken, whether it was asked for or detected.
         public ?string $language = null,
-        // The whole transcript as prose.
-        public ?string $text = null,
-        // Present when word-level timestamps were asked for.
-        /** @var list<TranscriptWord>|null */
-        public ?array $words = null,
+        public ?string $model = null,
+        public ?string $provider = null,
         // The speakers diarization found, in the order they first spoke.
         /** @var list<string>|null */
         public ?array $speakers = null,
         // The transcript as an SRT or VTT file, when one of those was asked for.
         public ?string $subtitles = null,
         public ?string $summary = null,
-        /** @var list<TranscriptEntity>|null */
-        public ?array $entities = null,
-        // How long the recording was, which is what it was billed on.
-        public ?int $audioDurationMs = null,
-        // Why the job failed, if it did.
-        public ?string $error = null,
-        public ?\DateTimeImmutable $completedAt = null,
+        // The whole transcript as prose.
+        public ?string $text = null,
+        // Present when word-level timestamps were asked for.
+        /** @var list<TranscriptWord>|null */
+        public ?array $words = null,
     ) {
     }
 
@@ -46,22 +46,22 @@ final readonly class Transcription
     public static function fromArray(array $data): self
     {
         return new self(
+            createdAt: Json::date($data, 'created_at'),
             id: Json::string($data, 'id'),
             status: Json::enum($data, 'status', RecordingStatus::class),
-            createdAt: Json::date($data, 'created_at'),
             updatedAt: Json::date($data, 'updated_at'),
-            provider: array_key_exists('provider', $data) && $data['provider'] !== null ? Json::string($data, 'provider') : null,
-            model: array_key_exists('model', $data) && $data['model'] !== null ? Json::string($data, 'model') : null,
+            audioDurationMs: array_key_exists('audio_duration_ms', $data) && $data['audio_duration_ms'] !== null ? Json::int($data, 'audio_duration_ms') : null,
+            completedAt: array_key_exists('completed_at', $data) && $data['completed_at'] !== null ? Json::date($data, 'completed_at') : null,
+            entities: array_key_exists('entities', $data) && $data['entities'] !== null ? array_map(TranscriptEntity::fromArray(...), Json::objects($data, 'entities')) : null,
+            error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
             language: array_key_exists('language', $data) && $data['language'] !== null ? Json::string($data, 'language') : null,
-            text: array_key_exists('text', $data) && $data['text'] !== null ? Json::string($data, 'text') : null,
-            words: array_key_exists('words', $data) && $data['words'] !== null ? array_map(TranscriptWord::fromArray(...), Json::objects($data, 'words')) : null,
+            model: array_key_exists('model', $data) && $data['model'] !== null ? Json::string($data, 'model') : null,
+            provider: array_key_exists('provider', $data) && $data['provider'] !== null ? Json::string($data, 'provider') : null,
             speakers: array_key_exists('speakers', $data) && $data['speakers'] !== null ? Json::strings($data, 'speakers') : null,
             subtitles: array_key_exists('subtitles', $data) && $data['subtitles'] !== null ? Json::string($data, 'subtitles') : null,
             summary: array_key_exists('summary', $data) && $data['summary'] !== null ? Json::string($data, 'summary') : null,
-            entities: array_key_exists('entities', $data) && $data['entities'] !== null ? array_map(TranscriptEntity::fromArray(...), Json::objects($data, 'entities')) : null,
-            audioDurationMs: array_key_exists('audio_duration_ms', $data) && $data['audio_duration_ms'] !== null ? Json::int($data, 'audio_duration_ms') : null,
-            error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
-            completedAt: array_key_exists('completed_at', $data) && $data['completed_at'] !== null ? Json::date($data, 'completed_at') : null,
+            text: array_key_exists('text', $data) && $data['text'] !== null ? Json::string($data, 'text') : null,
+            words: array_key_exists('words', $data) && $data['words'] !== null ? array_map(TranscriptWord::fromArray(...), Json::objects($data, 'words')) : null,
         );
     }
 
@@ -73,24 +73,30 @@ final readonly class Transcription
     public function toArray(): array
     {
         $out = [];
+        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['id'] = $this->id;
         $out['status'] = Json::enumValue($this->status);
-        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['updated_at'] = Json::dateValue($this->updatedAt);
-        if ($this->provider !== null) {
-            $out['provider'] = $this->provider;
+        if ($this->audioDurationMs !== null) {
+            $out['audio_duration_ms'] = $this->audioDurationMs;
         }
-        if ($this->model !== null) {
-            $out['model'] = $this->model;
+        if ($this->completedAt !== null) {
+            $out['completed_at'] = Json::dateValue($this->completedAt);
+        }
+        if ($this->entities !== null) {
+            $out['entities'] = array_map(static fn (TranscriptEntity $each): array => $each->toArray(), $this->entities);
+        }
+        if ($this->error !== null) {
+            $out['error'] = $this->error;
         }
         if ($this->language !== null) {
             $out['language'] = $this->language;
         }
-        if ($this->text !== null) {
-            $out['text'] = $this->text;
+        if ($this->model !== null) {
+            $out['model'] = $this->model;
         }
-        if ($this->words !== null) {
-            $out['words'] = array_map(static fn (TranscriptWord $each): array => $each->toArray(), $this->words);
+        if ($this->provider !== null) {
+            $out['provider'] = $this->provider;
         }
         if ($this->speakers !== null) {
             $out['speakers'] = $this->speakers;
@@ -101,17 +107,11 @@ final readonly class Transcription
         if ($this->summary !== null) {
             $out['summary'] = $this->summary;
         }
-        if ($this->entities !== null) {
-            $out['entities'] = array_map(static fn (TranscriptEntity $each): array => $each->toArray(), $this->entities);
+        if ($this->text !== null) {
+            $out['text'] = $this->text;
         }
-        if ($this->audioDurationMs !== null) {
-            $out['audio_duration_ms'] = $this->audioDurationMs;
-        }
-        if ($this->error !== null) {
-            $out['error'] = $this->error;
-        }
-        if ($this->completedAt !== null) {
-            $out['completed_at'] = Json::dateValue($this->completedAt);
+        if ($this->words !== null) {
+            $out['words'] = array_map(static fn (TranscriptWord $each): array => $each->toArray(), $this->words);
         }
         return $out;
     }

@@ -27,8 +27,8 @@ Which one a deployment uses is a property of the deployment rather than a choice
 ```ts
 import { Client } from "@stream-io/vision-agents";
 
-// On your own server.
-const api = new Client({ apiKey: process.env.STREAM_API_KEY, apiSecret: process.env.STREAM_API_SECRET });
+// On your own server, with STREAM_API_KEY and STREAM_API_SECRET in the environment.
+const api = new Client();
 
 // In a browser, with a token your backend minted for this user.
 const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token").then((r) => r.text()) });
@@ -43,12 +43,7 @@ credential spelled its own way. Pass `authenticate: true`, or set
 `STREAM_ACCELERATION_AUTHENTICATE`:
 
 ```ts
-const api = new Client({
-  url: "https://accelerate.gcp.stream-io-api.com",
-  apiKey: process.env.STREAM_API_KEY,
-  apiSecret: process.env.STREAM_API_SECRET,
-  authenticate: true,
-});
+const api = new Client({ url: "https://accelerate.gcp.stream-io-api.com", authenticate: true });
 ```
 
 It is a switch rather than an extra header or two because the two spellings contradict each
@@ -79,26 +74,26 @@ went wrong.
 ## A conversation somebody comes back to
 
 A text conversation is kept in Stream Chat, so what was said outlives the session that
-heard it. `conversation` returns the session holding one and opens one only if none is.
+heard it.
 
 ```ts
-import { conversation } from "@stream-io/vision-agents";
+const support = api.agent("support");
+const session = await support.sessions.create({ agent_id: "ana-support" });
+// Keep session.conversationId. It is the channel, and the way back to what was said.
+await session.responses.create("Where is my order?");
 
-const session = await conversation(api, { id, conversationId: stored, config_id: "cfg_1" });
-// Keep session.conversation_id. It is the channel, and the way back to what was said.
+// Later: ana's conversations still running, without paging through every one that ended.
+const live = await support.sessions.query({ agentId: "ana-support", state: "live" });
 ```
 
-`id` is your own name for the conversation, stable across the sessions that hold it, and
-what a running one is found by — so two people's conversations must not share it. The
-channel is the backend's to name: a first open takes none, and every later one takes the
-`conversation_id` the first was given. It cannot be named up front, because naming one is a
-resume, and a resume reads the channel without creating it — so a name nothing has been
-held in yet is refused. Come back as the same `id` too; the backend checks a conversation
-is reopened by whoever held it.
+The channel is the backend's to name: a first open takes no `conversation_id`, and every
+later one takes the one the first was given. Come back as the same `agent_id` too; the
+backend checks a conversation is reopened by whoever held it.
 
-The one caller this cannot find a session for is an anonymous one going by no name, which
-the backend tells about no sessions at all. Hold onto the session id and read it back with
-`getSession` instead.
+`session.close()` stops a conversation and keeps everything it recorded and remembered, so
+a conversation in writing is usually left running. `session.delete()`, or
+`sessions.delete(id)` without a handle, deletes it with its turns and what it taught
+memory.
 
 ## An agent
 
@@ -158,7 +153,7 @@ dispatch.onMessage(async (message) => {
     return;
   }
   const session = await dispatch.sessionFor(message, () => new Agent({ name: "John" }));
-  session.respond(message.text);
+  await session.responses.create(message.text);
 });
 
 await dispatch.run();
@@ -204,12 +199,13 @@ rather than talked over.
 
 ```
 agents/jean/
-  agent.yaml            required: the name and what it runs on (llm, stt, tts, tags, ...)
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, speed, harness, tags, ...)
   instructions.md
   guardrail.md
   skills/think.md
   knowledge/pricing.md
-  knowledge/urls.yaml
+  knowledge/urls.yaml   pages to read, each optionally with refresh_hours
+  simulations/lunch.yaml
   .agent_sync           written by sync: the fingerprint last synced and when
 ```
 
@@ -226,7 +222,13 @@ carrying the files, the pages and what `agent.yaml` declares. A key `agent.yaml`
 know is refused. The request carries a fingerprint of everything in it and `.agent_sync`
 records it, so syncing on every startup only reads the config back when nothing has changed.
 A setting left out leaves whatever is stored — a model chosen in the dashboard survives a
-sync that says nothing about it.
+sync that says nothing about it. The harness (`harness`, subagent, sandbox and skills) is
+stored on the config this way too, never on a session: a session runs its config's.
+
+Each file in `simulations/` is a list of `name`, `scenario` and `assertion`, with `mode`,
+`variations`, `max_turns`, `caller_*`, `judge_target` and `tags` optional. With a
+`simulations/` directory the config's simulations become exactly what it declares, so an
+empty one deletes them; without one, the stored ones are left alone.
 
 What is written in code wins over what the directory says, so a directory is a starting
 point rather than an override.

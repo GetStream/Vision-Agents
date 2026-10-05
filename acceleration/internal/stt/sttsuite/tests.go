@@ -141,7 +141,8 @@ func (s *Suite) TestAMidUtteranceClockTimeSettlesAsOneTranscript() {
 		heard.WriteString(final.Text)
 	}
 	text := strings.ToLower(heard.String())
-	s.Contains(text, "four")
+	s.True(strings.Contains(text, "four") || strings.Contains(text, "4"),
+		"the party of four must survive: %q", heard.String())
 	s.True(strings.Contains(text, "30") || strings.Contains(text, "thirty"),
 		"the minutes of 7:30 must survive: %q", heard.String())
 	s.Contains(text, "patio")

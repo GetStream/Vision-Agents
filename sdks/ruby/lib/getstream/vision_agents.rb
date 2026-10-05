@@ -16,6 +16,7 @@ require_relative "vision_agents/knowledge"
 require_relative "vision_agents/agent"
 require_relative "vision_agents/dispatch"
 require_relative "vision_agents/router"
+require_relative "vision_agents/simulations"
 
 module GetStream
   # Server-side Ruby SDK for the Vision Agents acceleration backend.

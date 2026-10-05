@@ -17,67 +17,67 @@ T = TypeVar("T", bound="TranscriptMessage")
 class TranscriptMessage:
     """
     Attributes:
+        created_at (datetime.datetime):
         speaker (str): Who said it, the agent under its own user id.
         text (str):
-        created_at (datetime.datetime):
-        name (str | Unset): That speaker's display name, when they have one.
         agent (bool | Unset): Whether the agent said it rather than somebody it was talking to. It is what the line was
             stored as, so it holds however the agent was named.
+        name (str | Unset): That speaker's display name, when they have one.
     """
 
+    created_at: datetime.datetime
     speaker: str
     text: str
-    created_at: datetime.datetime
-    name: str | Unset = UNSET
     agent: bool | Unset = UNSET
+    name: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        created_at = self.created_at.isoformat()
+
         speaker = self.speaker
 
         text = self.text
 
-        created_at = self.created_at.isoformat()
+        agent = self.agent
 
         name = self.name
-
-        agent = self.agent
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "created_at": created_at,
                 "speaker": speaker,
                 "text": text,
-                "created_at": created_at,
             }
         )
-        if name is not UNSET:
-            field_dict["name"] = name
         if agent is not UNSET:
             field_dict["agent"] = agent
+        if name is not UNSET:
+            field_dict["name"] = name
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
         speaker = d.pop("speaker")
 
         text = d.pop("text")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+        agent = d.pop("agent", UNSET)
 
         name = d.pop("name", UNSET)
 
-        agent = d.pop("agent", UNSET)
-
         transcript_message = cls(
+            created_at=created_at,
             speaker=speaker,
             text=text,
-            created_at=created_at,
-            name=name,
             agent=agent,
+            name=name,
         )
 
         transcript_message.additional_properties = d

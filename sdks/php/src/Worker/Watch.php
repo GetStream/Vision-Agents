@@ -96,11 +96,6 @@ final class Watch implements IteratorAggregate
         $this->socket->send(['type' => 'say', 'text' => $text]);
     }
 
-    public function respond(string $text): void
-    {
-        $this->socket->send(['type' => 'respond', 'text' => $text]);
-    }
-
     public function interrupt(): void
     {
         $this->socket->send(['type' => 'interrupt']);

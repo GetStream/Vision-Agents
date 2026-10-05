@@ -22,70 +22,70 @@ T = TypeVar("T", bound="Simulation")
 class Simulation:
     """
     Attributes:
-        id (str):
-        name (str):
-        mode (SimulationMode):
-        config_id (str):
-        scenario (str):
         assertion (str):
-        variations (int):
-        max_turns (int):
+        config_id (str):
         created_at (datetime.datetime):
-        judge_target (str | Unset):
+        id (str):
+        max_turns (int):
+        mode (SimulationMode):
+        name (str):
+        scenario (str):
+        variations (int):
+        caller_stt (str | Unset):
         caller_target (str | Unset):
         caller_tts (str | Unset):
-        caller_stt (str | Unset):
         caller_voice (str | Unset):
+        judge_target (str | Unset):
         tags (SimulationTags | Unset):
         updated_at (datetime.datetime | Unset):
     """
 
-    id: str
-    name: str
-    mode: SimulationMode
-    config_id: str
-    scenario: str
     assertion: str
-    variations: int
-    max_turns: int
+    config_id: str
     created_at: datetime.datetime
-    judge_target: str | Unset = UNSET
+    id: str
+    max_turns: int
+    mode: SimulationMode
+    name: str
+    scenario: str
+    variations: int
+    caller_stt: str | Unset = UNSET
     caller_target: str | Unset = UNSET
     caller_tts: str | Unset = UNSET
-    caller_stt: str | Unset = UNSET
     caller_voice: str | Unset = UNSET
+    judge_target: str | Unset = UNSET
     tags: SimulationTags | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
-
-        name = self.name
-
-        mode = self.mode.value
+        assertion = self.assertion
 
         config_id = self.config_id
 
-        scenario = self.scenario
+        created_at = self.created_at.isoformat()
 
-        assertion = self.assertion
-
-        variations = self.variations
+        id = self.id
 
         max_turns = self.max_turns
 
-        created_at = self.created_at.isoformat()
+        mode = self.mode.value
 
-        judge_target = self.judge_target
+        name = self.name
+
+        scenario = self.scenario
+
+        variations = self.variations
+
+        caller_stt = self.caller_stt
 
         caller_target = self.caller_target
 
         caller_tts = self.caller_tts
 
-        caller_stt = self.caller_stt
-
         caller_voice = self.caller_voice
+
+        judge_target = self.judge_target
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
@@ -99,27 +99,27 @@ class Simulation:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "id": id,
-                "name": name,
-                "mode": mode,
-                "config_id": config_id,
-                "scenario": scenario,
                 "assertion": assertion,
-                "variations": variations,
-                "max_turns": max_turns,
+                "config_id": config_id,
                 "created_at": created_at,
+                "id": id,
+                "max_turns": max_turns,
+                "mode": mode,
+                "name": name,
+                "scenario": scenario,
+                "variations": variations,
             }
         )
-        if judge_target is not UNSET:
-            field_dict["judge_target"] = judge_target
+        if caller_stt is not UNSET:
+            field_dict["caller_stt"] = caller_stt
         if caller_target is not UNSET:
             field_dict["caller_target"] = caller_target
         if caller_tts is not UNSET:
             field_dict["caller_tts"] = caller_tts
-        if caller_stt is not UNSET:
-            field_dict["caller_stt"] = caller_stt
         if caller_voice is not UNSET:
             field_dict["caller_voice"] = caller_voice
+        if judge_target is not UNSET:
+            field_dict["judge_target"] = judge_target
         if tags is not UNSET:
             field_dict["tags"] = tags
         if updated_at is not UNSET:
@@ -132,33 +132,33 @@ class Simulation:
         from ..models.simulation_tags import SimulationTags
 
         d = dict(src_dict)
-        id = d.pop("id")
-
-        name = d.pop("name")
-
-        mode = SimulationMode(d.pop("mode"))
+        assertion = d.pop("assertion")
 
         config_id = d.pop("config_id")
 
-        scenario = d.pop("scenario")
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
-        assertion = d.pop("assertion")
-
-        variations = d.pop("variations")
+        id = d.pop("id")
 
         max_turns = d.pop("max_turns")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+        mode = SimulationMode(d.pop("mode"))
 
-        judge_target = d.pop("judge_target", UNSET)
+        name = d.pop("name")
+
+        scenario = d.pop("scenario")
+
+        variations = d.pop("variations")
+
+        caller_stt = d.pop("caller_stt", UNSET)
 
         caller_target = d.pop("caller_target", UNSET)
 
         caller_tts = d.pop("caller_tts", UNSET)
 
-        caller_stt = d.pop("caller_stt", UNSET)
-
         caller_voice = d.pop("caller_voice", UNSET)
+
+        judge_target = d.pop("judge_target", UNSET)
 
         _tags = d.pop("tags", UNSET)
         tags: SimulationTags | Unset
@@ -175,20 +175,20 @@ class Simulation:
             updated_at = datetime.datetime.fromisoformat(_updated_at)
 
         simulation = cls(
-            id=id,
-            name=name,
-            mode=mode,
-            config_id=config_id,
-            scenario=scenario,
             assertion=assertion,
-            variations=variations,
-            max_turns=max_turns,
+            config_id=config_id,
             created_at=created_at,
-            judge_target=judge_target,
+            id=id,
+            max_turns=max_turns,
+            mode=mode,
+            name=name,
+            scenario=scenario,
+            variations=variations,
+            caller_stt=caller_stt,
             caller_target=caller_target,
             caller_tts=caller_tts,
-            caller_stt=caller_stt,
             caller_voice=caller_voice,
+            judge_target=judge_target,
             tags=tags,
             updated_at=updated_at,
         )

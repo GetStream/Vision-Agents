@@ -119,7 +119,7 @@ already, for the day `Price` grows the fields.
    `Term` and a line in `Terms()`. Pointers, so "say nothing" and "turn this off" stay
    different.
 2. The same field on `StsOptions`, on its Go struct in
-   `internal/api`, or in [`legacy.yaml`](../../../acceleration/api/legacy.yaml) until it has moved there. Then run
+   `internal/api`. Then run
    `go run ./cmd/openapi` and regenerate all five sides.
 3. A field on `sts.Capabilities` and a case in `Expresses`, so a config can only declare it
    for a model whose package reports it.
