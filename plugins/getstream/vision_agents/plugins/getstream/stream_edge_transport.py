@@ -167,6 +167,9 @@ class StreamEdge(EdgeTransport[StreamCall]):
         self._remote_tracks: dict[str, rtc.RemoteTrack] = {}
         # Track ids that are unpublished (muted) now; the RemoteTrack resumes after unmute.
         self._unpublished: set[str] = set()
+        # Sessions that left the call. The SDK sends tracks and SFU events on
+        # separate streams, so a track_added can arrive after participant_left.
+        self._left_sessions: set[str] = set()
 
         self._real_connection: Optional[ConnectionManager] = None
         self._call: Optional[StreamCall] = None
@@ -180,6 +183,8 @@ class StreamEdge(EdgeTransport[StreamCall]):
     async def _on_track_added(self, track: rtc.RemoteTrack):
         """Keep the remote track and spawn TrackAddedEvent."""
         participant = track.participant
+        if participant.session_id in self._left_sessions:
+            return
         track_id = _track_id(participant.session_id, track.track_type)
         self._remote_tracks[track_id] = track
         self._unpublished.discard(track_id)
@@ -258,6 +263,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
     async def _on_sfu_participant_left(self, event: rtc.ParticipantLeft):
         participant = event.participant
+        self._left_sessions.add(participant.session_id)
         track_ids = [
             track_id
             for track_id, track in self._remote_tracks.items()
@@ -470,6 +476,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
             self._real_connection = None
         self._remote_tracks.clear()
         self._unpublished.clear()
+        self._left_sessions.clear()
         if self.client:
             await self.client.aclose()
         self._call = None

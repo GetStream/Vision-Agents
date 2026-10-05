@@ -267,6 +267,11 @@ class TestStreamEdge:
         assert stream_edge._real_connection is None
         real_connection.leave.assert_called_once()
 
+    async def test_add_track_subscriber_for_unknown_track_gives_none(
+        self, stream_edge: StreamEdge
+    ):
+        assert stream_edge.add_track_subscriber("unknown-session:2") is None
+
     @pytest.mark.integration
     async def test_authenticate_keeps_custom_fields_set_elsewhere(self) -> None:
         """Metadata is merged into the stored user instead of replacing it."""
@@ -370,7 +375,9 @@ class TestStreamEdge:
         finally:
             await edge.close()
 
-    @pytest.mark.integration
+
+@pytest.mark.integration
+class TestStreamEdgeIntegration:
     async def test_participant_in_call_before_join_gives_participant_joined(
         self,
         edge: StreamEdge,
@@ -389,7 +396,6 @@ class TestStreamEdge:
             == f"{peer.user_id}__{event.participant.original.session_id}"
         )
 
-    @pytest.mark.integration
     async def test_published_audio_gives_track_added(
         self,
         edge: StreamEdge,
@@ -407,7 +413,6 @@ class TestStreamEdge:
         assert event.participant is not None
         assert event.participant.user_id == peer.user_id
 
-    @pytest.mark.integration
     async def test_participant_audio_gives_audio_received_with_joined_participant_id(
         self,
         edge: StreamEdge,
@@ -428,7 +433,6 @@ class TestStreamEdge:
         assert event.participant.user_id == peer.user_id
         assert event.participant.id == joined.participant.id
 
-    @pytest.mark.integration
     async def test_agent_audio_reaches_participant(
         self, edge: StreamEdge, agent: Agent, call: StreamCall, peer: ConnectionManager
     ):
@@ -451,7 +455,6 @@ class TestStreamEdge:
                 break
         assert pcm.participant.user_id == agent.agent_user.id
 
-    @pytest.mark.integration
     async def test_republished_track_gives_track_added_again(
         self,
         edge: StreamEdge,
@@ -476,7 +479,6 @@ class TestStreamEdge:
         ]
         assert added.track_id == removed.track_id == added_again.track_id
 
-    @pytest.mark.integration
     async def test_participant_leave_gives_track_removed_and_participant_left(
         self,
         edge: StreamEdge,
@@ -500,7 +502,6 @@ class TestStreamEdge:
         assert isinstance(left, ParticipantLeftEvent)
         assert left.participant.user_id == peer.user_id
 
-    @pytest.mark.integration
     async def test_leave_after_unpublish_gives_one_track_removed(
         self,
         edge: StreamEdge,
@@ -524,7 +525,35 @@ class TestStreamEdge:
         assert isinstance(left, ParticipantLeftEvent)
         assert track_events.empty()
 
-    @pytest.mark.integration
+    async def test_track_added_after_participant_left_is_ignored(
+        self,
+        edge: StreamEdge,
+        agent: Agent,
+        call: StreamCall,
+        peer: ConnectionManager,
+        peer_audio: AudioStreamTrack,
+        track_events: asyncio.Queue,
+        participant_events: asyncio.Queue,
+    ):
+        await edge.join(agent, call)
+        added = await asyncio.wait_for(track_events.get(), timeout=10)
+        track = edge._remote_tracks[added.track_id]
+        await peer.leave()
+        await asyncio.wait_for(track_events.get(), timeout=10)
+        while not isinstance(
+            await asyncio.wait_for(participant_events.get(), timeout=10),
+            ParticipantLeftEvent,
+        ):
+            pass
+
+        # The SDK sends tracks and SFU events on separate streams, so a
+        # participant's track_added can arrive after its participant_left.
+        edge._connection.emit("track_added", track)
+        await asyncio.sleep(1)
+
+        assert track_events.empty()
+        assert edge.add_track_subscriber(added.track_id) is None
+
     async def test_call_end_gives_one_call_ended(
         self,
         edge: StreamEdge,
@@ -543,12 +572,6 @@ class TestStreamEdge:
         await asyncio.sleep(1)
         assert call_ended_events.empty()
 
-    async def test_add_track_subscriber_for_unknown_track_gives_none(
-        self, stream_edge: StreamEdge
-    ):
-        assert stream_edge.add_track_subscriber("unknown-session:2") is None
-
-    @pytest.mark.integration
     async def test_published_video_gives_yuv420p_frames(
         self,
         edge: StreamEdge,
@@ -568,7 +591,6 @@ class TestStreamEdge:
         assert (frame.width, frame.height) == (640, 480)
         assert frame.time_base == Fraction(1, 90000)
 
-    @pytest.mark.integration
     async def test_two_subscribers_both_get_frames(
         self,
         edge: StreamEdge,
@@ -591,7 +613,6 @@ class TestStreamEdge:
             await asyncio.wait_for(second.recv(), timeout=10), av.VideoFrame
         )
 
-    @pytest.mark.integration
     async def test_video_ends_when_publisher_leaves(
         self,
         edge: StreamEdge,
@@ -621,7 +642,6 @@ class TestStreamEdge:
             pass
         assert edge.add_track_subscriber(event.track_id) is None
 
-    @pytest.mark.integration
     async def test_video_ends_when_edge_closes(
         self,
         edge: StreamEdge,
@@ -641,7 +661,6 @@ class TestStreamEdge:
             while True:
                 await asyncio.wait_for(track.recv(), timeout=10)
 
-    @pytest.mark.integration
     @pytest.mark.xfail(
         strict=True,
         reason="stream-py: a video publish after stop() fails in the SDK "
