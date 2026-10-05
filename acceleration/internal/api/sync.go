@@ -99,6 +99,7 @@ func (*SimulationDeclaration) TransformSchema(_ huma.Registry, schema *huma.Sche
 type SyncAgentResult struct {
 	Unchanged bool        `json:"unchanged" doc:"True when the hash matched and nothing was written."`
 	Config    AgentConfig `json:"config"`
+	Warnings  []string    `json:"warnings,omitempty" doc:"What was stored but will not work yet, such as a channel line the app has not connected."`
 }
 
 type syncAgentRequest struct {
@@ -197,7 +198,8 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		return nil, huma.Error400BadRequest(message)
 	}
 	config.MCPServers = servers
-	if message, ok := s.channelsComplaint(ctx, config); !ok {
+	warnings, message, ok := s.channelsWarnings(ctx, config)
+	if !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
@@ -273,7 +275,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		}
 	}
 	s.pluginEvents.Changed(customerID, config.ID)
-	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config)}}, nil
+	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings}}, nil
 }
 
 // syncComplaint reports what is wrong with the settings a directory declared, if

@@ -111,6 +111,25 @@ func (s *ChannelsSuite) TestAnAgentNamingANumberNobodyConnectedIsRefused() {
 	s.Contains(string(body), "has not connected")
 }
 
+// A provider can take days to approve a number, and the directory naming it should still sync.
+func (s *ChannelsSuite) TestASyncNamingANumberNobodyConnectedIsStoredWithAWarning() {
+	number := s.number()
+
+	var synced SyncAgentResult
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "channelled-" + s.utils.uuid(), "hash": "v1", "mode": "text",
+		"user_plugins": []string{"linear"},
+		"channels":     map[string]any{"whatsapp": map[string]any{"number": number}},
+	}, &synced))
+
+	s.Require().Len(synced.Warnings, 1)
+	s.Contains(synced.Warnings[0], "has not connected "+number)
+	s.Require().NotNil(synced.Config.Channels)
+	s.Equal(number, synced.Config.Channels.Whatsapp.Number)
+	s.Require().NotNil(synced.Config.UserPlugins)
+	s.Len(*synced.Config.UserPlugins, 1)
+}
+
 // Two agents on one number would both answer every message to it.
 func (s *ChannelsSuite) TestANumberAnotherAgentAlreadyAnswersOnIsRefused() {
 	number := s.number()

@@ -5236,6 +5236,9 @@ type SyncAgentResult struct {
 
 	// Unchanged True when the hash matched and nothing was written.
 	Unchanged bool `json:"unchanged"`
+
+	// Warnings What was stored but will not work yet, such as a channel line the app has not connected.
+	Warnings *[]string `json:"warnings,omitempty"`
 }
 
 // TagKeySummary defines model for TagKeySummary.

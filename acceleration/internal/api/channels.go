@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -298,31 +299,49 @@ func (s *Server) channelAccountOf(account store.ChannelAccount) ChannelAccount {
 // answerable, and it has to be a line no other agent has claimed: two agents on one number
 // would both answer every message to it.
 func (s *Server) channelsComplaint(ctx context.Context, config store.AgentConfig) (string, bool) {
+	unconnected, message, ok := s.channelsWarnings(ctx, config)
+	if !ok {
+		return message, false
+	}
+	if len(unconnected) > 0 {
+		return unconnected[0], false
+	}
+	return "", true
+}
+
+// channelsWarnings is channelsComplaint for a sync, which stores a line the app has not
+// connected yet and says so: a provider can take days to approve a number, and the repo
+// declaring it should not stop syncing meanwhile. Nothing answers on such a line until
+// it is connected, since a message arrives through the connected account.
+func (s *Server) channelsWarnings(ctx context.Context, config store.AgentConfig) ([]string, string, bool) {
 	named := config.Channels.Lines()
 	if len(named) == 0 {
-		return "", true
+		return nil, "", true
 	}
 	if identity := config.Channels.Identity; identity != store.ChannelIdentityPhone && identity != store.ChannelIdentityLink {
-		return "channels.identity is phone or link, not " + identity, false
+		return nil, "channels.identity is phone or link, not " + identity, false
 	}
+	var unconnected []string
 	for _, kind := range channels.Kinds {
 		number, ok := named[string(kind)]
 		if !ok {
 			continue
 		}
-		if _, err := s.store.ChannelAccount(ctx, config.CustomerID, string(kind), number); err != nil {
-			return "channels." + string(kind) + ": this app has not connected " + number +
-				": connect it with POST /v1/agents/channels", false
+		if _, err := s.store.ChannelAccount(ctx, config.CustomerID, string(kind), number); errors.Is(err, store.ErrUnknownChannelAccount) {
+			unconnected = append(unconnected, "channels."+string(kind)+": this app has not connected "+number+
+				": connect it with POST /v1/agents/channels")
+		} else if err != nil {
+			return nil, err.Error(), false
 		}
 		claimed, found, err := s.store.ConfigOnChannel(ctx, config.CustomerID, string(kind), number)
 		if err != nil {
-			return err.Error(), false
+			return nil, err.Error(), false
 		}
 		if found && claimed.ID != config.ID {
-			return "channels." + string(kind) + ": " + number + " already answers as " + claimed.Name, false
+			return nil, "channels." + string(kind) + ": " + number + " already answers as " + claimed.Name, false
 		}
 	}
-	return "", true
+	return unconnected, "", true
 }
 
 // channelsOf reads the lines a caller named, defaulting how a sender is identified.

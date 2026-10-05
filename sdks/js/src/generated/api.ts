@@ -5692,6 +5692,8 @@ export type components = {
             readonly config: components["schemas"]["AgentConfig"];
             /** @description True when the hash matched and nothing was written. */
             readonly unchanged: boolean;
+            /** @description What was stored but will not work yet, such as a channel line the app has not connected. */
+            readonly warnings?: readonly string[] | null;
         };
         readonly TagKeySummary: {
             /** Format: int64 */

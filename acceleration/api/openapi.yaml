@@ -5096,6 +5096,12 @@ components:
         unchanged:
           description: True when the hash matched and nothing was written.
           type: boolean
+        warnings:
+          description: What was stored but will not work yet, such as a channel line the app has not connected.
+          items:
+            type: string
+          nullable: true
+          type: array
       required:
         - unchanged
         - config
