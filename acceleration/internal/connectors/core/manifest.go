@@ -83,10 +83,10 @@ type Var struct {
 	Values map[string]string `yaml:"values" json:"values"`
 }
 
-// ClientPolicy says who may own the OAuth client and how it authenticates at the token
-// endpoint.
+// ClientPolicy says where the OAuth client may come from and how it authenticates at the
+// token endpoint.
 type ClientPolicy struct {
-	Policy     []ClientOwner    `yaml:"policy,omitempty" json:"policy,omitempty"`
+	From       []ClientSource   `yaml:"from,omitempty" json:"from,omitempty"`
 	AuthMethod ClientAuthMethod `yaml:"auth_method,omitempty" json:"auth_method,omitempty"`
 	// Alg is the signing algorithm of a private_key_jwt assertion, and set only for it.
 	Alg string `yaml:"alg,omitempty" json:"alg,omitempty"`
@@ -122,10 +122,10 @@ type RefreshPolicy struct {
 // RateLimitRule is how the provider counts calls.
 type RateLimitRule struct {
 	Per RateLimitScope `yaml:"per,omitempty" json:"per,omitempty"`
-	// Bucket and Leak describe a leaky bucket: its size in requests, and how many leave per
-	// second.
-	Bucket int `yaml:"bucket,omitempty" json:"bucket,omitempty"`
-	Leak   int `yaml:"leak,omitempty" json:"leak,omitempty"`
+	// Bucket and LeakPerSecond describe a leaky bucket: its size in requests, and how many
+	// leave per second.
+	Bucket        int `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	LeakPerSecond int `yaml:"leak_per_second,omitempty" json:"leak_per_second,omitempty"`
 }
 
 // SourceRule is one tool source the connector offers and the endpoint it runs against.
@@ -169,16 +169,17 @@ const (
 	FromCallbackQuery ValueSource = "callback_query"
 )
 
-// ClientOwner is who registered the OAuth client a connection uses.
-type ClientOwner string
+// ClientSource is where the OAuth client a connection uses comes from: who registered it, or
+// how it is registered on the fly.
+type ClientSource string
 
-// The owners from the architecture doc's «Axes where providers differ», row 10. A broker's
+// The sources from the architecture doc's «Axes where providers differ», row 10. A broker's
 // client is not here: a broker sits behind the CredentialStore, not in a manifest.
 const (
-	ClientOperator ClientOwner = "operator"
-	ClientCustomer ClientOwner = "customer"
-	ClientDCR      ClientOwner = "dcr"
-	ClientCIMD     ClientOwner = "cimd"
+	ClientOperator ClientSource = "operator"
+	ClientCustomer ClientSource = "customer"
+	ClientDCR      ClientSource = "dcr"
+	ClientCIMD     ClientSource = "cimd"
 )
 
 // ClientAuthMethod is how the client authenticates at the token endpoint.
@@ -210,7 +211,7 @@ const (
 
 var (
 	valueSources      = []ValueSource{FromTokenResponse, FromIDToken, FromCallbackQuery}
-	clientOwners      = []ClientOwner{ClientOperator, ClientCustomer, ClientDCR, ClientCIMD}
+	clientSources     = []ClientSource{ClientOperator, ClientCustomer, ClientDCR, ClientCIMD}
 	clientAuthMethods = []ClientAuthMethod{AuthNone, AuthClientSecretPost, AuthClientSecretBasic, AuthPrivateKeyJWT, AuthTLSClientAuth}
 	rateLimitScopes   = []RateLimitScope{RateLimitPerApp, RateLimitPerTenant, RateLimitPerUser}
 	hookPoints        = []string{HookBeforeAuthorize, HookBeforeComplete, HookAfterToken}
@@ -445,9 +446,9 @@ func (m Manifest) Validate() error {
 		}
 	}
 
-	for i, owner := range m.Client.Policy {
-		if !slices.Contains(clientOwners, owner) {
-			fail(fmt.Sprintf("client.policy[%d]", i), "%q is not one of %v", owner, clientOwners)
+	for i, source := range m.Client.From {
+		if !slices.Contains(clientSources, source) {
+			fail(fmt.Sprintf("client.from[%d]", i), "%q is not one of %v", source, clientSources)
 		}
 	}
 	if m.Client.AuthMethod != "" && !slices.Contains(clientAuthMethods, m.Client.AuthMethod) {
@@ -474,8 +475,8 @@ func (m Manifest) Validate() error {
 	if m.RateLimit.Per != "" && !slices.Contains(rateLimitScopes, m.RateLimit.Per) {
 		fail("rate_limit.per", "%q is not one of %v", m.RateLimit.Per, rateLimitScopes)
 	}
-	if m.RateLimit.Bucket < 0 || m.RateLimit.Leak < 0 {
-		fail("rate_limit", "bucket and leak cannot be negative")
+	if m.RateLimit.Bucket < 0 || m.RateLimit.LeakPerSecond < 0 {
+		fail("rate_limit", "bucket and leak_per_second cannot be negative")
 	}
 
 	for i, source := range m.Sources {

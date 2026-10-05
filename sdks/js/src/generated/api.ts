@@ -3617,7 +3617,7 @@ export type components = {
             /** @description The scopes a consent asks for. */
             readonly scopes: readonly string[] | null;
         };
-        /** @description Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint. */
+        /** @description Where the OAuth client a connection uses may come from, and how the client authenticates at the token endpoint. */
         readonly ConnectorClient: {
             /**
              * @description How a private_key_jwt assertion is signed, and set only for it.
@@ -3625,8 +3625,8 @@ export type components = {
              */
             readonly alg?: "RS256" | "PS256";
             readonly auth_method?: components["schemas"]["ConnectorClientAuthMethod"];
-            /** @description Who may own the OAuth client. Empty when the connector needs none. */
-            readonly policy?: readonly components["schemas"]["ConnectorClientOwner"][] | null;
+            /** @description Where the OAuth client may come from. Empty when the connector needs none. */
+            readonly from?: readonly components["schemas"]["ConnectorClientSource"][] | null;
         };
         /**
          * @description How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
@@ -3637,7 +3637,7 @@ export type components = {
          * @description operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
          * @enum {string}
          */
-        readonly ConnectorClientOwner: "operator" | "customer" | "dcr" | "cimd";
+        readonly ConnectorClientSource: "operator" | "customer" | "dcr" | "cimd";
         /** @description One account at one connector, owned by the app or by one of its users. Credentials are never shown. */
         readonly ConnectorConnection: {
             /** @description The provider account, known once it is connected. */

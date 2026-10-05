@@ -27,7 +27,7 @@ class CustomConnectorRequest:
         name (str):
         schemes (list[str] | None): How a connection may authenticate. Each must be a scheme this deployment has.
         category (str | Unset):
-        client (ConnectorClient | Unset): Who may own the OAuth client a connection uses, and how the client
+        client (ConnectorClient | Unset): Where the OAuth client a connection uses may come from, and how the client
             authenticates at the token endpoint.
         description (str | Unset):
         scopes (list[str] | None | Unset): The scopes a consent asks for, each an RFC 6749 scope token.

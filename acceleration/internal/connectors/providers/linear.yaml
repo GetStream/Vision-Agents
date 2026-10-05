@@ -9,8 +9,9 @@
 # Architecture rows cited are «Axes where providers differ» in
 # acceleration/docs/connectors/architecture.md on connectors/planning.
 id: linear
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 renames
+# client.policy to client.from.
+revision: 2
 # [proto]:68-70
 name: Linear
 category: Project management
@@ -25,7 +26,7 @@ endpoints:
 schemes: [oauth2_code]
 client:
   # «OAuth 2.1 with dynamic client registration»: [mcp]; [proto]:73.
-  policy: [dcr]
+  from: [dcr]
 scopes:
   # [proto]:74-76. [mcp] names read as the scope that keeps a connection read-only.
   list: [read, write]

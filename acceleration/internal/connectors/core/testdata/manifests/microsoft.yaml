@@ -26,7 +26,7 @@ endpoints:
 schemes: [oauth2_code]
 client:
   # Our policy, not a vendor fact.
-  policy: [operator, customer]
+  from: [operator, customer]
   # Certificate credentials are private_key_jwt, the assertion alg «Should be PS256»:
   # [cert]; row 8.
   auth_method: private_key_jwt

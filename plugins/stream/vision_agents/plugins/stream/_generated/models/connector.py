@@ -24,8 +24,8 @@ class Connector:
     is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
 
         Attributes:
-            client (ConnectorClient): Who may own the OAuth client a connection uses, and how the client authenticates at
-                the token endpoint.
+            client (ConnectorClient): Where the OAuth client a connection uses may come from, and how the client
+                authenticates at the token endpoint.
             created_at (datetime.datetime): When this revision was stored.
             custom (bool): The app's own definition rather than a built-in.
             id (str): Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-

@@ -8,7 +8,7 @@ from typing_extensions import Self
 
 from ..models.connector_client_alg import ConnectorClientAlg
 from ..models.connector_client_auth_method import ConnectorClientAuthMethod
-from ..models.connector_client_owner import ConnectorClientOwner
+from ..models.connector_client_source import ConnectorClientSource
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ConnectorClient")
@@ -16,19 +16,19 @@ T = TypeVar("T", bound="ConnectorClient")
 
 @_attrs_define
 class ConnectorClient:
-    """Who may own the OAuth client a connection uses, and how the client authenticates at the token endpoint.
+    """Where the OAuth client a connection uses may come from, and how the client authenticates at the token endpoint.
 
     Attributes:
         alg (ConnectorClientAlg | Unset): How a private_key_jwt assertion is signed, and set only for it.
         auth_method (ConnectorClientAuthMethod | Unset): How the OAuth client authenticates at the token endpoint, as
             the IANA OAuth token endpoint authentication methods registry spells it.
-        policy (list[ConnectorClientOwner] | None | Unset): Who may own the OAuth client. Empty when the connector needs
-            none.
+        from_ (list[ConnectorClientSource] | None | Unset): Where the OAuth client may come from. Empty when the
+            connector needs none.
     """
 
     alg: ConnectorClientAlg | Unset = UNSET
     auth_method: ConnectorClientAuthMethod | Unset = UNSET
-    policy: list[ConnectorClientOwner] | None | Unset = UNSET
+    from_: list[ConnectorClientSource] | None | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         alg: str | Unset = UNSET
@@ -39,17 +39,17 @@ class ConnectorClient:
         if not isinstance(self.auth_method, Unset):
             auth_method = self.auth_method.value
 
-        policy: list[str] | None | Unset
-        if isinstance(self.policy, Unset):
-            policy = UNSET
-        elif isinstance(self.policy, list):
-            policy = []
-            for policy_type_0_item_data in self.policy:
-                policy_type_0_item = policy_type_0_item_data.value
-                policy.append(policy_type_0_item)
+        from_: list[str] | None | Unset
+        if isinstance(self.from_, Unset):
+            from_ = UNSET
+        elif isinstance(self.from_, list):
+            from_ = []
+            for from_type_0_item_data in self.from_:
+                from_type_0_item = from_type_0_item_data.value
+                from_.append(from_type_0_item)
 
         else:
-            policy = self.policy
+            from_ = self.from_
 
         field_dict: dict[str, Any] = {}
 
@@ -58,8 +58,8 @@ class ConnectorClient:
             field_dict["alg"] = alg
         if auth_method is not UNSET:
             field_dict["auth_method"] = auth_method
-        if policy is not UNSET:
-            field_dict["policy"] = policy
+        if from_ is not UNSET:
+            field_dict["from"] = from_
 
         return field_dict
 
@@ -80,7 +80,7 @@ class ConnectorClient:
         else:
             auth_method = ConnectorClientAuthMethod(_auth_method)
 
-        def _parse_policy(data: object) -> list[ConnectorClientOwner] | None | Unset:
+        def _parse_from_(data: object) -> list[ConnectorClientSource] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -88,24 +88,24 @@ class ConnectorClient:
             try:
                 if not isinstance(data, list):
                     raise TypeError()
-                policy_type_0 = []
-                _policy_type_0 = data
-                for policy_type_0_item_data in _policy_type_0:
-                    policy_type_0_item = ConnectorClientOwner(policy_type_0_item_data)
+                from_type_0 = []
+                _from_type_0 = data
+                for from_type_0_item_data in _from_type_0:
+                    from_type_0_item = ConnectorClientSource(from_type_0_item_data)
 
-                    policy_type_0.append(policy_type_0_item)
+                    from_type_0.append(from_type_0_item)
 
-                return policy_type_0
+                return from_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(list[ConnectorClientOwner] | None | Unset, data)
+            return cast(list[ConnectorClientSource] | None | Unset, data)
 
-        policy = _parse_policy(d.pop("policy", UNSET))
+        from_ = _parse_from_(d.pop("from", UNSET))
 
         connector_client = cls(
             alg=alg,
             auth_method=auth_method,
-            policy=policy,
+            from_=from_,
         )
 
         return connector_client

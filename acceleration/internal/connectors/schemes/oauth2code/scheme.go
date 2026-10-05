@@ -67,7 +67,7 @@ var (
 	// ErrIssuerMissing is a callback without iss from a server whose metadata says it sends
 	// one (RFC 9207 section 2.4).
 	ErrIssuerMissing = errors.New("oauth2code: callback has no iss, and the authorization server sends one")
-	// ErrNoClient means no client the manifest's policy allows is available.
+	// ErrNoClient means no client the manifest's client.from allows is available.
 	ErrNoClient = errors.New("oauth2code: no OAuth client available for this connector")
 )
 

@@ -472,7 +472,7 @@ inputs:
     default: us
 schemes: [oauth2_code, test_key, test_absent]
 client:
-  policy: [dcr]
+  from: [dcr]
 sources:
   - kind: mcp
     endpoint: mcp

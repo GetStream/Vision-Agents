@@ -46,7 +46,7 @@ schemes:
 client:
   # Operator or customer app: the doc's «A manifest, for scale». Our policy, not a vendor
   # fact.
-  policy: [operator, customer]
+  from: [operator, customer]
   # prototype internal/mcp/connectors.yaml:104-105
   auth_method: client_secret_post
   env: SALESFORCE

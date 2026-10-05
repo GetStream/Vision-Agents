@@ -39,7 +39,7 @@ func (s *ConnectorsSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 }
 
-func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientPolicy() {
+func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientSources() {
 	slack := s.get("slack")
 
 	s.False(slack.Custom)
@@ -48,7 +48,7 @@ func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientPolicy
 	s.Equal([]string{"oauth2_code"}, slack.Schemes)
 	s.Empty(slack.Inputs, "Slack is connected with nothing but a consent")
 	s.Contains(slack.Scopes, "chat:write")
-	s.Equal([]ConnectorClientOwner{"operator"}, slack.Client.Policy)
+	s.Equal([]ConnectorClientSource{"operator"}, slack.Client.From)
 	s.Equal(ConnectorClientAuthMethod("client_secret_post"), slack.Client.AuthMethod)
 }
 
@@ -87,7 +87,7 @@ func (s *ConnectorsSuite) TestACustomMCPConnectorIsStoredAndReadBack() {
 	sent := s.customConnector(id)
 	sent["category"] = "  CRM  "
 	sent["scopes"] = []string{"crm.read", "crm.write"}
-	sent["client"] = map[string]any{"policy": []string{"dcr", "customer"}, "auth_method": "client_secret_basic"}
+	sent["client"] = map[string]any{"from": []string{"dcr", "customer"}, "auth_method": "client_secret_basic"}
 
 	created := s.create(sent)
 	s.Equal(id, created.ID)
@@ -96,7 +96,7 @@ func (s *ConnectorsSuite) TestACustomMCPConnectorIsStoredAndReadBack() {
 	s.Equal("CRM", created.Category, "trimmed")
 	s.Equal([]string{"oauth2_code"}, created.Schemes)
 	s.Equal([]string{"crm.read", "crm.write"}, created.Scopes)
-	s.Equal([]ConnectorClientOwner{"dcr", "customer"}, created.Client.Policy)
+	s.Equal([]ConnectorClientSource{"dcr", "customer"}, created.Client.From)
 	s.Equal(ConnectorClientAuthMethod("client_secret_basic"), created.Client.AuthMethod)
 
 	s.Equal(created, s.get(id), "the answer to the create is the stored row")
@@ -174,7 +174,7 @@ func (s *ConnectorsSuite) TestASchemeThisDeploymentDoesNotHaveIsRefused() {
 
 func (s *ConnectorsSuite) TestAnOperatorClientIsRefusedForACustomConnector() {
 	sent := s.customConnector(s.customID())
-	sent["client"] = map[string]any{"policy": []string{"operator"}}
+	sent["client"] = map[string]any{"from": []string{"operator"}}
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", sent)
 
@@ -182,20 +182,20 @@ func (s *ConnectorsSuite) TestAnOperatorClientIsRefusedForACustomConnector() {
 	s.Contains(failure, "operator")
 }
 
-func (s *ConnectorsSuite) TestAnOAuthConnectorWithoutAClientPolicyIsRefused() {
+func (s *ConnectorsSuite) TestAnOAuthConnectorWithoutClientSourcesIsRefused() {
 	sent := s.customConnector(s.customID())
 	delete(sent, "client")
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", sent)
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "client.policy")
+	s.Contains(failure, "client.from")
 }
 
-func (s *ConnectorsSuite) TestARepeatedScopeOrClientOwnerIsRefused() {
+func (s *ConnectorsSuite) TestARepeatedScopeOrClientSourceIsRefused() {
 	for name, change := range map[string]func(map[string]any){
-		"scope": func(sent map[string]any) { sent["scopes"] = []string{"crm.read", "crm.read"} },
-		"owner": func(sent map[string]any) { sent["client"] = map[string]any{"policy": []string{"dcr", "dcr"}} },
+		"scope":  func(sent map[string]any) { sent["scopes"] = []string{"crm.read", "crm.read"} },
+		"source": func(sent map[string]any) { sent["client"] = map[string]any{"from": []string{"dcr", "dcr"}} },
 	} {
 		sent := s.customConnector(s.customID())
 		change(sent)
@@ -217,7 +217,7 @@ func (s *ConnectorsSuite) TestAFieldTheRequestDoesNotHaveIsRefused() {
 		s.Equal(http.StatusBadRequest, status, field)
 	}
 	sent := s.customConnector(s.customID())
-	sent["client"] = map[string]any{"policy": []string{"dcr"}, "env": "SLACK"}
+	sent["client"] = map[string]any{"from": []string{"dcr"}, "env": "SLACK"}
 	status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", sent)
 	s.Equal(http.StatusBadRequest, status, "client.env")
 }
@@ -383,7 +383,7 @@ func (s *ConnectorsSuite) customConnector(id string) map[string]any {
 		"name":     "Our CRM",
 		"endpoint": "https://8.8.8.8/mcp",
 		"schemes":  []string{"oauth2_code"},
-		"client":   map[string]any{"policy": []string{"dcr"}},
+		"client":   map[string]any{"from": []string{"dcr"}},
 	}
 }
 

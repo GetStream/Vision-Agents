@@ -59,10 +59,10 @@ type ConnectorInput struct {
 	Default string   `json:"default,omitempty" doc:"Used when the connection gives no value. An input without one is required."`
 }
 
-// ConnectorClient is who may own the OAuth client a connection uses, and how that client
+// ConnectorClient is where the OAuth client a connection uses may come from, and how that client
 // authenticates.
 type ConnectorClient struct {
-	Policy     []ConnectorClientOwner    `json:"policy,omitempty" uniqueItems:"true" doc:"Who may own the OAuth client. Empty when the connector needs none."`
+	From       []ConnectorClientSource   `json:"from,omitempty" uniqueItems:"true" doc:"Where the OAuth client may come from. Empty when the connector needs none."`
 	AuthMethod ConnectorClientAuthMethod `json:"auth_method,omitempty"`
 	// The algorithms core.Manifest.Validate accepts (assertionAlgs in
 	// internal/connectors/core/manifest.go).
@@ -70,17 +70,17 @@ type ConnectorClient struct {
 }
 
 func (*ConnectorClient) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "Who may own the OAuth client a connection uses, and how the client " +
+	schema.Description = "Where the OAuth client a connection uses may come from, and how the client " +
 		"authenticates at the token endpoint."
 	schema.AdditionalProperties = false
 	return schema
 }
 
-// ConnectorClientOwner is who registered an OAuth client.
-type ConnectorClientOwner string
+// ConnectorClientSource is where an OAuth client comes from.
+type ConnectorClientSource string
 
-func (ConnectorClientOwner) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "ConnectorClientOwner",
+func (ConnectorClientSource) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ConnectorClientSource",
 		"operator is this deployment's own client, customer one the app registered, dcr one "+
 			"registered on the fly (RFC 7591) and cimd one named by a metadata document.",
 		string(core.ClientOperator), string(core.ClientCustomer), string(core.ClientDCR), string(core.ClientCIMD))
@@ -294,23 +294,23 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 	}
 	var client core.ClientPolicy
 	if sent.Client != nil {
-		for _, owner := range sent.Client.Policy {
+		for _, source := range sent.Client.From {
 			// An operator client is the deployment's own, read from the variables a
 			// built-in's client.env names, and the deployment has none registered with an
 			// app's own server.
-			if core.ClientOwner(owner) == core.ClientOperator {
-				return core.Manifest{}, errors.New("client.policy cannot be operator for a custom connector: this deployment has no client registered with it")
+			if core.ClientSource(source) == core.ClientOperator {
+				return core.Manifest{}, errors.New("client.from cannot be operator for a custom connector: this deployment has no client registered with it")
 			}
-			client.Policy = append(client.Policy, core.ClientOwner(owner))
+			client.From = append(client.From, core.ClientSource(source))
 		}
 		client.AuthMethod = core.ClientAuthMethod(sent.Client.AuthMethod)
 		client.Alg = sent.Client.Alg
 	}
-	// oauth2_code tries only the owners the policy names and fails with ErrNoClient when it
+	// oauth2_code tries only the sources client.from names and fails with ErrNoClient when it
 	// names none (pickClient in internal/connectors/schemes/oauth2code/client.go), so such a
 	// definition could be stored and never connected.
-	if slices.Contains(sent.Schemes, "oauth2_code") && len(client.Policy) == 0 {
-		return core.Manifest{}, errors.New("client.policy is required with oauth2_code: name who may own the OAuth client (customer, cimd or dcr)")
+	if slices.Contains(sent.Schemes, "oauth2_code") && len(client.From) == 0 {
+		return core.Manifest{}, errors.New("client.from is required with oauth2_code: name where the OAuth client may come from (customer, cimd or dcr)")
 	}
 	manifest := core.Manifest{
 		ID: sent.ID,
@@ -346,9 +346,9 @@ func connectorOf(definition store.ConnectorDefinition) Connector {
 	for _, in := range manifest.Inputs {
 		inputs = append(inputs, ConnectorInput{Name: in.Name, Enum: in.Enum, Pattern: in.Pattern, Default: in.Default})
 	}
-	owners := make([]ConnectorClientOwner, 0, len(manifest.Client.Policy))
-	for _, owner := range manifest.Client.Policy {
-		owners = append(owners, ConnectorClientOwner(owner))
+	sources := make([]ConnectorClientSource, 0, len(manifest.Client.From))
+	for _, source := range manifest.Client.From {
+		sources = append(sources, ConnectorClientSource(source))
 	}
 	return Connector{
 		ID:          definition.ID,
@@ -361,7 +361,7 @@ func connectorOf(definition store.ConnectorDefinition) Connector {
 		Inputs:      inputs,
 		Scopes:      append([]string{}, manifest.Scopes.List...),
 		Client: ConnectorClient{
-			Policy:     owners,
+			From:       sources,
 			AuthMethod: ConnectorClientAuthMethod(manifest.Client.AuthMethod),
 			Alg:        manifest.Client.Alg,
 		},

@@ -84,7 +84,7 @@ from .connector import Connector
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
-from .connector_client_owner import ConnectorClientOwner
+from .connector_client_source import ConnectorClientSource
 from .connector_connection import ConnectorConnection
 from .connector_connection_inputs import ConnectorConnectionInputs
 from .connector_connection_metadata import ConnectorConnectionMetadata
@@ -423,7 +423,7 @@ __all__ = (
     "ConnectorClient",
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",
-    "ConnectorClientOwner",
+    "ConnectorClientSource",
     "ConnectorConnection",
     "ConnectorConnectionInputs",
     "ConnectorConnectionMetadata",
