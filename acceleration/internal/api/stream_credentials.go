@@ -174,8 +174,17 @@ func (s *Server) updateAppStreamCredentials(ctx context.Context, request *stream
 		return s.getAppSettings(ctx, nil)
 	}
 
+	// A key named twice or a primary that is none of the keys is the caller's mistake, so
+	// it is refused here, before Stream is asked, rather than by the store after it, which
+	// would answer it as Stream's failure and have the caller try again for ever.
 	keys := make([]streamapp.Key, 0, len(sent.Keys))
+	holds := func(apiKey string) bool {
+		return slices.ContainsFunc(keys, func(key streamapp.Key) bool { return key.APIKey == apiKey })
+	}
 	for _, key := range sent.Keys {
+		if holds(key.APIKey) {
+			return nil, huma.Error400BadRequest("key " + key.APIKey + " is named twice")
+		}
 		secret, err := key.APISecret.reveal(key.APIKey)
 		if err != nil {
 			return nil, err
@@ -185,6 +194,9 @@ func (s *Server) updateAppStreamCredentials(ctx context.Context, request *stream
 			one.CreatedAt = *key.CreatedAt
 		}
 		keys = append(keys, one)
+	}
+	if sent.PrimaryKey != "" && !holds(sent.PrimaryKey) {
+		return nil, huma.Error400BadRequest("the primary key " + sent.PrimaryKey + " is not one of the keys")
 	}
 	allowGuests := before.AllowGuests
 	if sent.AllowGuests != nil {

@@ -187,6 +187,31 @@ func (s *StreamCredentialsSuite) TestAStaleRevisionIsAConflict() {
 	s.Equal(http.StatusConflict, status)
 }
 
+func (s *StreamCredentialsSuite) TestAPrimaryKeyThatIsNoneOfTheKeysIsRefusedBeforeStreamIsAsked() {
+	apiKey, primary := "own-key-"+s.utils.uuid(), "primary-"+s.utils.uuid()
+
+	status, failure := s.put(map[string]any{
+		"keys": []keyInput{key(apiKey, "a-long-stream-secret")}, "primary_key": primary, "expected_revision": 0,
+	})
+
+	s.Equal(http.StatusBadRequest, status, failure)
+	s.Contains(failure, primary)
+	s.Empty(s.chat.Requests(apiKey), "Stream is not asked about a registration that cannot be kept")
+}
+
+func (s *StreamCredentialsSuite) TestAKeyNamedTwiceIsRefusedBeforeStreamIsAsked() {
+	apiKey := "own-key-" + s.utils.uuid()
+
+	status, failure := s.put(map[string]any{
+		"keys": []keyInput{key(apiKey, "a-long-stream-secret"), key(apiKey, "another-long-secret")}, "expected_revision": 0,
+	})
+
+	s.Equal(http.StatusBadRequest, status, failure)
+	s.Contains(failure, apiKey)
+	s.NotContains(failure, "a-long-stream-secret")
+	s.Empty(s.chat.Requests(apiKey), "Stream is not asked about a registration that cannot be kept")
+}
+
 func (s *StreamCredentialsSuite) TestCheckReportsAMissingAgentCallType() {
 	s.registered(0, key("own-key-"+s.utils.uuid(), "a-long-stream-secret"))
 	s.chat.SetApp(chattest.App{
