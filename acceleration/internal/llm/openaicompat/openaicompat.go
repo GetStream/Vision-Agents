@@ -219,6 +219,11 @@ type puller struct {
 
 	err  error
 	done bool
+
+	// slots maps the index a provider streamed a call under to where it is recorded, and
+	// ids the call recorded at each slot.
+	slots map[int64]int64
+	ids   map[int64]string
 }
 
 // Advance reads one chunk and records what it carried.
@@ -253,7 +258,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 		w.ReasoningText(reasoning(choice.Delta.JSON.ExtraFields))
 		for _, call := range choice.Delta.ToolCalls {
 			w.FunctionCall(
-				call.Index,
+				p.slot(call.Index, call.ID),
 				call.ID,
 				call.Function.Name,
 				call.Function.Arguments,
@@ -265,6 +270,24 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 		}
 	}
 	return true
+}
+
+// slot is where a tool call fragment is recorded. Gemini streams every parallel call under
+// index 0 and tells them apart only by id, so a new id under a known index is a new call.
+func (p *puller) slot(index int64, id string) int64 {
+	if p.slots == nil {
+		p.slots, p.ids = map[int64]int64{}, map[int64]string{}
+	}
+	slot, known := p.slots[index]
+	if !known || (id != "" && p.ids[slot] != "" && p.ids[slot] != id) {
+		slot = int64(len(p.ids))
+		p.slots[index] = slot
+		p.ids[slot] = ""
+	}
+	if id != "" {
+		p.ids[slot] = id
+	}
+	return slot
 }
 
 // Err is the provider failure that ended the stream, if there was one.
