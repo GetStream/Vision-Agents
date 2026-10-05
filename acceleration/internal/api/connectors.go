@@ -62,8 +62,8 @@ type ConnectorInput struct {
 // ConnectorClient is how the OAuth client a connection uses is registered, and how that client
 // authenticates.
 type ConnectorClient struct {
-	Registration []ConnectorClientRegistration `json:"registration,omitempty" uniqueItems:"true" doc:"The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client."`
-	AuthMethod   ConnectorClientAuthMethod     `json:"auth_method,omitempty"`
+	Registration []ConnectorClientRegistrationMethod `json:"registration,omitempty" uniqueItems:"true" doc:"The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client."`
+	AuthMethod   ConnectorClientAuthMethod           `json:"auth_method,omitempty"`
 	// The algorithms core.Manifest.Validate accepts (assertionAlgs in
 	// internal/connectors/core/manifest.go).
 	Alg string `json:"alg,omitempty" enum:"RS256,PS256" doc:"How a private_key_jwt assertion is signed, and set only for it."`
@@ -76,11 +76,11 @@ func (*ConnectorClient) TransformSchema(_ huma.Registry, schema *huma.Schema) *h
 	return schema
 }
 
-// ConnectorClientRegistration is one way an OAuth client is registered.
-type ConnectorClientRegistration string
+// ConnectorClientRegistrationMethod is one way an OAuth client is registered.
+type ConnectorClientRegistrationMethod string
 
-func (ConnectorClientRegistration) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "ConnectorClientRegistration",
+func (ConnectorClientRegistrationMethod) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ConnectorClientRegistrationMethod",
 		"operator is this deployment's own client, customer one the app registered, dcr one "+
 			"registered on the fly (RFC 7591) and cimd one named by a metadata document.",
 		string(core.ClientOperator), string(core.ClientCustomer), string(core.ClientDCR), string(core.ClientCIMD))
@@ -298,10 +298,10 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 			// An operator client is the deployment's own, read from the variables a
 			// built-in's client.env names, and the deployment has none registered with an
 			// app's own server.
-			if core.ClientRegistration(registration) == core.ClientOperator {
+			if core.ClientRegistrationMethod(registration) == core.ClientOperator {
 				return core.Manifest{}, errors.New("client.registration cannot be operator for a custom connector: this deployment has no client registered with it")
 			}
-			client.Registration = append(client.Registration, core.ClientRegistration(registration))
+			client.Registration = append(client.Registration, core.ClientRegistrationMethod(registration))
 		}
 		client.AuthMethod = core.ClientAuthMethod(sent.Client.AuthMethod)
 		client.Alg = sent.Client.Alg
@@ -346,9 +346,9 @@ func connectorOf(definition store.ConnectorDefinition) Connector {
 	for _, in := range manifest.Inputs {
 		inputs = append(inputs, ConnectorInput{Name: in.Name, Enum: in.Enum, Pattern: in.Pattern, Default: in.Default})
 	}
-	registrations := make([]ConnectorClientRegistration, 0, len(manifest.Client.Registration))
+	registrations := make([]ConnectorClientRegistrationMethod, 0, len(manifest.Client.Registration))
 	for _, registration := range manifest.Client.Registration {
-		registrations = append(registrations, ConnectorClientRegistration(registration))
+		registrations = append(registrations, ConnectorClientRegistrationMethod(registration))
 	}
 	return Connector{
 		ID:          definition.ID,

@@ -48,7 +48,7 @@ func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientRegist
 	s.Equal([]string{"oauth2_code"}, slack.Schemes)
 	s.Empty(slack.Inputs, "Slack is connected with nothing but a consent")
 	s.Contains(slack.Scopes, "chat:write")
-	s.Equal([]ConnectorClientRegistration{"operator"}, slack.Client.Registration)
+	s.Equal([]ConnectorClientRegistrationMethod{"operator"}, slack.Client.Registration)
 	s.Equal(ConnectorClientAuthMethod("client_secret_post"), slack.Client.AuthMethod)
 }
 
@@ -96,7 +96,7 @@ func (s *ConnectorsSuite) TestACustomMCPConnectorIsStoredAndReadBack() {
 	s.Equal("CRM", created.Category, "trimmed")
 	s.Equal([]string{"oauth2_code"}, created.Schemes)
 	s.Equal([]string{"crm.read", "crm.write"}, created.Scopes)
-	s.Equal([]ConnectorClientRegistration{"dcr", "customer"}, created.Client.Registration)
+	s.Equal([]ConnectorClientRegistrationMethod{"dcr", "customer"}, created.Client.Registration)
 	s.Equal(ConnectorClientAuthMethod("client_secret_basic"), created.Client.AuthMethod)
 
 	s.Equal(created, s.get(id), "the answer to the create is the stored row")

@@ -119,7 +119,7 @@ func (s *ConsentSuite) TestGitHubSendsTheClientSecretInTheTokenRequestBody() {
 func (s *ConsentSuite) TestGitHubTakesACustomersClientBeforeTheOperators() {
 	srv := fakeprovider.New(s.T())
 	resolved := s.atFake(srv, s.resolve("github", nil))
-	scheme := s.scheme(srv, func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistration) (oauth2code.Client, bool, error) {
+	scheme := s.scheme(srv, func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
 		if source == core.ClientCustomer {
 			return oauth2code.Client{ID: srv.ClientID, Secret: srv.ClientSecret}, true, nil
 		}
@@ -259,8 +259,8 @@ func (s *ConsentSuite) atFake(srv *fakeprovider.Server, m core.ResolvedManifest)
 
 // preregistered answers the fake's preregistered client for source, and no client for any
 // other source.
-func (s *ConsentSuite) preregistered(srv *fakeprovider.Server, source core.ClientRegistration) oauth2code.ClientLookup {
-	return func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, asked core.ClientRegistration) (oauth2code.Client, bool, error) {
+func (s *ConsentSuite) preregistered(srv *fakeprovider.Server, source core.ClientRegistrationMethod) oauth2code.ClientLookup {
+	return func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, asked core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
 		if asked != source {
 			return oauth2code.Client{}, false, nil
 		}

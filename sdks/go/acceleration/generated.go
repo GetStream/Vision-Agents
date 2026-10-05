@@ -485,16 +485,16 @@ func (e ConnectorClientAuthMethod) Valid() bool {
 	}
 }
 
-// Defines values for ConnectorClientRegistration.
+// Defines values for ConnectorClientRegistrationMethod.
 const (
-	Cimd     ConnectorClientRegistration = "cimd"
-	Customer ConnectorClientRegistration = "customer"
-	Dcr      ConnectorClientRegistration = "dcr"
-	Operator ConnectorClientRegistration = "operator"
+	Cimd     ConnectorClientRegistrationMethod = "cimd"
+	Customer ConnectorClientRegistrationMethod = "customer"
+	Dcr      ConnectorClientRegistrationMethod = "dcr"
+	Operator ConnectorClientRegistrationMethod = "operator"
 )
 
-// Valid indicates whether the value is a known member of the ConnectorClientRegistration enum.
-func (e ConnectorClientRegistration) Valid() bool {
+// Valid indicates whether the value is a known member of the ConnectorClientRegistrationMethod enum.
+func (e ConnectorClientRegistrationMethod) Valid() bool {
 	switch e {
 	case Cimd:
 		return true
@@ -2940,7 +2940,7 @@ type ConnectorClient struct {
 	AuthMethod *ConnectorClientAuthMethod `json:"auth_method,omitempty"`
 
 	// Registration The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client.
-	Registration *[]ConnectorClientRegistration `json:"registration,omitempty"`
+	Registration *[]ConnectorClientRegistrationMethod `json:"registration,omitempty"`
 }
 
 // ConnectorClientAlg How a private_key_jwt assertion is signed, and set only for it.
@@ -2949,8 +2949,8 @@ type ConnectorClientAlg string
 // ConnectorClientAuthMethod How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
 type ConnectorClientAuthMethod string
 
-// ConnectorClientRegistration operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
-type ConnectorClientRegistration string
+// ConnectorClientRegistrationMethod operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+type ConnectorClientRegistrationMethod string
 
 // ConnectorInput defines model for ConnectorInput.
 type ConnectorInput struct {

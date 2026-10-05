@@ -234,7 +234,7 @@ func (s *OAuth2CodeSuite) TestARefreshRefusedWithAnErrorCodeClassifyDoesNotNameI
 	resolved := s.preregistered(srv)
 	resolved.Scopes.Separator = ","
 	secret := srv.ClientSecret
-	lookup := func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistration) (oauth2code.Client, bool, error) {
+	lookup := func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
 		return oauth2code.Client{ID: srv.ClientID, Secret: secret}, source == core.ClientOperator, nil
 	}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: lookup, Now: s.clock})
@@ -266,7 +266,7 @@ func (s *OAuth2CodeSuite) TestARefreshLooksThePreregisteredClientSecretUpAgain()
 	srv := fakeprovider.New(s.T())
 	resolved := s.preregistered(srv)
 	secret := srv.ClientSecret
-	lookup := func(_ context.Context, ref core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistration) (oauth2code.Client, bool, error) {
+	lookup := func(_ context.Context, ref core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
 		s.Equal(s.ref, ref, "the connection Complete ran for")
 		return oauth2code.Client{ID: srv.ClientID, Secret: secret}, source == core.ClientOperator, nil
 	}
@@ -579,7 +579,7 @@ func (s *OAuth2CodeSuite) TestARefusedRevocationIsAnOutcomeError() {
 	resolved := s.preregistered(srv)
 	resolved.Endpoints["revoke"] = srv.URL + fakeprovider.PathRevoke
 	secret := srv.ClientSecret
-	lookup := func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistration) (oauth2code.Client, bool, error) {
+	lookup := func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
 		return oauth2code.Client{ID: srv.ClientID, Secret: secret}, source == core.ClientOperator, nil
 	}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: lookup, Now: s.clock})

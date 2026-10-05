@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class ConnectorClientRegistration(StrEnum):
+class ConnectorClientRegistrationMethod(StrEnum):
     CIMD = "cimd"
     CUSTOMER = "customer"
     DCR = "dcr"

@@ -3702,7 +3702,7 @@ export type components = {
             readonly alg?: "RS256" | "PS256";
             readonly auth_method?: components["schemas"]["ConnectorClientAuthMethod"];
             /** @description The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client. */
-            readonly registration?: readonly components["schemas"]["ConnectorClientRegistration"][] | null;
+            readonly registration?: readonly components["schemas"]["ConnectorClientRegistrationMethod"][] | null;
         };
         /**
          * @description How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
@@ -3713,7 +3713,7 @@ export type components = {
          * @description operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
          * @enum {string}
          */
-        readonly ConnectorClientRegistration: "operator" | "customer" | "dcr" | "cimd";
+        readonly ConnectorClientRegistrationMethod: "operator" | "customer" | "dcr" | "cimd";
         readonly ConnectorInput: {
             /** @description Used when the connection gives no value. An input without one is required. */
             readonly default?: string;

@@ -1732,7 +1732,7 @@ components:
         registration:
           description: The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client.
           items:
-            $ref: '#/components/schemas/ConnectorClientRegistration'
+            $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
           nullable: true
           type: array
           uniqueItems: true
@@ -1746,7 +1746,7 @@ components:
         - private_key_jwt
         - tls_client_auth
       type: string
-    ConnectorClientRegistration:
+    ConnectorClientRegistrationMethod:
       description: operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
       enum:
         - operator

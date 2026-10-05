@@ -8,7 +8,9 @@ from typing_extensions import Self
 
 from ..models.connector_client_alg import ConnectorClientAlg
 from ..models.connector_client_auth_method import ConnectorClientAuthMethod
-from ..models.connector_client_registration import ConnectorClientRegistration
+from ..models.connector_client_registration_method import (
+    ConnectorClientRegistrationMethod,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ConnectorClient")
@@ -22,13 +24,13 @@ class ConnectorClient:
         alg (ConnectorClientAlg | Unset): How a private_key_jwt assertion is signed, and set only for it.
         auth_method (ConnectorClientAuthMethod | Unset): How the OAuth client authenticates at the token endpoint, as
             the IANA OAuth token endpoint authentication methods registry spells it.
-        registration (list[ConnectorClientRegistration] | None | Unset): The client registration mechanisms the
+        registration (list[ConnectorClientRegistrationMethod] | None | Unset): The client registration mechanisms the
             connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client.
     """
 
     alg: ConnectorClientAlg | Unset = UNSET
     auth_method: ConnectorClientAuthMethod | Unset = UNSET
-    registration: list[ConnectorClientRegistration] | None | Unset = UNSET
+    registration: list[ConnectorClientRegistrationMethod] | None | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         alg: str | Unset = UNSET
@@ -82,7 +84,7 @@ class ConnectorClient:
 
         def _parse_registration(
             data: object,
-        ) -> list[ConnectorClientRegistration] | None | Unset:
+        ) -> list[ConnectorClientRegistrationMethod] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -93,7 +95,7 @@ class ConnectorClient:
                 registration_type_0 = []
                 _registration_type_0 = data
                 for registration_type_0_item_data in _registration_type_0:
-                    registration_type_0_item = ConnectorClientRegistration(
+                    registration_type_0_item = ConnectorClientRegistrationMethod(
                         registration_type_0_item_data
                     )
 
@@ -102,7 +104,7 @@ class ConnectorClient:
                 return registration_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(list[ConnectorClientRegistration] | None | Unset, data)
+            return cast(list[ConnectorClientRegistrationMethod] | None | Unset, data)
 
         registration = _parse_registration(d.pop("registration", UNSET))
 

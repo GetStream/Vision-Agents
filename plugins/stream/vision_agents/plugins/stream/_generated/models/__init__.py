@@ -93,7 +93,7 @@ from .connector import Connector
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
-from .connector_client_registration import ConnectorClientRegistration
+from .connector_client_registration_method import ConnectorClientRegistrationMethod
 from .connector_input import ConnectorInput
 from .connector_page import ConnectorPage
 from .connector_tool_grant import ConnectorToolGrant
@@ -432,7 +432,7 @@ __all__ = (
     "ConnectorClient",
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",
-    "ConnectorClientRegistration",
+    "ConnectorClientRegistrationMethod",
     "ConnectorInput",
     "ConnectorPage",
     "ConnectorToolGrant",
