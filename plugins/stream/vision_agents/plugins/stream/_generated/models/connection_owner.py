@@ -6,23 +6,23 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from typing_extensions import Self
 
-from ..models.connector_connection_owner_type import ConnectorConnectionOwnerType
+from ..models.connection_owner_type import ConnectionOwnerType
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="ConnectorConnectionOwner")
+T = TypeVar("T", bound="ConnectionOwner")
 
 
 @_attrs_define
-class ConnectorConnectionOwner:
+class ConnectionOwner:
     """Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
 
     Attributes:
-        type_ (ConnectorConnectionOwnerType): app is the app's own account, user one user's.
+        type_ (ConnectionOwnerType): app is the app's own account, user one user's.
         user_id (str | Unset): The user, for a user-owned connection only. It must be the user the backend acts for,
             named by X-Stream-User-Id.
     """
 
-    type_: ConnectorConnectionOwnerType
+    type_: ConnectionOwnerType
     user_id: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,13 +45,13 @@ class ConnectorConnectionOwner:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        type_ = ConnectorConnectionOwnerType(d.pop("type"))
+        type_ = ConnectionOwnerType(d.pop("type"))
 
         user_id = d.pop("user_id", UNSET)
 
-        connector_connection_owner = cls(
+        connection_owner = cls(
             type_=type_,
             user_id=user_id,
         )
 
-        return connector_connection_owner
+        return connection_owner

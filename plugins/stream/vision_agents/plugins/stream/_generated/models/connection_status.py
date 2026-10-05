@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class ConnectorConnectionStatus(StrEnum):
+class ConnectionStatus(StrEnum):
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     NEEDS_REAUTHORIZATION = "needs_reauthorization"

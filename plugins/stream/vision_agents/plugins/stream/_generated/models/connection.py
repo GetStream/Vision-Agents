@@ -8,13 +8,13 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..models.connector_connection_status import ConnectorConnectionStatus
+from ..models.connection_status import ConnectionStatus
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.connection_inputs import ConnectionInputs
     from ..models.connection_metadata import ConnectionMetadata
-    from ..models.connector_connection_owner import ConnectorConnectionOwner
+    from ..models.connection_owner import ConnectionOwner
 
 
 T = TypeVar("T", bound="Connection")
@@ -35,11 +35,11 @@ class Connection:
         inputs (ConnectionInputs): What the connection was created with, the connector's defaults filled in.
         metadata (ConnectionMetadata): What the provider said about the account when it was connected, such as a
             workspace id. Empty until then.
-        owner (ConnectorConnectionOwner): Whose a connection is: the app's, which any of its agents may be bound to, or
-            one user's.
+        owner (ConnectionOwner): Whose a connection is: the app's, which any of its agents may be bound to, or one
+            user's.
         revision (int): Advances with every new credential, starting at 1.
-        status (ConnectorConnectionStatus): pending until an account is connected, then connected, needs_reauthorization
-            once the provider stops accepting its credential, and disconnected when it is deleted.
+        status (ConnectionStatus): pending until an account is connected, then connected, needs_reauthorization once the
+            provider stops accepting its credential, and disconnected when it is deleted.
         updated_at (datetime.datetime):
         account_id (str | Unset): The provider account, known once it is connected.
         expires_at (datetime.datetime | Unset): When the current credential expires. Absent when there is none or it
@@ -55,9 +55,9 @@ class Connection:
     id: str
     inputs: ConnectionInputs
     metadata: ConnectionMetadata
-    owner: ConnectorConnectionOwner
+    owner: ConnectionOwner
     revision: int
-    status: ConnectorConnectionStatus
+    status: ConnectionStatus
     updated_at: datetime.datetime
     account_id: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
@@ -133,9 +133,7 @@ class Connection:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.connection_inputs import ConnectionInputs
         from ..models.connection_metadata import ConnectionMetadata
-        from ..models.connector_connection_owner import (
-            ConnectorConnectionOwner,
-        )
+        from ..models.connection_owner import ConnectionOwner
 
         d = dict(src_dict)
         auth_scheme = d.pop("auth_scheme")
@@ -167,11 +165,11 @@ class Connection:
 
         metadata = ConnectionMetadata.from_dict(d.pop("metadata"))
 
-        owner = ConnectorConnectionOwner.from_dict(d.pop("owner"))
+        owner = ConnectionOwner.from_dict(d.pop("owner"))
 
         revision = d.pop("revision")
 
-        status = ConnectorConnectionStatus(d.pop("status"))
+        status = ConnectionStatus(d.pop("status"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 

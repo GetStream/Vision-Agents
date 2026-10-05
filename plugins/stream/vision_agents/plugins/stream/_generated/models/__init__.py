@@ -83,17 +83,17 @@ from .connect_channel_request import ConnectChannelRequest
 from .connection import Connection
 from .connection_inputs import ConnectionInputs
 from .connection_metadata import ConnectionMetadata
+from .connection_owner import ConnectionOwner
+from .connection_owner_type import ConnectionOwnerType
 from .connection_page import ConnectionPage
+from .connection_request import ConnectionRequest
+from .connection_request_inputs import ConnectionRequestInputs
+from .connection_status import ConnectionStatus
 from .connector import Connector
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
 from .connector_client_source import ConnectorClientSource
-from .connector_connection_owner import ConnectorConnectionOwner
-from .connector_connection_owner_type import ConnectorConnectionOwnerType
-from .connector_connection_request import ConnectorConnectionRequest
-from .connector_connection_request_inputs import ConnectorConnectionRequestInputs
-from .connector_connection_status import ConnectorConnectionStatus
 from .connector_input import ConnectorInput
 from .connector_page import ConnectorPage
 from .connector_tool_grant import ConnectorToolGrant
@@ -422,17 +422,17 @@ __all__ = (
     "Connection",
     "ConnectionInputs",
     "ConnectionMetadata",
+    "ConnectionOwner",
+    "ConnectionOwnerType",
     "ConnectionPage",
+    "ConnectionRequest",
+    "ConnectionRequestInputs",
+    "ConnectionStatus",
     "Connector",
     "ConnectorClient",
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",
     "ConnectorClientSource",
-    "ConnectorConnectionOwner",
-    "ConnectorConnectionOwnerType",
-    "ConnectorConnectionRequest",
-    "ConnectorConnectionRequestInputs",
-    "ConnectorConnectionStatus",
     "ConnectorInput",
     "ConnectorPage",
     "ConnectorToolGrant",

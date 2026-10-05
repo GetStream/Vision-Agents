@@ -81,7 +81,7 @@ func (s *ConnectionsSuite) TestABackendCreatesAUserOwnedConnectionForTheUserItAc
 
 	created := s.create(s.serverClient.actingFor(alice), userOwned("linear", alice))
 
-	s.Equal(ConnectorConnectionOwner{Type: "user", UserID: alice.userID}, created.Owner)
+	s.Equal(ConnectionOwner{Type: "user", UserID: alice.userID}, created.Owner)
 }
 
 func (s *ConnectionsSuite) TestAUserOwnedConnectionFromABackendActingForNobodyIsRefused() {
@@ -198,9 +198,9 @@ func (s *ConnectionsSuite) TestANewConnectionIsPendingAtTheConnectorsNewestRevis
 	s.NotEmpty(created.ID)
 	s.Equal("linear", created.ConnectorID)
 	s.Equal(linear.Revision, created.DefinitionRevision)
-	s.Equal(ConnectorConnectionOwner{Type: "app"}, created.Owner)
+	s.Equal(ConnectionOwner{Type: "app"}, created.Owner)
 	s.Equal("oauth2_code", created.AuthScheme, "Linear's only scheme")
-	s.Equal(ConnectorConnectionStatus("pending"), created.Status)
+	s.Equal(ConnectionStatus("pending"), created.Status)
 	s.Equal(1, created.Revision)
 	s.Equal("Support workspace", created.Label, "trimmed")
 	s.Empty(created.AccountID)

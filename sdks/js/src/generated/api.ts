@@ -614,7 +614,7 @@ export type paths = {
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
-        readonly get: operations["listConnectorConnections"];
+        readonly get: operations["listConnections"];
         readonly put?: never;
         /**
          * Create a connection
@@ -622,7 +622,7 @@ export type paths = {
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
-        readonly post: operations["createConnectorConnection"];
+        readonly post: operations["createConnection"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -642,7 +642,7 @@ export type paths = {
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
-        readonly get: operations["getConnectorConnection"];
+        readonly get: operations["getConnection"];
         readonly put?: never;
         readonly post?: never;
         /**
@@ -651,7 +651,7 @@ export type paths = {
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
-        readonly delete: operations["deleteConnectorConnection"];
+        readonly delete: operations["deleteConnection"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -3620,22 +3620,52 @@ export type components = {
             readonly metadata: {
                 readonly [key: string]: string;
             };
-            readonly owner: components["schemas"]["ConnectorConnectionOwner"];
+            readonly owner: components["schemas"]["ConnectionOwner"];
             /**
              * Format: int64
              * @description Advances with every new credential, starting at 1.
              */
             readonly revision: number;
-            readonly status: components["schemas"]["ConnectorConnectionStatus"];
+            readonly status: components["schemas"]["ConnectionStatus"];
             /** Format: date-time */
             readonly updated_at: string;
         };
+        /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
+        readonly ConnectionOwner: {
+            readonly type: components["schemas"]["ConnectionOwnerType"];
+            /** @description The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id. */
+            readonly user_id?: string;
+        };
+        /**
+         * @description app is the app's own account, user one user's.
+         * @enum {string}
+         */
+        readonly ConnectionOwnerType: "app" | "user";
         readonly ConnectionPage: {
             readonly has_more: boolean;
             readonly items: readonly components["schemas"]["Connection"][] | null;
             /** @description Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one. */
             readonly next_cursor?: string;
         };
+        /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
+        readonly ConnectionRequest: {
+            /** @description One of the connector's schemes. Omitted is its only one; a connector with several needs it named. */
+            readonly auth_scheme?: string;
+            /** @description A built-in, such as slack, or one of the app's own. */
+            readonly connector_id: string;
+            /** @description Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern. */
+            readonly inputs?: {
+                readonly [key: string]: string;
+            };
+            /** @description A name to tell connections apart by. */
+            readonly label?: string;
+            readonly owner: components["schemas"]["ConnectionOwner"];
+        };
+        /**
+         * @description pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
+         * @enum {string}
+         */
+        readonly ConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
         /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
         readonly Connector: {
             readonly category?: string;
@@ -3684,36 +3714,6 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectorClientSource: "operator" | "customer" | "dcr" | "cimd";
-        /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
-        readonly ConnectorConnectionOwner: {
-            readonly type: components["schemas"]["ConnectorConnectionOwnerType"];
-            /** @description The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id. */
-            readonly user_id?: string;
-        };
-        /**
-         * @description app is the app's own account, user one user's.
-         * @enum {string}
-         */
-        readonly ConnectorConnectionOwnerType: "app" | "user";
-        /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
-        readonly ConnectorConnectionRequest: {
-            /** @description One of the connector's schemes. Omitted is its only one; a connector with several needs it named. */
-            readonly auth_scheme?: string;
-            /** @description A built-in, such as slack, or one of the app's own. */
-            readonly connector_id: string;
-            /** @description Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern. */
-            readonly inputs?: {
-                readonly [key: string]: string;
-            };
-            /** @description A name to tell connections apart by. */
-            readonly label?: string;
-            readonly owner: components["schemas"]["ConnectorConnectionOwner"];
-        };
-        /**
-         * @description pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
-         * @enum {string}
-         */
-        readonly ConnectorConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
         readonly ConnectorInput: {
             /** @description Used when the connection gives no value. An input without one is required. */
             readonly default?: string;
@@ -7751,7 +7751,7 @@ export interface operations {
             };
         };
     };
-    readonly listConnectorConnections: {
+    readonly listConnections: {
         readonly parameters: {
             readonly query: {
                 /** @description Keeps one connector's. */
@@ -7761,7 +7761,7 @@ export interface operations {
                 /** @description Up to 200. Omitted is 25. */
                 readonly limit?: number;
                 /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. */
-                readonly owner_type: components["schemas"]["ConnectorConnectionOwnerType"];
+                readonly owner_type: components["schemas"]["ConnectionOwnerType"];
             };
             readonly header?: never;
             readonly path?: never;
@@ -7792,7 +7792,7 @@ export interface operations {
             };
         };
     };
-    readonly createConnectorConnection: {
+    readonly createConnection: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -7801,7 +7801,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["ConnectorConnectionRequest"];
+                readonly "application/json": components["schemas"]["ConnectionRequest"];
             };
         };
         readonly responses: {
@@ -7828,7 +7828,7 @@ export interface operations {
             };
         };
     };
-    readonly getConnectorConnection: {
+    readonly getConnection: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -7864,7 +7864,7 @@ export interface operations {
             };
         };
     };
-    readonly deleteConnectorConnection: {
+    readonly deleteConnection: {
         readonly parameters: {
             readonly query?: {
                 /** @description Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists. */

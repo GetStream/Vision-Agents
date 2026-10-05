@@ -32,9 +32,9 @@ The Go SDK (`agents.PluginSettings`) and the Python folder reader (`PluginSettin
 
 `listConnectors`, `getConnector` and `createConnector` (`/v1/agents/connectors`) answered schemas named `ConnectorDefinition` and `ConnectorDefinitionPage`. They are `Connector` and `ConnectorPage` now; the JSON is unchanged. Go, JavaScript and Python clients use the new type names.
 
-### Connections answer `Connection`, and a connector's client says `from`
+### Connections are `Connection` in the API, and a connector's client says `from`
 
-`createConnectorConnection`, `listConnectorConnections` and `getConnectorConnection` (`/v1/agents/connections`) answered schemas named `ConnectorConnection` and `ConnectorConnectionPage`. They are `Connection` and `ConnectionPage` now; the JSON is unchanged. The connector client's `policy` field is `from` on the wire, on `Connector.client` and `CustomConnectorRequest.client`, and its enum `ConnectorClientOwner` is `ConnectorClientSource`; the values are unchanged. In a manifest, `client.policy` is `client.from` and `rate_limit.leak` is `rate_limit.leak_per_second`, and every built-in connector has a new revision. Go, JavaScript and Python clients use the new names.
+The connection operations are renamed: `createConnectorConnection`, `listConnectorConnections`, `getConnectorConnection` and `deleteConnectorConnection` (`/v1/agents/connections`) are `createConnection`, `listConnections`, `getConnection` and `deleteConnection`. Their schemas follow: `ConnectorConnection`, `ConnectorConnectionPage`, `ConnectorConnectionRequest`, `ConnectorConnectionOwner`, `ConnectorConnectionOwnerType` and `ConnectorConnectionStatus` are `Connection`, `ConnectionPage`, `ConnectionRequest`, `ConnectionOwner`, `ConnectionOwnerType` and `ConnectionStatus`. Paths and JSON are unchanged. The connector client's `policy` field is `from` on the wire, on `Connector.client` and `CustomConnectorRequest.client`, and its enum `ConnectorClientOwner` is `ConnectorClientSource`; the values are unchanged. In a manifest, `client.policy` is `client.from` and `rate_limit.leak` is `rate_limit.leak_per_second`, and every built-in connector has a new revision. Go, JavaScript and Python clients use the new names.
 
 ### Deleting a session deletes it; stopping one is `POST .../stop`
 
