@@ -512,3 +512,20 @@ func next(t *testing.T, events <-chan Event) Event {
 
 // pointerTo is an optional field a test wants set, for the generated types that take one.
 func pointerTo[T any](value T) *T { return &value }
+
+func TestASettledTaskCarriesTheFilesItsCodeMade(t *testing.T) {
+	event := eventOf(Frame{"type": "task_settled", "text": "A teapot.", "files": []any{
+		map[string]any{"name": "teapot.png", "mime_type": "image/png", "url": "https://cdn.example/teapot.png", "size": float64(3)},
+	}})
+
+	want := []Attachment{{Name: "teapot.png", MIMEType: "image/png", URL: "https://cdn.example/teapot.png", Size: 3}}
+	if len(event.Files) != 1 || event.Files[0] != want[0] {
+		t.Errorf("the files read as %+v", event.Files)
+	}
+}
+
+func TestAnEventWithoutFilesHasNone(t *testing.T) {
+	if files := eventOf(Frame{"type": "task_settled", "files": []any{}}).Files; files != nil {
+		t.Errorf("an empty list read as %+v", files)
+	}
+}

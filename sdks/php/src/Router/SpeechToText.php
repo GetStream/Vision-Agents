@@ -24,6 +24,9 @@ final readonly class SpeechToText
 
     /**
      * Transcribes live audio sent over a socket. Needs amphp/websocket-client.
+     *
+     * Which model answers is the router config's `target`; `$options` are per-call overrides
+     * such as `diarize`, `keyterms` or `eagerEndOfTurn`.
      */
     public function realtime(?SttOptions $options = null): Realtime
     {

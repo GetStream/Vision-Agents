@@ -3,6 +3,7 @@ from vision_agents.core.telephony import CallContext, InboundCall
 
 from ._backend import Backend
 from ._generated.models import (
+    AgentConfigPatch,
     AttachedNumber,
     GuestUser,
     ImageSource,
@@ -14,10 +15,11 @@ from ._generated.models import (
     PhoneCapability,
     PhoneNumber,
     PhoneNumberType,
+    SimulationRequest,
     SkippedVendor,
 )
 from .accelerated import Accelerated
-from .client import Agent, Client, GuestOptions
+from .client import Agent, Client, GuestOptions, Memories
 from .config import define_agent, define_skills, ensure_agent, sync_agent
 from .dispatch import Dispatch
 from .folder import Folder, load
@@ -33,9 +35,9 @@ from .sessions import (
     Session,
     SessionEvent,
     SessionOptions,
-    SessionSettings,
     Sessions,
 )
+from .simulations import SimulationRuns, Simulations
 from .sts import STS
 from .stt import STT
 from .tts import TTS
@@ -43,6 +45,7 @@ from .tts import TTS
 __all__ = [
     "Accelerated",
     "Agent",
+    "AgentConfigPatch",
     "AgentResponse",
     "AttachedNumber",
     "Backend",
@@ -60,6 +63,7 @@ __all__ = [
     "Items",
     "Knowledge",
     "LLM",
+    "Memories",
     "MessageContext",
     "ModelOverwrites",
     "ModelOverwritesThinking",
@@ -79,8 +83,10 @@ __all__ = [
     "Session",
     "SessionEvent",
     "SessionOptions",
-    "SessionSettings",
     "Sessions",
+    "SimulationRequest",
+    "SimulationRuns",
+    "Simulations",
     "SkippedVendor",
     "TTS",
     "define_agent",

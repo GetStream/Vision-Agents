@@ -24,16 +24,16 @@ export interface CreateSessionOptions extends SessionSpec, SessionOptions {}
 
 /** Which of an agent's old conversations to list. */
 export interface SessionQuery {
-  /** Only this project's. */
-  project?: string;
+  /** Only this project's. A search covers every project, so the router refuses it on one. */
+  projectId?: string;
   /** Only this user's, which only a backend may ask for: a token is already narrowed. */
   userId?: string;
-  /** `running` or `closed`. Omitted is both. */
-  state?: "running" | "closed";
-  /** Labels a session must carry, all of them. */
-  custom?: Record<string, string | number | boolean>;
-  createdAfter?: Date | string;
-  createdBefore?: Date | string;
+  /** How the user took part. Omitted is every way. */
+  modality?: Schemas["SessionModality"];
+  /** `live` or `ended`. Omitted is both. */
+  state?: Schemas["SessionState"];
+  /** Only the ones created with this agent id, which names their transcript channel. */
+  agentId?: string;
   /** Up to 200. Omitted is 25. */
   limit?: number;
   /** The `next_cursor` of the page before, sent with the same filters. */
@@ -90,20 +90,18 @@ export class Sessions {
    * one, and `create({ conversation_id })` opens a new conversation on its transcript.
    */
   query(query: SessionQuery = {}): Promise<Schemas["SessionPage"]> {
-    return this.client.get("/v1/agents/sessions", { query: this.filter(query) });
+    return this.client.post("/v1/agents/sessions/query", { body: this.queryOf("", query) });
   }
 
   /**
-   * Finds a conversation by what it was called.
+   * Finds a conversation by what it was called, best match first.
    *
    * It reads the title, the description and the opening question, which is what a person
    * remembers a conversation by. Nothing about an incognito session is searchable, because
    * nothing about it was written down.
    */
   search(text: string, query: SessionQuery = {}): Promise<Schemas["SessionPage"]> {
-    return this.client.get("/v1/agents/sessions/search", {
-      query: { ...this.filter(query), q: text },
-    });
+    return this.client.post("/v1/agents/sessions/query", { body: this.queryOf(text, query) });
   }
 
   /**
@@ -123,6 +121,14 @@ export class Sessions {
   }
 
   /**
+   * Deletes a conversation, running or ended: it is stopped, and its turns and what it
+   * remembered are deleted with it. The user's other memories are kept.
+   */
+  delete(id: string): Promise<void> {
+    return this.client.delete("/v1/agents/sessions/{id}", { path: { id } });
+  }
+
+  /**
    * Deletes what one conversation remembered, running or ended, and leaves the rest of the
    * user's memories alone. Server side only.
    */
@@ -131,25 +137,19 @@ export class Sessions {
   }
 
   /** The query as the wire spells it, with the agent's own name always in it. */
-  private filter(query: SessionQuery): Record<string, string | number | undefined> {
+  private queryOf(text: string, query: SessionQuery): Schemas["SessionQuery"] {
     return {
-      agent: this.agent,
-      project: query.project,
-      user_id: query.userId,
-      state: query.state,
-      custom: query.custom ? JSON.stringify(query.custom) : undefined,
-      created_after: timestamp(query.createdAfter),
-      created_before: timestamp(query.createdBefore),
-      limit: query.limit,
-      cursor: query.cursor,
+      filter: {
+        agent: this.agent,
+        ...(query.projectId ? { project_id: query.projectId } : {}),
+        ...(query.userId ? { user_id: query.userId } : {}),
+        ...(query.modality ? { modality: query.modality } : {}),
+        ...(query.state ? { state: query.state } : {}),
+        ...(query.agentId ? { agent_id: query.agentId } : {}),
+        ...(text ? { text: { $q: text } } : {}),
+      },
+      ...(query.limit ? { limit: query.limit } : {}),
+      ...(query.cursor ? { cursor: query.cursor } : {}),
     };
   }
-}
-
-/** A moment as the wire takes it, so a caller can pass a Date or the string itself. */
-export function timestamp(at: Date | string | undefined): string | undefined {
-  if (at === undefined) {
-    return undefined;
-  }
-  return at instanceof Date ? at.toISOString() : at;
 }

@@ -10,7 +10,6 @@ import (
 	"maps"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -21,9 +20,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
-	"golang.org/x/sys/unix"
 )
 
 type Tool struct {
@@ -70,8 +70,12 @@ type Message struct {
 	// ClientID is the install a person's command came from, written on their message.
 	ClientID  string               `json:"client_id,omitempty"`
 	Artifacts []ArtifactAttachment `json:"artifacts,omitempty"`
-	Saved     bool                 `json:"saved"`
-	Error     string               `json:"persistence_error,omitempty"`
+	// Files are what the agent's own code made for this reply, such as a rendered image.
+	Files []sandbox.Attachment `json:"files,omitempty"`
+	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
+	Authorizations []plugins.Authorization `json:"authorizations,omitempty"`
+	Saved          bool                    `json:"saved"`
+	Error          string                  `json:"persistence_error,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
@@ -113,16 +117,16 @@ var validAuthorID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var validClientID = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
-type disk struct {
-	OutboxVersion int
-	CommandLedger bool
-	Pending       []operation
-	Commands      map[string]commandRecord
-	CID           string
-	Customer      string
-	Agent         string
-	Owner         string
-	Current       *Message
+// ledger is what a conversation holds in memory. Stream Chat is its durable copy: a
+// conversation nobody holds is rebuilt from its channel (commandsIn).
+type ledger struct {
+	Pending  []operation
+	Commands map[string]commandRecord
+	CID      string
+	Customer string
+	Agent    string
+	Owner    string
+	Current  *Message
 	// VisibleTools are the agent config's visible_tools, kept so a write retried after a
 	// restart shows end users what the agent shows them.
 	VisibleTools []string `json:",omitempty"`
@@ -132,23 +136,21 @@ type operation struct {
 	Create  bool
 	Author  string `json:",omitempty"`
 	// reasoning and live ride only on a live update. They are unexported so they never
-	// reach the outbox on disk or a stored message.
+	// reach a stored message.
 	reasoning *reasoningWindow
 	live      *liveSnapshot
 }
 
 type Service struct {
-	lock   *os.File
 	closed bool
 	mu     sync.Mutex
 	client *getstream.Stream
-	root   string
 	all    map[string]*Conversation
 }
 type Conversation struct {
 	mu       sync.Mutex
 	service  *Service
-	data     disk
+	data     ledger
 	active   bool
 	shared   bool
 	stopping bool
@@ -191,7 +193,7 @@ func SessionCommandChannel(channelType, id string) bool {
 const TriggerField = "support_trigger"
 const SessionCommandTrigger = "session_commands"
 
-func New(root string) (*Service, error) {
+func New() (*Service, error) {
 	client, err := getstream.NewClient(os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET"))
 	if err != nil {
 		return nil, err
@@ -199,58 +201,18 @@ func New(root string) (*Service, error) {
 	if os.Getenv("STREAM_API_KEY") == "" || os.Getenv("STREAM_API_SECRET") == "" {
 		return nil, errors.New("Stream Chat credentials are required for persistent conversations")
 	}
-	return newService(root, client)
+	return newService(client), nil
 }
 
 // NewForChat is New for a caller that already holds a Chat client rather than
 // reading one out of the environment.
-func NewForChat(root string, client *getstream.Stream) (*Service, error) {
-	return newService(root, client)
+func NewForChat(client *getstream.Stream) *Service {
+	return newService(client)
 }
-func newService(root string, client *getstream.Stream) (*Service, error) {
-	var err error
-	if root == "" {
-		root = ".local/chat-outbox"
-	}
-	if err = os.MkdirAll(root, 0700); err != nil {
-		return nil, err
-	}
-	lock, err := os.OpenFile(filepath.Join(root, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
-	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		lock.Close()
-		return nil, errors.New("conversation outbox is already owned by another service")
-	}
-	s := &Service{client: client, root: root, lock: lock, all: map[string]*Conversation{}}
-	ready := false
-	defer func() {
-		if !ready {
-			s.Close()
-		}
-	}()
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range entries {
-		if !e.IsDir() || !validID.MatchString(e.Name()) {
-			continue
-		}
-		d, err := loadDisk(filepath.Join(root, e.Name()))
-		if err != nil {
-			return nil, err
-		}
-		c := s.make(d)
-		c.mu.Lock()
-		c.finish("interrupted")
-		c.mu.Unlock()
-	}
-	ready = true
-	return s, nil
+func newService(client *getstream.Stream) *Service {
+	return &Service{client: client, all: map[string]*Conversation{}}
 }
-func (s *Service) make(d disk) *Conversation {
+func (s *Service) make(d ledger) *Conversation {
 	c := &Conversation{service: s, data: d, turns: map[string]string{}, created: map[string]bool{}, stopped: make(chan struct{}), done: make(chan struct{})}
 	s.all[d.CID] = c
 	go c.run()
@@ -278,8 +240,6 @@ func (s *Service) Close() {
 	for _, c := range all {
 		<-c.done
 	}
-	_ = unix.Flock(int(s.lock.Fd()), unix.LOCK_UN)
-	_ = s.lock.Close()
 }
 func (s *Service) Open(ctx context.Context, customer, agentID, cid string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	return s.OpenForCaller(ctx, customer, agentID, cid, "", scopes...)
@@ -333,7 +293,7 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 		if c.active {
 			return nil, nil, false, errors.New("conversation is already open")
 		}
-		page, err := s.history(ctx, customer, agentID, cid, "", caller, voiceAgent)
+		page, err := s.history(ctx, customer, agentID, cid, "", caller, c.data.Pending, voiceAgent)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -343,14 +303,8 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 		if c.data.Owner != caller && !page.shared {
 			return nil, nil, false, errors.New("conversation belongs to another user")
 		}
-		// Preserve old single-owner records before switching an explicitly shared
-		// conversation to the next authorized session's caller.
-		c.data.bindLegacyAuthors()
 		c.data.Owner = caller
 		c.shared = page.shared
-		if err := c.persist(); err != nil {
-			return nil, nil, false, err
-		}
 		c.active = true
 		h, tr := history(page)
 		return c, h, tr, nil
@@ -371,7 +325,7 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 			return nil, nil, false, err
 		}
 	}
-	page, err := s.history(ctx, customer, agentID, cid, "", caller, voiceAgent)
+	page, err := s.history(ctx, customer, agentID, cid, "", caller, nil, voiceAgent)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -381,19 +335,19 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 	if agentID == "" {
 		agentID = page.agent
 	}
-	initializeLedger := fresh || caller != "" && page.empty
-	c := s.make(disk{CID: cid, Customer: customer, Agent: agentID, Owner: caller, CommandLedger: initializeLedger})
+	c := s.make(ledger{CID: cid, Customer: customer, Agent: agentID, Owner: caller, Commands: commandsIn(page.Messages)})
 	c.shared = page.shared
 	c.active = true
-	if initializeLedger {
-		c.mu.Lock()
-		err := c.persist()
-		c.mu.Unlock()
-		if err != nil {
-			c.Release()
-			return nil, nil, false, err
+	// Nobody here holds the conversation, so a reply Stream still shows as running was
+	// left by a process that stopped.
+	c.mu.Lock()
+	for _, m := range page.Messages {
+		if m.Role == "assistant" && m.FinishedAt == nil {
+			c.data.Current = &m
+			c.finish("interrupted")
 		}
 	}
+	c.mu.Unlock()
 	h, tr := history(page)
 	return c, h, tr, nil
 }
@@ -411,7 +365,20 @@ func (s *Service) Recall(ctx context.Context, customer, agentID, cid string) ([]
 }
 
 func (s *Service) HistoryForCaller(ctx context.Context, customer, agentID, cid, before, caller string) (Page, error) {
-	return s.history(ctx, customer, agentID, cid, before, caller)
+	return s.history(ctx, customer, agentID, cid, before, caller, s.pending(cid))
+}
+
+// pending is what a held conversation has accepted but not yet written to Stream.
+func (s *Service) pending(cid string) []operation {
+	s.mu.Lock()
+	c := s.all[cid]
+	s.mu.Unlock()
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]operation(nil), c.data.Pending...)
 }
 
 // ContextForCaller returns completed user and assistant turns for a voice
@@ -425,7 +392,7 @@ func (s *Service) ContextForCaller(ctx context.Context, customer, agentID, cid, 
 	if len(voiceAgent) > 1 || (len(voiceAgent) == 1 && voiceAgent[0] != "" && !validAuthorID.MatchString(voiceAgent[0])) {
 		return nil, false, errors.New("invalid voice transcript author")
 	}
-	page, err := s.history(ctx, customer, agentID, cid, "", caller, voiceAgent...)
+	page, err := s.history(ctx, customer, agentID, cid, "", caller, s.pending(cid), voiceAgent...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -518,7 +485,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 		return CommandReceipt{}, ErrCommandNotFound
 	}
 	s.mu.Lock()
-	closed, open, root := s.closed, s.all[cid], s.root
+	closed, open := s.closed, s.all[cid]
 	s.mu.Unlock()
 	if closed {
 		return CommandReceipt{}, errors.New("conversation service is closed")
@@ -526,7 +493,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 
 	lookup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	limit, state := 1, true
+	limit, state := 100, true
 	// Query without Data, so asking about a command can neither create a channel nor
 	// overwrite the ownership recorded on one.
 	r, err := s.client.Chat().GetOrCreateChannel(lookup, "agent", id, &getstream.GetOrCreateChannelRequest{
@@ -556,23 +523,52 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 	if open != nil {
 		return open.receipt(commandID, caller)
 	}
-	var stored disk
-	raw, err := os.ReadFile(filepath.Join(root, id, "state.json"))
-	if err != nil {
-		return CommandReceipt{}, ErrCommandNotFound
+	var stored []Message
+	for _, m := range r.Data.Messages {
+		if msg, err := messageFromWire(m.ID, m.Text, m.Custom); err == nil {
+			msg.authorID = m.User.ID
+			stored = append(stored, msg)
+		}
 	}
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		return CommandReceipt{}, errors.New("invalid conversation outbox")
-	}
-	stored.bindLegacyAuthors()
-	record, known := stored.Commands[commandID]
-	if !stored.CommandLedger || !known || record.Initiator != caller {
+	record, known := commandsIn(stored)[commandID]
+	if !known || record.Initiator != caller {
 		return CommandReceipt{}, ErrCommandNotFound
 	}
 	return record.CommandReceipt, nil
 }
 
-func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string, voiceAgent ...string) (Page, error) {
+// commandsIn rebuilds the command ledger from stored messages. A person's message is stored
+// under its command ID and the reply carries that ID, so Stream already holds every command
+// a page shows. A command whose reply never reached Stream was cut off before it was stored.
+func commandsIn(messages []Message) map[string]commandRecord {
+	commands := map[string]commandRecord{}
+	for _, m := range messages {
+		if m.Role != "user" || m.CommandID == "" || m.ID != m.CommandID {
+			continue
+		}
+		initiator := m.authorID
+		if initiator == "support-operator" {
+			initiator = ""
+		}
+		commands[m.ID] = commandRecord{
+			CommandReceipt: CommandReceipt{CommandID: m.ID, UserMessageID: m.ID, State: "interrupted"},
+			Digest:         fmt.Sprintf("%x", sha256.Sum256([]byte(m.Text))),
+			Initiator:      initiator,
+		}
+	}
+	for _, m := range messages {
+		record, ok := commands[m.CommandID]
+		if m.Role != "assistant" || !ok {
+			continue
+		}
+		record.AssistantMessageID = m.ID
+		record.State = m.State
+		commands[m.CommandID] = record
+	}
+	return commands
+}
+
+func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string, pending []operation, voiceAgent ...string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
@@ -642,6 +638,10 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 		}
 		if err == nil {
 			msg.Artifacts = artifactsFromAttachments(m.Attachments)
+			if msg.Role == "assistant" {
+				msg.Files = filesFromAttachments(m.Attachments)
+			}
+			msg.Authorizations = authorizationsFromAttachments(m.Attachments)
 			msg.Saved = true
 			msg.authorID = m.User.ID
 			if m.User.Name != nil {
@@ -651,20 +651,9 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 		}
 	}
 	if before == "" {
-		// Overlay durable pending snapshots so a reconnect sees unfinished retries truthfully.
-		var pending disk
-		raw, err := os.ReadFile(filepath.Join(s.root, id, "state.json"))
-		if err != nil && !os.IsNotExist(err) {
-			return Page{}, err
-		}
-		if err == nil && json.Unmarshal(raw, &pending) != nil {
-			return Page{}, errors.New("invalid conversation outbox")
-		}
-		for _, op := range pending.Pending {
+		// Overlay pending writes so a reconnect sees unfinished retries truthfully.
+		for _, op := range pending {
 			op.Message.authorID = op.Author
-			if op.Message.authorID == "" && op.Message.Role == "user" {
-				op.Message.authorID = pending.Owner
-			}
 			op.Message.Saved = false
 			op.Message.Error = "Pending Stream Chat save"
 			found := false
@@ -811,7 +800,7 @@ func (c *Conversation) Release() {
 	c.emit = nil
 }
 func (c *Conversation) Begin(text string) error {
-	_, err := c.beginCommand(uuid.NewString(), text, "", true)
+	_, err := c.BeginCommand(uuid.NewString(), text, "")
 	return err
 }
 
@@ -821,7 +810,7 @@ func (c *Conversation) Begin(text string) error {
 func (c *Conversation) Command(id string) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.active || !c.data.CommandLedger || !validCommandID.MatchString(id) {
+	if !c.active || !validCommandID.MatchString(id) {
 		return CommandReceipt{}, ErrCommandNotFound
 	}
 	record, ok := c.data.Commands[id]
@@ -832,19 +821,13 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 }
 
 // BeginCommand atomically records command ownership and both initial Chat writes.
-// A recorded command is never automatically executed again, including after a crash.
+// A command Stream holds is never automatically executed again, including after a restart.
 // clientID names the install the command came from; an invalid one is ignored.
 func (c *Conversation) BeginCommand(id, text, clientID string) (CommandReceipt, error) {
-	return c.beginCommand(id, text, clientID, false)
-}
-func (c *Conversation) beginCommand(id, text, clientID string, legacy bool) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
 		return CommandReceipt{}, errors.New("conversation is not open")
-	}
-	if !legacy && !c.data.CommandLedger {
-		return CommandReceipt{}, errors.New("conversation command ledger is unavailable; restore its durable state")
 	}
 	if !validCommandID.MatchString(id) || text == "" || len(text) > 1024*1024 {
 		return CommandReceipt{}, errors.New("invalid command ID or text")
@@ -883,12 +866,6 @@ func (c *Conversation) beginCommand(id, text, clientID string, legacy bool) (Com
 	c.data.Pending = append(c.data.Pending,
 		operation{Message: u, Create: true, Author: c.userAuthor()},
 		operation{Message: a, Create: true})
-	if err := c.persist(); err != nil {
-		// A rename/fsync failure has an uncertain durable outcome. Retain the IDs,
-		// fail the command and never grant another inference attempt for this ID.
-		c.finish("failed")
-		return CommandReceipt{}, err
-	}
 	c.publish(u)
 	c.publish(a)
 	return receipt, nil
@@ -900,7 +877,7 @@ func (c *Conversation) receipt(id, caller string) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	record, known := c.data.Commands[id]
-	if !c.data.CommandLedger || !known || record.Initiator != caller {
+	if !known || record.Initiator != caller {
 		return CommandReceipt{}, ErrCommandNotFound
 	}
 	return record.CommandReceipt, nil
@@ -942,7 +919,7 @@ func (c *Conversation) CommandForTurn(turnID string) (string, bool) {
 func (c *Conversation) CancelCommand(id string) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.active || !c.data.CommandLedger {
+	if !c.active {
 		return CommandReceipt{}, ErrCommandNotFound
 	}
 	record, ok := c.data.Commands[id]
@@ -955,9 +932,6 @@ func (c *Conversation) CancelCommand(id string) (CommandReceipt, error) {
 			c.finish("cancelled")
 		} else if m.Error != "" {
 			c.save()
-		}
-		if m.Error != "" {
-			return CommandReceipt{}, errors.New("command cancellation persistence outcome unknown")
 		}
 		return c.data.Commands[id].CommandReceipt, nil
 	}
@@ -980,7 +954,9 @@ func (c *Conversation) Observe(event agent.Event) {
 	if m == nil || m.FinishedAt != nil {
 		return
 	}
-	persist := false
+	// A tool's progress reaches watchers through live updates; Stream stores it once the
+	// reply settles.
+	unsaved := false
 	switch e := event.(type) {
 	case agent.Responding:
 		if !c.acceptTurn(e.TurnID, true) {
@@ -1006,7 +982,7 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		// Only a new reasoning step changes the reply. The thinking itself is not part of
-		// the message, so nothing is republished or checkpointed for it: the next live
+		// the message, so nothing is republished for it: the next live
 		// update carries it.
 		if !c.thought(m, e.Text, time.Now()) {
 			return
@@ -1036,7 +1012,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		m.Tools = append(m.Tools, Tool{Type: "tool_calling", Product: e.Product, SDK: e.SDK, ID: e.ID, Name: e.Tool, Title: title(e.Tool), Status: "running", Phase: "running", StartedAt: e.StartedAt})
 		c.called(m, toolCall{id: e.ID, name: e.Tool, arguments: e.Arguments, startedAt: e.StartedAt})
 		c.state("tools")
-		persist = true
+		unsaved = true
 	case agent.ToolApprovalDecided:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -1044,7 +1020,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !decided(m, e.ID, e.Allowed, e.Summary, time.Now()) {
 			return
 		}
-		persist = true
+		unsaved = true
 	case agent.ToolRan:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -1084,6 +1060,11 @@ func (c *Conversation) Observe(event agent.Event) {
 				m.Sources = mergeSources(m.Sources, sourcesOf(e.Result))
 				m.Artifacts = mergeArtifacts(m.Artifacts, StoredArtifacts(e.Result))
 			}
+			// Asked of whoever is in the conversation, whether or not the tool's steps are
+			// shown: a login nobody sees is one nobody can finish.
+			if found, ok := plugins.RequestedAuthorization(t.Name, e.Result); ok && e.Err == nil {
+				m.Authorizations = mergeAuthorizations(m.Authorizations, found)
+			}
 			failure := ""
 			if e.Err != nil {
 				failure = e.Err.Error()
@@ -1095,7 +1076,7 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		c.afterTools()
-		persist = true
+		unsaved = true
 	case agent.Delegated:
 		if !c.acceptTurn(e.TurnID, true) {
 			return
@@ -1111,7 +1092,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		}
 		m.Tools = append(m.Tools, Tool{Type: "tool_calling", ID: e.TaskID, Name: e.Skill, Title: title(e.Skill), Status: "running", Phase: "running", StartedAt: startedAt})
 		c.state("tools")
-		persist = true
+		unsaved = true
 	case agent.TaskSettled:
 		changed := false
 		for i := range m.Tools {
@@ -1133,8 +1114,9 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !changed {
 			return
 		}
+		m.Files = mergeFiles(m.Files, e.Files)
 		c.afterTools()
-		persist = true
+		unsaved = true
 	case agent.TaskCancelled:
 		changed := false
 		for i := range m.Tools {
@@ -1153,7 +1135,7 @@ func (c *Conversation) Observe(event agent.Event) {
 			return
 		}
 		c.afterTools()
-		persist = true
+		unsaved = true
 	case agent.Error:
 		c.finish("failed")
 		return
@@ -1168,8 +1150,8 @@ func (c *Conversation) Observe(event agent.Event) {
 	}
 	m.Sequence++
 	c.dirty = true
-	if persist {
-		c.checkpoint()
+	if unsaved {
+		m.Saved = false
 	}
 	c.publish(*m)
 }
@@ -1223,7 +1205,7 @@ func (c *Conversation) Progress(id, phase string) {
 			if t.ExecutionStartedAt == nil {
 				now := time.Now().UTC()
 				t.ExecutionStartedAt = &now
-				c.checkpoint()
+				m.Saved = false
 			}
 		}
 		changed = true
@@ -1303,142 +1285,30 @@ func (c *Conversation) publish(m Message) {
 		m.Parts = append([]Part{}, m.Parts...)
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+		m.Files = append([]sandbox.Attachment{}, m.Files...)
+		m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
 }
-func (c *Conversation) dir() string {
-	return filepath.Join(c.service.root, strings.TrimPrefix(c.data.CID, "agent:"))
-}
-func writeJSON(path string, v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path+".tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if _, err = f.Write(b); err != nil {
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(path+".tmp", path); err != nil {
-		return err
-	}
-	d, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
-}
-
-// loadDisk imports the earlier per-operation files once. The version marker and
-// queue are committed together, so a crash during cleanup cannot replay old files.
-func loadDisk(dir string) (disk, error) {
-	var d disk
-	b, err := os.ReadFile(filepath.Join(dir, "state.json"))
-	if err != nil {
-		return d, err
-	}
-	if err = json.Unmarshal(b, &d); err != nil {
-		return d, err
-	}
-	if d.OutboxVersion > 1 {
-		return d, errors.New("unsupported conversation outbox version")
-	}
-	d.bindLegacyAuthors()
-	if d.OutboxVersion == 0 {
-		files, err := filepath.Glob(filepath.Join(dir, "ops", "*.json"))
-		if err != nil {
-			return d, err
-		}
-		sort.Strings(files)
-		for _, file := range files {
-			b, err := os.ReadFile(file)
-			if err != nil {
-				return d, err
-			}
-			var op operation
-			if err = json.Unmarshal(b, &op); err != nil {
-				return d, err
-			}
-			d.Pending = append(d.Pending, op)
-		}
-		d.OutboxVersion = 1
-		d.CommandLedger = true
-		if err = writeJSON(filepath.Join(dir, "state.json"), d); err != nil {
-			return d, err
-		}
-		for _, file := range files {
-			_ = os.Remove(file)
-		}
-	}
-	return d, nil
-}
-
-func (d *disk) bindLegacyAuthors() {
-	for id, record := range d.Commands {
-		if record.Initiator == "" {
-			record.Initiator = d.Owner
-			d.Commands[id] = record
-		}
-	}
-	for i := range d.Pending {
-		op := &d.Pending[i]
-		if op.Message.Role == "user" && op.Author == "" {
-			op.Author = d.Owner
-			if op.Author == "" {
-				op.Author = "support-operator"
-			}
-		}
-	}
-}
-
-func (c *Conversation) persist() error {
-	if err := os.MkdirAll(c.dir(), 0700); err != nil {
-		return err
-	}
-	c.data.OutboxVersion = 1
-	return writeJSON(filepath.Join(c.dir(), "state.json"), c.data)
-}
-func (c *Conversation) enqueue(m Message, create bool) error {
+func (c *Conversation) enqueue(m Message, create bool) {
 	m.Tools = append([]Tool{}, m.Tools...)
 	m.Parts = append([]Part{}, m.Parts...)
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+	m.Files = append([]sandbox.Attachment{}, m.Files...)
+	m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 	op := operation{Message: m, Create: create}
 	if m.Role == "user" {
 		op.Author = c.userAuthor()
 	}
 	c.data.Pending = append(c.data.Pending, op)
-	return c.persist()
-}
-
-// checkpoint records a reply's progress in the local ledger, which is what restart
-// recovery reads. Watchers get the progress from the next live (ephemeral) update, so
-// Stream Chat is only written when a reply is created and when it settles.
-func (c *Conversation) checkpoint() {
-	m := c.data.Current
-	m.Saved = false
-	if err := c.persist(); err != nil {
-		m.Error = "Could not save retry record: " + err.Error()
-	}
 }
 
 func (c *Conversation) save() {
 	m := c.data.Current
 	m.Saved = false
 	m.Error = ""
-	if err := c.enqueue(*m, false); err != nil {
-		m.Error = "Could not save retry record: " + err.Error()
-	}
+	c.enqueue(*m, false)
 }
 
 // userAuthor is captured when a write is accepted, not when the outbox retries it.
@@ -1470,7 +1340,9 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 	if op.live != nil {
 		parts = liveParts(parts, *op.live)
 	}
-	if attachments := messageAttachments(parts, partialAttachments(m.Artifacts)); len(attachments) > 0 {
+	extra := append(partialAttachments(m.Artifacts), authorizationAttachments(m.Authorizations)...)
+	extra = append(extra, fileAttachments(m.Files)...)
+	if attachments := messageAttachments(parts, extra); len(attachments) > 0 {
 		fields["attachments"] = attachments
 	}
 	if op.Create {
@@ -1524,11 +1396,6 @@ func (c *Conversation) flush() bool {
 			c.mu.Unlock()
 			return true
 		}
-		// Never send an operation that only exists in memory after a failed disk write.
-		if err := c.persist(); err != nil {
-			c.mu.Unlock()
-			return false
-		}
 		op := c.data.Pending[0]
 		visible := c.data.VisibleTools
 		c.mu.Unlock()
@@ -1544,13 +1411,7 @@ func (c *Conversation) flush() bool {
 			c.mu.Unlock()
 			return false
 		}
-		pending := c.data.Pending
-		c.data.Pending = pending[1:]
-		if err := c.persist(); err != nil {
-			c.data.Pending = pending
-			c.mu.Unlock()
-			return false
-		}
+		c.data.Pending = c.data.Pending[1:]
 		if op.Create {
 			c.created[op.Message.ID] = true
 		}
@@ -1618,6 +1479,8 @@ func (c *Conversation) run() {
 				copy.Parts = append([]Part{}, m.Parts...)
 				copy.Sources = append([]Source{}, m.Sources...)
 				copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+				copy.Files = append([]sandbox.Attachment{}, m.Files...)
+				copy.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 				m = &copy
 			}
 			// A change not sent yet waits for the next update; a settled reply's is stored.

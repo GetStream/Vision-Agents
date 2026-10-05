@@ -4,6 +4,7 @@ from .remote import (
     RemoteCall,
     RemoteEvent,
     RemoteEventType,
+    RemoteFile,
     RemotePipeline,
     RemotePipelineError,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "RemoteCall",
     "RemoteEvent",
     "RemoteEventType",
+    "RemoteFile",
     "RemotePipeline",
     "RemotePipelineError",
     "FunctionRegistry",

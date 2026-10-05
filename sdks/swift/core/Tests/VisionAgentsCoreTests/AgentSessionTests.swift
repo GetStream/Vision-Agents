@@ -22,8 +22,8 @@ import Testing
       backend: Backend(url: url, customerID: "test"),
       session: Session(
         .init(
-          id: "test", callId: "", text: true, callType: "agent", userId: "test",
-          agentId: "test", state: .live, createdAt: Date())),
+          agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+          modality: .text, state: .live, text: true, userId: "test")),
       tools: [tool])
     await session.start()
     do {
@@ -42,6 +42,23 @@ import Testing
       await session.close()
       throw error
     }
+  }
+
+  @Test func anUpdateRefreshesTheSessionItHolds() async throws {
+    let server = try SessionServer()
+    defer { server.listener.cancel() }
+    let session = AgentSession(
+      backend: Backend(url: try await server.url(), customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+          modality: .text, state: .live, text: true, title: "Before", userId: "test")),
+      tools: [])
+
+    try await session.update(title: "After")
+
+    #expect(session.session.title == "After")
+    #expect(try await server.request().body == ["title": .string("After")])
   }
 }
 

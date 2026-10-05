@@ -11,8 +11,8 @@ use GetStream\VisionAgents\Json;
 final readonly class SearchAnswer
 {
     public function __construct(
-        public string $provider,
         public string $model,
+        public string $provider,
         // The sources behind it, most relevant first.
         /** @var list<SearchResult> */
         public array $results,
@@ -27,8 +27,8 @@ final readonly class SearchAnswer
     public static function fromArray(array $data): self
     {
         return new self(
-            provider: Json::string($data, 'provider'),
             model: Json::string($data, 'model'),
+            provider: Json::string($data, 'provider'),
             results: array_map(SearchResult::fromArray(...), Json::objects($data, 'results')),
             answer: array_key_exists('answer', $data) && $data['answer'] !== null ? Json::string($data, 'answer') : null,
         );
@@ -42,8 +42,8 @@ final readonly class SearchAnswer
     public function toArray(): array
     {
         $out = [];
-        $out['provider'] = $this->provider;
         $out['model'] = $this->model;
+        $out['provider'] = $this->provider;
         $out['results'] = array_map(static fn (SearchResult $each): array => $each->toArray(), $this->results);
         if ($this->answer !== null) {
             $out['answer'] = $this->answer;

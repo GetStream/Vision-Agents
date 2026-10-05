@@ -23,87 +23,87 @@ T = TypeVar("T", bound="AgentLog")
 class AgentLog:
     """
     Attributes:
-        id (str):
-        config_id (str):
         agent_id (str):
-        session_id (str):
-        source (AgentLogSource):
-        severity (AgentLogSeverity):
+        config_id (str):
         event_type (str):
+        id (str):
+        ingested_at (datetime.datetime):
         message (str):
         occurred_at (datetime.datetime):
-        ingested_at (datetime.datetime):
+        session_id (str):
+        severity (AgentLogSeverity):
+        source (AgentLogSource):
         cursor (str | Unset):
-        user_id (str | Unset):
         details (AgentLogDetails | Unset):
+        user_id (str | Unset):
     """
 
-    id: str
-    config_id: str
     agent_id: str
-    session_id: str
-    source: AgentLogSource
-    severity: AgentLogSeverity
+    config_id: str
     event_type: str
+    id: str
+    ingested_at: datetime.datetime
     message: str
     occurred_at: datetime.datetime
-    ingested_at: datetime.datetime
+    session_id: str
+    severity: AgentLogSeverity
+    source: AgentLogSource
     cursor: str | Unset = UNSET
-    user_id: str | Unset = UNSET
     details: AgentLogDetails | Unset = UNSET
+    user_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
+        agent_id = self.agent_id
 
         config_id = self.config_id
 
-        agent_id = self.agent_id
-
-        session_id = self.session_id
-
-        source = self.source.value
-
-        severity = self.severity.value
-
         event_type = self.event_type
+
+        id = self.id
+
+        ingested_at = self.ingested_at.isoformat()
 
         message = self.message
 
         occurred_at = self.occurred_at.isoformat()
 
-        ingested_at = self.ingested_at.isoformat()
+        session_id = self.session_id
+
+        severity = self.severity.value
+
+        source = self.source.value
 
         cursor = self.cursor
-
-        user_id = self.user_id
 
         details: dict[str, Any] | Unset = UNSET
         if not isinstance(self.details, Unset):
             details = self.details.to_dict()
 
+        user_id = self.user_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "id": id,
-                "config_id": config_id,
                 "agent_id": agent_id,
-                "session_id": session_id,
-                "source": source,
-                "severity": severity,
+                "config_id": config_id,
                 "event_type": event_type,
+                "id": id,
+                "ingested_at": ingested_at,
                 "message": message,
                 "occurred_at": occurred_at,
-                "ingested_at": ingested_at,
+                "session_id": session_id,
+                "severity": severity,
+                "source": source,
             }
         )
         if cursor is not UNSET:
             field_dict["cursor"] = cursor
-        if user_id is not UNSET:
-            field_dict["user_id"] = user_id
         if details is not UNSET:
             field_dict["details"] = details
+        if user_id is not UNSET:
+            field_dict["user_id"] = user_id
 
         return field_dict
 
@@ -112,29 +112,27 @@ class AgentLog:
         from ..models.agent_log_details import AgentLogDetails
 
         d = dict(src_dict)
-        id = d.pop("id")
+        agent_id = d.pop("agent_id")
 
         config_id = d.pop("config_id")
 
-        agent_id = d.pop("agent_id")
-
-        session_id = d.pop("session_id")
-
-        source = AgentLogSource(d.pop("source"))
-
-        severity = AgentLogSeverity(d.pop("severity"))
-
         event_type = d.pop("event_type")
+
+        id = d.pop("id")
+
+        ingested_at = datetime.datetime.fromisoformat(d.pop("ingested_at"))
 
         message = d.pop("message")
 
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
 
-        ingested_at = datetime.datetime.fromisoformat(d.pop("ingested_at"))
+        session_id = d.pop("session_id")
+
+        severity = AgentLogSeverity(d.pop("severity"))
+
+        source = AgentLogSource(d.pop("source"))
 
         cursor = d.pop("cursor", UNSET)
-
-        user_id = d.pop("user_id", UNSET)
 
         _details = d.pop("details", UNSET)
         details: AgentLogDetails | Unset
@@ -143,20 +141,22 @@ class AgentLog:
         else:
             details = AgentLogDetails.from_dict(_details)
 
+        user_id = d.pop("user_id", UNSET)
+
         agent_log = cls(
-            id=id,
-            config_id=config_id,
             agent_id=agent_id,
-            session_id=session_id,
-            source=source,
-            severity=severity,
+            config_id=config_id,
             event_type=event_type,
+            id=id,
+            ingested_at=ingested_at,
             message=message,
             occurred_at=occurred_at,
-            ingested_at=ingested_at,
+            session_id=session_id,
+            severity=severity,
+            source=source,
             cursor=cursor,
-            user_id=user_id,
             details=details,
+            user_id=user_id,
         )
 
         agent_log.additional_properties = d

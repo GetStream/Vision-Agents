@@ -1,9 +1,11 @@
 """Local MCP server connection using stdio transport."""
 
-from typing import Optional, Dict, Callable
+import asyncio
+from typing import Optional, Dict
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from ..utils.utils import cancel_and_wait
 
 from .mcp_base import MCPBaseServer
 
@@ -27,10 +29,9 @@ class MCPServerLocal(MCPBaseServer):
         super().__init__(session_timeout)
         self.command = command
         self.env = env or {}
-        self._server_params: Optional[StdioServerParameters] = None
-        self._client_context: Optional[object] = None  # AsyncGeneratorContextManager
-        self._session_context: Optional[object] = None  # ClientSession context manager
-        self._get_session_id_cb: Optional[Callable[[], Optional[str]]] = None
+        self._supervisor_task: Optional[asyncio.Task] = None
+        self._setup: Optional[asyncio.Future[None]] = None
+        self._stop_event: Optional[asyncio.Event] = None
 
         # Parse command into executable and arguments
         self._parse_command()
@@ -50,85 +51,83 @@ class MCPServerLocal(MCPBaseServer):
             self.logger.warning("Already connected to MCP server")
             return
 
+        self.logger.info(f"Connecting to local MCP server: {self.command}")
+        self._setup = asyncio.get_running_loop().create_future()
+        self._stop_event = asyncio.Event()
+        self._supervisor_task = asyncio.create_task(
+            self._supervise_session(), name=f"mcp-supervisor:{self._executable}"
+        )
         try:
-            self.logger.info(f"Connecting to local MCP server: {self.command}")
-
-            # Create server parameters
-            self._server_params = StdioServerParameters(
-                command=self._executable, args=self._args, env=self.env
-            )
-
-            # Create the stdio client context
-            self._client_context = stdio_client(self._server_params)  # type: ignore[assignment]
-
-            # Enter the context to get the read/write streams
-            # Note: stdio_client only returns (read, write), no session ID callback
-            read, write = await self._client_context.__aenter__()  # type: ignore[attr-defined]
-
-            # Create the client session context manager
-            self._session_context = ClientSession(read, write)  # type: ignore[assignment]
-
-            # Enter the session context and get the actual session
-            self._session = await self._session_context.__aenter__()  # type: ignore[attr-defined]
-
-            # Initialize the connection
-            await self._session.initialize()
-
-            self._is_connected = True
-            await self._update_activity()
-            await self._start_timeout_monitor()
-
-            self.logger.info(
-                f"Successfully connected to local MCP server: {self.command}"
-            )
-
-        except Exception as e:
-            self.logger.error(f"Failed to connect to local MCP server: {e}")
-            # Clean up any partial connection state
-            await self._cleanup_connection()
+            await self._setup
+        except (Exception, asyncio.CancelledError):
+            await self._teardown_supervisor()
             raise
 
     async def disconnect(self) -> None:
         """Disconnect from the local MCP server."""
-        if not self._is_connected:
+        if self._supervisor_task is None:
             return
+        self.logger.info("Disconnecting from local MCP server")
+        await self._teardown_supervisor()
+        self.logger.info("Disconnected from local MCP server")
 
+    async def _teardown_supervisor(self) -> None:
+        """Signal the supervisor to stop and await its exit."""
         try:
-            self.logger.info("Disconnecting from local MCP server")
+            if self._stop_event is not None:
+                self._stop_event.set()
+            if self._supervisor_task is not None:
+                await cancel_and_wait(self._supervisor_task)
+        finally:
+            self._supervisor_task = None
+            self._setup = None
+            self._stop_event = None
 
-            # Stop timeout monitoring
-            await self._stop_timeout_monitor()
+    async def _supervise_session(self) -> None:
+        """Hold the MCP session open until ``_stop_event`` is set.
 
-            # Clean up the connection
-            await self._cleanup_connection()
+        The stdio transport is built on anyio cancel scopes, which must be entered and
+        exited in the same task, so this task owns the whole session.
+        """
+        if self._setup is None or self._stop_event is None:
+            raise RuntimeError(
+                "_supervise_session must be started by connect(); "
+                "_setup or _stop_event is not initialized"
+            )
+        params = StdioServerParameters(
+            command=self._executable, args=self._args, env=self.env
+        )
+        try:
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    self._session = session
+                    self._is_connected = True
+                    await self._update_activity()
+                    await self._start_timeout_monitor()
+                    self.logger.info(
+                        f"Successfully connected to local MCP server: {self.command}"
+                    )
 
-            self._is_connected = False
-            self.logger.info("Disconnected from local MCP server")
-
+                    self._setup.set_result(None)
+                    await self._stop_event.wait()
         except Exception as e:
-            self.logger.error(f"Error disconnecting from local MCP server: {e}")
+            if not self._setup.done():
+                self._setup.set_exception(e)
+                self.logger.exception("Failed to connect to local MCP server")
+            else:
+                self.logger.warning(
+                    "MCP session supervisor exited with error", exc_info=True
+                )
+        finally:
+            if not self._setup.done():
+                self._setup.cancel()
+            try:
+                await self._stop_timeout_monitor()
+            except Exception:
+                self.logger.warning("Error stopping timeout monitor", exc_info=True)
+            self._session = None
             self._is_connected = False
-
-    async def _cleanup_connection(self) -> None:
-        """Clean up the MCP connection resources."""
-        # Close the session context
-        if self._session_context:
-            try:
-                await self._session_context.__aexit__(None, None, None)  # type: ignore[attr-defined]
-            except Exception as e:
-                self.logger.warning(f"Error closing MCP session context: {e}")
-            self._session_context = None
-
-        # Close the client context
-        if self._client_context:
-            try:
-                await self._client_context.__aexit__(None, None, None)  # type: ignore[attr-defined]
-            except Exception as e:
-                self.logger.warning(f"Error closing MCP client context: {e}")
-            self._client_context = None
-
-        self._session = None
-        self._get_session_id_cb = None
 
     async def __aenter__(self):
         """Async context manager entry."""

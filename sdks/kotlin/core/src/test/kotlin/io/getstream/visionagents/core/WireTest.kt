@@ -57,7 +57,6 @@ class WireTest {
     fun `commands are the frames readCommands takes`() {
         fun frame(command: Command) = Json.parseToJsonElement(command.encode()).jsonObject
 
-        assertEquals("""{"type":"respond","text":"hi"}""", Command.Respond("hi").encode())
         assertEquals("""{"type":"interrupt"}""", Command.Interrupt().encode())
         assertEquals("""{"type":"interrupt","command_id":"cmd-1"}""", Command.Interrupt("cmd-1").encode())
         assertEquals("""{"type":"close"}""", Command.Close.encode())
@@ -70,9 +69,6 @@ class WireTest {
         assertEquals(JsonPrimitive("done"), result["output"])
         assertEquals(JsonPrimitive("t1"), result["turn_id"])
         assertNull(result["command_id"])
-
-        val withImage = frame(Command.Respond("what is this", listOf(ImageSource("https://x/y.png", ImageSource.Detail.Low))))
-        assertEquals("""[{"url":"https://x/y.png","detail":"low"}]""", withImage["images"].toString())
     }
 
     @Test

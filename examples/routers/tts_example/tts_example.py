@@ -35,7 +35,7 @@ LINES = [
 
 
 async def main() -> None:
-    router = acceleration.Router("switchboard")
+    router = acceleration.Client().router("switchboard")
     spoken: Optional[PcmData] = None
 
     async with router.tts.realtime() as tts:

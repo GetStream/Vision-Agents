@@ -11,19 +11,19 @@ use GetStream\VisionAgents\Json;
 final readonly class PhoneNumber
 {
     public function __construct(
-        public string $e164,
-        public string $vendor,
-        public string $country,
         /** @var list<PhoneCapability|string> */
         public array $capabilities,
+        public string $country,
+        public string $e164,
         public int $monthlyCostMicros,
         public \DateTimeImmutable $purchasedAt,
+        public string $vendor,
+        public ?\DateTimeImmutable $releasedAt = null,
+        // The SIP trunk calls to this number arrive on. Absent until attached.
+        public ?string $streamTrunkId = null,
         // The customer's own cost labels.
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        // The SIP trunk calls to this number arrive on. Absent until attached.
-        public ?string $streamTrunkId = null,
-        public ?\DateTimeImmutable $releasedAt = null,
     ) {
     }
 
@@ -33,15 +33,15 @@ final readonly class PhoneNumber
     public static function fromArray(array $data): self
     {
         return new self(
-            e164: Json::string($data, 'e164'),
-            vendor: Json::string($data, 'vendor'),
-            country: Json::string($data, 'country'),
             capabilities: Json::enums($data, 'capabilities', PhoneCapability::class),
+            country: Json::string($data, 'country'),
+            e164: Json::string($data, 'e164'),
             monthlyCostMicros: Json::int($data, 'monthly_cost_micros'),
             purchasedAt: Json::date($data, 'purchased_at'),
-            tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            streamTrunkId: array_key_exists('stream_trunk_id', $data) && $data['stream_trunk_id'] !== null ? Json::string($data, 'stream_trunk_id') : null,
+            vendor: Json::string($data, 'vendor'),
             releasedAt: array_key_exists('released_at', $data) && $data['released_at'] !== null ? Json::date($data, 'released_at') : null,
+            streamTrunkId: array_key_exists('stream_trunk_id', $data) && $data['stream_trunk_id'] !== null ? Json::string($data, 'stream_trunk_id') : null,
+            tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
     }
 
@@ -53,20 +53,20 @@ final readonly class PhoneNumber
     public function toArray(): array
     {
         $out = [];
-        $out['e164'] = $this->e164;
-        $out['vendor'] = $this->vendor;
-        $out['country'] = $this->country;
         $out['capabilities'] = Json::enumValues($this->capabilities);
+        $out['country'] = $this->country;
+        $out['e164'] = $this->e164;
         $out['monthly_cost_micros'] = $this->monthlyCostMicros;
         $out['purchased_at'] = Json::dateValue($this->purchasedAt);
-        if ($this->tags !== null) {
-            $out['tags'] = $this->tags;
+        $out['vendor'] = $this->vendor;
+        if ($this->releasedAt !== null) {
+            $out['released_at'] = Json::dateValue($this->releasedAt);
         }
         if ($this->streamTrunkId !== null) {
             $out['stream_trunk_id'] = $this->streamTrunkId;
         }
-        if ($this->releasedAt !== null) {
-            $out['released_at'] = Json::dateValue($this->releasedAt);
+        if ($this->tags !== null) {
+            $out['tags'] = $this->tags;
         }
         return $out;
     }

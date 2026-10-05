@@ -65,7 +65,7 @@ var dataTables = []dataTable{
 	{name: "simulations", customer: "customer_id"},
 	{name: "simulation_runs", customer: "customer_id"},
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
-	{name: "guest_users", customer: "customer_id"},
+	{name: "users", customer: "customer_id"},
 	{name: "calls", customer: "customer_id"},
 	{name: "call_events", customer: "customer_id"},
 	{name: "call_bridges", customer: "customer_id"},

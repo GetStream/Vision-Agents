@@ -6,6 +6,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/assemblyai"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/deepgram"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/elevenlabs"
@@ -195,6 +196,32 @@ func DefaultRegistry() *Registry {
 		return elevenlabs.New(options)
 	})
 
+	registry.Register(assemblyai.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		settings := assemblyaiSettings{}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+
+		options := assemblyai.Options{
+			Model:            spec.Model,
+			Keyterms:         spec.Keyterms,
+			LanguageHints:    spec.LanguageHints,
+			Mode:             settings.Mode,
+			MinTurnSilenceMs: settings.MinTurnSilenceMs,
+			Logger:           spec.Logger,
+		}
+		// Universal-3.6 Pro ends a turn on its own reading of the words, and
+		// max_turn_silence is the silence after which it ends one whatever they say,
+		// which is what a caller asking for silence endpointing is asking for.
+		if spec.STT.SilenceMs != nil {
+			options.MaxTurnSilenceMs = *spec.STT.SilenceMs
+		}
+		if settings.MaxTurnSilenceMs != 0 {
+			options.MaxTurnSilenceMs = settings.MaxTurnSilenceMs
+		}
+		return assemblyai.New(options)
+	})
+
 	registry.Register(togetherparakeet.ProviderName, func(spec routing.Spec) (stt.STT, error) {
 		return togetherparakeet.New(togetherparakeet.Options{Model: spec.Model, Logger: spec.Logger})
 	})
@@ -274,6 +301,15 @@ type elevenlabsSettings struct {
 	VadSilenceThresholdSecs float64 `json:"vad_silence_threshold_secs"`
 	MinSpeechDurationMs     int     `json:"min_speech_duration_ms"`
 	MinSilenceDurationMs    int     `json:"min_silence_duration_ms"`
+}
+
+// assemblyaiSettings are Universal-3.6 Pro's latency preset and the two silences its turn
+// detector works from. The preset is a mode rather than a number and the silences are the
+// vendor's own split of one question into two, so neither is in the shared vocabulary.
+type assemblyaiSettings struct {
+	Mode             string `json:"mode"`
+	MinTurnSilenceMs int    `json:"min_turn_silence"`
+	MaxTurnSilenceMs int    `json:"max_turn_silence"`
 }
 
 // trainingRefused reports whether this request asked not to be trained on.

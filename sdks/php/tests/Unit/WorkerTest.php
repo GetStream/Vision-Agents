@@ -17,7 +17,6 @@ use GetStream\VisionAgents\Generated\SttOptions;
 use GetStream\VisionAgents\Inbound\InboundCall;
 use GetStream\VisionAgents\Inbound\InboundMessage;
 use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Router;
 use GetStream\VisionAgents\Session;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\LocalSocketServer;
@@ -248,9 +247,9 @@ final class WorkerTest extends TestCase
             'type' => 'host_tools',
             'agent_id' => 'my-agent',
             'tools' => [
-                ['name' => 'weather_lookup', 'description' => 'The weather somewhere', 'parameters' => ['type' => 'object', 'properties' => ['location' => ['type' => 'string']]]],
-                ['name' => 'slow', 'description' => 'Takes a while'],
-                ['name' => 'broken', 'description' => 'Always fails'],
+                ['description' => 'The weather somewhere', 'name' => 'weather_lookup', 'parameters' => ['type' => 'object', 'properties' => ['location' => ['type' => 'string']]]],
+                ['description' => 'Takes a while', 'name' => 'slow'],
+                ['description' => 'Always fails', 'name' => 'broken'],
             ],
             'timeout_ms' => 30000,
         ]], $server->sent('host_tools'));
@@ -353,7 +352,7 @@ final class WorkerTest extends TestCase
             delay(0.1);
             $socket->close();
         });
-        $router = new Router('healthcare', ['team' => 'clinical'], $server->client());
+        $router = $server->client()->router('healthcare', ['team' => 'clinical']);
 
         $stt = $router->stt->realtime(new SttOptions(interim: true));
         $stt->sendAudio(str_repeat("\0", 320));
@@ -375,7 +374,7 @@ final class WorkerTest extends TestCase
             $socket->close();
         });
 
-        $llm = (new Router(client: $server->client()))->llm->realtime();
+        $llm = $server->client()->router()->llm->realtime();
 
         $this->expectException(RealtimeException::class);
         $this->expectExceptionMessage('no model here takes images');

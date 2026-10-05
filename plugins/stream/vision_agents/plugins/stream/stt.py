@@ -35,6 +35,7 @@ class STT(stt.STT):
         customer_id: Optional[str] = None,
         config_id: str = "",
         options: Optional[dict[str, Any]] = None,
+        backend: Optional[Backend] = None,
     ):
         """Route transcription to `target`.
 
@@ -49,6 +50,8 @@ class STT(stt.STT):
             config_id: A stored router config to take the options from, by name or by id.
             options: Per-call overrides of that config's stt block. Usually built by
                 `Router.stt.realtime`.
+            backend: A backend to use as it is, instead of building one from `url` and
+                `customer_id`.
         """
         super().__init__(provider_name="stream")
         self.model = target
@@ -56,7 +59,7 @@ class STT(stt.STT):
         self.tags = tags or {}
         self.config_id = config_id
         self.options = options or {}
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = backend or Backend(url=url, customer_id=customer_id)
 
         self._socket: Optional[Socket] = None
         self._reader: Optional[asyncio.Task] = None

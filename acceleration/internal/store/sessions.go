@@ -292,6 +292,9 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
 	}
+	if filter.ConfigID != "" {
+		query = query.Where("config_id = ?", filter.ConfigID)
+	}
 	if filter.AgentName != "" {
 		query = query.Where("agent_name = ?", filter.AgentName)
 	}
@@ -306,6 +309,17 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	}
 	if filter.State != "" {
 		query = query.Where("state = ?", filter.State)
+	}
+	if len(filter.Custom) > 0 {
+		// Containment rather than a key at a time, so the GIN index on custom is usable
+		// and a caller asking for two labels gets the sessions carrying both.
+		query = query.Where("custom @> ?::jsonb", jsonbOf(filter.Custom))
+	}
+	if !filter.After.IsZero() {
+		query = query.Where("created_at >= ?", filter.After)
+	}
+	if !filter.Before.IsZero() {
+		query = query.Where("created_at < ?", filter.Before)
 	}
 	return query
 }
@@ -562,49 +576,62 @@ func (s *Store) RewindResponses(ctx context.Context, customerID, sessionID, kept
 	return nil
 }
 
-// RecordGuest stores a guest this app handed out, so it can later be claimed.
-func (s *Store) RecordGuest(ctx context.Context, guest *GuestUser) error {
-	if guest.ID == "" {
-		return errors.New("store: a guest id is required")
+// RecordUser stores an end user this app was seen acting for.
+func (s *Store) RecordUser(ctx context.Context, user *User) error {
+	if user.ID == "" {
+		return errors.New("store: a user id is required")
 	}
-	if guest.CustomerID == "" {
+	if user.CustomerID == "" {
 		return errors.New("store: customer id is required")
 	}
-	if guest.CreatedAt.IsZero() {
-		guest.CreatedAt = time.Now().UTC()
+	if user.Kind == "" {
+		return errors.New("store: a user kind is required")
 	}
-	if guest.Custom == nil {
-		guest.Custom = map[string]any{}
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = time.Now().UTC()
+	}
+	if user.Custom == nil {
+		user.Custom = map[string]any{}
 	}
 
-	// Getting a guest is get-or-create, so the same id arriving again is the same person
-	// coming back rather than a conflict.
-	_, err := s.db.NewInsert().Model(guest).
-		On("CONFLICT (id) DO NOTHING").
+	// Recording a user is get-or-create, so the same id arriving again is the same person
+	// coming back rather than a conflict. A row already here is left alone: a guest who
+	// signed up is claimed rather than overwritten, and overwriting would lose the kind
+	// the claim path reads.
+	_, err := s.db.NewInsert().Model(user).
+		On("CONFLICT (customer_id, id) DO NOTHING").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: record guest: %w", err)
+		return fmt.Errorf("store: record user: %w", err)
 	}
 	return nil
 }
 
-// Guest returns one guest of a customer's.
-func (s *Store) Guest(ctx context.Context, customerID, id string) (GuestUser, error) {
+// RecordGuest stores a guest this app handed out, so it can later be claimed.
+func (s *Store) RecordGuest(ctx context.Context, guest *User) error {
+	guest.Kind = UserKindGuest
+	return s.RecordUser(ctx, guest)
+}
+
+// Guest returns one guest of a customer's. A user of some other kind is not one: an
+// account that signed up is nobody's to claim.
+func (s *Store) Guest(ctx context.Context, customerID, id string) (User, error) {
 	if customerID == "" || id == "" {
-		return GuestUser{}, errors.New("store: a customer and a guest id are required")
+		return User{}, errors.New("store: a customer and a guest id are required")
 	}
 
-	var guest GuestUser
+	var guest User
 	err := s.db.NewSelect().Model(&guest).
 		Where("id = ?", id).
 		Where("customer_id = ?", customerID).
+		Where("kind = ?", UserKindGuest).
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return GuestUser{}, notAGuest(id, customerID)
+		return User{}, notAGuest(id, customerID)
 	}
 	if err != nil {
-		return GuestUser{}, fmt.Errorf("store: guest: %w", err)
+		return User{}, fmt.Errorf("store: guest: %w", err)
 	}
 	return guest, nil
 }
@@ -626,11 +653,12 @@ func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID stri
 	var moved int64
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		now := time.Now().UTC()
-		claimed, err := tx.NewUpdate().Model((*GuestUser)(nil)).
+		claimed, err := tx.NewUpdate().Model((*User)(nil)).
 			Set("claimed_by = ?", userID).
 			Set("claimed_at = ?", now).
 			Where("id = ?", guestID).
 			Where("customer_id = ?", customerID).
+			Where("kind = ?", UserKindGuest).
 			Where("claimed_by IS NULL").
 			Exec(ctx)
 		if err != nil {
@@ -644,10 +672,11 @@ func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID stri
 			// Either there is no such guest or somebody already claimed them, and the
 			// caller is told which: a guest already claimed is a retry, and a guest that
 			// never existed is a different mistake.
-			var existing GuestUser
+			var existing User
 			err := tx.NewSelect().Model(&existing).
 				Where("id = ?", guestID).
 				Where("customer_id = ?", customerID).
+				Where("kind = ?", UserKindGuest).
 				Limit(1).
 				Scan(ctx)
 			if errors.Is(err, sql.ErrNoRows) {

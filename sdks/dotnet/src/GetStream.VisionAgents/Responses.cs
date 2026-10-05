@@ -70,33 +70,34 @@ public sealed class Items
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         page = Math.Clamp(page <= 0 ? Page : page, 1, Ceiling);
-        var offset = 0;
+        string? cursor = null;
         while (true)
         {
-            var read = await ListAsync(page, offset, cancellationToken).ConfigureAwait(false);
-            foreach (var item in read)
+            var read = await ListAsync(page, cursor, cancellationToken).ConfigureAwait(false);
+            foreach (var item in read.Items)
             {
                 yield return item;
             }
-            // A short page is the last one; asking again to see an empty one would double
-            // the requests for every conversation that is an exact multiple of the page.
-            if (read.Count < page)
+            if (!read.HasMore || read.NextCursor is not { Length: > 0 } next)
             {
                 yield break;
             }
-            offset += read.Count;
+            cursor = next;
         }
     }
 
-    /// <summary>One page of items, for a caller doing its own paging.</summary>
-    public Task<List<AgentResponseItem>> ListAsync(int? limit = null, int? offset = null, CancellationToken cancellationToken = default) =>
-        _client.GetAsync<List<AgentResponseItem>>(
+    /// <summary>
+    /// One page of items, for a caller doing its own paging. A null limit leaves the router's
+    /// own; a null cursor is the first page, and the page's <c>NextCursor</c> the next.
+    /// </summary>
+    public Task<AgentResponseItemPage> ListAsync(int? limit = null, string? cursor = null, CancellationToken cancellationToken = default) =>
+        _client.GetAsync<AgentResponseItemPage>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses/items",
             new Dictionary<string, string?>
             {
                 ["response_id"] = VisionAgentsClient.Blank(_responseId),
                 ["limit"] = VisionAgentsClient.Number(limit),
-                ["offset"] = VisionAgentsClient.Number(offset),
+                ["cursor"] = VisionAgentsClient.Blank(cursor),
             },
             cancellationToken);
 
@@ -159,14 +160,17 @@ public sealed class Responses
         return new Response(_client, created);
     }
 
-    /// <summary>The turns so far, oldest first.</summary>
-    public Task<List<AgentResponse>> ListAsync(int? limit = null, int? offset = null, CancellationToken cancellationToken = default) =>
-        _client.GetAsync<List<AgentResponse>>(
+    /// <summary>
+    /// A page of the turns so far, oldest first. A null limit leaves the router's own; a null
+    /// cursor is the first page, and the page's <c>NextCursor</c> the next.
+    /// </summary>
+    public Task<AgentResponsePage> ListAsync(int? limit = null, string? cursor = null, CancellationToken cancellationToken = default) =>
+        _client.GetAsync<AgentResponsePage>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses",
             new Dictionary<string, string?>
             {
                 ["limit"] = VisionAgentsClient.Number(limit),
-                ["offset"] = VisionAgentsClient.Number(offset),
+                ["cursor"] = VisionAgentsClient.Blank(cursor),
             },
             cancellationToken);
 

@@ -25,42 +25,42 @@ class TranscriptionRequest:
         source (RecordingSource): Where the audio to work on comes from. A URL is what every vendor's batch API takes
             and what anything longer than a clip should use; inline bytes save a caller with a short local file from having
             to host it somewhere first.
+        callback (str | Unset): A URL the finished job is POSTed to, so a caller does not have to poll. The body is the
+            same Transcription this returns.
+        config_id (str | Unset): A stored router config to take the options from. Anything named here as well overrides
+            that one field of it.
         inline (bool | Unset): Complete this short request synchronously without storing a recording job or audio. The
             202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database
             is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8
-            MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
-             Default: False.
-        config_id (str | Unset): A stored router config to take the options from. Anything named here as well overrides
-            that one field of it.
+            MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs. Default:
+            False.
         options (SttOptions | Unset): How this config transcribes, live or from a recording. A field that only means
             something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to
             write subtitles from. A provider that cannot express a term refuses the request rather than dropping it
             silently.
-        callback (str | Unset): A URL the finished job is POSTed to, so a caller does not have to poll. The body is the
-            same Transcription this returns.
         tags (TranscriptionRequestTags | Unset): Cost labels for this job.
     """
 
     source: RecordingSource
-    inline: bool | Unset = False
-    config_id: str | Unset = UNSET
-    options: SttOptions | Unset = UNSET
     callback: str | Unset = UNSET
+    config_id: str | Unset = UNSET
+    inline: bool | Unset = False
+    options: SttOptions | Unset = UNSET
     tags: TranscriptionRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_dict()
 
-        inline = self.inline
+        callback = self.callback
 
         config_id = self.config_id
+
+        inline = self.inline
 
         options: dict[str, Any] | Unset = UNSET
         if not isinstance(self.options, Unset):
             options = self.options.to_dict()
-
-        callback = self.callback
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
@@ -73,14 +73,14 @@ class TranscriptionRequest:
                 "source": source,
             }
         )
-        if inline is not UNSET:
-            field_dict["inline"] = inline
-        if config_id is not UNSET:
-            field_dict["config_id"] = config_id
-        if options is not UNSET:
-            field_dict["options"] = options
         if callback is not UNSET:
             field_dict["callback"] = callback
+        if config_id is not UNSET:
+            field_dict["config_id"] = config_id
+        if inline is not UNSET:
+            field_dict["inline"] = inline
+        if options is not UNSET:
+            field_dict["options"] = options
         if tags is not UNSET:
             field_dict["tags"] = tags
 
@@ -97,9 +97,11 @@ class TranscriptionRequest:
         d = dict(src_dict)
         source = RecordingSource.from_dict(d.pop("source"))
 
-        inline = d.pop("inline", UNSET)
+        callback = d.pop("callback", UNSET)
 
         config_id = d.pop("config_id", UNSET)
+
+        inline = d.pop("inline", UNSET)
 
         _options = d.pop("options", UNSET)
         options: SttOptions | Unset
@@ -107,8 +109,6 @@ class TranscriptionRequest:
             options = UNSET
         else:
             options = SttOptions.from_dict(_options)
-
-        callback = d.pop("callback", UNSET)
 
         _tags = d.pop("tags", UNSET)
         tags: TranscriptionRequestTags | Unset
@@ -119,10 +119,10 @@ class TranscriptionRequest:
 
         transcription_request = cls(
             source=source,
-            inline=inline,
-            config_id=config_id,
-            options=options,
             callback=callback,
+            config_id=config_id,
+            inline=inline,
+            options=options,
             tags=tags,
         )
 

@@ -60,6 +60,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -89,7 +94,7 @@ def sync_detailed(
     latency and cost to words that were never in question.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (SayRequest):
 
     Raises:
@@ -124,7 +129,7 @@ def sync(
     latency and cost to words that were never in question.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (SayRequest):
 
     Raises:
@@ -154,7 +159,7 @@ async def asyncio_detailed(
     latency and cost to words that were never in question.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (SayRequest):
 
     Raises:
@@ -187,7 +192,7 @@ async def asyncio(
     latency and cost to words that were never in question.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (SayRequest):
 
     Raises:

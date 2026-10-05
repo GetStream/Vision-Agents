@@ -16,25 +16,31 @@ class ChatToken:
     """
     Attributes:
         api_key (str): The Stream app the channel is in, which the browser SDK connects to.
+        channel_id (str): The channel holding the conversation, which is the agent id.
+        channel_type (str): Always agent, which is the type a conversation is written to.
+        expires_at (datetime.datetime):
         token (str):
         user_id (str):
         user_name (str):
-        channel_type (str): Always agent, which is the type a conversation is written to.
-        channel_id (str): The channel holding the conversation, which is the agent id.
-        expires_at (datetime.datetime):
     """
 
     api_key: str
+    channel_id: str
+    channel_type: str
+    expires_at: datetime.datetime
     token: str
     user_id: str
     user_name: str
-    channel_type: str
-    channel_id: str
-    expires_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         api_key = self.api_key
+
+        channel_id = self.channel_id
+
+        channel_type = self.channel_type
+
+        expires_at = self.expires_at.isoformat()
 
         token = self.token
 
@@ -42,23 +48,17 @@ class ChatToken:
 
         user_name = self.user_name
 
-        channel_type = self.channel_type
-
-        channel_id = self.channel_id
-
-        expires_at = self.expires_at.isoformat()
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "api_key": api_key,
+                "channel_id": channel_id,
+                "channel_type": channel_type,
+                "expires_at": expires_at,
                 "token": token,
                 "user_id": user_id,
                 "user_name": user_name,
-                "channel_type": channel_type,
-                "channel_id": channel_id,
-                "expires_at": expires_at,
             }
         )
 
@@ -69,26 +69,26 @@ class ChatToken:
         d = dict(src_dict)
         api_key = d.pop("api_key")
 
+        channel_id = d.pop("channel_id")
+
+        channel_type = d.pop("channel_type")
+
+        expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
+
         token = d.pop("token")
 
         user_id = d.pop("user_id")
 
         user_name = d.pop("user_name")
 
-        channel_type = d.pop("channel_type")
-
-        channel_id = d.pop("channel_id")
-
-        expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
-
         chat_token = cls(
             api_key=api_key,
+            channel_id=channel_id,
+            channel_type=channel_type,
+            expires_at=expires_at,
             token=token,
             user_id=user_id,
             user_name=user_name,
-            channel_type=channel_type,
-            channel_id=channel_id,
-            expires_at=expires_at,
         )
 
         chat_token.additional_properties = d

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents;
 
 use GetStream\VisionAgents\Generated\AgentResponseItem;
+use GetStream\VisionAgents\Generated\AgentResponseItemPage;
 use Generator;
 
 /**
@@ -33,31 +34,25 @@ final readonly class Items
     public function unwind(int $page = self::PAGE): Generator
     {
         $page = max(1, min($page, 1000));
-        $offset = 0;
-        while (true) {
-            $items = $this->list($page, $offset);
-            yield from $items;
-            // A short page is the last page.
-            if (count($items) < $page) {
-                return;
-            }
-            $offset += count($items);
-        }
+        $cursor = null;
+        do {
+            $listed = $this->list($page, $cursor);
+            yield from $listed->items;
+            $cursor = $listed->nextCursor;
+        } while ($listed->hasMore && $cursor !== null && $cursor !== '');
     }
 
     /**
-     * One page, for a caller doing its own paging.
-     *
-     * @return list<AgentResponseItem>
+     * One page, for a caller doing its own paging. Pass its `nextCursor` back for the next one.
      */
-    public function list(?int $limit = null, ?int $offset = null): array
+    public function list(?int $limit = null, ?string $cursor = null): AgentResponseItemPage
     {
         $listed = $this->client->get('/v1/agents/sessions/{id}/responses/items', ['id' => $this->sessionId], [
             'response_id' => $this->responseId === '' ? null : $this->responseId,
             'limit' => $limit,
-            'offset' => $offset,
+            'cursor' => $cursor,
         ]);
-        return array_map(AgentResponseItem::fromArray(...), Json::objects(['rows' => $listed], 'rows'));
+        return AgentResponseItemPage::fromArray(Json::asObject($listed));
     }
 
     /**

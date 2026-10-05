@@ -15,8 +15,10 @@ final readonly class KnowledgeUrlDeclaration
 {
     public function __construct(
         public string $url,
-        public ?string $title = null,
         public ?string $description = null,
+        // How often the page is read again on its own, in hours. Omit it and the page is read on every sync that chan...
+        public ?int $refreshHours = null,
+        public ?string $title = null,
     ) {
     }
 
@@ -27,8 +29,9 @@ final readonly class KnowledgeUrlDeclaration
     {
         return new self(
             url: Json::string($data, 'url'),
-            title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
+            refreshHours: array_key_exists('refresh_hours', $data) && $data['refresh_hours'] !== null ? Json::int($data, 'refresh_hours') : null,
+            title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
         );
     }
 
@@ -41,11 +44,14 @@ final readonly class KnowledgeUrlDeclaration
     {
         $out = [];
         $out['url'] = $this->url;
-        if ($this->title !== null) {
-            $out['title'] = $this->title;
-        }
         if ($this->description !== null) {
             $out['description'] = $this->description;
+        }
+        if ($this->refreshHours !== null) {
+            $out['refresh_hours'] = $this->refreshHours;
+        }
+        if ($this->title !== null) {
+            $out['title'] = $this->title;
         }
         return $out;
     }

@@ -321,6 +321,7 @@ pub fn session(id: &str) -> Value {
         "call_id": "call",
         "call_type": "agent",
         "created_at": "2026-09-24T10:00:00Z",
+        "modality": "voice",
         "state": "live",
         "user_id": "user",
     })

@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 
 /** How many events a slow [AgentSession.events] collector may fall behind before the oldest go. */
 private const val EVENT_BUFFER = 256
@@ -36,8 +37,7 @@ private const val EVENT_BUFFER = 256
  */
 public class AgentSession internal constructor(
     private val backend: Backend,
-    /** The session the router opened. */
-    public val session: Session,
+    session: Session,
     tools: List<AgentTool>,
     context: CoroutineContext = Dispatchers.Default,
 ) {
@@ -61,6 +61,10 @@ public class AgentSession internal constructor(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
+    /** The session the router opened, as [update] last left it. */
+    @Volatile public var session: Session = session
+        private set
+
     /** What the router holds this session by, which is what addresses it and its socket. */
     public val id: String get() = session.id
 
@@ -73,8 +77,16 @@ public class AgentSession internal constructor(
     /** Why the socket stopped, or null. A conversation that ended normally has none. */
     public val failure: StateFlow<AgentsException?> = stoppedBy.asStateFlow()
 
-    /** The session's turns as the router wrote them down, for reading back and rewinding. */
-    public val responses: Responses = Responses(backend, session.id)
+    /**
+     * The session's turns: asking, reading back and rewinding. What is asked here shows in
+     * [conversation] at once, and the reply streams into it.
+     */
+    public val responses: Responses = Responses(
+        backend,
+        session.id,
+        kept = session.conversationId.isNotEmpty(),
+        asked = { text -> state.update { it.said(text) } },
+    )
 
     /**
      * Every event as it arrives, for a caller building on more than [conversation] holds.
@@ -110,14 +122,6 @@ public class AgentSession internal constructor(
         }
     }
 
-    /** Says this to the agent, as though it had been heard. */
-    public suspend fun send(text: String, images: List<ImageSource> = emptyList()) {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-        state.update { it.said(trimmed) }
-        socket.send(Command.Respond(trimmed, images))
-    }
-
     /** Speaks this without going through the model. */
     public suspend fun say(text: String) {
         socket.send(Command.Say(text))
@@ -133,6 +137,13 @@ public class AgentSession internal constructor(
         socket.send(Command.Instructions(instructions))
     }
 
+    /** Renames this conversation or relabels it, and returns it as it now is. See [Sessions.update]. */
+    public suspend fun update(
+        title: String? = null,
+        description: String? = null,
+        custom: JsonObject? = null,
+    ): Session = Sessions(backend).update(session.id, title, description, custom).also { session = it }
+
     /**
      * Continues this conversation as a new session, leaving this one as it was.
      *
@@ -141,13 +152,26 @@ public class AgentSession internal constructor(
     public suspend fun fork(options: ForkOptions = ForkOptions()): Session =
         Sessions(backend).fork(session.id, options)
 
-    /** Ends the session and closes the socket. Safe to call more than once. */
+    /**
+     * Stops the session and closes the socket. Safe to call more than once. What it recorded and
+     * remembered is kept; [delete] takes it away.
+     */
     public suspend fun close() {
         try {
             socket.send(Command.Close)
         } catch (_: AgentsException) {
             // Already gone, which is what closing wanted.
         }
+        end()
+    }
+
+    /** Deletes this conversation and closes the socket. See [Sessions.delete]. */
+    public suspend fun delete() {
+        Sessions(backend).delete(session.id)
+        end()
+    }
+
+    private suspend fun end() {
         socket.close()
         scope.cancel()
         connected.value = false

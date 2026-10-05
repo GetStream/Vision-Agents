@@ -11,85 +11,76 @@ use GetStream\VisionAgents\Json;
 final readonly class CreateSessionRequest
 {
     public function __construct(
-        // Stream Chat CID to resume; returned for persistent text sessions.
-        public ?string $conversationId = null,
-        // Older history was omitted from the model context.
-        public ?bool $contextTruncated = null,
-        // The call to join. Required unless the session is text.
-        public ?string $callId = null,
-        // Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no...
-        public ?bool $text = null,
-        // An agent config to start from. Everything else in this request overrides what the config says, so a caller...
-        public ?string $configId = null,
         // The name of an agent config to start from, as an alternative to config_id. It is what a caller actually kno...
         public ?string $agent = null,
-        // Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream C...
-        public ?bool $incognito = null,
-        // What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is...
-        public ?string $title = null,
-        // A longer note about the conversation, searched alongside the title.
-        public ?string $description = null,
-        // What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project...
-        public ?string $project = null,
+        // Keys transcripts and statistics. Empty means the call id.
+        public ?string $agentId = null,
+        // Murmur while a participant is still talking, the way a person does.
+        public ?bool $backchannel = null,
+        // The call to join. Required unless the session is text.
+        public ?string $callId = null,
+        public ?string $callType = null,
+        // An agent config to start from. Everything else in this request overrides what the config says, so a caller...
+        public ?string $configId = null,
+        // Older history was omitted from the model context.
+        public ?bool $contextTruncated = null,
+        // Stream Chat CID to resume; returned for persistent text sessions.
+        public ?string $conversationId = null,
         // Anything the caller wants to remember about the session, handed back untouched and never read by the router...
         /** @var array<string, mixed>|null */
         public ?array $custom = null,
-        public ?ModelOverwrites $modelOverwrites = null,
-        public ?string $callType = null,
-        // Who the agent joins the call as.
-        public ?string $userId = null,
-        public ?string $userName = null,
-        // Keys transcripts and statistics. Empty means the call id.
-        public ?string $agentId = null,
-        public ?string $instructions = null,
+        // A longer note about the conversation, searched alongside the title.
+        public ?string $description = null,
         // Said on joining without going through the model. Empty means the agent waits to be spoken to.
         public ?string $greeting = null,
-        // The agent placed this call, so let recordings finish and answer their menus.
-        public ?bool $navigating = null,
-        // A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no con...
-        public ?string $llm = null,
-        // Omit it and the config decides, or en-low-latency when there is no config.
-        public ?string $stt = null,
-        // Omit it and the config decides, or en-low-latency when there is no config.
-        public ?string $tts = null,
-        // A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, s...
-        public ?string $sts = null,
-        // The model that does the thinking. Empty means the voice model answers everything itself, and skills mean no...
-        public ?string $subagent = null,
-        // Omit it and the config decides, or search-fast when there is no config.
-        public ?string $search = null,
-        // Provider-specific voice id.
-        public ?string $voice = null,
-        // Language hints, which narrow the candidates in every modality.
-        /** @var list<string>|null */
-        public ?array $languages = null,
+        // The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody...
+        public ?string $id = null,
+        // Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream C...
+        public ?bool $incognito = null,
+        public ?string $instructions = null,
         // Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cann...
         /** @var list<string>|null */
         public ?array $keyterms = null,
+        // Language hints, which narrow the candidates in every modality.
+        /** @var list<string>|null */
+        public ?array $languages = null,
+        // A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no con...
+        public ?string $llm = null,
         public ?int $maxTokens = null,
-        // How much delegated work may run at once.
-        public ?int $tasks = null,
-        public Sandbox|string|null $sandbox = null,
-        // Murmur while a participant is still talking, the way a person does.
-        public ?bool $backchannel = null,
+        public ?SessionMemory $memory = null,
         // How sure the transcriber must be before the agent answers rather than checks what was meant.
         public ?float $minConfidence = null,
-        // Omit for the built-in set of think, recall and explain.
-        /** @var list<SessionSkill>|null */
-        public ?array $skills = null,
-        // Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and expla...
-        /** @var list<string>|null */
-        public ?array $skillNames = null,
-        /** @var list<SessionTool>|null */
-        public ?array $tools = null,
-        // How long the model waits for a tool result. Zero is the default.
-        public ?int $toolTimeoutMs = null,
+        public ?ModelOverwrites $modelOverwrites = null,
+        // The agent placed this call, so let recordings finish and answer their menus.
+        public ?bool $navigating = null,
+        public ?SessionPhone $phone = null,
+        // What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project...
+        public ?string $projectId = null,
+        // Omit it and the config decides, or search-fast when there is no config.
+        public ?string $search = null,
+        // A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, s...
+        public ?string $sts = null,
+        // Omit it and the config decides, or en-low-latency when there is no config.
+        public ?string $stt = null,
         // Cost labels, carried onto every request the session makes.
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        public ?SessionMemory $memory = null,
-        public ?SessionPhone $phone = null,
+        // Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no...
+        public ?bool $text = null,
+        // What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is...
+        public ?string $title = null,
+        // How long the model waits for a tool result. Zero is the default.
+        public ?int $toolTimeoutMs = null,
+        /** @var list<SessionTool>|null */
+        public ?array $tools = null,
+        // Omit it and the config decides, or en-low-latency when there is no config.
+        public ?string $tts = null,
+        // Who the agent joins the call as.
+        public ?string $userId = null,
+        public ?string $userName = null,
         public ?SessionVideo $video = null,
+        // Provider-specific voice id.
+        public ?string $voice = null,
     ) {
     }
 
@@ -99,47 +90,43 @@ final readonly class CreateSessionRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            conversationId: array_key_exists('conversation_id', $data) && $data['conversation_id'] !== null ? Json::string($data, 'conversation_id') : null,
-            contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
-            callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
-            text: array_key_exists('text', $data) && $data['text'] !== null ? Json::bool($data, 'text') : null,
-            configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
             agent: array_key_exists('agent', $data) && $data['agent'] !== null ? Json::string($data, 'agent') : null,
-            incognito: array_key_exists('incognito', $data) && $data['incognito'] !== null ? Json::bool($data, 'incognito') : null,
-            title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
-            description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
-            project: array_key_exists('project', $data) && $data['project'] !== null ? Json::string($data, 'project') : null,
-            custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
-            modelOverwrites: array_key_exists('model_overwrites', $data) && $data['model_overwrites'] !== null ? ModelOverwrites::fromArray(Json::object($data, 'model_overwrites')) : null,
+            agentId: array_key_exists('agent_id', $data) && $data['agent_id'] !== null ? Json::string($data, 'agent_id') : null,
+            backchannel: array_key_exists('backchannel', $data) && $data['backchannel'] !== null ? Json::bool($data, 'backchannel') : null,
+            callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
             callType: array_key_exists('call_type', $data) && $data['call_type'] !== null ? Json::string($data, 'call_type') : null,
+            configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
+            contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
+            conversationId: array_key_exists('conversation_id', $data) && $data['conversation_id'] !== null ? Json::string($data, 'conversation_id') : null,
+            custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
+            description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
+            greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
+            id: array_key_exists('id', $data) && $data['id'] !== null ? Json::string($data, 'id') : null,
+            incognito: array_key_exists('incognito', $data) && $data['incognito'] !== null ? Json::bool($data, 'incognito') : null,
+            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
+            keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
+            languages: array_key_exists('languages', $data) && $data['languages'] !== null ? Json::strings($data, 'languages') : null,
+            llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
+            maxTokens: array_key_exists('max_tokens', $data) && $data['max_tokens'] !== null ? Json::int($data, 'max_tokens') : null,
+            memory: array_key_exists('memory', $data) && $data['memory'] !== null ? SessionMemory::fromArray(Json::object($data, 'memory')) : null,
+            minConfidence: array_key_exists('min_confidence', $data) && $data['min_confidence'] !== null ? Json::float($data, 'min_confidence') : null,
+            modelOverwrites: array_key_exists('model_overwrites', $data) && $data['model_overwrites'] !== null ? ModelOverwrites::fromArray(Json::object($data, 'model_overwrites')) : null,
+            navigating: array_key_exists('navigating', $data) && $data['navigating'] !== null ? Json::bool($data, 'navigating') : null,
+            phone: array_key_exists('phone', $data) && $data['phone'] !== null ? SessionPhone::fromArray(Json::object($data, 'phone')) : null,
+            projectId: array_key_exists('project_id', $data) && $data['project_id'] !== null ? Json::string($data, 'project_id') : null,
+            search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
+            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
+            stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
+            tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            text: array_key_exists('text', $data) && $data['text'] !== null ? Json::bool($data, 'text') : null,
+            title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
+            toolTimeoutMs: array_key_exists('tool_timeout_ms', $data) && $data['tool_timeout_ms'] !== null ? Json::int($data, 'tool_timeout_ms') : null,
+            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? array_map(SessionTool::fromArray(...), Json::objects($data, 'tools')) : null,
+            tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             userId: array_key_exists('user_id', $data) && $data['user_id'] !== null ? Json::string($data, 'user_id') : null,
             userName: array_key_exists('user_name', $data) && $data['user_name'] !== null ? Json::string($data, 'user_name') : null,
-            agentId: array_key_exists('agent_id', $data) && $data['agent_id'] !== null ? Json::string($data, 'agent_id') : null,
-            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
-            greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
-            navigating: array_key_exists('navigating', $data) && $data['navigating'] !== null ? Json::bool($data, 'navigating') : null,
-            llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
-            stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
-            tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
-            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
-            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
-            search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
-            voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
-            languages: array_key_exists('languages', $data) && $data['languages'] !== null ? Json::strings($data, 'languages') : null,
-            keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
-            maxTokens: array_key_exists('max_tokens', $data) && $data['max_tokens'] !== null ? Json::int($data, 'max_tokens') : null,
-            tasks: array_key_exists('tasks', $data) && $data['tasks'] !== null ? Json::int($data, 'tasks') : null,
-            sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
-            backchannel: array_key_exists('backchannel', $data) && $data['backchannel'] !== null ? Json::bool($data, 'backchannel') : null,
-            minConfidence: array_key_exists('min_confidence', $data) && $data['min_confidence'] !== null ? Json::float($data, 'min_confidence') : null,
-            skills: array_key_exists('skills', $data) && $data['skills'] !== null ? array_map(SessionSkill::fromArray(...), Json::objects($data, 'skills')) : null,
-            skillNames: array_key_exists('skill_names', $data) && $data['skill_names'] !== null ? Json::strings($data, 'skill_names') : null,
-            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? array_map(SessionTool::fromArray(...), Json::objects($data, 'tools')) : null,
-            toolTimeoutMs: array_key_exists('tool_timeout_ms', $data) && $data['tool_timeout_ms'] !== null ? Json::int($data, 'tool_timeout_ms') : null,
-            tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            memory: array_key_exists('memory', $data) && $data['memory'] !== null ? SessionMemory::fromArray(Json::object($data, 'memory')) : null,
-            phone: array_key_exists('phone', $data) && $data['phone'] !== null ? SessionPhone::fromArray(Json::object($data, 'phone')) : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
+            voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
         );
     }
 
@@ -151,44 +138,104 @@ final readonly class CreateSessionRequest
     public function toArray(): array
     {
         $out = [];
-        if ($this->conversationId !== null) {
-            $out['conversation_id'] = $this->conversationId;
+        if ($this->agent !== null) {
+            $out['agent'] = $this->agent;
         }
-        if ($this->contextTruncated !== null) {
-            $out['context_truncated'] = $this->contextTruncated;
+        if ($this->agentId !== null) {
+            $out['agent_id'] = $this->agentId;
+        }
+        if ($this->backchannel !== null) {
+            $out['backchannel'] = $this->backchannel;
         }
         if ($this->callId !== null) {
             $out['call_id'] = $this->callId;
         }
-        if ($this->text !== null) {
-            $out['text'] = $this->text;
+        if ($this->callType !== null) {
+            $out['call_type'] = $this->callType;
         }
         if ($this->configId !== null) {
             $out['config_id'] = $this->configId;
         }
-        if ($this->agent !== null) {
-            $out['agent'] = $this->agent;
+        if ($this->contextTruncated !== null) {
+            $out['context_truncated'] = $this->contextTruncated;
         }
-        if ($this->incognito !== null) {
-            $out['incognito'] = $this->incognito;
-        }
-        if ($this->title !== null) {
-            $out['title'] = $this->title;
-        }
-        if ($this->description !== null) {
-            $out['description'] = $this->description;
-        }
-        if ($this->project !== null) {
-            $out['project'] = $this->project;
+        if ($this->conversationId !== null) {
+            $out['conversation_id'] = $this->conversationId;
         }
         if ($this->custom !== null) {
             $out['custom'] = Json::objectValue($this->custom);
         }
+        if ($this->description !== null) {
+            $out['description'] = $this->description;
+        }
+        if ($this->greeting !== null) {
+            $out['greeting'] = $this->greeting;
+        }
+        if ($this->id !== null) {
+            $out['id'] = $this->id;
+        }
+        if ($this->incognito !== null) {
+            $out['incognito'] = $this->incognito;
+        }
+        if ($this->instructions !== null) {
+            $out['instructions'] = $this->instructions;
+        }
+        if ($this->keyterms !== null) {
+            $out['keyterms'] = $this->keyterms;
+        }
+        if ($this->languages !== null) {
+            $out['languages'] = $this->languages;
+        }
+        if ($this->llm !== null) {
+            $out['llm'] = $this->llm;
+        }
+        if ($this->maxTokens !== null) {
+            $out['max_tokens'] = $this->maxTokens;
+        }
+        if ($this->memory !== null) {
+            $out['memory'] = $this->memory->toArray();
+        }
+        if ($this->minConfidence !== null) {
+            $out['min_confidence'] = $this->minConfidence;
+        }
         if ($this->modelOverwrites !== null) {
             $out['model_overwrites'] = $this->modelOverwrites->toArray();
         }
-        if ($this->callType !== null) {
-            $out['call_type'] = $this->callType;
+        if ($this->navigating !== null) {
+            $out['navigating'] = $this->navigating;
+        }
+        if ($this->phone !== null) {
+            $out['phone'] = $this->phone->toArray();
+        }
+        if ($this->projectId !== null) {
+            $out['project_id'] = $this->projectId;
+        }
+        if ($this->search !== null) {
+            $out['search'] = $this->search;
+        }
+        if ($this->sts !== null) {
+            $out['sts'] = $this->sts;
+        }
+        if ($this->stt !== null) {
+            $out['stt'] = $this->stt;
+        }
+        if ($this->tags !== null) {
+            $out['tags'] = $this->tags;
+        }
+        if ($this->text !== null) {
+            $out['text'] = $this->text;
+        }
+        if ($this->title !== null) {
+            $out['title'] = $this->title;
+        }
+        if ($this->toolTimeoutMs !== null) {
+            $out['tool_timeout_ms'] = $this->toolTimeoutMs;
+        }
+        if ($this->tools !== null) {
+            $out['tools'] = array_map(static fn (SessionTool $each): array => $each->toArray(), $this->tools);
+        }
+        if ($this->tts !== null) {
+            $out['tts'] = $this->tts;
         }
         if ($this->userId !== null) {
             $out['user_id'] = $this->userId;
@@ -196,83 +243,11 @@ final readonly class CreateSessionRequest
         if ($this->userName !== null) {
             $out['user_name'] = $this->userName;
         }
-        if ($this->agentId !== null) {
-            $out['agent_id'] = $this->agentId;
-        }
-        if ($this->instructions !== null) {
-            $out['instructions'] = $this->instructions;
-        }
-        if ($this->greeting !== null) {
-            $out['greeting'] = $this->greeting;
-        }
-        if ($this->navigating !== null) {
-            $out['navigating'] = $this->navigating;
-        }
-        if ($this->llm !== null) {
-            $out['llm'] = $this->llm;
-        }
-        if ($this->stt !== null) {
-            $out['stt'] = $this->stt;
-        }
-        if ($this->tts !== null) {
-            $out['tts'] = $this->tts;
-        }
-        if ($this->sts !== null) {
-            $out['sts'] = $this->sts;
-        }
-        if ($this->subagent !== null) {
-            $out['subagent'] = $this->subagent;
-        }
-        if ($this->search !== null) {
-            $out['search'] = $this->search;
+        if ($this->video !== null) {
+            $out['video'] = $this->video->toArray();
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
-        }
-        if ($this->languages !== null) {
-            $out['languages'] = $this->languages;
-        }
-        if ($this->keyterms !== null) {
-            $out['keyterms'] = $this->keyterms;
-        }
-        if ($this->maxTokens !== null) {
-            $out['max_tokens'] = $this->maxTokens;
-        }
-        if ($this->tasks !== null) {
-            $out['tasks'] = $this->tasks;
-        }
-        if ($this->sandbox !== null) {
-            $out['sandbox'] = Json::enumValue($this->sandbox);
-        }
-        if ($this->backchannel !== null) {
-            $out['backchannel'] = $this->backchannel;
-        }
-        if ($this->minConfidence !== null) {
-            $out['min_confidence'] = $this->minConfidence;
-        }
-        if ($this->skills !== null) {
-            $out['skills'] = array_map(static fn (SessionSkill $each): array => $each->toArray(), $this->skills);
-        }
-        if ($this->skillNames !== null) {
-            $out['skill_names'] = $this->skillNames;
-        }
-        if ($this->tools !== null) {
-            $out['tools'] = array_map(static fn (SessionTool $each): array => $each->toArray(), $this->tools);
-        }
-        if ($this->toolTimeoutMs !== null) {
-            $out['tool_timeout_ms'] = $this->toolTimeoutMs;
-        }
-        if ($this->tags !== null) {
-            $out['tags'] = $this->tags;
-        }
-        if ($this->memory !== null) {
-            $out['memory'] = $this->memory->toArray();
-        }
-        if ($this->phone !== null) {
-            $out['phone'] = $this->phone->toArray();
-        }
-        if ($this->video !== null) {
-            $out['video'] = $this->video->toArray();
         }
         return $out;
     }

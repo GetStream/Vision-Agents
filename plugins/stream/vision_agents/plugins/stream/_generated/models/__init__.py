@@ -3,6 +3,8 @@
 from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
 from .agent_config import AgentConfig
+from .agent_config_patch import AgentConfigPatch
+from .agent_config_patch_tags import AgentConfigPatchTags
 from .agent_config_request import AgentConfigRequest
 from .agent_config_request_tags import AgentConfigRequestTags
 from .agent_config_tags import AgentConfigTags
@@ -16,7 +18,9 @@ from .agent_mode import AgentMode
 from .agent_response import AgentResponse
 from .agent_response_item import AgentResponseItem
 from .agent_response_item_kind import AgentResponseItemKind
+from .agent_response_item_page import AgentResponseItemPage
 from .agent_response_item_payload import AgentResponseItemPayload
+from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
@@ -56,6 +60,13 @@ from .classify_result import ClassifyResult
 from .classify_result_answers import ClassifyResultAnswers
 from .classify_usage import ClassifyUsage
 from .command_receipt import CommandReceipt
+from .connector_client import ConnectorClient
+from .connector_client_alg import ConnectorClientAlg
+from .connector_client_auth_method import ConnectorClientAuthMethod
+from .connector_client_owner import ConnectorClientOwner
+from .connector_definition import ConnectorDefinition
+from .connector_definition_page import ConnectorDefinitionPage
+from .connector_input import ConnectorInput
 from .contact import Contact
 from .contact_state import ContactState
 from .contacts_request import ContactsRequest
@@ -64,6 +75,7 @@ from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_tags import CreateSessionRequestTags
+from .custom_connector_request import CustomConnectorRequest
 from .data_change import DataChange
 from .data_change_key import DataChangeKey
 from .data_change_op import DataChangeOp
@@ -75,6 +87,7 @@ from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
 from .dispatch_setting import DispatchSetting
 from .endpointing import Endpointing
+from .equals_type_1 import EqualsType1
 from .error import Error
 from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
@@ -86,6 +99,7 @@ from .guest_user import GuestUser
 from .guest_user_custom import GuestUserCustom
 from .guest_user_request import GuestUserRequest
 from .guest_user_request_custom import GuestUserRequestCustom
+from .harness import Harness
 from .health_status import HealthStatus
 from .health_status_dependencies import HealthStatusDependencies
 from .health_status_status import HealthStatusStatus
@@ -113,13 +127,13 @@ from .knowledge_url_state import KnowledgeUrlState
 from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
 from .list_agent_logs_severity import ListAgentLogsSeverity
-from .list_sessions_state import ListSessionsState
 from .list_simulation_runs_state import ListSimulationRunsState
 from .llm_options import LlmOptions
 from .llm_options_format import LlmOptionsFormat
 from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
+from .mcp_server import McpServer
 from .modality import Modality
 from .model_call_timing import ModelCallTiming
 from .model_overwrites import ModelOverwrites
@@ -141,7 +155,11 @@ from .plugin import Plugin
 from .plugin_authorization import PluginAuthorization
 from .plugin_connection import PluginConnection
 from .plugin_connection_status import PluginConnectionStatus
+from .plugin_event import PluginEvent
+from .plugin_event_arguments import PluginEventArguments
+from .plugin_options import PluginOptions
 from .policy import Policy
+from .policy_tags import PolicyTags
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
 from .provider import Provider
@@ -158,6 +176,7 @@ from .route import Route
 from .router_config import RouterConfig
 from .router_config_request import RouterConfigRequest
 from .sandbox import Sandbox
+from .sandbox_options import SandboxOptions
 from .say_request import SayRequest
 from .search_answer import SearchAnswer
 from .search_depth import SearchDepth
@@ -167,27 +186,38 @@ from .search_options_output_schema import SearchOptionsOutputSchema
 from .search_request import SearchRequest
 from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
-from .search_sessions_state import SearchSessionsState
 from .session import Session
 from .session_custom import SessionCustom
+from .session_filter import SessionFilter
+from .session_filter_custom import SessionFilterCustom
 from .session_memory import SessionMemory
 from .session_memory_filter import SessionMemoryFilter
+from .session_modality import SessionModality
 from .session_mode import SessionMode
+from .session_page import SessionPage
 from .session_phone import SessionPhone
+from .session_query import SessionQuery
 from .session_respond_command import SessionRespondCommand
 from .session_respond_command_type import SessionRespondCommandType
 from .session_settings_request import SessionSettingsRequest
 from .session_settings_request_thinking import SessionSettingsRequestThinking
 from .session_settings_request_verbosity import SessionSettingsRequestVerbosity
-from .session_skill import SessionSkill
+from .session_sort import SessionSort
+from .session_sort_direction import SessionSortDirection
+from .session_sort_field import SessionSortField
 from .session_state import SessionState
 from .session_tool import SessionTool
+from .session_tool_approval import SessionToolApproval
+from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
 from .simulation import Simulation
 from .simulation_case import SimulationCase
 from .simulation_case_ended import SimulationCaseEnded
 from .simulation_case_state import SimulationCaseState
+from .simulation_declaration import SimulationDeclaration
+from .simulation_declaration_mode import SimulationDeclarationMode
+from .simulation_declaration_tags import SimulationDeclarationTags
 from .simulation_line import SimulationLine
 from .simulation_mode import SimulationMode
 from .simulation_request import SimulationRequest
@@ -218,8 +248,12 @@ from .tag_stats_bucket import TagStatsBucket
 from .tag_value_summary import TagValueSummary
 from .text_content_part import TextContentPart
 from .text_content_part_type import TextContentPartType
+from .text_match import TextMatch
 from .tier import Tier
+from .time_range import TimeRange
 from .timeline_entry import TimelineEntry
+from .tool_approval_command import ToolApprovalCommand
+from .tool_approval_command_type import ToolApprovalCommandType
 from .tool_result_command import ToolResultCommand
 from .tool_result_command_type import ToolResultCommandType
 from .transcript_entity import TranscriptEntity
@@ -236,6 +270,10 @@ from .tts_options import TtsOptions
 from .tts_options_overwrites import TtsOptionsOverwrites
 from .tts_options_pronunciations import TtsOptionsPronunciations
 from .turn_stats_bucket import TurnStatsBucket
+from .update_session_request import UpdateSessionRequest
+from .update_session_request_custom import UpdateSessionRequestCustom
+from .update_session_request_thinking import UpdateSessionRequestThinking
+from .update_session_request_verbosity import UpdateSessionRequestVerbosity
 from .video_source import VideoSource
 from .voice import Voice
 from .voice_binding import VoiceBinding
@@ -251,6 +289,8 @@ __all__ = (
     "ActivityBucket",
     "ActivityGranularity",
     "AgentConfig",
+    "AgentConfigPatch",
+    "AgentConfigPatchTags",
     "AgentConfigRequest",
     "AgentConfigRequestTags",
     "AgentConfigTags",
@@ -264,7 +304,9 @@ __all__ = (
     "AgentResponse",
     "AgentResponseItem",
     "AgentResponseItemKind",
+    "AgentResponseItemPage",
     "AgentResponseItemPayload",
+    "AgentResponsePage",
     "AgentResponseStatus",
     "AttachNumberRequest",
     "AttachedNumber",
@@ -304,6 +346,13 @@ __all__ = (
     "ClassifyResultAnswers",
     "ClassifyUsage",
     "CommandReceipt",
+    "ConnectorClient",
+    "ConnectorClientAlg",
+    "ConnectorClientAuthMethod",
+    "ConnectorClientOwner",
+    "ConnectorDefinition",
+    "ConnectorDefinitionPage",
+    "ConnectorInput",
     "Contact",
     "ContactState",
     "ContactsRequest",
@@ -312,6 +361,7 @@ __all__ = (
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
     "CreateSessionRequestTags",
+    "CustomConnectorRequest",
     "DataChange",
     "DataChangeKey",
     "DataChangeOp",
@@ -323,6 +373,7 @@ __all__ = (
     "DecisionKind",
     "DispatchSetting",
     "Endpointing",
+    "EqualsType1",
     "Error",
     "ForkSessionRequest",
     "ForkSessionRequestCustom",
@@ -334,6 +385,7 @@ __all__ = (
     "GuestUserCustom",
     "GuestUserRequest",
     "GuestUserRequestCustom",
+    "Harness",
     "HealthStatus",
     "HealthStatusDependencies",
     "HealthStatusStatus",
@@ -361,13 +413,13 @@ __all__ = (
     "LibraryVoice",
     "LibraryVoices",
     "ListAgentLogsSeverity",
-    "ListSessionsState",
     "ListSimulationRunsState",
     "LlmOptions",
     "LlmOptionsFormat",
     "LlmOptionsMetadata",
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
+    "McpServer",
     "Modality",
     "ModelCallTiming",
     "ModelOverwrites",
@@ -389,7 +441,11 @@ __all__ = (
     "PluginAuthorization",
     "PluginConnection",
     "PluginConnectionStatus",
+    "PluginEvent",
+    "PluginEventArguments",
+    "PluginOptions",
     "Policy",
+    "PolicyTags",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
     "Provider",
@@ -406,6 +462,7 @@ __all__ = (
     "RouterConfig",
     "RouterConfigRequest",
     "Sandbox",
+    "SandboxOptions",
     "SayRequest",
     "SearchAnswer",
     "SearchDepth",
@@ -415,27 +472,38 @@ __all__ = (
     "SearchRequest",
     "SearchRequestTags",
     "SearchResult",
-    "SearchSessionsState",
     "Session",
     "SessionCustom",
+    "SessionFilter",
+    "SessionFilterCustom",
     "SessionMemory",
     "SessionMemoryFilter",
+    "SessionModality",
     "SessionMode",
+    "SessionPage",
     "SessionPhone",
+    "SessionQuery",
     "SessionRespondCommand",
     "SessionRespondCommandType",
     "SessionSettingsRequest",
     "SessionSettingsRequestThinking",
     "SessionSettingsRequestVerbosity",
-    "SessionSkill",
+    "SessionSort",
+    "SessionSortDirection",
+    "SessionSortField",
     "SessionState",
     "SessionTool",
+    "SessionToolApproval",
+    "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
     "Simulation",
     "SimulationCase",
     "SimulationCaseEnded",
     "SimulationCaseState",
+    "SimulationDeclaration",
+    "SimulationDeclarationMode",
+    "SimulationDeclarationTags",
     "SimulationLine",
     "SimulationMode",
     "SimulationRequest",
@@ -466,8 +534,12 @@ __all__ = (
     "TagValueSummary",
     "TextContentPart",
     "TextContentPartType",
+    "TextMatch",
     "Tier",
+    "TimeRange",
     "TimelineEntry",
+    "ToolApprovalCommand",
+    "ToolApprovalCommandType",
     "ToolResultCommand",
     "ToolResultCommandType",
     "TranscriptEntity",
@@ -484,6 +556,10 @@ __all__ = (
     "TtsOptionsOverwrites",
     "TtsOptionsPronunciations",
     "TurnStatsBucket",
+    "UpdateSessionRequest",
+    "UpdateSessionRequestCustom",
+    "UpdateSessionRequestThinking",
+    "UpdateSessionRequestVerbosity",
     "VideoSource",
     "Voice",
     "VoiceBinding",

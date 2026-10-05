@@ -16,37 +16,36 @@ class SpendBucket:
     """
     Attributes:
         bucket (datetime.datetime):
-        value (str): The modality or label value this row is for. "other" is everything outside the biggest few, and the
-            empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see
-            which part.
-             Example: support.
         cost_micros_total (int): Millionths of a dollar, priced from the configured rates.
         request_count (int):
+        value (str): The modality or label value this row is for. "other" is everything outside the biggest few, and the
+            empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see
+            which part. Example: support.
     """
 
     bucket: datetime.datetime
-    value: str
     cost_micros_total: int
     request_count: int
+    value: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         bucket = self.bucket.isoformat()
 
-        value = self.value
-
         cost_micros_total = self.cost_micros_total
 
         request_count = self.request_count
+
+        value = self.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "bucket": bucket,
-                "value": value,
                 "cost_micros_total": cost_micros_total,
                 "request_count": request_count,
+                "value": value,
             }
         )
 
@@ -57,17 +56,17 @@ class SpendBucket:
         d = dict(src_dict)
         bucket = datetime.datetime.fromisoformat(d.pop("bucket"))
 
-        value = d.pop("value")
-
         cost_micros_total = d.pop("cost_micros_total")
 
         request_count = d.pop("request_count")
 
+        value = d.pop("value")
+
         spend_bucket = cls(
             bucket=bucket,
-            value=value,
             cost_micros_total=cost_micros_total,
             request_count=request_count,
+            value=value,
         )
 
         spend_bucket.additional_properties = d

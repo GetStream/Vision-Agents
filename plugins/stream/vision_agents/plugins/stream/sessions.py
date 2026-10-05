@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import datetime
 import json
 import logging
 import os
@@ -13,31 +12,35 @@ from vision_agents.core.llm.function_registry import FunctionRegistry
 
 from ._backend import API_KEY_ENV, API_SECRET_ENV, Backend
 from ._generated.api.default import (
-    close_session,
     create_session,
+    delete_session,
+    delete_session_memories,
     fork_session,
     get_session,
-    list_sessions,
-    search_sessions,
-    set_session_settings,
+    query_sessions,
+    stop_session,
+    update_session,
 )
 from ._generated.models import (
     CreateSessionRequest,
     CreateSessionRequestCustom,
     ForkSessionRequest,
     ForkSessionRequestCustom,
-    ListSessionsState,
     ModelOverwrites,
-    SearchSessionsState,
     Session as SessionRow,
-    SessionSettingsRequest,
-    SessionSettingsRequestThinking,
-    SessionSettingsRequestVerbosity,
+    SessionFilter,
+    SessionPage,
+    SessionQuery,
     SessionTool,
     SessionToolParameters,
+    TextMatch,
+    UpdateSessionRequest,
+    UpdateSessionRequestCustom,
+    UpdateSessionRequestThinking,
+    UpdateSessionRequestVerbosity,
 )
 from ._socket import Socket
-from .responses import Responses, _set, _unwrapped
+from .responses import Responses, _deleted, _unwrapped
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +88,11 @@ class SessionOptions:
     so they can find it again, which models to overrule, and whether to keep it at all.
 
     Attributes:
+        id: The UUID to hold the session by, for a caller that wants to know it before the
+            session exists. Empty lets the router generate one. One already taken is a 409.
         title: What a person finds the conversation by later. Searched.
         description: A longer note, searched alongside the title.
-        project: Groups conversations, and is carried as a cost label too.
+        project_id: Groups conversations, and is carried as a cost label too.
         custom: The caller's own labels, which a query can match on.
         incognito: Hold the conversation and keep nothing: no row, no turns, no transcript. It
             cannot be searched for, listed or forked afterwards, which is the point of it.
@@ -104,9 +109,10 @@ class SessionOptions:
             is the router explaining itself several times a second.
     """
 
+    id: str = ""
     title: str = ""
     description: str = ""
-    project: str = ""
+    project_id: str = ""
     custom: Optional[dict[str, Any]] = None
     incognito: bool = False
     model_overwrites: Optional[ModelOverwrites] = None
@@ -138,7 +144,7 @@ class ForkOptions:
     agent: str = ""
     title: str = ""
     description: str = ""
-    project: str = ""
+    project_id: str = ""
     custom: Optional[dict[str, Any]] = None
     instructions: str = ""
     incognito: bool = False
@@ -152,52 +158,28 @@ class ForkOptions:
 
 
 @dataclass
-class SessionSettings:
-    """What to change about a running conversation's models, for this session alone.
-
-    A field left as None is left as it is. An empty string is a value: an empty ``sts``
-    makes the session a cascade again, and an empty ``voice`` returns to the provider's
-    default.
-
-    Attributes:
-        llm: The conversation model, a provider/model or a capability shortcut.
-        sts: A speech-to-speech target, which makes the session native.
-        thinking: ``none``, ``minimal``, ``low``, ``medium`` or ``high``.
-        verbosity: ``low``, ``medium`` or ``high``.
-    """
-
-    llm: Optional[str] = None
-    stt: Optional[str] = None
-    tts: Optional[str] = None
-    sts: Optional[str] = None
-    subagent: Optional[str] = None
-    voice: Optional[str] = None
-    thinking: Optional[str] = None
-    temperature: Optional[float] = None
-    max_output_tokens: Optional[int] = None
-    verbosity: Optional[str] = None
-
-
-@dataclass
 class Query:
     """Which of an agent's conversations to list.
 
     Attributes:
+        project_id: Only this project's. A search covers every project, so it refuses one.
         user_id: Only this user's, which only a server-side caller may ask for: anybody else
             is narrowed to their own whatever they send.
-        state: ``running`` or ``closed``. Empty is both.
-        custom: Labels a conversation must carry, all of them.
+        modality: How the user took part: ``text``, ``voice`` or ``video``.
+        state: ``live`` or ``ended``. Empty is both.
+        agent_id: Only the sessions created with this agent id.
         limit: Up to 200. Zero is 25.
+        cursor: The ``next_cursor`` of the page before, with the same filters. Empty is the
+            first page.
     """
 
-    project: str = ""
+    project_id: str = ""
     user_id: str = ""
+    modality: str = ""
     state: str = ""
-    custom: Optional[dict[str, Any]] = None
-    created_after: Optional[datetime.datetime] = None
-    created_before: Optional[datetime.datetime] = None
+    agent_id: str = ""
     limit: int = 0
-    offset: int = 0
+    cursor: str = ""
 
 
 class Sessions:
@@ -222,38 +204,27 @@ class Sessions:
         row = _unwrapped(created, f"opening a session with {self._agent}")
         return await Session.watching(self._backend, row, self._functions, options)
 
-    async def query(self, query: Optional[Query] = None) -> list[SessionRow]:
-        """The agent's conversations, newest first, the ones that ended included.
+    async def query(self, query: Optional[Query] = None) -> SessionPage:
+        """A page of the agent's conversations, most recently updated first, the ones that
+        ended included. Pass the page's ``next_cursor`` as ``Query.cursor`` for the next one.
 
         What comes back are the rows rather than live handles: reading a conversation back is
         not the same as holding one, and most of these are over.
         """
-        query = query or Query()
-        narrowed = _narrow(query)
-        if query.state:
-            narrowed["state"] = ListSessionsState(query.state)
-
-        listed = await list_sessions.asyncio(
-            client=self._backend.client(), agent=self._agent, **narrowed
+        listed = await query_sessions.asyncio(
+            client=self._backend.client(), body=self._query("", query or Query())
         )
         return _unwrapped(listed, f"listing the sessions of {self._agent}")
 
-    async def search(
-        self, text: str, query: Optional[Query] = None
-    ) -> list[SessionRow]:
-        """Find a conversation by what it was called.
+    async def search(self, text: str, query: Optional[Query] = None) -> SessionPage:
+        """Find a conversation by what it was called, best match first.
 
         It reads the title, the description and the opening question, which is what a person
         remembers a conversation by. An incognito conversation is never found: nothing about
-        it was written down to search.
+        it was written down to search. It pages the same way ``query`` does.
         """
-        query = query or Query()
-        narrowed = _narrow(query)
-        if query.state:
-            narrowed["state"] = SearchSessionsState(query.state)
-
-        found = await search_sessions.asyncio(
-            client=self._backend.client(), agent=self._agent, q=text, **narrowed
+        found = await query_sessions.asyncio(
+            client=self._backend.client(), body=self._query(text, query or Query())
         )
         return _unwrapped(found, f"searching the sessions of {self._agent}")
 
@@ -261,6 +232,79 @@ class Sessions:
         """One conversation, whether or not it is still being held."""
         got = await get_session.asyncio(id, client=self._backend.client())
         return _unwrapped(got, f"reading the session {id}")
+
+    async def update(
+        self,
+        id: str,
+        *,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        custom: Optional[dict[str, Any]] = None,
+        instructions: Optional[str] = None,
+        llm: Optional[str] = None,
+        stt: Optional[str] = None,
+        tts: Optional[str] = None,
+        sts: Optional[str] = None,
+        voice: Optional[str] = None,
+        thinking: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        verbosity: Optional[str] = None,
+    ) -> SessionRow:
+        """Change one conversation, whether or not it is still being held.
+
+        Server side only. A field left as None is left as it is; an empty ``sts`` makes the
+        session a cascade again, and an empty ``voice`` returns to the provider's default.
+        One that ended can still be renamed and relabelled; instructions, models and voice
+        need it running, and take over from its next turn. The agent config it started from
+        is untouched.
+
+        Args:
+            thinking: ``none``, ``minimal``, ``low``, ``medium`` or ``high``.
+            verbosity: ``low``, ``medium`` or ``high``.
+        """
+        request = UpdateSessionRequest()
+        for name, value in (
+            ("title", title),
+            ("description", description),
+            ("instructions", instructions),
+            ("llm", llm),
+            ("stt", stt),
+            ("tts", tts),
+            ("sts", sts),
+            ("voice", voice),
+            ("temperature", temperature),
+            ("max_output_tokens", max_output_tokens),
+        ):
+            if value is not None:
+                setattr(request, name, value)
+        if custom is not None:
+            request.custom = UpdateSessionRequestCustom.from_dict(custom)
+        if thinking is not None:
+            request.thinking = UpdateSessionRequestThinking(thinking)
+        if verbosity is not None:
+            request.verbosity = UpdateSessionRequestVerbosity(verbosity)
+
+        updated = await update_session.asyncio(
+            id, client=self._backend.client(), body=request
+        )
+        return _unwrapped(updated, f"updating the session {id}")
+
+    async def delete(self, id: str) -> None:
+        """Delete a conversation, running or ended: it is stopped, and its turns and what it
+        remembered are deleted with it. The user's other memories are kept."""
+        deleted = await delete_session.asyncio_detailed(
+            id, client=self._backend.client()
+        )
+        _deleted(deleted, f"deleting the session {id}")
+
+    async def delete_memories(self, id: str) -> None:
+        """Delete what one conversation remembered, running or ended, and leave the rest of
+        the user's memories alone. Server side only."""
+        deleted = await delete_session_memories.asyncio_detailed(
+            id, client=self._backend.client()
+        )
+        _deleted(deleted, f"deleting the memories of {id}")
 
     def responses(self, id: str) -> Responses:
         """A session's turns, read back without holding the conversation.
@@ -273,7 +317,14 @@ class Sessions:
     def _request(self, options: SessionOptions) -> CreateSessionRequest:
         """Render the options as the session request, with the agent named by name."""
         request = CreateSessionRequest(agent=self._agent)
-        for name in ("title", "description", "project", "instructions", "call_type"):
+        for name in (
+            "id",
+            "title",
+            "description",
+            "project_id",
+            "instructions",
+            "call_type",
+        ):
             if getattr(options, name):
                 setattr(request, name, getattr(options, name))
         if options.conversation_id:
@@ -299,6 +350,28 @@ class Sessions:
         if declared:
             request.tools = declared
         return request
+
+    def _query(self, text: str, query: Query) -> SessionQuery:
+        """The query the listing and the search share, narrowed to this agent. Text makes
+        it a search.
+
+        One function rather than two, so the two cannot drift apart in what they honour: a
+        filter respected by one and forgotten by the other would be a surprise at best, and at
+        worst a list somebody reads another user's conversations out of.
+        """
+        narrowed = SessionFilter(agent=self._agent)
+        for name in ("project_id", "user_id", "modality", "state", "agent_id"):
+            if getattr(query, name):
+                setattr(narrowed, name, getattr(query, name))
+        if text:
+            narrowed.text = TextMatch(q=text)
+
+        body = SessionQuery(filter_=narrowed)
+        if query.limit:
+            body.limit = query.limit
+        if query.cursor:
+            body.cursor = query.cursor
+        return body
 
 
 class Session:
@@ -356,11 +429,9 @@ class Session:
             await socket.connect()
         except Exception:
             # The session is live in the backend even though nothing here can watch it, so it
-            # is closed rather than left holding a call nobody is listening to.
+            # is stopped rather than left holding a call nobody is listening to.
             with contextlib.suppress(Exception):
-                await close_session.asyncio_detailed(
-                    created.id, client=backend.client()
-                )
+                await stop_session.asyncio_detailed(created.id, client=backend.client())
             raise
         return cls(backend, created, functions, socket)
 
@@ -401,16 +472,6 @@ class Session:
             await self._command({"type": "interrupt"})
         await self._command({"type": "say", "text": text})
 
-    async def respond(self, text: str, interrupt: bool = False) -> None:
-        """Answer text through the model, as though it had been said on the call.
-
-        ``responses.create`` is the same thing with an id back, which is what a caller that
-        wants to follow one particular turn asks for.
-        """
-        if interrupt:
-            await self._command({"type": "interrupt"})
-        await self._command({"type": "respond", "text": text})
-
     async def interrupt(self) -> None:
         """Abandon the reply being spoken."""
         await self._command({"type": "interrupt"})
@@ -438,7 +499,7 @@ class Session:
             "agent",
             "title",
             "description",
-            "project",
+            "project_id",
             "instructions",
             "call_id",
             "response_id",
@@ -461,31 +522,49 @@ class Session:
         row = _unwrapped(forked, f"forking the session {self.id}")
         return await Session.watching(self._backend, row, self._functions, options)
 
-    async def update_settings(self, settings: SessionSettings) -> SessionRow:
-        """Swap the models or the voice this conversation runs on, for this session alone.
-
-        Server side only. The agent config it started from is untouched, and the new models
-        take over from the next turn: a reply being spoken finishes on the ones it started
-        with. A target that does not route is refused and the conversation carries on as it
-        was.
-        """
-        request = SessionSettingsRequest()
-        for name in ("llm", "stt", "tts", "sts", "subagent", "voice"):
-            if getattr(settings, name) is not None:
-                setattr(request, name, getattr(settings, name))
-        if settings.thinking is not None:
-            request.thinking = SessionSettingsRequestThinking(settings.thinking)
-        if settings.temperature is not None:
-            request.temperature = settings.temperature
-        if settings.max_output_tokens is not None:
-            request.max_output_tokens = settings.max_output_tokens
-        if settings.verbosity is not None:
-            request.verbosity = SessionSettingsRequestVerbosity(settings.verbosity)
-
-        updated = await set_session_settings.asyncio(
-            self.id, client=self._backend.client(), body=request
+    async def update(
+        self,
+        *,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        custom: Optional[dict[str, Any]] = None,
+        instructions: Optional[str] = None,
+        llm: Optional[str] = None,
+        stt: Optional[str] = None,
+        tts: Optional[str] = None,
+        sts: Optional[str] = None,
+        voice: Optional[str] = None,
+        thinking: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        verbosity: Optional[str] = None,
+    ) -> SessionRow:
+        """Change this conversation: its title, description, custom labels, instructions,
+        models or voice. See ``Sessions.update``."""
+        return await self._sessions().update(
+            self.id,
+            title=title,
+            description=description,
+            custom=custom,
+            instructions=instructions,
+            llm=llm,
+            stt=stt,
+            tts=tts,
+            sts=sts,
+            voice=voice,
+            thinking=thinking,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            verbosity=verbosity,
         )
-        return _unwrapped(updated, f"changing the settings of {self.id}")
+
+    async def delete(self) -> None:
+        """Delete this conversation. See ``Sessions.delete``."""
+        await self._sessions().delete(self.id)
+
+    async def delete_memories(self) -> None:
+        """Delete what this conversation remembered. See ``Sessions.delete_memories``."""
+        await self._sessions().delete_memories(self.id)
 
     def chat(self):
         """The Stream Chat channel this conversation is written into.
@@ -525,12 +604,13 @@ class Session:
         )
 
     async def close(self) -> None:
-        """End the conversation. Safe to call after it has already ended."""
+        """Stop the conversation. Safe to call after it has already ended. What it recorded
+        and remembered is kept; ``delete`` takes it away."""
         if self._socket.open:
             await self._socket.send({"type": "close"})
         elif not self._ended:
             with contextlib.suppress(Exception):
-                await close_session.asyncio_detailed(
+                await stop_session.asyncio_detailed(
                     self.id, client=self._backend.client()
                 )
 
@@ -563,6 +643,10 @@ class Session:
         from getstream import Stream
 
         return Stream(api_key=str(key), api_secret=str(secret))
+
+    def _sessions(self) -> Sessions:
+        """The resource methods that act on a session by id, which never need its agent."""
+        return Sessions(self._backend, "", self._functions)
 
     async def _command(self, frame: dict[str, Any]) -> None:
         """Act on the session over the socket it is being watched on."""
@@ -653,26 +737,6 @@ def _tools(functions: FunctionRegistry) -> list[SessionTool]:
         tool.parameters = parameters
         declared.append(tool)
     return declared
-
-
-def _narrow(query: Query) -> dict[str, Any]:
-    """The filters the listing and the search share.
-
-    One function rather than two, so the two cannot drift apart in what they honour: a filter
-    respected by one and forgotten by the other would be a surprise at best, and at worst a
-    list somebody reads another user's conversations out of.
-    """
-    narrowed = _set(
-        project=query.project,
-        user_id=query.user_id,
-        limit=query.limit,
-        offset=query.offset,
-        created_after=query.created_after,
-        created_before=query.created_before,
-    )
-    if query.custom:
-        narrowed["custom"] = json.dumps(query.custom)
-    return narrowed
 
 
 def _event_of(frame: dict[str, Any]) -> SessionEvent:

@@ -22,6 +22,7 @@ DIRECTORY_CONTENTS = {
     "skills",
     "knowledge",
     "knowledge_urls",
+    "simulations",
 }
 
 
@@ -37,6 +38,9 @@ class Router:
         self.skills: dict[str, dict[str, Any]] = {}
         self.knowledge: list[dict[str, Any]] = []
         self.pages: list[dict[str, Any]] = []
+        # What the last sync declared as the config's simulations, None when it said
+        # nothing about them.
+        self.simulations: list[dict[str, Any]] | None = None
         self.syncs = 0
         self.url = ""
         self._next = 0
@@ -92,6 +96,7 @@ class Router:
     async def _sync(self, request: web.Request) -> web.Response:
         body = await request.json()
         self.syncs += 1
+        self.simulations = body.get("simulations")
         existing_id = ""
         for stored in self.configs.values():
             if stored["name"] != body["name"]:
@@ -192,7 +197,7 @@ class TestDefineAgent:
             "name": "docs-agent",
             "instructions": "Answer from the docs.",
             "llm": "llm-fast",
-            "subagent": "llm-smart",
+            "thinking_llm": "llm-smart",
             "skills": [EXPLAIN],
             "knowledge": "docs",
         }
@@ -206,7 +211,7 @@ class TestDefineAgent:
 
         assert config.name == "docs-agent"
         stored = router.configs[config.id]
-        assert stored["subagent"] == "llm-smart"
+        assert stored["thinking_llm"] == "llm-smart"
         assert stored["skills"] == ["explain"]
         assert stored["knowledge_namespace"] == "docs"
 
@@ -224,7 +229,7 @@ class TestDefineAgent:
     ) -> None:
         config = await stream.define_agent(
             name="visual-agent",
-            subagent="vlm",
+            thinking_llm="vlm",
             video_source="roboflow_streaming",
             video_max_frames=2,
             skills=[
@@ -239,7 +244,7 @@ class TestDefineAgent:
             customer_id="acme",
         )
 
-        assert config.subagent == "vlm"
+        assert config.thinking_llm == "vlm"
         assert config.video.to_dict() == {
             "source": "roboflow_streaming",
             "max_frames": 2,
@@ -271,7 +276,7 @@ class TestDefineAgent:
     async def test_an_agent_that_delegates_nothing_needs_no_skills(
         self, router: Router
     ):
-        config = await self.define(router, skills=None, subagent="")
+        config = await self.define(router, skills=None, thinking_llm="")
 
         assert router.skills == {}
         assert "skills" not in router.configs[config.id]
@@ -316,6 +321,13 @@ class TestKnowledge:
         assert router.pages == [
             {"namespace": "docs", "url": "https://example.com/handbook"}
         ]
+
+    async def test_a_page_may_be_read_again_on_a_schedule(
+        self, router: Router, knowledge: stream.Knowledge
+    ):
+        await knowledge.add_url("https://example.com/handbook", refresh_hours=24)
+
+        assert router.pages[0]["refresh_hours"] == 24
 
     async def test_an_agent_configured_by_hand_has_no_knowledge_base(
         self, router: Router
@@ -383,7 +395,7 @@ class TestSyncAgent:
     ):
         (support_dir / "knowledge" / "urls.yaml").write_text(
             "- https://example.com/pricing\n"
-            "- url: https://example.com/plans\n  title: Plans\n"
+            "- url: https://example.com/plans\n  title: Plans\n  refresh_hours: 24\n"
         )
 
         await stream.sync_agent(
@@ -396,11 +408,63 @@ class TestSyncAgent:
                 "namespace": "support",
                 "url": "https://example.com/plans",
                 "title": "Plans",
+                "refresh_hours": 24,
             },
         ]
         assert [document["source"] for document in router.knowledge[0]] == [
             "policy.md"
         ], "the declaration of pages is not itself looked things up in"
+
+    @pytest.fixture
+    def simulations_dir(self, support_dir):
+        simulations = support_dir / "simulations"
+        simulations.mkdir()
+        return simulations
+
+    async def test_a_directorys_simulations_are_synced_with_it(
+        self, router: Router, support_dir, simulations_dir
+    ):
+        (simulations_dir / "refunds.yaml").write_text(
+            "- name: late refund\n"
+            "  scenario: Ask for a refund 40 days late.\n"
+            "  assertion: No refund is promised.\n"
+            "  mode: text\n"
+            "  variations: 5\n"
+            "  tags:\n    team: support\n"
+        )
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.simulations == [
+            {
+                "name": "late refund",
+                "scenario": "Ask for a refund 40 days late.",
+                "assertion": "No refund is promised.",
+                "mode": "text",
+                "variations": 5,
+                "tags": {"team": "support"},
+            }
+        ]
+
+    async def test_simulations_are_left_alone_without_a_directory(
+        self, router: Router, support_dir
+    ):
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.simulations is None
+
+    async def test_an_empty_simulations_directory_clears_them(
+        self, router: Router, support_dir, simulations_dir
+    ):
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.simulations == []
 
     async def test_syncing_the_same_directory_twice_does_nothing(
         self, router: Router, support_dir
@@ -452,16 +516,19 @@ class TestSyncAgent:
     ):
         (support_dir / "agent.yaml").write_text(
             "name: support\n"
-            "mode: text\n"
+            "mode: voice\n"
             "llm: llm-fast\n"
-            "subagent: llm-thinking\n"
+            "thinking_llm: llm-thinking\n"
             "stt: stt-fast\n"
             "tts: tts-fast\n"
             "voice: nova\n"
+            "speed: 1.1\n"
+            "harness: default\n"
             "search: search-fast\n"
             "greeting: Hello.\n"
             "sandbox: daytona\n"
             "plugins:\n  - gmail\n"
+            "user_plugins:\n  - google_calendar\n"
             "keyterms:\n  - Vision Agents\n"
             "tags:\n  team: support\n"
         )
@@ -471,16 +538,19 @@ class TestSyncAgent:
         )
 
         stored = router.configs[result.config.id]
-        assert stored["mode"] == "text"
+        assert stored["mode"] == "voice"
         assert stored["llm"] == "llm-fast"
-        assert stored["subagent"] == "llm-thinking"
+        assert stored["thinking_llm"] == "llm-thinking"
         assert stored["stt"] == "stt-fast"
         assert stored["tts"] == "tts-fast"
         assert stored["voice"] == "nova"
+        assert stored["speed"] == 1.1
+        assert stored["harness"] == "default"
         assert stored["search"] == "search-fast"
         assert stored["greeting"] == "Hello."
         assert stored["sandbox"] == "daytona"
         assert stored["plugins"] == ["gmail"]
+        assert stored["user_plugins"] == ["google_calendar"]
         assert stored["keyterms"] == ["Vision Agents"]
         assert stored["tags"] == {"team": "support"}
 
@@ -499,6 +569,78 @@ class TestSyncAgent:
             "incoming_call": "disabled",
             "text": "enabled",
         }
+
+    async def test_a_declaration_says_how_its_sandbox_is_built(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nsandbox: daytona\nsandbox_options:\n"
+            "  setup: [pip install bpy==5.2.2]\n  timeout: 5m\n  memory_gb: 4\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["sandbox_options"] == {
+            "image": "",
+            "setup": ["pip install bpy==5.2.2"],
+            "timeout_ms": 300000,
+            "cpu": 0,
+            "memory_gb": 4,
+            "disk_gb": 0,
+        }
+
+    async def test_the_mcp_servers_named_by_url_are_sent(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nmcp_servers:\n"
+            "  - name: tablejourney\n    url: https://tablejourney.com/mcp\n"
+            "    tools: [search_*]\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["mcp_servers"] == [
+            {
+                "name": "tablejourney",
+                "url": "https://tablejourney.com/mcp",
+                "tools": ["search_*"],
+            }
+        ]
+
+    async def test_how_each_plugin_is_reached_is_sent(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nuser_plugins: [linear, calcom]\nplugin_options:\n"
+            "  - plugin: linear\n    readonly: true\n"
+            "  - plugin: calcom\n    toolsets: [bookings]\n    tools: [get_*]\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["plugin_options"] == [
+            {
+                "plugin": "linear",
+                "readonly": True,
+                "scopes": [],
+                "toolsets": [],
+                "tools": [],
+            },
+            {
+                "plugin": "calcom",
+                "readonly": False,
+                "scopes": [],
+                "toolsets": ["bookings"],
+                "tools": ["get_*"],
+            },
+        ]
 
     async def test_sts_can_be_selected_and_cleared(self, router: Router, support_dir):
         for target in ("openai/gpt-realtime-2", ""):

@@ -35,14 +35,14 @@ public struct SearchOptions: Sendable, Hashable {
 extension SearchOptions {
     var schema: Components.Schemas.SearchOptions {
         .init(
-            target: target,
-            depth: depth.flatMap { .init(rawValue: $0.rawValue) },
-            results: results,
-            includeDomains: includeDomains.isEmpty ? nil : includeDomains,
-            excludeDomains: excludeDomains.isEmpty ? nil : excludeDomains,
             category: category,
+            depth: depth.flatMap { .init(rawValue: $0.rawValue) },
+            excludeDomains: excludeDomains.isEmpty ? nil : excludeDomains,
+            includeDomains: includeDomains.isEmpty ? nil : includeDomains,
+            location: location,
             maxAgeHours: maxAgeHours,
-            location: location)
+            results: results,
+            target: target)
     }
 }
 

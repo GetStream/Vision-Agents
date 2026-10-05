@@ -274,7 +274,7 @@ function camel(string $wire): string
 
 function pascal(string $wire): string
 {
-    return str_replace(' ', '', ucwords(str_replace(['_', '-', '.'], ' ', $wire)));
+    return str_replace(' ', '', ucwords(str_replace(['_', '-', '.', '$'], ' ', $wire)));
 }
 
 function caseName(string $value): string

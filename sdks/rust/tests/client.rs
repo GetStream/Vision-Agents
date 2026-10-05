@@ -3,7 +3,7 @@ mod support;
 use axum::http::Method;
 use serde_json::json;
 use support::{SECRET, Server, claims};
-use vision_agents::{Client, ClientOptions, Error, ListSessionsQuery, types};
+use vision_agents::{Client, ClientOptions, Error, ListResponsesQuery, types};
 
 #[tokio::test]
 async fn a_router_with_nothing_in_front_is_told_the_customer() {
@@ -162,11 +162,16 @@ async fn a_refusal_carries_the_status_and_what_the_router_said() {
 #[tokio::test]
 async fn an_answer_with_no_body_is_nothing() {
     let server = Server::start().await;
-    server.route(Method::DELETE, "/v1/agents/sessions/s1", 204, json!(null));
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/s1/stop",
+        204,
+        json!(null),
+    );
 
-    server.client().close_session("s1").await.unwrap();
+    server.client().stop_session("s1").await.unwrap();
 
-    server.request(Method::DELETE, "/v1/agents/sessions/s1");
+    server.request(Method::POST, "/v1/agents/sessions/s1/stop");
 }
 
 #[tokio::test]
@@ -193,7 +198,12 @@ async fn what_was_left_out_is_left_out() {
         201,
         support::session("s1"),
     );
-    server.route(Method::GET, "/v1/agents/sessions", 200, json!([]));
+    server.route(
+        Method::GET,
+        "/v1/agents/sessions/s1/responses",
+        200,
+        json!({"items": [], "has_more": false}),
+    );
 
     let client = server.client();
     client
@@ -204,10 +214,13 @@ async fn what_was_left_out_is_left_out() {
         .await
         .unwrap();
     client
-        .list_sessions(&ListSessionsQuery {
-            limit: Some(5),
-            ..Default::default()
-        })
+        .list_responses(
+            "s1",
+            &ListResponsesQuery {
+                limit: Some(5),
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
 
@@ -216,9 +229,89 @@ async fn what_was_left_out_is_left_out() {
         json!({"text": true})
     );
     assert_eq!(
-        server.request(Method::GET, "/v1/agents/sessions").query,
+        server
+            .request(Method::GET, "/v1/agents/sessions/s1/responses")
+            .query,
         "limit=5"
     );
+}
+
+#[tokio::test]
+async fn a_policy_tells_no_models_from_every_model() {
+    let server = Server::start().await;
+    server.route(Method::PUT, "/v1/policies/app", 200, json!({}));
+    let client = server.backend();
+
+    client
+        .update_app_policy(&types::Policy {
+            allowed_models: Some(vec![]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let everything = client
+        .update_app_policy(&types::Policy::default())
+        .await
+        .unwrap();
+
+    let bodies: Vec<_> = server
+        .requests(Method::PUT, "/v1/policies/app")
+        .into_iter()
+        .map(|seen| seen.body)
+        .collect();
+    assert_eq!(bodies, [json!({"allowed_models": []}), json!({})]);
+    assert_eq!(everything.allowed_models, None);
+}
+
+#[tokio::test]
+async fn simulations_are_written_run_and_read_back_as_a_resource() {
+    let server = Server::start().await;
+    let simulation = json!({"id": "sim1", "name": "lunch", "config_id": "c1", "scenario": "Order lunch.",
+                            "assertion": "Lunch was ordered.", "created_at": "2026-09-24T10:00:00Z",
+                            "max_turns": 6, "mode": "text", "variations": 1});
+    let run = json!({"id": "run1", "simulation_id": "sim1", "state": "running", "cases": 1,
+                     "passed": 0, "failed": 0, "started_at": "2026-09-24T10:00:00Z"});
+    server.route(Method::POST, "/v1/agents/simulations", 201, simulation);
+    server.route(
+        Method::POST,
+        "/v1/agents/simulations/sim1/run",
+        201,
+        run.clone(),
+    );
+    server.route(
+        Method::GET,
+        "/v1/agents/simulation-runs/run1",
+        200,
+        run.clone(),
+    );
+    server.route(
+        Method::POST,
+        "/v1/agents/simulation-runs/run1/cancel",
+        200,
+        run,
+    );
+    let simulations = server.backend().simulations();
+
+    let created = simulations
+        .create(&types::SimulationRequest {
+            name: "lunch".into(),
+            config_id: "c1".into(),
+            scenario: "Order lunch.".into(),
+            assertion: "Lunch was ordered.".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let started = simulations.run(&created.id).await.unwrap();
+    let read = simulations.runs.get(&started.id).await.unwrap();
+    simulations.runs.cancel(&read.id).await.unwrap();
+
+    assert_eq!(read.simulation_id, "sim1");
+    assert_eq!(
+        server.request(Method::POST, "/v1/agents/simulations").body["name"],
+        "lunch"
+    );
+    server.request(Method::POST, "/v1/agents/simulation-runs/run1/cancel");
 }
 
 #[tokio::test]

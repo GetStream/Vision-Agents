@@ -191,6 +191,8 @@ type HarnessSuite struct {
 	tools Tools
 	// box is where the next harness's subagent may run code. Nil is the usual case.
 	box *stubSandbox
+	// shelf, when set, is where files the subagent's code hands back are published.
+	shelf *shelf
 	// skills are what the next harness offers.
 	skills Skills
 
@@ -206,6 +208,7 @@ func (s *HarnessSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.tools = Tools{}
 	s.box = nil
+	s.shelf = nil
 	s.skills = testSkills()
 }
 
@@ -274,6 +277,9 @@ func (s *HarnessSuite) build(delegating bool) {
 	}
 	if s.box != nil {
 		options.Sandbox = s.box
+	}
+	if s.shelf != nil {
+		options.Publish = s.shelf.publish
 	}
 
 	harness, err := New(options)

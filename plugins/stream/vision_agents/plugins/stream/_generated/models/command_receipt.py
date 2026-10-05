@@ -14,40 +14,40 @@ T = TypeVar("T", bound="CommandReceipt")
 class CommandReceipt:
     """
     Attributes:
-        command_id (str):
-        user_message_id (str):
         assistant_message_id (str):
-        state (str): Latest locally recorded response state; an interrupted command is never automatically rerun.
+        command_id (str):
         duplicate (bool): True when this command already exists and no new inference was started.
+        state (str): Latest locally recorded response state; an interrupted command is never automatically rerun.
+        user_message_id (str):
     """
 
-    command_id: str
-    user_message_id: str
     assistant_message_id: str
-    state: str
+    command_id: str
     duplicate: bool
+    state: str
+    user_message_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        assistant_message_id = self.assistant_message_id
+
         command_id = self.command_id
 
-        user_message_id = self.user_message_id
-
-        assistant_message_id = self.assistant_message_id
+        duplicate = self.duplicate
 
         state = self.state
 
-        duplicate = self.duplicate
+        user_message_id = self.user_message_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "command_id": command_id,
-                "user_message_id": user_message_id,
                 "assistant_message_id": assistant_message_id,
-                "state": state,
+                "command_id": command_id,
                 "duplicate": duplicate,
+                "state": state,
+                "user_message_id": user_message_id,
             }
         )
 
@@ -56,22 +56,22 @@ class CommandReceipt:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        command_id = d.pop("command_id")
-
-        user_message_id = d.pop("user_message_id")
-
         assistant_message_id = d.pop("assistant_message_id")
 
-        state = d.pop("state")
+        command_id = d.pop("command_id")
 
         duplicate = d.pop("duplicate")
 
+        state = d.pop("state")
+
+        user_message_id = d.pop("user_message_id")
+
         command_receipt = cls(
-            command_id=command_id,
-            user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            state=state,
+            command_id=command_id,
             duplicate=duplicate,
+            state=state,
+            user_message_id=user_message_id,
         )
 
         command_receipt.additional_properties = d

@@ -40,6 +40,7 @@ class TTS(tts.TTS):
         customer_id: Optional[str] = None,
         config_id: str = "",
         options: Optional[dict[str, Any]] = None,
+        backend: Optional[Backend] = None,
     ):
         """Route speech to `target`.
 
@@ -55,6 +56,8 @@ class TTS(tts.TTS):
             config_id: A stored router config to take the options from, by name or by id.
             options: Per-call overrides of that config's tts block. Usually built by
                 `Router.tts.realtime`.
+            backend: A backend to use as it is, instead of building one from `url` and
+                `customer_id`.
         """
         super().__init__(provider_name="stream")
         self.model = target
@@ -63,7 +66,7 @@ class TTS(tts.TTS):
         self.tags = tags or {}
         self.config_id = config_id
         self.options = options or {}
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = backend or Backend(url=url, customer_id=customer_id)
 
         self._socket: Optional[Socket] = None
         self._reader: Optional[asyncio.Task] = None

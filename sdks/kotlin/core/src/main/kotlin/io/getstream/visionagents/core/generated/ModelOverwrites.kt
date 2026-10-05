@@ -37,14 +37,13 @@ import kotlinx.serialization.encoding.Encoder
  * What to change about the models for one session, over whatever its agent config decided. It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. 
  *
  * @param llm A provider/model or a capability shortcut, in place of the config's.
- * @param stt 
- * @param tts 
- * @param sts A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened. 
- * @param subagent The model delegated work runs on, in place of the config's. 
- * @param search 
- * @param thinking How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason. 
- * @param temperature How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model. 
  * @param maxOutputTokens Caps the reply, reasoning included. Omitted leaves the provider's default.
+ * @param search 
+ * @param sts A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened. 
+ * @param stt 
+ * @param temperature How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model. 
+ * @param thinking How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason. 
+ * @param tts 
  * @param verbosity How much detail to give. Dropped for models that do not take it.
  */
 @Serializable
@@ -55,34 +54,30 @@ internal data class ModelOverwrites (
     @SerialName(value = "llm")
     val llm: kotlin.String? = null,
 
-    @SerialName(value = "stt")
-    val stt: kotlin.String? = null,
+    /* Caps the reply, reasoning included. Omitted leaves the provider's default. */
+    @SerialName(value = "max_output_tokens")
+    val maxOutputTokens: kotlin.Int? = null,
 
-    @SerialName(value = "tts")
-    val tts: kotlin.String? = null,
+    @SerialName(value = "search")
+    val search: kotlin.String? = null,
 
     /* A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.  */
     @SerialName(value = "sts")
     val sts: kotlin.String? = null,
 
-    /* The model delegated work runs on, in place of the config's.  */
-    @SerialName(value = "subagent")
-    val subagent: kotlin.String? = null,
-
-    @SerialName(value = "search")
-    val search: kotlin.String? = null,
-
-    /* How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.  */
-    @SerialName(value = "thinking")
-    val thinking: ModelOverwrites.Thinking? = null,
+    @SerialName(value = "stt")
+    val stt: kotlin.String? = null,
 
     /* How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.  */
     @SerialName(value = "temperature")
     val temperature: kotlin.Double? = null,
 
-    /* Caps the reply, reasoning included. Omitted leaves the provider's default. */
-    @SerialName(value = "max_output_tokens")
-    val maxOutputTokens: kotlin.Int? = null,
+    /* How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.  */
+    @SerialName(value = "thinking")
+    val thinking: ModelOverwrites.Thinking? = null,
+
+    @SerialName(value = "tts")
+    val tts: kotlin.String? = null,
 
     /* How much detail to give. Dropped for models that do not take it. */
     @SerialName(value = "verbosity")

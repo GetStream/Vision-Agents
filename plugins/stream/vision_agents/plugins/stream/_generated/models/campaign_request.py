@@ -20,26 +20,26 @@ T = TypeVar("T", bound="CampaignRequest")
 class CampaignRequest:
     """
     Attributes:
-        name (str):
         config_id (str): The agent config the calls are made with.
         from_number (str): One of your own numbers, which is what the person sees.
+        name (str):
         concurrency (int | Unset): How many of these calls may be happening at once. Default: 1.
         tags (CampaignRequestTags | Unset):
     """
 
-    name: str
     config_id: str
     from_number: str
+    name: str
     concurrency: int | Unset = 1
     tags: CampaignRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        name = self.name
-
         config_id = self.config_id
 
         from_number = self.from_number
+
+        name = self.name
 
         concurrency = self.concurrency
 
@@ -51,9 +51,9 @@ class CampaignRequest:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "name": name,
                 "config_id": config_id,
                 "from_number": from_number,
+                "name": name,
             }
         )
         if concurrency is not UNSET:
@@ -68,11 +68,11 @@ class CampaignRequest:
         from ..models.campaign_request_tags import CampaignRequestTags
 
         d = dict(src_dict)
-        name = d.pop("name")
-
         config_id = d.pop("config_id")
 
         from_number = d.pop("from_number")
+
+        name = d.pop("name")
 
         concurrency = d.pop("concurrency", UNSET)
 
@@ -84,9 +84,9 @@ class CampaignRequest:
             tags = CampaignRequestTags.from_dict(_tags)
 
         campaign_request = cls(
-            name=name,
             config_id=config_id,
             from_number=from_number,
+            name=name,
             concurrency=concurrency,
             tags=tags,
         )

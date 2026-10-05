@@ -15,9 +15,13 @@ use GetStream\VisionAgents\Json;
 final readonly class SessionTool
 {
     public function __construct(
-        public string $name,
         // What the model is told the tool does, which is the whole of how it decides when to reach for one.
         public string $description,
+        public string $name,
+        // What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown...
+        public ?string $displayTitle = null,
+        // Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awa...
+        public ?string $executor = null,
         // A JSON Schema object describing the arguments.
         /** @var array<string, mixed>|null */
         public ?array $parameters = null,
@@ -30,8 +34,10 @@ final readonly class SessionTool
     public static function fromArray(array $data): self
     {
         return new self(
-            name: Json::string($data, 'name'),
             description: Json::string($data, 'description'),
+            name: Json::string($data, 'name'),
+            displayTitle: array_key_exists('display_title', $data) && $data['display_title'] !== null ? Json::string($data, 'display_title') : null,
+            executor: array_key_exists('executor', $data) && $data['executor'] !== null ? Json::string($data, 'executor') : null,
             parameters: array_key_exists('parameters', $data) && $data['parameters'] !== null ? Json::object($data, 'parameters') : null,
         );
     }
@@ -44,8 +50,14 @@ final readonly class SessionTool
     public function toArray(): array
     {
         $out = [];
-        $out['name'] = $this->name;
         $out['description'] = $this->description;
+        $out['name'] = $this->name;
+        if ($this->displayTitle !== null) {
+            $out['display_title'] = $this->displayTitle;
+        }
+        if ($this->executor !== null) {
+            $out['executor'] = $this->executor;
+        }
         if ($this->parameters !== null) {
             $out['parameters'] = Json::objectValue($this->parameters);
         }

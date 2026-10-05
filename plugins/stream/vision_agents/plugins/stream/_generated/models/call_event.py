@@ -26,20 +26,20 @@ class CallEvent:
             ruling about words that have since changed; compacting replaces old history with a summary; delegating hands
             work to the subagent and settling is that work coming back, answered or not.
         reason (str): Why the conversation chose it, in words.
-        turn_id (str | Unset): The exchange it was about, which lines it up against that turn's timings.
-        participant (str | Unset): Who it concerned.
-        said (str | Unset): What was heard, what the agent decided to say, or what the subagent came back with.
         latency_ms (float | Unset): What the flow controller took to rule, or what the subagent took to answer. Zero
             where nothing was asked.
+        participant (str | Unset): Who it concerned.
+        said (str | Unset): What was heard, what the agent decided to say, or what the subagent came back with.
+        turn_id (str | Unset): The exchange it was about, which lines it up against that turn's timings.
     """
 
     at: datetime.datetime
     kind: DecisionKind
     reason: str
-    turn_id: str | Unset = UNSET
+    latency_ms: float | Unset = UNSET
     participant: str | Unset = UNSET
     said: str | Unset = UNSET
-    latency_ms: float | Unset = UNSET
+    turn_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,13 +49,13 @@ class CallEvent:
 
         reason = self.reason
 
-        turn_id = self.turn_id
+        latency_ms = self.latency_ms
 
         participant = self.participant
 
         said = self.said
 
-        latency_ms = self.latency_ms
+        turn_id = self.turn_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -66,14 +66,14 @@ class CallEvent:
                 "reason": reason,
             }
         )
-        if turn_id is not UNSET:
-            field_dict["turn_id"] = turn_id
+        if latency_ms is not UNSET:
+            field_dict["latency_ms"] = latency_ms
         if participant is not UNSET:
             field_dict["participant"] = participant
         if said is not UNSET:
             field_dict["said"] = said
-        if latency_ms is not UNSET:
-            field_dict["latency_ms"] = latency_ms
+        if turn_id is not UNSET:
+            field_dict["turn_id"] = turn_id
 
         return field_dict
 
@@ -86,22 +86,22 @@ class CallEvent:
 
         reason = d.pop("reason")
 
-        turn_id = d.pop("turn_id", UNSET)
+        latency_ms = d.pop("latency_ms", UNSET)
 
         participant = d.pop("participant", UNSET)
 
         said = d.pop("said", UNSET)
 
-        latency_ms = d.pop("latency_ms", UNSET)
+        turn_id = d.pop("turn_id", UNSET)
 
         call_event = cls(
             at=at,
             kind=kind,
             reason=reason,
-            turn_id=turn_id,
+            latency_ms=latency_ms,
             participant=participant,
             said=said,
-            latency_ms=latency_ms,
+            turn_id=turn_id,
         )
 
         call_event.additional_properties = d
