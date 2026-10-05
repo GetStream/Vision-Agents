@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
@@ -135,6 +136,34 @@ func (s *AppsSuite) TestReattachingAfterRegistrationMovesTheTrunk() {
 	s.Equal([]string{second.TrunkID}, s.own.Trunks())
 }
 
+func (s *AppsSuite) TestReleasingAfterRegistrationDeletesTheLinesLeftInTheDeploymentApp() {
+	// The customer may no longer add to the deployment's app, and what the router made
+	// there for it is still the router's to take down.
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.Require().Len(s.deployment.Trunks(), 1)
+	s.ownApp()
+
+	s.Require().NoError(s.service.Release(s.ctx, s.customer, s.e164))
+
+	s.Empty(s.deployment.Trunks())
+	s.Empty(s.deployment.Rules())
+}
+
+func (s *AppsSuite) TestACallEndedAfterRegistrationDeletesItsLinesInTheDeploymentApp() {
+	placed, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+	s.Require().Len(s.deployment.Trunks(), 1)
+	s.ownApp()
+
+	s.Require().NoError(s.service.ReleaseCall(s.ctx, store.AppScope{App: 1, Unpinned: true}, placed.CallType, placed.CallID))
+
+	s.Empty(s.deployment.Trunks())
+	s.Empty(s.deployment.Rules())
+}
+
 func (s *AppsSuite) TestACampaignCallAndItsSessionShareAnAppAndACall() {
 	s.ownApp()
 
@@ -205,7 +234,8 @@ func (s *AppsSuite) TestAMidCallTransferCreatesItsTrunkInTheSessionsApp() {
 }
 
 // testApps is the apps the suite's customers make lines in: their own when given one, the
-// deployment's otherwise.
+// deployment's otherwise. As app mode does once it no longer falls back, a customer given an
+// app of its own can read what it left in the deployment's app and not add to it.
 type testApps struct {
 	mu         sync.Mutex
 	deployment *chattest.Server
@@ -228,7 +258,17 @@ func (a *testApps) For(_ context.Context, customer string) (*Stream, int64, erro
 	return NewStreamFromClient(a.deployment.Client), 0, nil
 }
 
-func (a *testApps) ForApp(_ context.Context, customer string, app int64) (*Stream, error) {
+func (a *testApps) ForApp(ctx context.Context, customer string, app int64) (*Stream, error) {
+	a.mu.Lock()
+	_, owns := a.own[customer]
+	a.mu.Unlock()
+	if owns && app == 0 {
+		return nil, streamapp.ErrReadOnly
+	}
+	return a.ForAppRemoving(ctx, customer, app)
+}
+
+func (a *testApps) ForAppRemoving(_ context.Context, customer string, app int64) (*Stream, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if server, ok := a.own[customer]; ok && a.pins[customer] == app {

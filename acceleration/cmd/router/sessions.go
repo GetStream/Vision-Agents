@@ -85,3 +85,11 @@ func (a phoneApps) ForApp(ctx context.Context, customer string, app int64) (*pho
 	}
 	return phone.NewStreamFromClient(bound.Client), nil
 }
+
+func (a phoneApps) ForAppRemoving(ctx context.Context, customer string, app int64) (*phone.Stream, error) {
+	bound, err := a.clients.ForAppReading(ctx, customer, app)
+	if err != nil {
+		return nil, err
+	}
+	return phone.NewStreamFromClient(bound.Client), nil
+}

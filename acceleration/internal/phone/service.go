@@ -77,8 +77,12 @@ func NewService(options ServiceOptions) (*Service, error) {
 type Apps interface {
 	// For is the app new lines for a customer are made in, with its pin.
 	For(ctx context.Context, customer string) (*Stream, int64, error)
-	// ForApp is the app a line already made is in, to finish or remove it there.
+	// ForApp is the app a line already made is in, to finish it there.
 	ForApp(ctx context.Context, customer string, app int64) (*Stream, error)
+	// ForAppRemoving is the app a line already made is in, to remove it there. It reaches
+	// wherever reading that app does: a line in the deployment's app that the customer may
+	// no longer add to is still the router's own to take down, and one left there is billed.
+	ForAppRemoving(ctx context.Context, customer string, app int64) (*Stream, error)
 }
 
 // errNoStream is a service with no Stream app to make lines in.
@@ -106,6 +110,17 @@ func (s *Service) streamForApp(ctx context.Context, customer string, app int64) 
 	return s.stream, nil
 }
 
+// streamToRemove is the app a line already made is in, to remove it there.
+func (s *Service) streamToRemove(ctx context.Context, customer string, app int64) (*Stream, error) {
+	if s.apps != nil {
+		return s.apps.ForAppRemoving(ctx, customer, app)
+	}
+	if s.stream == nil {
+		return nil, errNoStream
+	}
+	return s.stream, nil
+}
+
 // unwire removes a trunk and routing rule from the app they were made in. It is
 // best-effort: a cleanup failure is logged rather than returned, so it cannot mask what
 // the caller was doing.
@@ -113,7 +128,7 @@ func (s *Service) unwire(ctx context.Context, customer string, app int64, routeI
 	if routeID == "" && trunkID == "" {
 		return
 	}
-	stream, err := s.streamForApp(ctx, customer, app)
+	stream, err := s.streamToRemove(ctx, customer, app)
 	if err != nil {
 		s.logger.Error("could not reach the Stream app a line was made in", "why", why,
 			"trunk", trunkID, "route", routeID, "error", err)
