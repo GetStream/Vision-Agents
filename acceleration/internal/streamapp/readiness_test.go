@@ -108,6 +108,34 @@ func (s *ReadinessSuite) TestReadinessIsAskedOfStreamAtMostOnceAMinute() {
 	s.Equal(2, s.stream.AppReads())
 }
 
+func (s *ReadinessSuite) TestARefusalFromStreamIsKeptForTheMinute() {
+	s.stream.SetApp(chattest.App{ID: 4242, Refuses: true})
+	bound, err := s.cache.For(s.ctx, "acme")
+	s.Require().NoError(err)
+	_, err = s.cache.Readiness(s.ctx, bound)
+	s.Require().Error(err)
+
+	s.stream.SetApp(chattest.App{ID: 4242})
+	_, err = s.cache.Readiness(s.ctx, bound)
+
+	s.Error(err, "Stream's own answer is kept until the minute is up")
+	s.Equal(1, s.stream.AppReads())
+}
+
+func (s *ReadinessSuite) TestAReadItsCallerAbandonedIsNotKept() {
+	bound, err := s.cache.For(s.ctx, "acme")
+	s.Require().NoError(err)
+	ended, cancel := context.WithCancel(s.ctx)
+	cancel()
+	_, err = s.cache.Readiness(ended, bound)
+	s.Require().ErrorIs(err, context.Canceled)
+
+	readiness, err := s.cache.Readiness(s.ctx, bound)
+
+	s.Require().NoError(err, "the next caller asks Stream rather than getting the cancellation")
+	s.Equal(TypePresent, readiness.ChannelType)
+}
+
 func (s *ReadinessSuite) TestTheDeploymentLearnsItsOwnAppFromStream() {
 	s.stream.SetApp(chattest.App{ID: 1234})
 

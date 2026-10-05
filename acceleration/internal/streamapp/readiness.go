@@ -148,7 +148,9 @@ type checked struct {
 }
 
 // Readiness is what the app a bound client acts in holds, asked of Stream at most once a
-// minute per credential.
+// minute per credential. What Stream answers is kept for that minute, a refusal too; a
+// failure because the caller's request ended says nothing about the app and is not kept,
+// or every session would skip the checks this answers until it expired.
 func (c *Clients) Readiness(ctx context.Context, bound Bound) (Readiness, error) {
 	key := bound.Identity.Fingerprint()
 	c.mu.Lock()
@@ -160,6 +162,9 @@ func (c *Clients) Readiness(ctx context.Context, bound Bound) (Readiness, error)
 
 	readiness, err := ReadReadiness(ctx, bound.Client, c.now())
 
+	if err != nil && ctx.Err() != nil {
+		return readiness, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.checks[key] = checked{customer: bound.Identity.CustomerID, readiness: readiness, err: err, at: c.now()}
