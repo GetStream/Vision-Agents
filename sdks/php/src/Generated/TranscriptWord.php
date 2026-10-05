@@ -11,9 +11,9 @@ use GetStream\VisionAgents\Json;
 final readonly class TranscriptWord
 {
     public function __construct(
-        public string $text,
-        public int $startMs,
         public int $endMs,
+        public int $startMs,
+        public string $text,
         public ?float $confidence = null,
         // Who said it, when diarization was asked for.
         public ?string $speaker = null,
@@ -26,9 +26,9 @@ final readonly class TranscriptWord
     public static function fromArray(array $data): self
     {
         return new self(
-            text: Json::string($data, 'text'),
-            startMs: Json::int($data, 'start_ms'),
             endMs: Json::int($data, 'end_ms'),
+            startMs: Json::int($data, 'start_ms'),
+            text: Json::string($data, 'text'),
             confidence: array_key_exists('confidence', $data) && $data['confidence'] !== null ? Json::float($data, 'confidence') : null,
             speaker: array_key_exists('speaker', $data) && $data['speaker'] !== null ? Json::string($data, 'speaker') : null,
         );
@@ -42,9 +42,9 @@ final readonly class TranscriptWord
     public function toArray(): array
     {
         $out = [];
-        $out['text'] = $this->text;
-        $out['start_ms'] = $this->startMs;
         $out['end_ms'] = $this->endMs;
+        $out['start_ms'] = $this->startMs;
+        $out['text'] = $this->text;
         if ($this->confidence !== null) {
             $out['confidence'] = $this->confidence;
         }

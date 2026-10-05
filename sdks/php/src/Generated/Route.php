@@ -11,13 +11,13 @@ use GetStream\VisionAgents\Json;
 final readonly class Route
 {
     public function __construct(
-        // The shortcut, which is what a config or request names as its target.
-        public string $id,
-        public string $title,
-        public string $description,
         // The models the shortcut resolves to right now, best first.
         /** @var list<Candidate> */
         public array $candidates,
+        public string $description,
+        // The shortcut, which is what a config or request names as its target.
+        public string $id,
+        public string $title,
     ) {
     }
 
@@ -27,10 +27,10 @@ final readonly class Route
     public static function fromArray(array $data): self
     {
         return new self(
+            candidates: array_map(Candidate::fromArray(...), Json::objects($data, 'candidates')),
+            description: Json::string($data, 'description'),
             id: Json::string($data, 'id'),
             title: Json::string($data, 'title'),
-            description: Json::string($data, 'description'),
-            candidates: array_map(Candidate::fromArray(...), Json::objects($data, 'candidates')),
         );
     }
 
@@ -42,10 +42,10 @@ final readonly class Route
     public function toArray(): array
     {
         $out = [];
+        $out['candidates'] = array_map(static fn (Candidate $each): array => $each->toArray(), $this->candidates);
+        $out['description'] = $this->description;
         $out['id'] = $this->id;
         $out['title'] = $this->title;
-        $out['description'] = $this->description;
-        $out['candidates'] = array_map(static fn (Candidate $each): array => $each->toArray(), $this->candidates);
         return $out;
     }
 }

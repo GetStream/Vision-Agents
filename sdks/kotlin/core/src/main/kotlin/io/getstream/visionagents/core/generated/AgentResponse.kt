@@ -36,17 +36,20 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * 
  *
+ * @param createdAt 
  * @param id 
  * @param sessionId 
  * @param status cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. 
- * @param createdAt 
- * @param said What the person asked, which is the first item of every response.
  * @param error 
  * @param finishedAt 
+ * @param said What the person asked, which is the first item of every response.
  */
 @Serializable
 
 internal data class AgentResponse (
+
+    @SerialName(value = "created_at")
+    val createdAt: kotlin.String,
 
     @SerialName(value = "id")
     val id: kotlin.String,
@@ -58,18 +61,15 @@ internal data class AgentResponse (
     @SerialName(value = "status")
     val status: AgentResponse.Status,
 
-    @SerialName(value = "created_at")
-    val createdAt: kotlin.String,
-
-    /* What the person asked, which is the first item of every response. */
-    @SerialName(value = "said")
-    val said: kotlin.String? = null,
-
     @SerialName(value = "error")
     val error: kotlin.String? = null,
 
     @SerialName(value = "finished_at")
-    val finishedAt: kotlin.String? = null
+    val finishedAt: kotlin.String? = null,
+
+    /* What the person asked, which is the first item of every response. */
+    @SerialName(value = "said")
+    val said: kotlin.String? = null
 
 ) {
 

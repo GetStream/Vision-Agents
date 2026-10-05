@@ -4,7 +4,7 @@ require_relative "test_helper"
 
 class TestRouter < LocalRouterTest
   def router(config = "healthcare", **options)
-    VA::Router.new(config, client: client, **options)
+    client.router(config, **options)
   end
 
   def test_search_carries_the_config_and_the_labels
@@ -33,14 +33,14 @@ class TestRouter < LocalRouterTest
       peer.send_frame(type: "closed")
     end
 
-    frames = router.stt.realtime(languages: ["en"]) do |stt|
+    frames = router.stt.realtime(languages: ["en"], eager_end_of_turn: true) do |stt|
       assert_equal "deepgram", stt.provider
       stt.send_audio("\x01\x02".b)
       stt.to_a
     end
 
-    assert_equal({ "type" => "start", "stt" => { "languages" => ["en"] }, "sample_rate" => 16_000,
-                   "config_id" => "healthcare" }, heard.pop)
+    assert_equal({ "type" => "start", "stt" => { "languages" => ["en"], "eager_end_of_turn" => true },
+                   "sample_rate" => 16_000, "config_id" => "healthcare" }, heard.pop)
     assert_equal "\x01\x02".b, heard.pop
     assert_equal [{ "type" => "transcript", "text" => "hello", "final" => true }], frames
   end

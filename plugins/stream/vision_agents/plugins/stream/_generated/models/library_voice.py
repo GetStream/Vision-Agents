@@ -18,113 +18,113 @@ class LibraryVoice:
     so a field being absent means the vendor did not label it rather than that the voice lacks it.
 
         Attributes:
-            provider (str):
             id (str): What to put in the voice field, in the provider's own terms.
             name (str):
+            provider (str):
+            accent (str | Unset):
             description (str | Unset):
             gender (str | Unset):
-            accent (str | Unset):
             language (str | Unset):
-            tags (list[str] | Unset):
             own (bool | Unset): A voice this account made, rather than one from the public library.
             preview (bool | Unset): Whether the voice can be heard.
+            tags (list[str] | Unset):
     """
 
-    provider: str
     id: str
     name: str
+    provider: str
+    accent: str | Unset = UNSET
     description: str | Unset = UNSET
     gender: str | Unset = UNSET
-    accent: str | Unset = UNSET
     language: str | Unset = UNSET
-    tags: list[str] | Unset = UNSET
     own: bool | Unset = UNSET
     preview: bool | Unset = UNSET
+    tags: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        provider = self.provider
-
         id = self.id
 
         name = self.name
+
+        provider = self.provider
+
+        accent = self.accent
 
         description = self.description
 
         gender = self.gender
 
-        accent = self.accent
-
         language = self.language
-
-        tags: list[str] | Unset = UNSET
-        if not isinstance(self.tags, Unset):
-            tags = self.tags
 
         own = self.own
 
         preview = self.preview
 
+        tags: list[str] | Unset = UNSET
+        if not isinstance(self.tags, Unset):
+            tags = self.tags
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "provider": provider,
                 "id": id,
                 "name": name,
+                "provider": provider,
             }
         )
+        if accent is not UNSET:
+            field_dict["accent"] = accent
         if description is not UNSET:
             field_dict["description"] = description
         if gender is not UNSET:
             field_dict["gender"] = gender
-        if accent is not UNSET:
-            field_dict["accent"] = accent
         if language is not UNSET:
             field_dict["language"] = language
-        if tags is not UNSET:
-            field_dict["tags"] = tags
         if own is not UNSET:
             field_dict["own"] = own
         if preview is not UNSET:
             field_dict["preview"] = preview
+        if tags is not UNSET:
+            field_dict["tags"] = tags
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        provider = d.pop("provider")
-
         id = d.pop("id")
 
         name = d.pop("name")
+
+        provider = d.pop("provider")
+
+        accent = d.pop("accent", UNSET)
 
         description = d.pop("description", UNSET)
 
         gender = d.pop("gender", UNSET)
 
-        accent = d.pop("accent", UNSET)
-
         language = d.pop("language", UNSET)
-
-        tags = cast(list[str], d.pop("tags", UNSET))
 
         own = d.pop("own", UNSET)
 
         preview = d.pop("preview", UNSET)
 
+        tags = cast(list[str], d.pop("tags", UNSET))
+
         library_voice = cls(
-            provider=provider,
             id=id,
             name=name,
+            provider=provider,
+            accent=accent,
             description=description,
             gender=gender,
-            accent=accent,
             language=language,
-            tags=tags,
             own=own,
             preview=preview,
+            tags=tags,
         )
 
         library_voice.additional_properties = d

@@ -285,9 +285,3 @@ Reject it if it:
 - hand-edits generated code, or adds a client method for an `x-server-side-only` operation;
 - adds a theme object, a `NavigationStack`, or an asset-name string to `ui`;
 - asserts that a method was called.
-
-## Pending: cursor pagination
-
-Go has moved; this SDK still needs to. `listSessions`, `searchSessions`, `listResponses` and
-`listResponseItems` take `cursor` instead of `offset` and return `{items, has_more,
-next_cursor}` instead of an array. See the `pagination` skill and `sdks/go/client`.

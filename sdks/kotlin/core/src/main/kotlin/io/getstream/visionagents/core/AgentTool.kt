@@ -1,5 +1,6 @@
 package io.getstream.visionagents.core
 
+import io.getstream.visionagents.core.generated.SessionTool
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
@@ -21,12 +22,43 @@ public class AgentTool(
     public val description: String,
     /** A JSON Schema object describing the arguments, or null for a tool that takes none. */
     public val parameters: JsonObject? = null,
+    /** Who runs it, as the conversation shows it. Null leaves the router's default, [Executor.Server]. */
+    public val executor: Executor? = null,
+    /**
+     * What a call is doing, in words for the people in the conversation, such as "Checking your
+     * location". At most 80 characters, shown on the reply's tool call attachment.
+     */
+    public val displayTitle: String? = null,
     /**
      * Runs the tool. What it returns is given to the model as the result; throwing tells the
      * model the tool failed and why. It is cancelled when the router gives up on the call.
      */
     public val run: suspend (arguments: JsonObject) -> String,
 ) {
+    /** Who runs a tool. Either way, this session answers it over its socket. */
+    public enum class Executor {
+        Server,
+        /**
+         * A person's device: in a conversation kept in Stream Chat the call is shown as waiting
+         * on the device of the person whose message it answers, arguments included, which
+         * everybody in the channel can read.
+         */
+        Client,
+    }
+
+    internal val schema: SessionTool
+        get() = SessionTool(
+            name = name,
+            description = description,
+            parameters = parameters,
+            executor = when (executor) {
+                Executor.Server -> SessionTool.Executor.SessionToolExecutorServer
+                Executor.Client -> SessionTool.Executor.SessionToolExecutorClient
+                null -> null
+            },
+            displayTitle = displayTitle,
+        )
+
     public companion object {
         /**
          * A JSON Schema object for a tool whose arguments are all strings.

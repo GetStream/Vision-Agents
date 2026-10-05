@@ -37,7 +37,7 @@ public sealed class LiveTests : IAsyncLifetime
         {
             try
             {
-                await _client.DeleteAsync($"/v1/agents/sessions/{id}");
+                await _client.Sessions.DeleteAsync(id);
             }
             catch (RouterException)
             {
@@ -82,7 +82,7 @@ public sealed class LiveTests : IAsyncLifetime
             await AnsweredAsync(session);
         }
 
-        var kept = (await session.Responses.ListAsync(cancellationToken: Cancel))[0];
+        var kept = (await session.Responses.ListAsync(cancellationToken: Cancel)).Items[0];
         var forked = Remember(await session.ForkAsync(new ForkOptions { ResponseId = kept.Id }, Cancel));
         Assert.Equal(session.Id, forked.Created.ForkedFrom);
     }
@@ -108,9 +108,9 @@ public sealed class LiveTests : IAsyncLifetime
         await session.CloseAsync(Cancel);
 
         var found = await EventuallyAsync(() => _client.Sessions.SearchAsync(title, new SessionQuery { Limit = 50 }, Cancel),
-            found => found.Exists(each => each.Id == session.Id));
+            found => found.Items.Exists(each => each.Id == session.Id));
 
-        Assert.Contains(found, each => each.Id == session.Id);
+        Assert.Contains(found.Items, each => each.Id == session.Id);
     }
 
     [Fact]

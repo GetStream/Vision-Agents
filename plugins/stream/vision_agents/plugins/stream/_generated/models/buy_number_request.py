@@ -20,25 +20,24 @@ T = TypeVar("T", bound="BuyNumberRequest")
 class BuyNumberRequest:
     """
     Attributes:
-        vendor (str):  Example: twilio.
         e164 (str):  Example: +15125551234.
+        vendor (str):  Example: twilio.
         country (str | Unset): The country the number was offered from, as the search reported it. Most vendors buy by
             number alone; the few that buy out of a country's inventory need this, and it cannot be guessed back out of the
-            number.
-             Example: US.
+            number. Example: US.
         tags (BuyNumberRequestTags | Unset): Cost labels carried onto the purchase's request row.
     """
 
-    vendor: str
     e164: str
+    vendor: str
     country: str | Unset = UNSET
     tags: BuyNumberRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        vendor = self.vendor
-
         e164 = self.e164
+
+        vendor = self.vendor
 
         country = self.country
 
@@ -50,8 +49,8 @@ class BuyNumberRequest:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "vendor": vendor,
                 "e164": e164,
+                "vendor": vendor,
             }
         )
         if country is not UNSET:
@@ -68,9 +67,9 @@ class BuyNumberRequest:
         )
 
         d = dict(src_dict)
-        vendor = d.pop("vendor")
-
         e164 = d.pop("e164")
+
+        vendor = d.pop("vendor")
 
         country = d.pop("country", UNSET)
 
@@ -82,8 +81,8 @@ class BuyNumberRequest:
             tags = BuyNumberRequestTags.from_dict(_tags)
 
         buy_number_request = cls(
-            vendor=vendor,
             e164=e164,
+            vendor=vendor,
             country=country,
             tags=tags,
         )

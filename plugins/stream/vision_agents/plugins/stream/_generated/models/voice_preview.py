@@ -14,30 +14,30 @@ T = TypeVar("T", bound="VoicePreview")
 class VoicePreview:
     """
     Attributes:
-        provider (str):
-        content_type (str):  Example: audio/mpeg.
         audio (str): The spoken line, base64 encoded.
+        content_type (str):  Example: audio/mpeg.
+        provider (str):
     """
 
-    provider: str
-    content_type: str
     audio: str
+    content_type: str
+    provider: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        provider = self.provider
+        audio = self.audio
 
         content_type = self.content_type
 
-        audio = self.audio
+        provider = self.provider
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "provider": provider,
-                "content_type": content_type,
                 "audio": audio,
+                "content_type": content_type,
+                "provider": provider,
             }
         )
 
@@ -46,16 +46,16 @@ class VoicePreview:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        provider = d.pop("provider")
+        audio = d.pop("audio")
 
         content_type = d.pop("content_type")
 
-        audio = d.pop("audio")
+        provider = d.pop("provider")
 
         voice_preview = cls(
-            provider=provider,
-            content_type=content_type,
             audio=audio,
+            content_type=content_type,
+            provider=provider,
         )
 
         voice_preview.additional_properties = d

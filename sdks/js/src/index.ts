@@ -44,7 +44,6 @@ export { SimulationRuns, Simulations, type SimulationRunQuery } from "./simulati
 
 export {
   Sessions,
-  timestamp,
   type CreateSessionOptions,
   type SessionQuery,
   type SessionSpec,

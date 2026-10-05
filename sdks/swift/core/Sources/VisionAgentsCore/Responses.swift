@@ -9,20 +9,38 @@ public struct Responses: Sendable {
     public let sessionID: String
 
     private let backend: Backend
+    /// A conversation kept in Stream Chat, whose every question is a command the router can
+    /// tell apart from a retry.
+    private let kept: Bool
+    /// Shows what was asked in the transcript of the `AgentSession` asking it, since a
+    /// conversation in writing is never heard back.
+    private let asked: (@MainActor @Sendable (String) -> Void)?
 
-    init(backend: Backend, sessionID: String) {
+    init(
+        backend: Backend, sessionID: String, kept: Bool = false,
+        asked: (@MainActor @Sendable (String) -> Void)? = nil
+    ) {
         self.backend = backend
         self.sessionID = sessionID
+        self.kept = kept
+        self.asked = asked
     }
 
     /// Asks the agent something and names the turn it answers as.
     ///
     /// It returns as soon as the agent has started answering rather than when it has finished,
     /// so the result is a handle on an answer in progress: `items(responseID:)` reads what has
-    /// been written down so far.
-    public func create(_ text: String, images: [ImageSource] = []) async throws -> Response {
+    /// been written down so far. `commandID` names the question so a retry with the same id and
+    /// text starts no second turn; a conversation kept in Stream Chat gets a fresh one when
+    /// none is given.
+    public func create(
+        _ text: String, images: [ImageSource] = [], commandID: String? = nil
+    ) async throws -> Response {
+        // A command carries text only, so a question with images goes without one.
+        let commandID = commandID ?? (kept && images.isEmpty ? UUID().uuidString : nil)
         let body = Components.Schemas.CreateResponseRequest(
-            text: text, images: images.isEmpty ? nil : images.map(\.schema))
+            commandId: commandID, images: images.isEmpty ? nil : images.map(\.schema), text: text)
+        await asked?(text)
         let output = try await backend.call {
             try await $0.createResponse(path: .init(id: sessionID), body: .json(body))
         }
@@ -44,18 +62,23 @@ public struct Responses: Sendable {
         }
     }
 
-    /// The turns so far, oldest first.
+    /// One page of the turns so far, oldest first.
     ///
     /// A session that records nothing has none, and one rewound has none after the response
-    /// it went back to.
-    public func list(limit: Int? = nil, offset: Int? = nil) async throws -> [Response] {
+    /// it went back to. Pass the page's `nextCursor` as `cursor` for the next one.
+    public func list(limit: Int? = nil, cursor: String? = nil) async throws -> Page<Response> {
         let output = try await backend.call {
             try await $0.listResponses(
-                path: .init(id: sessionID), query: .init(limit: limit, offset: offset))
+                path: .init(id: sessionID), query: .init(limit: limit, cursor: cursor))
         }
         switch output {
         case .ok(let response):
-            return try response.body.json.map(Response.init)
+            let page = try response.body.json
+            return Page(
+                items: page.items.map(Response.init), hasMore: page.hasMore,
+                nextCursor: page.nextCursor)
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
         case .unauthorized(let response):
             throw AgentsError.http(status: 401, message: try response.body.json.error)
         case .forbidden(let response):
@@ -72,16 +95,21 @@ public struct Responses: Sendable {
     /// Every turn in the session, or only `responseID`'s. Nothing comes back for an incognito
     /// session, which has none to return.
     public func items(
-        responseID: String? = nil, limit: Int? = nil, offset: Int? = nil
-    ) async throws -> [ResponseItem] {
+        responseID: String? = nil, limit: Int? = nil, cursor: String? = nil
+    ) async throws -> Page<ResponseItem> {
         let output = try await backend.call {
             try await $0.listResponseItems(
                 path: .init(id: sessionID),
-                query: .init(responseId: responseID, limit: limit, offset: offset))
+                query: .init(responseId: responseID, limit: limit, cursor: cursor))
         }
         switch output {
         case .ok(let response):
-            return try response.body.json.map(ResponseItem.init)
+            let page = try response.body.json
+            return Page(
+                items: page.items.map(ResponseItem.init), hasMore: page.hasMore,
+                nextCursor: page.nextCursor)
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
         case .unauthorized(let response):
             throw AgentsError.http(status: 401, message: try response.body.json.error)
         case .forbidden(let response):

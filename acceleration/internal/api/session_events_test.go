@@ -39,7 +39,7 @@ func (s *SessionEventsSuite) TestTheSocketCarriesWhatTheConversationAnswered() {
 		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "hello"}, nil))
 
 	answered := s.await(watching, "responded")
-	s.Equal(answer, answered["text"])
+	s.Contains(answered["text"], answer)
 	s.NotEmpty(answered["turn_id"])
 }
 

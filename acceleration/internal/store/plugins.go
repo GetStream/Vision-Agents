@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-// UpsertPluginConnection writes a pending or connected login for one plugin on one config.
-// A second authorize of the same plugin replaces the previous attempt rather than leaving
-// two pending rows.
+// UpsertPluginConnection writes a pending or connected login for one plugin on one config,
+// the app's own or, with a UserID, one end user's. A second authorize of the same plugin by
+// the same owner replaces the previous attempt rather than leaving two pending rows.
 func (s *Store) UpsertPluginConnection(ctx context.Context, conn *PluginConnection) error {
 	if conn.CustomerID == "" || conn.ConfigID == "" || conn.PluginID == "" {
 		return errors.New("store: a customer, a config and a plugin are required")
@@ -24,7 +24,7 @@ func (s *Store) UpsertPluginConnection(ctx context.Context, conn *PluginConnecti
 		conn.Status = PluginPending
 	}
 
-	existing, err := s.pluginConnection(ctx, conn.CustomerID, conn.ConfigID, conn.PluginID)
+	existing, err := s.pluginConnection(ctx, conn.CustomerID, conn.ConfigID, conn.UserID, conn.PluginID)
 	if err == nil {
 		conn.ID = existing.ID
 		conn.CreatedAt = existing.CreatedAt
@@ -72,7 +72,8 @@ func (s *Store) PluginConnectionByState(ctx context.Context, state string) (Plug
 	return conn, nil
 }
 
-// PluginConnections returns every login one config holds, newest first.
+// PluginConnections returns every login the app holds on one config, newest first. An end
+// user's own logins are not among them: every session of the config would use them.
 func (s *Store) PluginConnections(ctx context.Context, customerID, configID string) ([]PluginConnection, error) {
 	if customerID == "" || configID == "" {
 		return nil, errors.New("store: a customer and a config are required")
@@ -82,6 +83,7 @@ func (s *Store) PluginConnections(ctx context.Context, customerID, configID stri
 	err := s.db.NewSelect().Model(&conns).
 		Where("customer_id = ?", customerID).
 		Where("config_id = ?", configID).
+		Where("user_id = ''").
 		Where("deleted_at IS NULL").
 		Order("created_at DESC").
 		Scan(ctx)
@@ -104,6 +106,14 @@ func (s *Store) ConnectedPlugins(ctx context.Context, customerID, configID strin
 		}
 	}
 	return ready, nil
+}
+
+// UserPluginConnection is the login one end user made to one plugin on one config.
+func (s *Store) UserPluginConnection(ctx context.Context, customerID, configID, userID, pluginID string) (PluginConnection, error) {
+	if customerID == "" || configID == "" || userID == "" || pluginID == "" {
+		return PluginConnection{}, errors.New("store: a customer, a config, a user and a plugin are required")
+	}
+	return s.pluginConnection(ctx, customerID, configID, userID, pluginID)
 }
 
 // SavePluginConnection writes tokens and status after the callback, or after a refresh.
@@ -131,7 +141,7 @@ func (s *Store) SavePluginConnection(ctx context.Context, conn *PluginConnection
 	return nil
 }
 
-// DeletePluginConnection marks a login as gone.
+// DeletePluginConnection marks the app's login as gone.
 func (s *Store) DeletePluginConnection(ctx context.Context, customerID, configID, pluginID string) error {
 	if customerID == "" || configID == "" || pluginID == "" {
 		return errors.New("store: a customer, a config and a plugin are required")
@@ -146,6 +156,7 @@ func (s *Store) DeletePluginConnection(ctx context.Context, customerID, configID
 		Where("customer_id = ?", customerID).
 		Where("config_id = ?", configID).
 		Where("plugin_id = ?", pluginID).
+		Where("user_id = ''").
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
@@ -192,11 +203,12 @@ func (s *Store) RemoveConfigPlugin(ctx context.Context, customerID, configID, pl
 	return s.UpdateAgentConfig(ctx, &config)
 }
 
-func (s *Store) pluginConnection(ctx context.Context, customerID, configID, pluginID string) (PluginConnection, error) {
+func (s *Store) pluginConnection(ctx context.Context, customerID, configID, userID, pluginID string) (PluginConnection, error) {
 	var conn PluginConnection
 	err := s.db.NewSelect().Model(&conn).
 		Where("customer_id = ?", customerID).
 		Where("config_id = ?", configID).
+		Where("user_id = ?", userID).
 		Where("plugin_id = ?", pluginID).
 		Where("deleted_at IS NULL").
 		Limit(1).

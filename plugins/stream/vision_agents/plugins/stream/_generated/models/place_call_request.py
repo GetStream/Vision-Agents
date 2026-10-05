@@ -27,15 +27,15 @@ class PlaceCallRequest:
         call_id (str | Unset): The Stream call the answered leg joins, and so the one the agent has to be in. Omit to
             have one named after this call, since two calls from the same number are two conversations.
         call_type (str | Unset): The Stream call type. Omit for "agent".
-        ring_timeout_seconds (int | Unset): How long to ring before giving up. Omit to leave the vendor's default, which
-            is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than
-            ringing for its own default.
-        initial_digits (str | Unset): Digits pressed once the person answers, for reaching an extension behind a menu,
-            e.g. "ww1234#". w is a short pause and W a long one.
         custom (PlaceCallRequestCustom | Unset): Put on the Stream call, where the agent in it can read it. It is set at
             Stream rather than at the vendor, so every vendor can carry it.
         headers (PlaceCallRequestHeaders | Unset): Carried to the person's leg as custom SIP headers. Only some vendors
             can express these, and one that cannot refuses the call.
+        initial_digits (str | Unset): Digits pressed once the person answers, for reaching an extension behind a menu,
+            e.g. "ww1234#". w is a short pause and W a long one.
+        ring_timeout_seconds (int | Unset): How long to ring before giving up. Omit to leave the vendor's default, which
+            is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than
+            ringing for its own default.
         tags (PlaceCallRequestTags | Unset):
     """
 
@@ -43,10 +43,10 @@ class PlaceCallRequest:
     to: str
     call_id: str | Unset = UNSET
     call_type: str | Unset = UNSET
-    ring_timeout_seconds: int | Unset = UNSET
-    initial_digits: str | Unset = UNSET
     custom: PlaceCallRequestCustom | Unset = UNSET
     headers: PlaceCallRequestHeaders | Unset = UNSET
+    initial_digits: str | Unset = UNSET
+    ring_timeout_seconds: int | Unset = UNSET
     tags: PlaceCallRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -59,10 +59,6 @@ class PlaceCallRequest:
 
         call_type = self.call_type
 
-        ring_timeout_seconds = self.ring_timeout_seconds
-
-        initial_digits = self.initial_digits
-
         custom: dict[str, Any] | Unset = UNSET
         if not isinstance(self.custom, Unset):
             custom = self.custom.to_dict()
@@ -70,6 +66,10 @@ class PlaceCallRequest:
         headers: dict[str, Any] | Unset = UNSET
         if not isinstance(self.headers, Unset):
             headers = self.headers.to_dict()
+
+        initial_digits = self.initial_digits
+
+        ring_timeout_seconds = self.ring_timeout_seconds
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
@@ -87,14 +87,14 @@ class PlaceCallRequest:
             field_dict["call_id"] = call_id
         if call_type is not UNSET:
             field_dict["call_type"] = call_type
-        if ring_timeout_seconds is not UNSET:
-            field_dict["ring_timeout_seconds"] = ring_timeout_seconds
-        if initial_digits is not UNSET:
-            field_dict["initial_digits"] = initial_digits
         if custom is not UNSET:
             field_dict["custom"] = custom
         if headers is not UNSET:
             field_dict["headers"] = headers
+        if initial_digits is not UNSET:
+            field_dict["initial_digits"] = initial_digits
+        if ring_timeout_seconds is not UNSET:
+            field_dict["ring_timeout_seconds"] = ring_timeout_seconds
         if tags is not UNSET:
             field_dict["tags"] = tags
 
@@ -121,10 +121,6 @@ class PlaceCallRequest:
 
         call_type = d.pop("call_type", UNSET)
 
-        ring_timeout_seconds = d.pop("ring_timeout_seconds", UNSET)
-
-        initial_digits = d.pop("initial_digits", UNSET)
-
         _custom = d.pop("custom", UNSET)
         custom: PlaceCallRequestCustom | Unset
         if isinstance(_custom, Unset):
@@ -139,6 +135,10 @@ class PlaceCallRequest:
         else:
             headers = PlaceCallRequestHeaders.from_dict(_headers)
 
+        initial_digits = d.pop("initial_digits", UNSET)
+
+        ring_timeout_seconds = d.pop("ring_timeout_seconds", UNSET)
+
         _tags = d.pop("tags", UNSET)
         tags: PlaceCallRequestTags | Unset
         if isinstance(_tags, Unset):
@@ -151,10 +151,10 @@ class PlaceCallRequest:
             to=to,
             call_id=call_id,
             call_type=call_type,
-            ring_timeout_seconds=ring_timeout_seconds,
-            initial_digits=initial_digits,
             custom=custom,
             headers=headers,
+            initial_digits=initial_digits,
+            ring_timeout_seconds=ring_timeout_seconds,
             tags=tags,
         )
 

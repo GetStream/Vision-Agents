@@ -11,19 +11,19 @@ use GetStream\VisionAgents\Json;
 final readonly class TagStatsBucket
 {
     public function __construct(
-        public string $tagKey,
-        public string $tagValue,
-        public \DateTimeImmutable $bucket,
         public int $audioMsTotal,
-        public int $charactersTotal,
-        public int $inputTokensTotal,
+        public \DateTimeImmutable $bucket,
         public int $cachedInputTokensTotal,
-        public int $outputTokensTotal,
-        public int $imagesTotal,
+        public int $charactersTotal,
         // Millionths of a dollar, priced from the configured rates.
         public int $costMicrosTotal,
-        public int $requestCount,
         public int $errorCount,
+        public int $imagesTotal,
+        public int $inputTokensTotal,
+        public int $outputTokensTotal,
+        public int $requestCount,
+        public string $tagKey,
+        public string $tagValue,
         public ?float $latencyP50Ms = null,
         public ?float $latencyP95Ms = null,
         public ?float $uptime = null,
@@ -36,18 +36,18 @@ final readonly class TagStatsBucket
     public static function fromArray(array $data): self
     {
         return new self(
+            audioMsTotal: Json::int($data, 'audio_ms_total'),
+            bucket: Json::date($data, 'bucket'),
+            cachedInputTokensTotal: Json::int($data, 'cached_input_tokens_total'),
+            charactersTotal: Json::int($data, 'characters_total'),
+            costMicrosTotal: Json::int($data, 'cost_micros_total'),
+            errorCount: Json::int($data, 'error_count'),
+            imagesTotal: Json::int($data, 'images_total'),
+            inputTokensTotal: Json::int($data, 'input_tokens_total'),
+            outputTokensTotal: Json::int($data, 'output_tokens_total'),
+            requestCount: Json::int($data, 'request_count'),
             tagKey: Json::string($data, 'tag_key'),
             tagValue: Json::string($data, 'tag_value'),
-            bucket: Json::date($data, 'bucket'),
-            audioMsTotal: Json::int($data, 'audio_ms_total'),
-            charactersTotal: Json::int($data, 'characters_total'),
-            inputTokensTotal: Json::int($data, 'input_tokens_total'),
-            cachedInputTokensTotal: Json::int($data, 'cached_input_tokens_total'),
-            outputTokensTotal: Json::int($data, 'output_tokens_total'),
-            imagesTotal: Json::int($data, 'images_total'),
-            costMicrosTotal: Json::int($data, 'cost_micros_total'),
-            requestCount: Json::int($data, 'request_count'),
-            errorCount: Json::int($data, 'error_count'),
             latencyP50Ms: array_key_exists('latency_p50_ms', $data) && $data['latency_p50_ms'] !== null ? Json::float($data, 'latency_p50_ms') : null,
             latencyP95Ms: array_key_exists('latency_p95_ms', $data) && $data['latency_p95_ms'] !== null ? Json::float($data, 'latency_p95_ms') : null,
             uptime: array_key_exists('uptime', $data) && $data['uptime'] !== null ? Json::float($data, 'uptime') : null,
@@ -62,18 +62,18 @@ final readonly class TagStatsBucket
     public function toArray(): array
     {
         $out = [];
+        $out['audio_ms_total'] = $this->audioMsTotal;
+        $out['bucket'] = Json::dateValue($this->bucket);
+        $out['cached_input_tokens_total'] = $this->cachedInputTokensTotal;
+        $out['characters_total'] = $this->charactersTotal;
+        $out['cost_micros_total'] = $this->costMicrosTotal;
+        $out['error_count'] = $this->errorCount;
+        $out['images_total'] = $this->imagesTotal;
+        $out['input_tokens_total'] = $this->inputTokensTotal;
+        $out['output_tokens_total'] = $this->outputTokensTotal;
+        $out['request_count'] = $this->requestCount;
         $out['tag_key'] = $this->tagKey;
         $out['tag_value'] = $this->tagValue;
-        $out['bucket'] = Json::dateValue($this->bucket);
-        $out['audio_ms_total'] = $this->audioMsTotal;
-        $out['characters_total'] = $this->charactersTotal;
-        $out['input_tokens_total'] = $this->inputTokensTotal;
-        $out['cached_input_tokens_total'] = $this->cachedInputTokensTotal;
-        $out['output_tokens_total'] = $this->outputTokensTotal;
-        $out['images_total'] = $this->imagesTotal;
-        $out['cost_micros_total'] = $this->costMicrosTotal;
-        $out['request_count'] = $this->requestCount;
-        $out['error_count'] = $this->errorCount;
         if ($this->latencyP50Ms !== null) {
             $out['latency_p50_ms'] = $this->latencyP50Ms;
         }

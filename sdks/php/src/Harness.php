@@ -4,31 +4,28 @@ declare(strict_types=1);
 
 namespace GetStream\VisionAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\VisionAgents\Generated\Harness as HarnessName;
 
 /**
  * What stands between what a caller said and the model that answers them.
  *
- * The loop runs in the backend, so this is configuration rather than behaviour: it is written
- * into the session and the decisions are taken there.
+ * The loop runs in the backend and is part of the agent's stored config, never of a session:
+ * `Agent::sync` writes it, and every session opened under that config runs it.
  */
 final readonly class Harness
 {
     /**
-     * @param ?bool $useSkills offer the backend's built-in skills; false turns delegation off
+     * @param HarnessName|string $name which harness the backend runs; empty is `default`, the
+     *     only one there is
      * @param string $subagent the model delegated work runs on
-     * @param list<Skill> $skills skills of your own, replacing the built-in set
-     * @param ?int $tasks how much delegated work may run at once
+     * @param list<Skill> $skills skills of your own, stored on the config in place of the
+     *     built-in set
      */
     public function __construct(
-        public ?bool $useSkills = null,
+        public HarnessName|string $name = '',
         public string $subagent = '',
         public array $skills = [],
-        public ?int $tasks = null,
     ) {
-        if ($tasks !== null && $tasks < 0) {
-            throw new ConfigurationException('tasks cannot be negative');
-        }
     }
 
     /**
@@ -36,6 +33,6 @@ final readonly class Harness
      */
     public function withSkills(array $skills): self
     {
-        return new self($this->useSkills ?? true, $this->subagent, $skills, $this->tasks);
+        return new self($this->name, $this->subagent, $skills);
     }
 }

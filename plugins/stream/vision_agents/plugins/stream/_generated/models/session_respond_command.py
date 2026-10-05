@@ -21,23 +21,23 @@ T = TypeVar("T", bound="SessionRespondCommand")
 class SessionRespondCommand:
     """
     Attributes:
-        type_ (SessionRespondCommandType):
         text (str):
+        type_ (SessionRespondCommandType):
         command_id (str | Unset): Required for personal persistent text conversations; reuse on retries. Text only when
             present.
         images (list[ImageSource] | Unset):
     """
 
-    type_: SessionRespondCommandType
     text: str
+    type_: SessionRespondCommandType
     command_id: str | Unset = UNSET
     images: list[ImageSource] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        type_ = self.type_.value
-
         text = self.text
+
+        type_ = self.type_.value
 
         command_id = self.command_id
 
@@ -52,8 +52,8 @@ class SessionRespondCommand:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "type": type_,
                 "text": text,
+                "type": type_,
             }
         )
         if command_id is not UNSET:
@@ -68,9 +68,9 @@ class SessionRespondCommand:
         from ..models.image_source import ImageSource
 
         d = dict(src_dict)
-        type_ = SessionRespondCommandType(d.pop("type"))
-
         text = d.pop("text")
+
+        type_ = SessionRespondCommandType(d.pop("type"))
 
         command_id = d.pop("command_id", UNSET)
 
@@ -84,8 +84,8 @@ class SessionRespondCommand:
                 images.append(images_item)
 
         session_respond_command = cls(
-            type_=type_,
             text=text,
+            type_=type_,
             command_id=command_id,
             images=images,
         )

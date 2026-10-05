@@ -78,21 +78,26 @@ void main() {
 
       final session = await agents.sessions.create(
         const SessionOptions(
+          id: '0199a3f2-7c1e-7d4a-9b2e-5f6a7b8c9d0e',
           agent: 'docs',
           title: 'Billing',
+          projectId: 'Health',
           modelOverwrites: ModelOverwrites(thinking: Thinking.high),
         ),
       );
 
       expect(router.last('POST /v1/agents/sessions').json, {
+        'id': '0199a3f2-7c1e-7d4a-9b2e-5f6a7b8c9d0e',
         'text': true,
         'agent': 'docs',
         'title': 'Billing',
+        'project_id': 'Health',
         'model_overwrites': {'thinking': 'high'},
       });
       expect(session.id, 's1');
       expect(session.isText, isTrue);
       expect(session.mode, SessionMode.text);
+      expect(session.modality, SessionModality.text);
       expect(session.createdAt, DateTime.utc(2026, 9, 24, 15, 54, 56, 38, 55));
     });
 
@@ -117,6 +122,8 @@ void main() {
               name: 'lookup_order',
               description: 'Look up an order.',
               parameters: AgentTool.strings({'order_id': 'the number'}, required: ['order_id']),
+              displayTitle: 'Looking up your order',
+              executor: ToolExecutor.client,
               run: (_) async => '',
             ),
           ],
@@ -127,6 +134,8 @@ void main() {
         {
           'name': 'lookup_order',
           'description': 'Look up an order.',
+          'display_title': 'Looking up your order',
+          'executor': 'client',
           'parameters': {
             'type': 'object',
             'properties': {
@@ -138,30 +147,45 @@ void main() {
       ]);
     });
 
-    test("an agent's sessions are opened against it and listed by it", () async {
+    test("an agent's sessions are opened against it and queried by it, a page at a time", () async {
       router
         ..answer('POST /v1/agents/sessions', Answer(201, sessionJson()))
-        ..answer('GET /v1/agents/sessions', Answer(200, [sessionJson()]));
+        ..answer(
+          'POST /v1/agents/sessions/query',
+          Answer(200, pageJson([sessionJson()], nextCursor: 'c2')),
+        );
       final docs = agents.agent('docs');
 
       await docs.sessions.create();
-      await docs.sessions.query(
-        SessionQuery(
-          state: SessionFilter.closed,
-          custom: {'tenant': 'acme'},
-          createdAfter: DateTime.utc(2026, 9, 1),
+      final page = await docs.sessions.query(
+        const SessionQuery(
+          agentId: 'a1',
+          modality: SessionModality.voice,
+          state: SessionState.ended,
           limit: 10,
+          cursor: 'c1',
         ),
       );
 
       expect(router.last('POST /v1/agents/sessions').json, {'text': true, 'agent': 'docs'});
-      expect(router.last('GET /v1/agents/sessions').query, {
-        'agent': 'docs',
-        'state': 'closed',
-        'custom': '{"tenant":"acme"}',
-        'created_after': '2026-09-01T00:00:00.000Z',
-        'limit': '10',
+      expect(router.last('POST /v1/agents/sessions/query').json, {
+        'filter': {'agent': 'docs', 'agent_id': 'a1', 'modality': 'voice', 'state': 'ended'},
+        'limit': 10,
+        'cursor': 'c1',
       });
+      expect(page.items.single.id, 's1');
+      expect(page.hasMore, isTrue);
+      expect(page.nextCursor, 'c2');
+    });
+
+    test('a query with nothing to narrow it sends no filter', () async {
+      router.answer('POST /v1/agents/sessions/query', Answer(200, pageJson([])));
+
+      final page = await agents.sessions.search('');
+
+      expect(router.last('POST /v1/agents/sessions/query').json, <String, Object?>{});
+      expect(page.items, isEmpty);
+      expect(page.nextCursor, isNull);
     });
 
     test('naming a config by id does not also send the agent it is scoped to', () async {
@@ -173,24 +197,59 @@ void main() {
     });
 
     test('searches by the words a conversation was titled with', () async {
-      router.answer('GET /v1/agents/sessions/search', Answer(200, [sessionJson(id: 's2')]));
+      router.answer(
+        'POST /v1/agents/sessions/query',
+        Answer(200, pageJson([sessionJson(id: 's2')])),
+      );
 
       final found = await agents.sessions.search(
         "o'brien billing",
-        const SessionQuery(project: 'Health'),
+        const SessionQuery(state: SessionState.live),
       );
 
-      expect(found.single.id, 's2');
-      expect(router.last('GET /v1/agents/sessions/search').query, {
-        'q': "o'brien billing",
-        'project': 'Health',
+      expect(found.items.single.id, 's2');
+      expect(router.last('POST /v1/agents/sessions/query').json, {
+        'filter': {
+          'state': 'live',
+          'text': {r'$q': "o'brien billing"},
+        },
       });
+    });
+
+    test('stopping keeps the conversation and deleting takes it away', () async {
+      router
+        ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+        ..answer('DELETE /v1/agents/sessions/s1', const Answer(204));
+
+      await agents.sessions.stop('s1');
+      await agents.sessions.delete('s1');
+
+      expect(router.arrived.map((request) => '${request.method} ${request.path}'), [
+        'POST /v1/agents/sessions/s1/stop',
+        'DELETE /v1/agents/sessions/s1',
+      ]);
+    });
+
+    test('renames a conversation, sending only what changes, and reads back the result', () async {
+      router.answer(
+        'PATCH /v1/agents/sessions/s1',
+        Answer(200, {...sessionJson(state: 'ended'), 'title': 'Billing'}),
+      );
+
+      final session = await agents.sessions.update('s1', title: 'Billing', custom: {});
+
+      expect(router.last('PATCH /v1/agents/sessions/s1').json, {
+        'title': 'Billing',
+        'custom': <String, Object?>{},
+      });
+      expect(session.title, 'Billing');
+      expect(session.state, SessionState.ended);
     });
 
     test('encodes a session id into the path rather than trusting it', () async {
       router.answer('DELETE /v1/agents/sessions/a%2Fb', const Answer(204));
 
-      await agents.sessions.close('a/b');
+      await agents.sessions.delete('a/b');
 
       expect(router.arrived.single.path, '/v1/agents/sessions/a%2Fb');
     });
@@ -293,21 +352,42 @@ void main() {
       });
     });
 
-    test('lists the turns, oldest first, with their finish times', () async {
+    test('names a question with the command id it was given', () async {
       router.answer(
-        'GET /v1/agents/sessions/s1/responses',
-        Answer(200, [responseJson('r1'), responseJson('r2', status: 'cancelled')]),
+        'POST /v1/agents/sessions/s1/responses',
+        Answer(202, responseJson('r1', status: 'running')),
       );
 
-      final turns = await agents.sessions.responses('s1').list(limit: 5);
+      await agents.sessions.responses('s1').create('Hello', commandId: 'cmd-1');
 
-      expect(turns.map((turn) => turn.id), ['r1', 'r2']);
-      expect(turns.last.status, ResponseStatus.cancelled);
-      expect(turns.first.finishedAt, DateTime.utc(2026, 9, 24, 15, 54, 57, 500));
-      expect(router.last('GET /v1/agents/sessions/s1/responses').query, {'limit': '5'});
+      expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
+        'command_id': 'cmd-1',
+        'text': 'Hello',
+      });
     });
 
-    test('unwinds every item a page at a time, stopping at a short page', () async {
+    test('lists a page of turns, oldest first, with their finish times', () async {
+      router.answer(
+        'GET /v1/agents/sessions/s1/responses',
+        Answer(
+          200,
+          pageJson([responseJson('r1'), responseJson('r2', status: 'cancelled')], nextCursor: 'n'),
+        ),
+      );
+
+      final turns = await agents.sessions.responses('s1').list(limit: 5, cursor: 'c');
+
+      expect(turns.items.map((turn) => turn.id), ['r1', 'r2']);
+      expect(turns.items.last.status, ResponseStatus.cancelled);
+      expect(turns.items.first.finishedAt, DateTime.utc(2026, 9, 24, 15, 54, 57, 500));
+      expect(turns.nextCursor, 'n');
+      expect(router.last('GET /v1/agents/sessions/s1/responses').query, {
+        'limit': '5',
+        'cursor': 'c',
+      });
+    });
+
+    test('unwinds every item a page at a time, following the cursor to the last', () async {
       Map<String, Object?> item(int ordinal) => {
         'response_id': 'r1',
         'ordinal': ordinal,
@@ -315,20 +395,21 @@ void main() {
         'tool_name': 'lookup_order',
         'at': '2026-09-24T15:54:56Z',
       };
-      router.answer('GET /v1/agents/sessions/s1/responses/items', Answer(200, [item(0), item(1)]));
+      router.answerInTurn('GET /v1/agents/sessions/s1/responses/items', [
+        Answer(200, pageJson([item(0), item(1)], nextCursor: 'c2')),
+        Answer(200, pageJson([item(2)])),
+      ]);
 
       final items = await agents.sessions
           .responses('s1')
-          .unwind(responseId: 'r1', pageSize: 3)
+          .unwind(responseId: 'r1', pageSize: 2)
           .toList();
 
-      expect(items.map((item) => item.kind), [ItemKind.said, ItemKind.toolCall]);
-      expect(router.arrived, hasLength(1));
-      expect(router.last('GET /v1/agents/sessions/s1/responses/items').query, {
-        'response_id': 'r1',
-        'limit': '3',
-        'offset': '0',
-      });
+      expect(items.map((item) => item.kind), [ItemKind.said, ItemKind.toolCall, ItemKind.toolCall]);
+      expect(router.arrived.map((request) => request.query), [
+        {'response_id': 'r1', 'limit': '2'},
+        {'response_id': 'r1', 'limit': '2', 'cursor': 'c2'},
+      ]);
     });
 
     test('rewinds to a response, which answers nothing', () async {
@@ -416,12 +497,12 @@ void main() {
     test('asks as the guest afterwards', () async {
       router
         ..answer('POST /v1/agents/guests', Answer(201, guest('guest-1')))
-        ..answer('GET /v1/agents/sessions', const Answer(200, []));
+        ..answer('POST /v1/agents/sessions/query', Answer(200, pageJson([])));
 
       final minted = await agents.guestUser();
       await agents.withGuest(minted).sessions.query();
 
-      expect(router.last('GET /v1/agents/sessions').header('X-Stream-User-Id'), 'guest-1');
+      expect(router.last('POST /v1/agents/sessions/query').header('X-Stream-User-Id'), 'guest-1');
     });
   });
 

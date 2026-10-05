@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -172,12 +173,24 @@ type Spec struct {
 	SkillNames []string
 	// Plugins are hosted MCP servers this session may reach, named from the catalog.
 	Plugins []string
+	// UserPlugins are hosted MCP servers the caller reaches with their own account, named
+	// from the catalog. A session with no caller is offered none of them.
+	UserPlugins []string
+	// PluginOptions change how those plugins are reached and what their logins ask for.
+	PluginOptions []store.PluginOptions
+	// MCPServers are MCP servers outside the catalog, opened by their URL with no login.
+	MCPServers []store.MCPServer
+	// ServerInstructions are what those servers said at initialize about using their
+	// tools, added after Instructions. The session fills it in once they are open.
+	ServerInstructions string
 	// KnowledgeNamespace is what the agent may look things up in. Empty means it knows
 	// only what it was told.
 	KnowledgeNamespace string
 	// Sandbox names where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none, and works everything out in its head.
 	Sandbox string
+	// SandboxOptions is how the sandbox is built and how long code may run in it.
+	SandboxOptions sandbox.Config
 	// Tools are what the voice model may do rather than say. These are the caller's own
 	// functions: the session carries the request out to whoever asked for the session
 	// and waits for them to answer it.
@@ -256,10 +269,14 @@ func FromConfig(config store.AgentConfig) Spec {
 		Guardrail:          config.Guardrail,
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
+		UserPlugins:        config.UserPlugins,
+		PluginOptions:      config.PluginOptions,
+		MCPServers:         config.MCPServers,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Sandbox:            config.Sandbox,
+		SandboxOptions:     config.SandboxOptions,
 		Harness:            config.Harness,
 		DispatchText:       config.DispatchText,
 		Tags:               routing.Tags(config.Tags),
@@ -351,6 +368,11 @@ func (s *Spec) Normalize() error {
 	if s.LLMTarget == "" && !s.Native() {
 		s.LLMTarget = defaultLLMTarget
 	}
+	// A text session runs on one model. Nobody is waiting on a voice while it thinks, so
+	// the skills it hands over run on the model holding the conversation.
+	if s.Text {
+		s.SubagentTarget = s.LLMTarget
+	}
 	if s.ControllerTarget == "" && !s.Native() {
 		s.ControllerTarget = defaultControllerTarget
 	}
@@ -439,13 +461,17 @@ func (s Spec) LLMOverwrites() options.LLM {
 // prompt is what the agent is told to be. An agent that placed the call is told how to get
 // through whatever answers, ahead of whatever it was told to do once it has.
 func (s Spec) prompt() string {
-	if !s.Navigating {
-		return s.Instructions
+	var parts []string
+	if s.Navigating {
+		parts = append(parts, agent.NavigatingInstructions)
 	}
-	if s.Instructions == "" {
-		return agent.NavigatingInstructions
+	if s.Instructions != "" {
+		parts = append(parts, s.Instructions)
 	}
-	return agent.NavigatingInstructions + "\n\n" + s.Instructions
+	if s.ServerInstructions != "" {
+		parts = append(parts, s.ServerInstructions)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // duplex is how the agent listens and talks at the same time.

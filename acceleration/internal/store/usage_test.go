@@ -166,7 +166,7 @@ func (s *StoreSuite) TestActivityCountsWhatWasAskedOfTheAgents() {
 }
 
 func (s *StoreSuite) TestAClaimedGuestIsTheSamePersonAsTheUserWhoClaimedThem() {
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{
 		ID: "guest-1", CustomerID: "acme", Name: "Randy", CreatedAt: s.base,
 	}))
 	_, err := s.store.ClaimGuest(s.ctx, "acme", "guest-1", "randy")

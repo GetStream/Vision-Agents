@@ -60,6 +60,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -96,7 +101,7 @@ def sync_detailed(
     turns back the next time it opened; fork it at the response instead.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (RewindSessionRequest):
 
     Raises:
@@ -138,7 +143,7 @@ def sync(
     turns back the next time it opened; fork it at the response instead.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (RewindSessionRequest):
 
     Raises:
@@ -175,7 +180,7 @@ async def asyncio_detailed(
     turns back the next time it opened; fork it at the response instead.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (RewindSessionRequest):
 
     Raises:
@@ -215,7 +220,7 @@ async def asyncio(
     turns back the next time it opened; fork it at the response instead.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (RewindSessionRequest):
 
     Raises:

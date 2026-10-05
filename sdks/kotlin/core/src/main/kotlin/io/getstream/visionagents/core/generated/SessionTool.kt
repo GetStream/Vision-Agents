@@ -36,20 +36,30 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket. 
  *
- * @param name 
  * @param description What the model is told the tool does, which is the whole of how it decides when to reach for one. 
+ * @param name 
+ * @param displayTitle What a call is doing, in words for the people in the conversation, such as \"Checking your location\". Shown on the reply's ai_tool_call attachment. 
+ * @param executor Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server. 
  * @param parameters A JSON Schema object describing the arguments.
  */
 @Serializable
 
 internal data class SessionTool (
 
-    @SerialName(value = "name")
-    val name: kotlin.String,
-
     /* What the model is told the tool does, which is the whole of how it decides when to reach for one.  */
     @SerialName(value = "description")
     val description: kotlin.String,
+
+    @SerialName(value = "name")
+    val name: kotlin.String,
+
+    /* What a call is doing, in words for the people in the conversation, such as \"Checking your location\". Shown on the reply's ai_tool_call attachment.  */
+    @SerialName(value = "display_title")
+    val displayTitle: kotlin.String? = null,
+
+    /* Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.  */
+    @SerialName(value = "executor")
+    val executor: SessionTool.Executor? = null,
 
     /* A JSON Schema object describing the arguments. */
     @Contextual @SerialName(value = "parameters")
@@ -57,6 +67,31 @@ internal data class SessionTool (
 
 ) {
 
+    /**
+     * Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server. 
+     *
+     * Values: SessionToolExecutorServer,SessionToolExecutorClient,unknown_default_open_api
+     */
+    @Serializable(with = ExecutorSerializer::class)
+    internal enum class Executor(val value: kotlin.String) {
+        @SerialName(value = "server") SessionToolExecutorServer("server"),
+        @SerialName(value = "client") SessionToolExecutorClient("client"),
+        @SerialName(value = "unknown_default_open_api") unknown_default_open_api("unknown_default_open_api");
+    }
+
+    internal object ExecutorSerializer : KSerializer<Executor> {
+        override val descriptor = kotlin.String.serializer().descriptor
+
+        override fun deserialize(decoder: Decoder): Executor {
+            val value = decoder.decodeSerializableValue(kotlin.String.serializer())
+            return Executor.entries.firstOrNull { it.value == value }
+                ?: Executor.unknown_default_open_api
+        }
+
+        override fun serialize(encoder: Encoder, value: Executor) {
+            encoder.encodeSerializableValue(kotlin.String.serializer(), value.value)
+        }
+    }
 
 }
 

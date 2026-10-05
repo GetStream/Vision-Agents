@@ -527,9 +527,9 @@ func (s *StoreSuite) TestDeletingSomebodyElsesSessionDeletesNothing() {
 }
 
 func (s *StoreSuite) TestGettingAGuestTwiceIsOneGuest() {
-	guest := &GuestUser{ID: "guest-1", CustomerID: "app", Name: "Guest", CreatedAt: s.base}
+	guest := &User{ID: "guest-1", CustomerID: "app", Name: "Guest", CreatedAt: s.base}
 	s.Require().NoError(s.store.RecordGuest(s.ctx, guest))
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", Name: "Renamed"}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", Name: "Renamed"}))
 
 	found, err := s.store.Guest(s.ctx, "app", "guest-1")
 	s.Require().NoError(err)
@@ -537,7 +537,7 @@ func (s *StoreSuite) TestGettingAGuestTwiceIsOneGuest() {
 }
 
 func (s *StoreSuite) TestClaimingAGuestMovesTheirConversations() {
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
 	s.opened("theirs", "app", s.base, func(session *AgentSession) {
 		session.UserID = "guest-1"
 		session.CallerKind = "guest"
@@ -564,7 +564,7 @@ func (s *StoreSuite) TestClaimingAGuestMovesTheirConversations() {
 }
 
 func (s *StoreSuite) TestAGuestIsClaimedOnce() {
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
 	_, err := s.store.ClaimGuest(s.ctx, "app", "guest-1", "jlahey")
 	s.Require().NoError(err)
 
@@ -582,13 +582,50 @@ func (s *StoreSuite) TestClaimingSomethingThatWasNeverAGuestFails() {
 }
 
 func (s *StoreSuite) TestAGuestCannotBeClaimedByItself() {
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
 	_, err := s.store.ClaimGuest(s.ctx, "app", "guest-1", "guest-1")
 	s.Require().Error(err)
 }
 
 func (s *StoreSuite) TestAGuestOfAnotherAppIsNotClaimable() {
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
 	_, err := s.store.ClaimGuest(s.ctx, "somebody-else", "guest-1", "jlahey")
+	s.Require().Error(err)
+}
+
+func (s *StoreSuite) TestAnAccountIsNobodysToClaim() {
+	// Everybody is recorded now, so a user id being here no longer says anybody may be
+	// handed their conversations. Only a guest may.
+	s.Require().NoError(s.store.RecordUser(s.ctx, &User{
+		ID: "jlahey", CustomerID: "app", Kind: UserKindAuthenticated, CreatedAt: s.base,
+	}))
+
+	_, err := s.store.Guest(s.ctx, "app", "jlahey")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "is not a guest of app")
+
+	_, err = s.store.ClaimGuest(s.ctx, "app", "jlahey", "randy")
+	s.Require().Error(err)
+}
+
+func (s *StoreSuite) TestTheSameUserIdUnderTwoAppsIsTwoPeople() {
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{
+		ID: "jlahey", CustomerID: "app", Name: "Guest", CreatedAt: s.base,
+	}))
+	s.Require().NoError(s.store.RecordUser(s.ctx, &User{
+		ID: "jlahey", CustomerID: "somebody-else", Kind: UserKindAuthenticated, CreatedAt: s.base,
+	}))
+
+	found, err := s.store.Guest(s.ctx, "app", "jlahey")
+	s.Require().NoError(err)
+	s.Equal("Guest", found.Name)
+
+	_, err = s.store.Guest(s.ctx, "somebody-else", "jlahey")
+	s.Require().Error(err, "the other app's user of that name is somebody else")
+}
+
+func (s *StoreSuite) TestAUserHasToSayWhichKindTheyAre() {
+	// Without it a row says somebody called, and nothing says whether anybody checked.
+	err := s.store.RecordUser(s.ctx, &User{ID: "jlahey", CustomerID: "app"})
 	s.Require().Error(err)
 }

@@ -277,11 +277,51 @@ dispatch:
 	}
 }
 
+func TestTheDeclarationSaysWhoConnectsEachPlugin(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nplugins: [sentry]\nuser_plugins: [google_calendar]\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := folder.Settings.Plugins; len(got) != 1 || got[0] != "sentry" {
+		t.Errorf("the app's plugins read as %v", got)
+	}
+	if got := folder.Settings.UserPlugins; len(got) != 1 || got[0] != "google_calendar" {
+		t.Errorf("each user's plugins read as %v", got)
+	}
+}
+
+func TestTheDeclarationSaysWhichPluginEventsTheAgentTakes(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nplugins: [sentry]\nplugin_events:\n"+
+		"  - plugin: sentry\n    event: issue.created\n    arguments:\n      project: web\n"+
+		"    instructions: Triage it.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := folder.Settings.PluginEvents
+	if len(events) != 1 {
+		t.Fatalf("the plugin events read as %+v", events)
+	}
+	if events[0].Plugin != "sentry" || events[0].Event != "issue.created" ||
+		events[0].Arguments["project"] != "web" || events[0].Instructions != "Triage it." {
+		t.Errorf("the plugin event read as %+v", events[0])
+	}
+}
+
 func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 	for _, declaration := range []string{
 		"name: jean\nlmm: openai/gpt-5.6\n",
 		"video:\n  max_frames: 9\n",
+		"sandbox_options:\n  timeout: 2h\n",
+		"sandbox_options:\n  timeout: soon\n",
+		"sandbox_options:\n  memory: 4\n",
 		"keyterms: Vision Agents\n",
+		"plugin_events:\n  - plugin: sentry\n    name: issue.created\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", declaration)

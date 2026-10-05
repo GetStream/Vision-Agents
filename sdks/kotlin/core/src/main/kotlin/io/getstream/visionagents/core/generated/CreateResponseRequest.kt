@@ -39,9 +39,9 @@ import kotlinx.serialization.encoding.Encoder
  * 
  *
  * @param text What to answer, as though it had been said.
+ * @param commandId Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
  * @param images 
  * @param videos Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole. 
- * @param commandId Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
  */
 @Serializable
 
@@ -51,16 +51,16 @@ internal data class CreateResponseRequest (
     @SerialName(value = "text")
     val text: kotlin.String,
 
+    /* Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id. */
+    @SerialName(value = "command_id")
+    val commandId: kotlin.String? = null,
+
     @SerialName(value = "images")
     val images: kotlin.collections.List<ImageSource>? = null,
 
     /* Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.  */
     @SerialName(value = "videos")
-    val videos: kotlin.collections.List<VideoSource>? = null,
-
-    /* Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id. */
-    @SerialName(value = "command_id")
-    val commandId: kotlin.String? = null
+    val videos: kotlin.collections.List<VideoSource>? = null
 
 ) {
 

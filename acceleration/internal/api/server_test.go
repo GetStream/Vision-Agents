@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -54,6 +55,76 @@ func (s *ServerSuite) TestHealthReportsEveryDependencyAsOk() {
 	s.Equal("ok", status.Dependencies["redis"])
 	s.Equal("ok", status.Dependencies["stt"])
 	s.Equal("ok", status.Dependencies["tts"])
+}
+
+func (s *ServerSuite) TestAnAnswerSaysHowLongTheServerTook() {
+	round, response, body := s.timed(http.MethodGet, "/health")
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+
+	// The point of reporting it: what the server spent is a part of what the caller
+	// waited, and the difference is the network.
+	spent := s.durationOf(body)
+	s.Positive(spent)
+	s.Less(spent, round.Seconds()*1000)
+	s.InDelta(spent, s.stampOf(response), 1, "the header and the body disagree")
+}
+
+func (s *ServerSuite) TestARefusalSaysHowLongItTookToRefuse() {
+	_, response, body := s.timed(http.MethodGet, "/v1/agents/sessions/"+s.utils.uuid())
+	s.Require().Equal(http.StatusNotFound, response.StatusCode)
+
+	s.Positive(s.durationOf(body))
+	s.Positive(s.stampOf(response))
+}
+
+func (s *ServerSuite) TestAnAnswerThatIsNotOneDocumentIsOnlyStamped() {
+	_, response, body := s.timed(http.MethodGet, "/v1/data/export")
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+
+	// A record per line has nowhere to name a duration, so it is left as it was and the
+	// header carries the whole of the answer.
+	s.Positive(s.stampOf(response))
+	s.NotContains(string(body), `"duration"`)
+}
+
+// timed makes one request and reports how long the caller waited for it, alongside the
+// answer.
+func (s *ServerSuite) timed(method, path string) (time.Duration, *http.Response, []byte) {
+	request, err := http.NewRequest(method, s.server.URL+path, nil)
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+
+	started := time.Now()
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return time.Since(started), response, body
+}
+
+// durationOf is the milliseconds a JSON answer says the server spent.
+func (s *ServerSuite) durationOf(body []byte) float64 {
+	var answered struct {
+		Duration string `json:"duration"`
+	}
+	s.Require().NoError(json.Unmarshal(body, &answered), string(body))
+	s.Require().NotEmpty(answered.Duration, "no duration in %s", string(body))
+
+	spent, err := time.ParseDuration(answered.Duration)
+	s.Require().NoError(err)
+	return float64(spent) / float64(time.Millisecond)
+}
+
+// stampOf is the milliseconds the Server-Timing header reports.
+func (s *ServerSuite) stampOf(response *http.Response) float64 {
+	stamp := response.Header.Get("Server-Timing")
+	s.Require().NotEmpty(stamp)
+
+	var spent float64
+	_, err := fmt.Sscanf(stamp, "app;dur=%f", &spent)
+	s.Require().NoError(err, stamp)
+	return spent
 }
 
 func (s *ServerSuite) TestRollupThenStatsReportsTheCustomersUsage() {

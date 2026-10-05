@@ -11,17 +11,17 @@ use GetStream\VisionAgents\Json;
 final readonly class AgentResponseItem
 {
     public function __construct(
-        public string $responseId,
+        public \DateTimeImmutable $at,
+        public string $kind,
         // The position within the response, assigned by the writer rather than by the database, so items keep the ord...
         public int $ordinal,
-        public string $kind,
-        public \DateTimeImmutable $at,
-        public ?string $sessionId = null,
-        public ?string $text = null,
-        public ?string $toolName = null,
+        public string $responseId,
         // Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a ca...
         /** @var array<string, mixed>|null */
         public ?array $payload = null,
+        public ?string $sessionId = null,
+        public ?string $text = null,
+        public ?string $toolName = null,
     ) {
     }
 
@@ -31,14 +31,14 @@ final readonly class AgentResponseItem
     public static function fromArray(array $data): self
     {
         return new self(
-            responseId: Json::string($data, 'response_id'),
-            ordinal: Json::int($data, 'ordinal'),
-            kind: Json::string($data, 'kind'),
             at: Json::date($data, 'at'),
+            kind: Json::string($data, 'kind'),
+            ordinal: Json::int($data, 'ordinal'),
+            responseId: Json::string($data, 'response_id'),
+            payload: array_key_exists('payload', $data) && $data['payload'] !== null ? Json::object($data, 'payload') : null,
             sessionId: array_key_exists('session_id', $data) && $data['session_id'] !== null ? Json::string($data, 'session_id') : null,
             text: array_key_exists('text', $data) && $data['text'] !== null ? Json::string($data, 'text') : null,
             toolName: array_key_exists('tool_name', $data) && $data['tool_name'] !== null ? Json::string($data, 'tool_name') : null,
-            payload: array_key_exists('payload', $data) && $data['payload'] !== null ? Json::object($data, 'payload') : null,
         );
     }
 
@@ -50,10 +50,13 @@ final readonly class AgentResponseItem
     public function toArray(): array
     {
         $out = [];
-        $out['response_id'] = $this->responseId;
-        $out['ordinal'] = $this->ordinal;
-        $out['kind'] = $this->kind;
         $out['at'] = Json::dateValue($this->at);
+        $out['kind'] = $this->kind;
+        $out['ordinal'] = $this->ordinal;
+        $out['response_id'] = $this->responseId;
+        if ($this->payload !== null) {
+            $out['payload'] = Json::objectValue($this->payload);
+        }
         if ($this->sessionId !== null) {
             $out['session_id'] = $this->sessionId;
         }
@@ -62,9 +65,6 @@ final readonly class AgentResponseItem
         }
         if ($this->toolName !== null) {
             $out['tool_name'] = $this->toolName;
-        }
-        if ($this->payload !== null) {
-            $out['payload'] = Json::objectValue($this->payload);
         }
         return $out;
     }

@@ -22,6 +22,9 @@ class ConversationView extends StatefulWidget {
 }
 
 class _ConversationViewState extends State<ConversationView> {
+  /// Why the last question was not taken, which the socket's state does not cover.
+  AgentsException? _refused;
+
   @override
   void initState() {
     super.initState();
@@ -51,7 +54,7 @@ class _ConversationViewState extends State<ConversationView> {
         builder: (context, conversation) => Column(
           children: [
             Expanded(child: TranscriptView(turns: conversation.turns)),
-            if (session.failure ?? conversation.failure case final failure?)
+            if (session.failure ?? conversation.failure ?? _refused case final failure?)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
@@ -73,9 +76,14 @@ class _ConversationViewState extends State<ConversationView> {
                 enabled: connection is Connected,
                 send: (text) async {
                   try {
-                    session.send(text);
-                  } on AgentsException {
-                    // The socket dropped, which `connection` already shows.
+                    await session.responses.create(text.trim());
+                    if (mounted && _refused != null) {
+                      setState(() => _refused = null);
+                    }
+                  } on AgentsException catch (error) {
+                    if (mounted) {
+                      setState(() => _refused = error);
+                    }
                   }
                 },
               ),

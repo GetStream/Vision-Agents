@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/redis/rueidis"
+	"github.com/redis/rueidis/rueidisotel"
 )
 
 // Health is the recent behaviour of one provider and model.
@@ -82,7 +83,7 @@ func New(options Options) (*Client, error) {
 		options.MaxErrorRate = 0.5
 	}
 
-	client, err := rueidis.NewClient(rueidis.ClientOption{
+	client, err := rueidisotel.NewClient(rueidis.ClientOption{
 		InitAddress:  []string{options.Address},
 		Username:     options.Username,
 		Password:     options.Password,

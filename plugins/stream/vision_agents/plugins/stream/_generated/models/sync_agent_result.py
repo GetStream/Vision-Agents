@@ -18,25 +18,25 @@ T = TypeVar("T", bound="SyncAgentResult")
 class SyncAgentResult:
     """
     Attributes:
-        unchanged (bool): True when the hash matched and nothing was written.
         config (AgentConfig):
+        unchanged (bool): True when the hash matched and nothing was written.
     """
 
-    unchanged: bool
     config: AgentConfig
+    unchanged: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        unchanged = self.unchanged
-
         config = self.config.to_dict()
+
+        unchanged = self.unchanged
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "unchanged": unchanged,
                 "config": config,
+                "unchanged": unchanged,
             }
         )
 
@@ -47,13 +47,13 @@ class SyncAgentResult:
         from ..models.agent_config import AgentConfig
 
         d = dict(src_dict)
-        unchanged = d.pop("unchanged")
-
         config = AgentConfig.from_dict(d.pop("config"))
 
+        unchanged = d.pop("unchanged")
+
         sync_agent_result = cls(
-            unchanged=unchanged,
             config=config,
+            unchanged=unchanged,
         )
 
         sync_agent_result.additional_properties = d

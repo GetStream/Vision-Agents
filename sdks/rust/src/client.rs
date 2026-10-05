@@ -8,7 +8,9 @@ use serde::de::DeserializeOwned;
 
 use crate::backend::{Backend, ClientOptions};
 use crate::error::{Error, Result};
-use crate::sessions::AgentRef;
+use crate::router::Router;
+use crate::sessions::{AgentRef, Memories};
+use crate::simulations::Simulations;
 use crate::socket::Socket;
 use crate::types;
 
@@ -117,6 +119,24 @@ impl Client {
     /// opened rather than here.
     pub fn agent(&self, name: &str) -> AgentRef {
         AgentRef::new(self.clone(), name)
+    }
+
+    /// The router, routing through the stored router config named `config` (by name or id),
+    /// which holds the target. An empty name is a router told what to do per call instead.
+    pub fn router(&self, config: &str) -> Router {
+        Router::new(self.clone(), config)
+    }
+
+    /// The simulations agents are put through. Server side only.
+    pub fn simulations(&self) -> Simulations {
+        Simulations::new(self.clone())
+    }
+
+    /// What this app's agents remember about its users. Server side only.
+    pub fn memories(&self) -> Memories {
+        Memories {
+            client: self.clone(),
+        }
     }
 
     /// Mints a guest so somebody can talk to an agent before they sign up.

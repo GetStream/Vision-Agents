@@ -72,6 +72,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -108,8 +113,8 @@ def sync_detailed(
         granularity (ActivityGranularity | Unset): Separate from Granularity, and coarser, because
             distinct users cannot be summed: a month of them is who came back rather than the sum of
             its days.
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,8 +156,8 @@ def sync(
         granularity (ActivityGranularity | Unset): Separate from Granularity, and coarser, because
             distinct users cannot be summed: a month of them is who came back rather than the sum of
             its days.
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -189,8 +194,8 @@ async def asyncio_detailed(
         granularity (ActivityGranularity | Unset): Separate from Granularity, and coarser, because
             distinct users cannot be summed: a month of them is who came back rather than the sum of
             its days.
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -230,8 +235,8 @@ async def asyncio(
         granularity (ActivityGranularity | Unset): Separate from Granularity, and coarser, because
             distinct users cannot be summed: a month of them is who came back rather than the sum of
             its days.
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

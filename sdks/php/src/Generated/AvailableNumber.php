@@ -11,17 +11,17 @@ use GetStream\VisionAgents\Json;
 final readonly class AvailableNumber
 {
     public function __construct(
+        /** @var list<PhoneCapability|string> */
+        public array $capabilities,
+        public string $country,
         public string $e164,
         // Who is offering it, which is also who to buy it from.
         public string $vendor,
-        public string $country,
-        /** @var list<PhoneCapability|string> */
-        public array $capabilities,
-        public ?string $region = null,
         public ?string $locality = null,
-        public PhoneNumberType|string|null $numberType = null,
         // Millionths of a dollar per month, zero when the vendor does not quote one.
         public ?int $monthlyCostMicros = null,
+        public PhoneNumberType|string|null $numberType = null,
+        public ?string $region = null,
     ) {
     }
 
@@ -31,14 +31,14 @@ final readonly class AvailableNumber
     public static function fromArray(array $data): self
     {
         return new self(
+            capabilities: Json::enums($data, 'capabilities', PhoneCapability::class),
+            country: Json::string($data, 'country'),
             e164: Json::string($data, 'e164'),
             vendor: Json::string($data, 'vendor'),
-            country: Json::string($data, 'country'),
-            capabilities: Json::enums($data, 'capabilities', PhoneCapability::class),
-            region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
             locality: array_key_exists('locality', $data) && $data['locality'] !== null ? Json::string($data, 'locality') : null,
-            numberType: array_key_exists('number_type', $data) && $data['number_type'] !== null ? Json::enum($data, 'number_type', PhoneNumberType::class) : null,
             monthlyCostMicros: array_key_exists('monthly_cost_micros', $data) && $data['monthly_cost_micros'] !== null ? Json::int($data, 'monthly_cost_micros') : null,
+            numberType: array_key_exists('number_type', $data) && $data['number_type'] !== null ? Json::enum($data, 'number_type', PhoneNumberType::class) : null,
+            region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
         );
     }
 
@@ -50,21 +50,21 @@ final readonly class AvailableNumber
     public function toArray(): array
     {
         $out = [];
+        $out['capabilities'] = Json::enumValues($this->capabilities);
+        $out['country'] = $this->country;
         $out['e164'] = $this->e164;
         $out['vendor'] = $this->vendor;
-        $out['country'] = $this->country;
-        $out['capabilities'] = Json::enumValues($this->capabilities);
-        if ($this->region !== null) {
-            $out['region'] = $this->region;
-        }
         if ($this->locality !== null) {
             $out['locality'] = $this->locality;
+        }
+        if ($this->monthlyCostMicros !== null) {
+            $out['monthly_cost_micros'] = $this->monthlyCostMicros;
         }
         if ($this->numberType !== null) {
             $out['number_type'] = Json::enumValue($this->numberType);
         }
-        if ($this->monthlyCostMicros !== null) {
-            $out['monthly_cost_micros'] = $this->monthlyCostMicros;
+        if ($this->region !== null) {
+            $out['region'] = $this->region;
         }
         return $out;
     }

@@ -11,12 +11,12 @@ use GetStream\VisionAgents\Json;
 final readonly class ToolResultCommand
 {
     public function __construct(
-        public string $type,
         public string $toolCallId,
+        public string $type,
         public ?string $commandId = null,
-        public ?string $turnId = null,
-        public mixed $output = null,
         public ?string $error = null,
+        public mixed $output = null,
+        public ?string $turnId = null,
     ) {
     }
 
@@ -26,12 +26,12 @@ final readonly class ToolResultCommand
     public static function fromArray(array $data): self
     {
         return new self(
-            type: Json::string($data, 'type'),
             toolCallId: Json::string($data, 'tool_call_id'),
+            type: Json::string($data, 'type'),
             commandId: array_key_exists('command_id', $data) && $data['command_id'] !== null ? Json::string($data, 'command_id') : null,
-            turnId: array_key_exists('turn_id', $data) && $data['turn_id'] !== null ? Json::string($data, 'turn_id') : null,
-            output: $data['output'] ?? null,
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
+            output: $data['output'] ?? null,
+            turnId: array_key_exists('turn_id', $data) && $data['turn_id'] !== null ? Json::string($data, 'turn_id') : null,
         );
     }
 
@@ -43,19 +43,19 @@ final readonly class ToolResultCommand
     public function toArray(): array
     {
         $out = [];
-        $out['type'] = $this->type;
         $out['tool_call_id'] = $this->toolCallId;
+        $out['type'] = $this->type;
         if ($this->commandId !== null) {
             $out['command_id'] = $this->commandId;
         }
-        if ($this->turnId !== null) {
-            $out['turn_id'] = $this->turnId;
+        if ($this->error !== null) {
+            $out['error'] = $this->error;
         }
         if ($this->output !== null) {
             $out['output'] = $this->output;
         }
-        if ($this->error !== null) {
-            $out['error'] = $this->error;
+        if ($this->turnId !== null) {
+            $out['turn_id'] = $this->turnId;
         }
         return $out;
     }

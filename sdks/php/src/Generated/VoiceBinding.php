@@ -13,13 +13,13 @@ final readonly class VoiceBinding
     public function __construct(
         public string $provider,
         public string $state,
-        // What this provider calls the voice.
-        public ?string $externalId = null,
         // Why the provider would not take the recordings, when it would not.
         public ?string $error = null,
-        public ?\DateTimeImmutable $updatedAt = null,
+        // What this provider calls the voice.
+        public ?string $externalId = null,
         // When this provider last came back with a voice that can be spoken in, absent until one does. It is not upda...
         public ?\DateTimeImmutable $syncedAt = null,
+        public ?\DateTimeImmutable $updatedAt = null,
     ) {
     }
 
@@ -31,10 +31,10 @@ final readonly class VoiceBinding
         return new self(
             provider: Json::string($data, 'provider'),
             state: Json::string($data, 'state'),
-            externalId: array_key_exists('external_id', $data) && $data['external_id'] !== null ? Json::string($data, 'external_id') : null,
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
-            updatedAt: array_key_exists('updated_at', $data) && $data['updated_at'] !== null ? Json::date($data, 'updated_at') : null,
+            externalId: array_key_exists('external_id', $data) && $data['external_id'] !== null ? Json::string($data, 'external_id') : null,
             syncedAt: array_key_exists('synced_at', $data) && $data['synced_at'] !== null ? Json::date($data, 'synced_at') : null,
+            updatedAt: array_key_exists('updated_at', $data) && $data['updated_at'] !== null ? Json::date($data, 'updated_at') : null,
         );
     }
 
@@ -48,17 +48,17 @@ final readonly class VoiceBinding
         $out = [];
         $out['provider'] = $this->provider;
         $out['state'] = $this->state;
-        if ($this->externalId !== null) {
-            $out['external_id'] = $this->externalId;
-        }
         if ($this->error !== null) {
             $out['error'] = $this->error;
         }
-        if ($this->updatedAt !== null) {
-            $out['updated_at'] = Json::dateValue($this->updatedAt);
+        if ($this->externalId !== null) {
+            $out['external_id'] = $this->externalId;
         }
         if ($this->syncedAt !== null) {
             $out['synced_at'] = Json::dateValue($this->syncedAt);
+        }
+        if ($this->updatedAt !== null) {
+            $out['updated_at'] = Json::dateValue($this->updatedAt);
         }
         return $out;
     }

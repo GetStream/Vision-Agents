@@ -19,25 +19,25 @@ T = TypeVar("T", bound="ClassifyResult")
 class ClassifyResult:
     """
     Attributes:
-        provider (str):
-        model (str): The version that answered, which is worth recording when the target was an alias.
         answers (ClassifyResultAnswers):
+        model (str): The version that answered, which is worth recording when the target was an alias.
+        provider (str):
         usage (ClassifyUsage): What the request read and wrote. The state's tokens are counted once however many
             questions shared them.
     """
 
-    provider: str
-    model: str
     answers: ClassifyResultAnswers
+    model: str
+    provider: str
     usage: ClassifyUsage
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        provider = self.provider
+        answers = self.answers.to_dict()
 
         model = self.model
 
-        answers = self.answers.to_dict()
+        provider = self.provider
 
         usage = self.usage.to_dict()
 
@@ -45,9 +45,9 @@ class ClassifyResult:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "provider": provider,
-                "model": model,
                 "answers": answers,
+                "model": model,
+                "provider": provider,
                 "usage": usage,
             }
         )
@@ -62,18 +62,18 @@ class ClassifyResult:
         from ..models.classify_usage import ClassifyUsage
 
         d = dict(src_dict)
-        provider = d.pop("provider")
+        answers = ClassifyResultAnswers.from_dict(d.pop("answers"))
 
         model = d.pop("model")
 
-        answers = ClassifyResultAnswers.from_dict(d.pop("answers"))
+        provider = d.pop("provider")
 
         usage = ClassifyUsage.from_dict(d.pop("usage"))
 
         classify_result = cls(
-            provider=provider,
-            model=model,
             answers=answers,
+            model=model,
+            provider=provider,
             usage=usage,
         )
 
