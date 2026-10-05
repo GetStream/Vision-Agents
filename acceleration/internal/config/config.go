@@ -361,10 +361,25 @@ func (c Config) validate() error {
 
 // validateAppTenancy refuses an app mode that could not keep its promises. Registered apps
 // and their keys live in Postgres. A fixed user token is the deployment's own, and the voice
-// edge would prefer it to a token of the app a session is in.
+// edge would prefer it to a token of the app a session is in. And the customer picks whose
+// stored Stream secret mints a caller's tokens, so it has to be one nobody could name for
+// themselves: noauth, and a proxy that does not declare kinds, take it from the caller's own
+// X-Customer-Id.
 func (c Config) validateAppTenancy() error {
 	if c.Postgres.DSN == "" {
 		return fmt.Errorf("config: stream.tenancy=%s keeps every app's keys in Postgres: set postgres.dsn", TenancyApp)
+	}
+	switch strings.TrimSpace(c.Auth.Mode) {
+	case "noauth":
+		return fmt.Errorf("config: stream.tenancy=%s cannot use auth.mode=noauth, where a caller names "+
+			"its own customer and so whose Stream app it acts in: set auth.mode=api_key, or proxy with "+
+			"auth.proxy_declares_kind", TenancyApp)
+	case "proxy":
+		if !c.Auth.ProxyDeclaresKind {
+			return fmt.Errorf("config: stream.tenancy=%s cannot use auth.mode=proxy without "+
+				"auth.proxy_declares_kind, which reads a caller's own X-Customer-Id: set "+
+				"auth.proxy_declares_kind=true, or auth.mode=api_key", TenancyApp)
+		}
 	}
 	if c.Stream.UserToken != "" {
 		return fmt.Errorf("config: stream.tenancy=%s cannot use stream.user_token, which is one "+

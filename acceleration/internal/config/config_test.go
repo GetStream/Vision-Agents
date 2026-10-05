@@ -224,6 +224,38 @@ func (s *ConfigSuite) TestAppModeStartsWithPostgresAndNoUserToken() {
 	s.Equal(TenancyApp, config.Stream.Tenancy)
 }
 
+func (s *ConfigSuite) TestAppModeRefusesNoAuth() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "noauth")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "auth.mode=noauth")
+}
+
+func (s *ConfigSuite) TestAppModeRefusesAProxyThatDeclaresNoKind() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "auth.proxy_declares_kind")
+}
+
+func (s *ConfigSuite) TestAppModeStartsBehindAProxyThatDeclaresKinds() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal(TenancyApp, config.Stream.Tenancy)
+}
+
 func (s *ConfigSuite) TestStreamFallbackDefaultsToRefuseInAppMode() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

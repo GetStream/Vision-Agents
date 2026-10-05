@@ -31,7 +31,7 @@ Two modes, chosen per deployment:
 | `stream.trust_api_key_header` | `ROUTER_STREAM_TRUST_API_KEY_HEADER` | false | Let a caller name which of its app's keys to act with |
 | `auth.proxy_declares_kind` | `ROUTER_AUTH_PROXY_DECLARES_KIND` | false | Proxy mode: trust `Stream-Auth-Type` from the proxy, and read its absence as client-side (fail closed) |
 
-App mode needs Postgres and a keyring: `ROUTER_AUTH_KEK`, or `ROUTER_AUTH_KEK_V<n>` with `ROUTER_AUTH_KEK_VERSION`. It refuses `STREAM_USER_TOKEN`.
+App mode needs Postgres and a keyring: `ROUTER_AUTH_KEK`, or `ROUTER_AUTH_KEK_V<n>` with `ROUTER_AUTH_KEK_VERSION`. It refuses `STREAM_USER_TOKEN`. It also refuses `auth.mode=noauth`, and `proxy` without `auth.proxy_declares_kind`: both read the customer from the caller's own `X-Customer-Id`, and the customer picks whose Stream secret mints tokens.
 
 The deployment's own app is never registered: its customer keeps the env pair's identity in both modes.
 
@@ -130,14 +130,15 @@ go run ./cmd/openapi && git diff --exit-code -- api/openapi.yaml ../sdks/go/acce
 **A local router in app mode** (scratch database, a Stream test app you can clean up):
 
 ```
-ROUTER_ADDR=:18181 ROUTER_AUTH_MODE=noauth \
+export ROUTER_AUTH_MODE=api_key ROUTER_AUTH_KEK=<any local string> \
 ROUTER_POSTGRES_DSN=postgres://postgres:postgres@localhost:55432/<scratch>?sslmode=disable \
-ROUTER_REDIS_ADDR=localhost:56379 ROUTER_AUTH_KEK_V1=<any local string> \
-ROUTER_STREAM_TENANCY=app ROUTER_STREAM_FALLBACK=refuse CHAT_OUTBOX_DIR=<scratch dir> \
+ROUTER_REDIS_ADDR=localhost:56379
+./router keys create --app-id <Stream app id>
+ROUTER_ADDR=:18181 ROUTER_STREAM_TENANCY=app ROUTER_STREAM_FALLBACK=refuse CHAT_OUTBOX_DIR=<scratch dir> \
 BASETEN_API_KEY=<any value; session start needs an LLM route> ./router
 ```
 
-Then, with `X-Customer-Id: <app id>`:
+Then, with the printed key in `X-Api-Key`, `Stream-Auth-Type: server`, and a bearer token signed with its secret that carries `server: true`:
 1. `GET /v1/settings/app` reads `nowhere`.
 2. A text session is refused.
 3. `PUT …/stream/credentials` connects the app.
@@ -172,7 +173,7 @@ What app mode on a hosted router needs:
   - `jwt` for a token naming a user;
   - `server` for one that does not;
   - never `server` for an app whose tokens are not checked.
-  - Without it, the router refuses every registration behind a proxy, and browsers keep reaching server-only operations.
+  - Without it, app mode refuses to start behind a proxy.
 - **Anything that calls the router directly,** without the gateway, names its app with `X-Stream-App-Id`. With the setting above, proxy mode no longer reads `X-Customer-Id`.
 - **A durable `CHAT_OUTBOX_DIR`** (recommended). On an emptyDir every restart loses each conversation's command ledger.
 - **The `agent` channel and call types in each registered app.**
