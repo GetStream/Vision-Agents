@@ -1762,16 +1762,9 @@ webrtc = [
     { name = "aiortc" },
     { name = "av" },
     { name = "numpy" },
-    { name = "ping3" },
     { name = "protobuf" },
     { name = "python-dateutil" },
-    { name = "scipy" },
-    { name = "soundfile" },
-    { name = "structlog" },
-    { name = "tenacity" },
     { name = "twirp" },
-    { name = "websocket-client" },
-    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -1789,7 +1782,6 @@ requires-dist = [
     { name = "openai", extras = ["realtime"], marker = "extra == 'openai-realtime'", specifier = ">=1.93.0" },
     { name = "opentelemetry-api", marker = "extra == 'telemetry'", specifier = ">=1.26.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.26.0" },
-    { name = "ping3", marker = "extra == 'webrtc'", specifier = ">=4.0.8" },
     { name = "protobuf", specifier = ">=6.31.1" },
     { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=4.25.1" },
     { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=6.31.1" },
@@ -1799,17 +1791,8 @@ requires-dist = [
     { name = "pyjwt", specifier = ">=2.8.0,<3" },
     { name = "python-dateutil", specifier = ">=2.8.2" },
     { name = "python-dateutil", marker = "extra == 'webrtc'", specifier = ">=2.8.2" },
-    { name = "scipy", marker = "python_full_version >= '3.14' and extra == 'webrtc'", specifier = ">=1.16.1,<1.17" },
-    { name = "scipy", marker = "python_full_version < '3.14' and extra == 'webrtc'", specifier = ">=1.15.3,<1.16" },
-    { name = "scipy", marker = "extra == 'webrtc'", specifier = ">=1.15.3" },
-    { name = "soundfile", marker = "extra == 'webrtc'", specifier = ">=0.13.1" },
-    { name = "structlog", marker = "extra == 'webrtc'", specifier = "<24" },
-    { name = "tenacity", marker = "extra == 'webrtc'", specifier = ">=9.1.2" },
     { name = "twirp" },
     { name = "twirp", marker = "extra == 'webrtc'" },
-    { name = "websocket-client", marker = "extra == 'webrtc'", specifier = ">=1.8.0" },
-    { name = "websockets", marker = "extra == 'webrtc'", specifier = ">=15.0.1" },
-    { name = "websockets", marker = "extra == 'webrtc'", specifier = ">=15.0.1,<16" },
 ]
 provides-extras = ["openai-realtime", "webrtc", "telemetry"]
 
@@ -4032,15 +4015,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/7b/f9/cfaa5082ca9bc4a6de66ffe1c12c2d90bf09c309a5f52b27759a596900e7/pillow-10.4.0-cp313-cp313-win32.whl", hash = "sha256:551d3fd6e9dc15e4c1eb6fc4ba2b39c0c7933fa113b220057a34f4bb3268a060", size = 2235603, upload-time = "2024-07-01T09:47:03.918Z" },
     { url = "https://files.pythonhosted.org/packages/01/6a/30ff0eef6e0c0e71e55ded56a38d4859bf9d3634a94a88743897b5f96936/pillow-10.4.0-cp313-cp313-win_amd64.whl", hash = "sha256:030abdbe43ee02e0de642aee345efa443740aa4d828bfe8e2eb11922ea6a21ea", size = 2554972, upload-time = "2024-07-01T09:47:06.152Z" },
     { url = "https://files.pythonhosted.org/packages/48/2c/2e0a52890f269435eee38b21c8218e102c621fe8d8df8b9dd06fabf879ba/pillow-10.4.0-cp313-cp313-win_arm64.whl", hash = "sha256:5b001114dd152cfd6b23befeb28d7aee43553e2402c9f159807bf55f33af8a8d", size = 2243375, upload-time = "2024-07-01T09:47:09.065Z" },
-]
-
-[[package]]
-name = "ping3"
-version = "5.1.5"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0d/e5/702dfb79e74990585d502734065f8a1610d18473bbd4bd18e4058abe9dbc/ping3-5.1.5.tar.gz", hash = "sha256:6c99bc844e0b7dbc5c9765e8b530140daf1ccd2112c99db01ab79831bd8081cd", size = 19995, upload-time = "2025-08-10T16:07:30.582Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/03/2580e349f6cab60865456db4b8984a50c91c98e88fc5055a3cd7c30485a5/ping3-5.1.5-py3-none-any.whl", hash = "sha256:9503164d054b87b01a6bd0df83a49c29e7c8427eb06940f874ebd4ed2d8ba8f6", size = 15945, upload-time = "2025-08-10T16:07:28.777Z" },
 ]
 
 [[package]]
@@ -7369,6 +7343,7 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "scipy" },
 ]
 
 [package.metadata]
@@ -7381,6 +7356,7 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "scipy", specifier = ">=1.15.3" },
 ]
 
 [[package]]
@@ -7995,15 +7971,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ce/e5/e272bb9a045105a1fdf4b798d8086f5932a178f4d738f17a74f5c9e0ae9a/weasel-1.0.0.tar.gz", hash = "sha256:7b129b44c90cc543b760532974ca1e4eb30dad2aa2026f57bdce66354ae610fc", size = 38682, upload-time = "2026-03-20T08:10:25.266Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0a/07/57ebf7a6798b016c064bd0ca81b4c6a99daa4dc377b898bc7b41eb6b5af0/weasel-1.0.0-py3-none-any.whl", hash = "sha256:89518acee027f49d743126c3502d35e6dd14f5768be5c37c9af47c171b6005cc", size = 50713, upload-time = "2026-03-20T08:10:23.637Z" },
-]
-
-[[package]]
-name = "websocket-client"
-version = "1.9.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz", hash = "sha256:9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98", size = 70576, upload-time = "2025-10-07T21:16:36.495Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl", hash = "sha256:af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef", size = 82616, upload-time = "2025-10-07T21:16:34.951Z" },
 ]
 
 [[package]]
