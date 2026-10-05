@@ -2,6 +2,22 @@
 
 ## Breaking Changes
 
+### `getstream` plugin: transport moves to the Rust-based stream-py
+
+`vision-agents` and `vision-agents-plugins-getstream` now require `getstream>=6.1.1` built on the Rust Video SDK ([stream-py#303](https://github.com/GetStream/stream-py/pull/303)) instead of the aiortc transport of 4.x. Building it from source needs the Rust toolchain from its `rust-toolchain.toml`, `cmake`, `pkg-config` and `libvpx`. The `StreamEdge` API does not change, but:
+
+- Video tracks from `add_track_subscriber()` read the SDK's decoded frames, and each call returns an independent track.
+- Published video is sent as VP9 (was H264), at the size of its first frame.
+- `AudioStreamTrack` no longer paces `recv()` by default. Code that sends one on its own aiortc connection must pass `pace=True`; the `openai` and `inworld` Realtime plugins now do.
+
+### `getstream` plugin: `sfu_events` removed
+
+`vision_agents.plugins.getstream.sfu_events` (the protobuf SFU event wrappers) is removed, and `EventManager` no longer converts raw protobuf messages. `StreamEdge` sends only the core edge events from `vision_agents.core.edge.events`: `TrackAddedEvent`, `TrackRemovedEvent`, `ParticipantJoinedEvent`, `ParticipantLeftEvent`, `CallEndedEvent` and `AudioReceivedEvent`. Subscribe to those instead.
+
+### `getstream` plugin: new participant and track ids
+
+`Participant.id` is now `"{user_id}__{session_id}"` (was `"{user_id}__{track_lookup_prefix}"`), and `Participant.original` is a `getstream.video.rtc.RemoteParticipant` instead of a protobuf `Participant`. Track ids in `TrackAddedEvent` and `TrackRemovedEvent` are now `"{session_id}:{track_type}"`, where `track_type` is the protobuf track type number (for example `2` for video).
+
 ### `gemini` plugin: Realtime defaults to `gemini-3.8-live` (#647)
 
 `gemini.Realtime` now defaults to `gemini-3.8-live` (was `gemini-3.1-flash-live-preview`). Pass `model=` explicitly to stay on an older Live model.
