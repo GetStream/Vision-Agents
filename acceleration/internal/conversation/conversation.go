@@ -184,7 +184,8 @@ type Conversation struct {
 	// liveFailures how many have failed in a row.
 	liveRetry    time.Time
 	liveFailures int
-	// parkedUntil is when a conversation whose app is out of reach tries again.
+	// parkedUntil is when a conversation whose app is out of reach tries again, and zero
+	// while it is not parked.
 	parkedUntil time.Time
 	stopped     chan struct{}
 	done        chan struct{}
@@ -1651,6 +1652,16 @@ func (c *Conversation) flush() bool {
 		err := c.send(ctx, op, false, visible)
 		cancel()
 		c.mu.Lock()
+		// A parked conversation tells only its session, which a recovered one has none of, so
+		// parking and unparking are logged: once each, rather than on every retry.
+		if parked(err) && c.parkedUntil.IsZero() {
+			c.service.logger.Warn("parked a conversation whose Stream app cannot be written",
+				"customer", c.data.Customer, "cid", c.data.CID, "stream_app", c.data.StreamApp, "reason", err)
+		} else if !parked(err) && !c.parkedUntil.IsZero() {
+			c.service.logger.Info("unparked a conversation whose Stream app can be written again",
+				"customer", c.data.Customer, "cid", c.data.CID, "stream_app", c.data.StreamApp)
+			c.parkedUntil = time.Time{}
+		}
 		if err != nil {
 			// An app out of reach keeps every write on disk and waits, rather than having
 			// them delivered anywhere else.

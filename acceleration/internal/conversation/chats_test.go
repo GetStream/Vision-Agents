@@ -1,8 +1,10 @@
 package conversation
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -375,6 +377,32 @@ type AppsSuite struct {
 	acme    *chattest.Server
 	globex  *chattest.Server
 	service *Service
+	logs    *logged
+}
+
+// logged is what the service logged, written from its conversations' goroutines.
+type logged struct {
+	mu  sync.Mutex
+	out bytes.Buffer
+}
+
+func (l *logged) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.out.Write(p)
+}
+
+// count is how many lines carry text.
+func (l *logged) count(text string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Count(l.out.String(), text)
+}
+
+func (l *logged) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.out.String()
 }
 
 func TestAppsSuite(t *testing.T) { suite.Run(t, new(AppsSuite)) }
@@ -385,7 +413,22 @@ func (s *AppsSuite) SetupTest() {
 	s.globex = s.apps.give(s.T(), "globex", 99)
 	service, err := NewForChats(s.T().TempDir(), s.apps)
 	s.Require().NoError(err)
+	s.logs = &logged{}
+	service.logger = slog.New(slog.NewTextHandler(s.logs, nil))
 	s.service = service
+}
+
+// parkedReply opens a conversation in globex's app, takes the app out of reach and begins a
+// reply, waiting until its writes have been refused once.
+func (s *AppsSuite) parkedReply() *Conversation {
+	c, _, _, err := s.service.OpenInApp(s.T().Context(), 99, "globex", "agent", "", "employee", "", nil)
+	s.Require().NoError(err)
+	s.apps.mu.Lock()
+	s.apps.down[99] = true
+	s.apps.mu.Unlock()
+	s.Require().NoError(c.Begin("waiting for globex's app"))
+	s.Require().Eventually(func() bool { return current(c).Error != "" }, 8*time.Second, 20*time.Millisecond)
+	return c
 }
 
 func (s *AppsSuite) TearDownTest() {
@@ -418,4 +461,28 @@ func (s *AppsSuite) TestTwoCustomersEachKeepTheirOwnConversationUnderTheSameChan
 	s.Equal(int64(99), globex.StreamApp())
 	s.Contains(s.globex.Messages(id), "globex's question")
 	s.NotContains(s.acme.Messages(id), "globex's question")
+}
+
+func (s *AppsSuite) TestAConversationWhoseAppCannotBeWrittenIsLoggedAsParkedOnce() {
+	c := s.parkedReply()
+	// Stopping tries its writes once more, still refused.
+	s.service.Close()
+
+	s.Equal(1, s.logs.count(`msg="parked a conversation`), s.logs.String())
+	s.Contains(s.logs.String(), "level=WARN")
+	s.Contains(s.logs.String(), "customer=globex cid="+c.CID()+" stream_app=99")
+	s.Contains(s.logs.String(), streamapp.ErrStreamAppDisconnected.Error())
+}
+
+func (s *AppsSuite) TestAParkedConversationIsLoggedOnceItsWritesGoThrough() {
+	c := s.parkedReply()
+	s.apps.mu.Lock()
+	s.apps.down[99] = false
+	s.apps.mu.Unlock()
+	// Stopping delivers what was waiting, without waiting out the parked retry.
+	s.service.Close()
+
+	s.Contains(s.globex.Messages(strings.TrimPrefix(c.CID(), "agent:")), "waiting for globex's app")
+	s.Equal(1, s.logs.count(`msg="unparked a conversation`), s.logs.String())
+	s.Contains(s.logs.String(), "customer=globex cid="+c.CID()+" stream_app=99")
 }
