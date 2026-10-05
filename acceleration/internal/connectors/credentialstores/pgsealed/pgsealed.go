@@ -116,8 +116,8 @@ func (l *locked) state() core.CredentialState {
 
 // stale reports StoredCredentials that opened under a key version other than the current one.
 func (b *CredentialStore) stale(stored *locked) bool {
-	return stored.opened && len(stored.connection.MaterialSealed) > 0 &&
-		stored.connection.MaterialKEKVersion != b.sealer.CurrentVersion()
+	return stored.opened && len(stored.connection.CredentialsSealed) > 0 &&
+		stored.connection.CredentialsKEKVersion != b.sealer.CurrentVersion()
 }
 
 // commit writes state onto the connection and saves it at the revision last committed. New
@@ -139,7 +139,7 @@ func (b *CredentialStore) commit(ref core.ConnectionRef, stored *locked, state *
 		if err != nil {
 			return err
 		}
-		connection.Revision, connection.MaterialSealed, connection.MaterialKEKVersion = revision, sealed, version
+		connection.Revision, connection.CredentialsSealed, connection.CredentialsKEKVersion = revision, sealed, version
 	}
 	connection.Status = state.Status
 	connection.LastError = state.LastError
@@ -180,11 +180,11 @@ func (b *CredentialStore) seal(ref core.ConnectionRef, revision int, c core.Stor
 // open is the connection's StoredCredentials, and false when there is a blob that does not open for
 // this row at this revision. A key version the keyring does not hold is an error instead.
 func (b *CredentialStore) open(ref core.ConnectionRef, connection *store.ConnectorConnection) (core.StoredCredentials, bool, error) {
-	if len(connection.MaterialSealed) == 0 {
+	if len(connection.CredentialsSealed) == 0 {
 		return core.StoredCredentials{}, true, nil
 	}
-	plain, err := b.sealer.OpenWithAADVersion(connection.MaterialSealed,
-		credentialsAAD(ref, connection.Revision), connection.MaterialKEKVersion)
+	plain, err := b.sealer.OpenWithAADVersion(connection.CredentialsSealed,
+		credentialsAAD(ref, connection.Revision), connection.CredentialsKEKVersion)
 	if errors.Is(err, auth.ErrKeyVersionUnavailable) {
 		return core.StoredCredentials{}, false, fmt.Errorf("pgsealed: open credentials: %w", err)
 	}

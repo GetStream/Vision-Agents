@@ -95,7 +95,7 @@ var dataTables = []dataTable{
 // their data would be a way to walk off with a customer's users' accounts. Both are left
 // out on the way out and left alone on the way in, so a connection arrives needing to be
 // authorized again rather than arriving broken.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "material_sealed"}
+var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {
@@ -329,14 +329,14 @@ func (t dataTable) identity() string {
 	if t.name == "policies" {
 		return "jsonb_build_object('scope_id', ?::text, 'scope', 'app')"
 	}
-	// A connector connection arrives without its material, so it arrives saying it needs
+	// A connector connection arrives without its credentials, so it arrives saying it needs
 	// one, rather than connected with nothing to connect with. Key version 0 and no
-	// expiry are what a connection without material holds (20261002193000_connector_connections.sql),
-	// so the source grant's version and expiry do not come along either, on an import or
+	// expiry are what a connection without credentials holds (20261002193000_connector_connections.sql),
+	// so the source credentials' key version and expiry do not come along either, on an import or
 	// on every change applied after it.
 	if t.name == "connector_connections" {
 		return "jsonb_build_object('customer_id', ?::text, 'status', '" + ConnectionNeedsReauthorization + "'," +
-			" 'material_kek_version', 0, 'expires_at', NULL)"
+			" 'credentials_kek_version', 0, 'expires_at', NULL)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }

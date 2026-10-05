@@ -102,9 +102,9 @@ func TestAUserOwnedConnectionNamingNoUserIsRefused(t *testing.T) {
 	require.ErrorContains(t, err, "a user owner has one")
 }
 
-func TestAConnectionIsNotCreatedWithMaterial(t *testing.T) {
+func TestAConnectionIsNotCreatedWithCredentials(t *testing.T) {
 	connection := appConnection()
-	connection.MaterialSealed = []byte("sealed elsewhere")
+	connection.CredentialsSealed = []byte("sealed elsewhere")
 
 	err := (&Store{}).CreateConnectorConnection(context.Background(), testSchemes, connection)
 

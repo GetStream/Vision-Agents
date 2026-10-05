@@ -35,7 +35,7 @@ func (s *SealSuite) SetupTest() {
 func (s *SealSuite) sealed(ref core.ConnectionRef, revision int) *store.ConnectorConnection {
 	blob, version, err := s.store.seal(ref, revision, s.stored)
 	s.Require().NoError(err)
-	return &store.ConnectorConnection{Revision: revision, MaterialSealed: blob, MaterialKEKVersion: version}
+	return &store.ConnectorConnection{Revision: revision, CredentialsSealed: blob, CredentialsKEKVersion: version}
 }
 
 func (s *SealSuite) TestSealedCredentialsOpenForTheirRowAndRevision() {
@@ -46,8 +46,8 @@ func (s *SealSuite) TestSealedCredentialsOpenForTheirRowAndRevision() {
 	s.Require().NoError(err)
 	s.True(ok)
 	s.Equal(s.stored, opened)
-	s.NotContains(string(connection.MaterialSealed), "secret-refresh")
-	s.Equal(1, connection.MaterialKEKVersion)
+	s.NotContains(string(connection.CredentialsSealed), "secret-refresh")
+	s.Equal(1, connection.CredentialsKEKVersion)
 }
 
 func (s *SealSuite) TestSealedCredentialsDoNotOpenAtAnotherRevision() {
@@ -61,7 +61,7 @@ func (s *SealSuite) TestSealedCredentialsDoNotOpenAtAnotherRevision() {
 
 func (s *SealSuite) TestAKeyVersionTheKeyringLacksIsAnErrorNotAnUnreadableBlob() {
 	connection := s.sealed(s.ref, 2)
-	connection.MaterialKEKVersion = 2
+	connection.CredentialsKEKVersion = 2
 
 	_, _, err := s.store.open(s.ref, connection)
 	s.ErrorIs(err, auth.ErrKeyVersionUnavailable)
@@ -73,7 +73,7 @@ func (s *SealSuite) TestNoCredentialsAreAnEmptyBlobAtKeyVersionZero() {
 	s.Empty(blob)
 	s.Zero(version)
 
-	opened, ok, err := s.store.open(s.ref, &store.ConnectorConnection{Revision: 2, MaterialSealed: blob})
+	opened, ok, err := s.store.open(s.ref, &store.ConnectorConnection{Revision: 2, CredentialsSealed: blob})
 	s.Require().NoError(err)
 	s.True(ok)
 	s.Equal(core.StoredCredentials{}, opened)

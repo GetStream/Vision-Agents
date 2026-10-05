@@ -346,7 +346,7 @@ func (s *PGSealedSuite) TestConcurrentCredentialResolutionCommitsOneRotatedRefre
 	stored := s.stored(ref)
 	s.Equal(before+1, stored.Revision, "one rotation is one revision")
 	s.Equal(store.ConnectionConnected, stored.Status)
-	s.NotContains(string(stored.MaterialSealed), "refresh-1", "the material is stored sealed")
+	s.NotContains(string(stored.CredentialsSealed), "refresh-1", "the credentials are stored sealed")
 	s.Equal(tokens{Access: "access-1", Refresh: "refresh-1"}, opened(s.held(s.credentialStore(s.v1), ref).Credentials))
 }
 
@@ -389,7 +389,7 @@ func (s *PGSealedSuite) TestRefreshOutcomeSurvivesLostResponsesAndCanceledWorker
 		s.Equal(store.ConnectionNeedsReauthorization, stored.Status, name)
 		s.Equal(lostRefresh, stored.LastError, name)
 		s.Equal(before.Revision, stored.Revision, "%s: no credentials were saved", name)
-		s.True(bytes.Equal(before.MaterialSealed, stored.MaterialSealed), "%s: the blob is the one before the refresh", name)
+		s.True(bytes.Equal(before.CredentialsSealed, stored.CredentialsSealed), "%s: the blob is the one before the refresh", name)
 
 		_, err = resolve(s.ctx, s.router(s.v1), ref, endpoint)
 		s.ErrorIs(err, errReauthorize, "%s: the next caller does not refresh", name)
@@ -425,7 +425,7 @@ func (s *PGSealedSuite) TestAStatusChangeKeepsTheRevisionAndTheBlob() {
 
 	stored := s.stored(ref)
 	s.Equal(before.Revision, stored.Revision)
-	s.True(bytes.Equal(before.MaterialSealed, stored.MaterialSealed), "the blob is unchanged")
+	s.True(bytes.Equal(before.CredentialsSealed, stored.CredentialsSealed), "the blob is unchanged")
 	s.Equal(store.ConnectionNeedsReauthorization, stored.Status)
 	s.Equal("Reconnect the account", stored.LastError)
 }
@@ -444,7 +444,7 @@ func (s *PGSealedSuite) TestTheRevisionIsNotTheCallbacksToMove() {
 func (s *PGSealedSuite) TestCredentialsSealedUnderAnOlderKeyAreRewrappedOnNextUse() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
 	before := s.stored(ref)
-	s.Equal(1, before.MaterialKEKVersion)
+	s.Equal(1, before.CredentialsKEKVersion)
 
 	rotated, err := auth.NewSealerWithKeyring(2, map[int]string{1: "test key one", 2: "test key two"})
 	s.Require().NoError(err)
@@ -452,9 +452,9 @@ func (s *PGSealedSuite) TestCredentialsSealedUnderAnOlderKeyAreRewrappedOnNextUs
 	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(used.Credentials), "the old key still opens it")
 
 	stored := s.stored(ref)
-	s.Equal(2, stored.MaterialKEKVersion, "a use that changed nothing still rewraps")
+	s.Equal(2, stored.CredentialsKEKVersion, "a use that changed nothing still rewraps")
 	s.Equal(before.Revision, stored.Revision, "a rewrap is the same credentials at the same revision")
-	s.False(bytes.Equal(before.MaterialSealed, stored.MaterialSealed), "the blob is sealed again")
+	s.False(bytes.Equal(before.CredentialsSealed, stored.CredentialsSealed), "the blob is sealed again")
 
 	retired, err := auth.NewSealerWithKeyring(2, map[int]string{2: "test key two"})
 	s.Require().NoError(err)
@@ -470,18 +470,18 @@ func (s *PGSealedSuite) TestAFailedUseDoesNotRewrap() {
 	failed := errors.New("the use failed")
 	err = s.credentialStore(rotated).Update(s.ctx, ref, func(*core.CredentialState, func() error) (bool, error) { return false, failed })
 	s.ErrorIs(err, failed)
-	s.Equal(1, s.stored(ref).MaterialKEKVersion)
+	s.Equal(1, s.stored(ref).CredentialsKEKVersion)
 }
 
 func (s *PGSealedSuite) TestABlobFromAnEarlierRevisionDoesNotOpen() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "spent"}, time.Time{})
-	earlier := s.stored(ref).MaterialSealed
+	earlier := s.stored(ref).CredentialsSealed
 	s.Require().NoError(s.credentialStore(s.v1).Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		state.Credentials = credentials(tokens{Access: "b", Refresh: "live"})
 		return true, nil
 	}))
 	// Somebody with write access to the table puts the earlier credentials back.
-	_, err := s.db.DB().ExecContext(s.ctx, "UPDATE connector_connections SET material_sealed = ? WHERE id = ?", earlier, ref.ConnectionID)
+	_, err := s.db.DB().ExecContext(s.ctx, "UPDATE connector_connections SET credentials_sealed = ? WHERE id = ?", earlier, ref.ConnectionID)
 	s.Require().NoError(err)
 
 	s.assertUnreadable(ref)
@@ -491,8 +491,8 @@ func (s *PGSealedSuite) TestABlobFromAnotherConnectionDoesNotOpen() {
 	theirs := s.connected("acme-app", tokens{Access: "theirs", Refresh: "theirs"}, time.Time{})
 	mine := s.connected("acme-app", tokens{Access: "mine", Refresh: "mine"}, time.Time{})
 	s.Equal(s.stored(theirs).Revision, s.stored(mine).Revision, "both at the same revision, so only the id tells them apart")
-	_, err := s.db.DB().ExecContext(s.ctx, "UPDATE connector_connections SET material_sealed = ? WHERE id = ?",
-		s.stored(theirs).MaterialSealed, mine.ConnectionID)
+	_, err := s.db.DB().ExecContext(s.ctx, "UPDATE connector_connections SET credentials_sealed = ? WHERE id = ?",
+		s.stored(theirs).CredentialsSealed, mine.ConnectionID)
 	s.Require().NoError(err)
 
 	s.assertUnreadable(mine)
@@ -547,7 +547,7 @@ func (s *PGSealedSuite) TestARewrapKeepsWhatAnUnchangedUseEditedButDidNotCommit(
 	s.Require().NoError(err)
 
 	stored := s.stored(ref)
-	s.Equal(2, stored.MaterialKEKVersion, "the rewrap still happens")
+	s.Equal(2, stored.CredentialsKEKVersion, "the rewrap still happens")
 	s.Equal(before.Revision, stored.Revision, "fn's StoredCredentials were not committed")
 	s.Equal(store.ConnectionConnected, stored.Status)
 	s.Empty(stored.LastError)
@@ -565,7 +565,7 @@ func (s *PGSealedSuite) assertUnreadable(ref core.ConnectionRef) {
 	stored := s.stored(ref)
 	s.Equal(store.ConnectionNeedsReauthorization, stored.Status, "committed before the callback ran")
 	s.Equal(unreadableError, stored.LastError)
-	s.True(bytes.Equal(before.MaterialSealed, stored.MaterialSealed), "the blob is left as it was")
+	s.True(bytes.Equal(before.CredentialsSealed, stored.CredentialsSealed), "the blob is left as it was")
 
 	s.Require().NoError(s.credentialStore(s.v1).Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		state.Credentials = credentials(tokens{Access: "reconnected", Refresh: "reconnected"})

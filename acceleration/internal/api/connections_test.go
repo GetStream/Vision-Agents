@@ -209,14 +209,14 @@ func (s *ConnectionsSuite) TestANewConnectionIsPendingAtTheConnectorsNewestRevis
 	s.Equal(created, s.get(s.serverClient, created.ID), "the answer to the create is the stored row")
 }
 
-func (s *ConnectionsSuite) TestAConnectionNeverShowsCredentialMaterial() {
+func (s *ConnectionsSuite) TestAConnectionNeverShowsItsStoredCredentials() {
 	created := s.create(s.serverClient, appOwned("linear"))
 
 	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connections/"+created.ID, nil)
 	s.Require().Equal(http.StatusOK, status)
 	var shown map[string]any
 	s.Require().NoError(json.Unmarshal(raw, &shown))
-	for _, withheld := range []string{"material", "material_sealed", "material_kek_version", "customer_id", "cached_tools", "deleted_at"} {
+	for _, withheld := range []string{"credentials", "credentials_sealed", "credentials_kek_version", "customer_id", "cached_tools", "deleted_at"} {
 		s.NotContains(shown, withheld)
 	}
 }

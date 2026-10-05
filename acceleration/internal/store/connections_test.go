@@ -77,7 +77,7 @@ func (s *StoreSuite) insertRaw(ownerType, ownerID string) error {
 	return err
 }
 
-func (s *StoreSuite) TestACreatedConnectionIsPendingAtRevisionOneWithNoMaterial() {
+func (s *StoreSuite) TestACreatedConnectionIsPendingAtRevisionOneWithNoCredentials() {
 	created := s.connection("acme-app", func(connection *ConnectorConnection) {
 		connection.Inputs = map[string]string{"region": "eu"}
 		connection.Label = "Support workspace"
@@ -97,8 +97,8 @@ func (s *StoreSuite) TestACreatedConnectionIsPendingAtRevisionOneWithNoMaterial(
 	s.Equal("Support workspace", found.Label)
 	s.Equal(ConnectionPending, found.Status)
 	s.Equal(1, found.Revision)
-	s.Empty(found.MaterialSealed)
-	s.Zero(found.MaterialKEKVersion)
+	s.Empty(found.CredentialsSealed)
+	s.Zero(found.CredentialsKEKVersion)
 	s.Equal([]string{}, found.GrantedScopes)
 	s.True(created.CreatedAt.Equal(found.CreatedAt), "the row handed back is the row a read returns")
 	s.Nil(found.DeletedAt)
@@ -307,24 +307,24 @@ func (s *StoreSuite) TestADeletedConnectionCannotBeDeletedAgain() {
 	s.ErrorIs(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID), ErrNoConnectorConnection)
 }
 
-func (s *StoreSuite) TestDeletingAConnectionDropsItsMaterial() {
+func (s *StoreSuite) TestDeletingAConnectionDropsItsCredentials() {
 	connection := s.connection("acme-app", nil)
-	// The revisioned save that writes material is T8's; this is the state it leaves.
+	// The revisioned save that writes credentials is T8's; this is the state it leaves.
 	_, err := s.store.DB().ExecContext(s.ctx,
-		"UPDATE connector_connections SET material_sealed = 'sealed grant', material_kek_version = 1, status = ?, expires_at = now() WHERE id = ?",
+		"UPDATE connector_connections SET credentials_sealed = 'sealed credentials', credentials_kek_version = 1, status = ?, expires_at = now() WHERE id = ?",
 		ConnectionConnected, connection.ID)
 	s.Require().NoError(err)
 
 	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID))
 
-	var material []byte
+	var sealed []byte
 	var version int
 	var status string
 	var expires *time.Time
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
-		"SELECT material_sealed, material_kek_version, status, expires_at FROM connector_connections WHERE id = ?",
-		connection.ID).Scan(&material, &version, &status, &expires))
-	s.Empty(material)
+		"SELECT credentials_sealed, credentials_kek_version, status, expires_at FROM connector_connections WHERE id = ?",
+		connection.ID).Scan(&sealed, &version, &status, &expires))
+	s.Empty(sealed)
 	s.Zero(version)
 	s.Equal(ConnectionDisconnected, status)
 	s.Nil(expires)
