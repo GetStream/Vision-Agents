@@ -22,8 +22,15 @@ from ._generated.models import (
     AgentMode,
     DispatchSetting,
     Error,
+    Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
+    McpServer,
+    PluginOptions,
+    SandboxOptions,
+    SimulationDeclaration,
+    SimulationDeclarationMode,
+    SimulationDeclarationTags,
     SkillRequest,
     SessionVideo,
     SyncAgentRequest,
@@ -35,6 +42,7 @@ from .folder import (
     AGENT_STAMP,
     Folder,
     Settings,
+    Simulation,
     find,
     load,
     read_stamp,
@@ -111,8 +119,12 @@ async def sync_agent(
                 declared.title = page.title
             if page.description:
                 declared.description = page.description
+            if page.refresh_hours:
+                declared.refresh_hours = page.refresh_hours
             pages.append(declared)
         body.knowledge_urls = pages
+    if folder.simulations is not None:
+        body.simulations = [_simulation(item) for item in folder.simulations]
     _declare_settings(body, folder.settings)
 
     result = _answer(await sync_agent_request.asyncio(client=client, body=body))
@@ -162,7 +174,7 @@ async def define_agent(
     name: str,
     instructions: str = "",
     llm: str = "",
-    subagent: str = "",
+    thinking_llm: str = "",
     stt: str = "",
     tts: str = "",
     voice: str = "",
@@ -189,7 +201,8 @@ async def define_agent(
         name: What the config is called, which is also how it is found again.
         instructions: The system prompt.
         llm: The model that answers.
-        subagent: The model delegated work runs on.
+        thinking_llm: The model a voice agent hands its skills to. Only for a voice
+            agent: a text agent runs everything on its llm.
         video_source: Source used by skills that capture video.
         video_max_frames: Number of retained frames to capture, from 1 to 8.
         stt: The model that transcribes, for a config a call will use.
@@ -218,8 +231,8 @@ async def define_agent(
         wanted.instructions = instructions
     if llm:
         wanted.llm = llm
-    if subagent:
-        wanted.subagent = subagent
+    if thinking_llm:
+        wanted.thinking_llm = thinking_llm
     if video_source is not None or video_max_frames is not None:
         wanted.video = SessionVideo()
         if video_source is not None:
@@ -315,10 +328,14 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.sts = settings.sts
     if settings.voice:
         body.voice = settings.voice
+    if settings.speed:
+        body.speed = settings.speed
     if settings.llm:
         body.llm = settings.llm
-    if settings.subagent:
-        body.subagent = settings.subagent
+    if settings.harness:
+        body.harness = Harness(settings.harness)
+    if settings.thinking_llm:
+        body.thinking_llm = settings.thinking_llm
     if settings.video_max_frames:
         body.video = SessionVideo(
             source=settings.video_source, max_frames=settings.video_max_frames
@@ -337,14 +354,71 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.greeting = settings.greeting
     if settings.plugins:
         body.plugins = settings.plugins
+    if settings.user_plugins:
+        body.user_plugins = settings.user_plugins
+    if settings.plugin_options:
+        body.plugin_options = [
+            PluginOptions(
+                plugin=option.plugin,
+                readonly=option.readonly,
+                scopes=option.scopes,
+                toolsets=option.toolsets,
+                tools=option.tools,
+            )
+            for option in settings.plugin_options
+        ]
+    if settings.mcp_servers:
+        body.mcp_servers = [
+            McpServer(name=server.name, url=server.url, tools=server.tools)
+            for server in settings.mcp_servers
+        ]
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:
         body.sandbox = SandboxProvider(settings.sandbox)
+    if settings.sandbox_options is not None:
+        options = settings.sandbox_options
+        body.sandbox_options = SandboxOptions(
+            image=options.image,
+            setup=options.setup,
+            timeout_ms=int(options.timeout_seconds * 1000),
+            cpu=options.cpu,
+            memory_gb=options.memory_gb,
+            disk_gb=options.disk_gb,
+        )
     if settings.tags:
         tags = SyncAgentRequestTags()
         tags.additional_properties = dict(settings.tags)
         body.tags = tags
+
+
+def _simulation(simulation: Simulation) -> SimulationDeclaration:
+    """A declared simulation as the sync request carries it, with the unset ones left out."""
+    declared = SimulationDeclaration(
+        name=simulation.name,
+        scenario=simulation.scenario,
+        assertion=simulation.assertion,
+    )
+    if simulation.mode:
+        declared.mode = SimulationDeclarationMode(simulation.mode)
+    if simulation.variations > 0:
+        declared.variations = simulation.variations
+    if simulation.max_turns > 0:
+        declared.max_turns = simulation.max_turns
+    for name in (
+        "caller_target",
+        "judge_target",
+        "caller_stt",
+        "caller_tts",
+        "caller_voice",
+    ):
+        if getattr(simulation, name):
+            setattr(declared, name, getattr(simulation, name))
+    if simulation.tags:
+        tags = SimulationDeclarationTags()
+        tags.additional_properties = dict(simulation.tags)
+        declared.tags = tags
+    return declared
 
 
 def _answer(answer: Union[T, Error, None]) -> T:

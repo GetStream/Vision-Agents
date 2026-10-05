@@ -68,6 +68,9 @@ type Options struct {
 	// alone: running code takes seconds, and the model holding the conversation does not
 	// have seconds. Nil means the subagent works everything out in its head.
 	Sandbox sandbox.Sandbox
+	// Publish puts the files the subagent's code hands back where the caller can see them.
+	// Nil means there is nowhere to, and the subagent is told so.
+	Publish sandbox.Publisher
 	// Tasks caps how much delegated work may run at once.
 	Tasks int
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
@@ -190,6 +193,7 @@ func New(options Options) (*Harness, error) {
 		h.tasks.onModelCall = options.OnModelCall
 		h.tasks.capture = options.Capture
 		h.tasks.load = options.Skills.Load
+		h.tasks.publish = options.Publish
 		if options.Subagent == nil {
 			h.tasks.open(options.OpenSubagent)
 		}

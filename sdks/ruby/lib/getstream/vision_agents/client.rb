@@ -15,7 +15,10 @@ module GetStream
     #
     #   api = GetStream::VisionAgents::Client.new(customer_id: "examples")
     #   api.get("/v1/agents/configs", query: { name: "docs" })
-    #   api.delete("/v1/agents/sessions/{id}", path: { id: "sess_1" })
+    #   api.get("/v1/agents/sessions/{id}", path: { id: "sess_1" })
+    #
+    # The resources (#agent, #router, #simulations, #memories) are built on these, and are
+    # what callers use.
     #
     # Answers are the router's JSON as string-keyed hashes, whole: a field added to the spec
     # after this gem shipped still reaches the caller. A 204 answers nil.
@@ -116,6 +119,23 @@ module GetStream
       # An agent addressed by the name it is configured under. No request is made.
       def agent(name, **options)
         Agent.new(config: name, client: self, **options)
+      end
+
+      # Routes through a stored router config, named by what it was stored under or by its
+      # id. The config holds the targets; an empty name is a router told what to do per call.
+      # No request is made.
+      def router(name = "", tags: {})
+        Router.new(name, tags: tags, client: self)
+      end
+
+      # Conversations to test an agent with, and their runs.
+      def simulations
+        Simulations.new(self)
+      end
+
+      # What agents remember about the app's users.
+      def memories
+        Memories.new(self)
       end
 
       private

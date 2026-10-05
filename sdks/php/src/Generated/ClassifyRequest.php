@@ -11,15 +11,15 @@ use GetStream\VisionAgents\Json;
 final readonly class ClassifyRequest
 {
     public function __construct(
-        // What the questions are about: a string for plain text, or a JSON object whose parts a question can name, su...
-        public mixed $state,
         // Keyed by ids of the caller's own choosing, which is how the answers come back. An id is not part of what is...
         /** @var array<string, mixed> */
         public array $questions,
-        // A provider/model or a capability shortcut. Empty takes classify-fast.
-        public ?string $target = null,
+        // What the questions are about: a string for plain text, or a JSON object whose parts a question can name, su...
+        public mixed $state,
         /** @var array<string, string>|null */
         public ?array $tags = null,
+        // A provider/model or a capability shortcut. Empty takes classify-fast.
+        public ?string $target = null,
     ) {
     }
 
@@ -29,10 +29,10 @@ final readonly class ClassifyRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            state: $data['state'] ?? null,
             questions: Json::object($data, 'questions'),
-            target: array_key_exists('target', $data) && $data['target'] !== null ? Json::string($data, 'target') : null,
+            state: $data['state'] ?? null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            target: array_key_exists('target', $data) && $data['target'] !== null ? Json::string($data, 'target') : null,
         );
     }
 
@@ -44,13 +44,13 @@ final readonly class ClassifyRequest
     public function toArray(): array
     {
         $out = [];
-        $out['state'] = $this->state;
         $out['questions'] = Json::objectValue($this->questions);
-        if ($this->target !== null) {
-            $out['target'] = $this->target;
-        }
+        $out['state'] = $this->state;
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
+        }
+        if ($this->target !== null) {
+            $out['target'] = $this->target;
         }
         return $out;
     }

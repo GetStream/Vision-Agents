@@ -17,64 +17,64 @@ T = TypeVar("T", bound="StatsBucket")
 class StatsBucket:
     """
     Attributes:
-        provider (str):
-        model (str):
-        bucket (datetime.datetime):
         audio_ms_total (int): Billable audio, transcribed or produced.
-        characters_total (int): Billable text. Zero for providers that bill by audio.
-        input_tokens_total (int): Prompt tokens read, cached ones included. Zero outside llm.
+        bucket (datetime.datetime):
         cached_input_tokens_total (int): The part of the prompt served from the provider's cache.
-        output_tokens_total (int): Generated tokens, reasoning included. Zero outside llm.
-        images_total (int): Pictures drawn. Zero outside image.
+        characters_total (int): Billable text. Zero for providers that bill by audio.
         cost_micros_total (int): Millionths of a dollar, priced from the configured rates.
-        request_count (int):
         error_count (int):
+        images_total (int): Pictures drawn. Zero outside image.
+        input_tokens_total (int): Prompt tokens read, cached ones included. Zero outside llm.
+        model (str):
+        output_tokens_total (int): Generated tokens, reasoning included. Zero outside llm.
+        provider (str):
+        request_count (int):
         latency_p50_ms (float | None | Unset):
         latency_p95_ms (float | None | Unset):
         uptime (float | None | Unset): Successes over total requests in the bucket.
     """
 
-    provider: str
-    model: str
-    bucket: datetime.datetime
     audio_ms_total: int
-    characters_total: int
-    input_tokens_total: int
+    bucket: datetime.datetime
     cached_input_tokens_total: int
-    output_tokens_total: int
-    images_total: int
+    characters_total: int
     cost_micros_total: int
-    request_count: int
     error_count: int
+    images_total: int
+    input_tokens_total: int
+    model: str
+    output_tokens_total: int
+    provider: str
+    request_count: int
     latency_p50_ms: float | None | Unset = UNSET
     latency_p95_ms: float | None | Unset = UNSET
     uptime: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        provider = self.provider
-
-        model = self.model
+        audio_ms_total = self.audio_ms_total
 
         bucket = self.bucket.isoformat()
 
-        audio_ms_total = self.audio_ms_total
+        cached_input_tokens_total = self.cached_input_tokens_total
 
         characters_total = self.characters_total
 
-        input_tokens_total = self.input_tokens_total
+        cost_micros_total = self.cost_micros_total
 
-        cached_input_tokens_total = self.cached_input_tokens_total
-
-        output_tokens_total = self.output_tokens_total
+        error_count = self.error_count
 
         images_total = self.images_total
 
-        cost_micros_total = self.cost_micros_total
+        input_tokens_total = self.input_tokens_total
+
+        model = self.model
+
+        output_tokens_total = self.output_tokens_total
+
+        provider = self.provider
 
         request_count = self.request_count
-
-        error_count = self.error_count
 
         latency_p50_ms: float | None | Unset
         if isinstance(self.latency_p50_ms, Unset):
@@ -98,18 +98,18 @@ class StatsBucket:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "provider": provider,
-                "model": model,
-                "bucket": bucket,
                 "audio_ms_total": audio_ms_total,
-                "characters_total": characters_total,
-                "input_tokens_total": input_tokens_total,
+                "bucket": bucket,
                 "cached_input_tokens_total": cached_input_tokens_total,
-                "output_tokens_total": output_tokens_total,
-                "images_total": images_total,
+                "characters_total": characters_total,
                 "cost_micros_total": cost_micros_total,
-                "request_count": request_count,
                 "error_count": error_count,
+                "images_total": images_total,
+                "input_tokens_total": input_tokens_total,
+                "model": model,
+                "output_tokens_total": output_tokens_total,
+                "provider": provider,
+                "request_count": request_count,
             }
         )
         if latency_p50_ms is not UNSET:
@@ -124,29 +124,29 @@ class StatsBucket:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        provider = d.pop("provider")
-
-        model = d.pop("model")
+        audio_ms_total = d.pop("audio_ms_total")
 
         bucket = datetime.datetime.fromisoformat(d.pop("bucket"))
 
-        audio_ms_total = d.pop("audio_ms_total")
+        cached_input_tokens_total = d.pop("cached_input_tokens_total")
 
         characters_total = d.pop("characters_total")
 
-        input_tokens_total = d.pop("input_tokens_total")
+        cost_micros_total = d.pop("cost_micros_total")
 
-        cached_input_tokens_total = d.pop("cached_input_tokens_total")
-
-        output_tokens_total = d.pop("output_tokens_total")
+        error_count = d.pop("error_count")
 
         images_total = d.pop("images_total")
 
-        cost_micros_total = d.pop("cost_micros_total")
+        input_tokens_total = d.pop("input_tokens_total")
+
+        model = d.pop("model")
+
+        output_tokens_total = d.pop("output_tokens_total")
+
+        provider = d.pop("provider")
 
         request_count = d.pop("request_count")
-
-        error_count = d.pop("error_count")
 
         def _parse_latency_p50_ms(data: object) -> float | None | Unset:
             if data is None:
@@ -176,18 +176,18 @@ class StatsBucket:
         uptime = _parse_uptime(d.pop("uptime", UNSET))
 
         stats_bucket = cls(
-            provider=provider,
-            model=model,
-            bucket=bucket,
             audio_ms_total=audio_ms_total,
-            characters_total=characters_total,
-            input_tokens_total=input_tokens_total,
+            bucket=bucket,
             cached_input_tokens_total=cached_input_tokens_total,
-            output_tokens_total=output_tokens_total,
-            images_total=images_total,
+            characters_total=characters_total,
             cost_micros_total=cost_micros_total,
-            request_count=request_count,
             error_count=error_count,
+            images_total=images_total,
+            input_tokens_total=input_tokens_total,
+            model=model,
+            output_tokens_total=output_tokens_total,
+            provider=provider,
+            request_count=request_count,
             latency_p50_ms=latency_p50_ms,
             latency_p95_ms=latency_p95_ms,
             uptime=uptime,

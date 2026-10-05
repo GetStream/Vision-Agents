@@ -521,6 +521,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 		Skills:       a.options.Skills,
 		Tools:        a.availableTools(),
 		Sandbox:      a.options.Sandbox,
+		Publish:      a.options.Publish,
 		Tasks:        a.options.Tasks,
 		MaxTokens:    a.options.MaxTokens,
 		Overwrites:   s.Overwrites,
@@ -550,7 +551,7 @@ func (a *Agent) openNative(s Settings) (*prepared, error) {
 		var err error
 		prep.harness, err = harness.New(harness.Options{
 			OpenSubagent: subagent, Capture: a.captureVideo, Skills: a.options.Skills,
-			Sandbox: a.options.Sandbox, Tasks: a.options.Tasks, Logger: a.logger,
+			Sandbox: a.options.Sandbox, Publish: a.options.Publish, Tasks: a.options.Tasks, Logger: a.logger,
 			OnModelCall: func(timing llm.CallTiming) { a.emitter.Send(ModelCall{CallTiming: timing}) },
 		})
 		if err != nil {

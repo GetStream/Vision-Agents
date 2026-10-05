@@ -40,7 +40,7 @@ class Knowledge:
         self.backend = backend
 
     async def add_url(
-        self, url: str, title: str = "", description: str = ""
+        self, url: str, title: str = "", description: str = "", refresh_hours: int = 0
     ) -> KnowledgePage:
         """Keep the knowledge base filled from a page published elsewhere.
 
@@ -53,6 +53,8 @@ class Knowledge:
             url: The http or https address to read.
             title: What to call the page. Defaults to what it calls itself.
             description: What the page is, in the caller's own words.
+            refresh_hours: How many hours between reads. Zero is never; adding a page
+                again without one turns its schedule off.
 
         Returns:
             The page as stored, including how many passages it became and why it failed if
@@ -69,6 +71,8 @@ class Knowledge:
             body.title = title
         if description:
             body.description = description
+        if refresh_hours:
+            body.refresh_hours = refresh_hours
 
         added = await add_knowledge_url.asyncio(client=self.backend.client(), body=body)
         page = await self._settled(self._page(added))

@@ -13,41 +13,47 @@ final readonly class AgentConfigRequest
     public function __construct(
         // What the config is called, which is unique among the customer's own.
         public string $name,
-        public AgentMode|string|null $mode = null,
-        // A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
-        public ?string $stt = null,
-        public ?string $tts = null,
-        // A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes t...
-        public ?string $sts = null,
-        // Provider-specific voice id.
-        public ?string $voice = null,
-        // The model holding the conversation.
-        public ?string $llm = null,
-        public ?SessionVideo $video = null,
-        // The model that does the thinking. Empty means the voice model answers everything itself, and skills mean no...
-        public ?string $subagent = null,
-        // What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves t...
-        public ?string $search = null,
-        public ?string $instructions = null,
+        public ?AgentDispatch $dispatch = null,
         public ?string $greeting = null,
         // A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose....
         public ?string $guardrail = null,
-        // Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built...
-        /** @var list<string>|null */
-        public ?array $skills = null,
-        // Hosted MCP servers this agent may reach, named from the built-in catalog.
-        /** @var list<string>|null */
-        public ?array $plugins = null,
+        public Harness|string|null $harness = null,
+        public ?string $instructions = null,
         // Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to...
         /** @var list<string>|null */
         public ?array $keyterms = null,
         // What the agent may look things up in. Empty means it knows only what it was told.
         public ?string $knowledgeNamespace = null,
+        // The model holding the conversation.
+        public ?string $llm = null,
+        public AgentMode|string|null $mode = null,
+        // Hosted MCP servers this agent may reach, named from the built-in catalog.
+        /** @var list<string>|null */
+        public ?array $plugins = null,
         public Sandbox|string|null $sandbox = null,
+        // What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves t...
+        public ?string $search = null,
+        // Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built...
+        /** @var list<string>|null */
+        public ?array $skills = null,
+        // Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only...
+        public ?float $speed = null,
+        // A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes t...
+        public ?string $sts = null,
+        // A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
+        public ?string $stt = null,
+        // The model that does the thinking. Empty means the voice model answers everything itself, and skills mean no...
+        public ?string $subagent = null,
         // Cost labels, carried onto every request a session using it makes.
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        public ?AgentDispatch $dispatch = null,
+        public ?string $tts = null,
+        public ?SessionVideo $video = null,
+        // Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match pattern...
+        /** @var list<string>|null */
+        public ?array $visibleTools = null,
+        // Provider-specific voice id.
+        public ?string $voice = null,
     ) {
     }
 
@@ -58,25 +64,28 @@ final readonly class AgentConfigRequest
     {
         return new self(
             name: Json::string($data, 'name'),
-            mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
-            stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
-            tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
-            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
-            voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
-            llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
-            video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
-            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
-            search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
-            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
+            dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
-            skills: array_key_exists('skills', $data) && $data['skills'] !== null ? Json::strings($data, 'skills') : null,
-            plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::strings($data, 'plugins') : null,
+            harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
+            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
+            llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
+            mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
+            plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::strings($data, 'plugins') : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
+            search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
+            skills: array_key_exists('skills', $data) && $data['skills'] !== null ? Json::strings($data, 'skills') : null,
+            speed: array_key_exists('speed', $data) && $data['speed'] !== null ? Json::float($data, 'speed') : null,
+            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
+            stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
+            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
+            tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
+            video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
+            visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
+            voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
         );
     }
 
@@ -89,35 +98,8 @@ final readonly class AgentConfigRequest
     {
         $out = [];
         $out['name'] = $this->name;
-        if ($this->mode !== null) {
-            $out['mode'] = Json::enumValue($this->mode);
-        }
-        if ($this->stt !== null) {
-            $out['stt'] = $this->stt;
-        }
-        if ($this->tts !== null) {
-            $out['tts'] = $this->tts;
-        }
-        if ($this->sts !== null) {
-            $out['sts'] = $this->sts;
-        }
-        if ($this->voice !== null) {
-            $out['voice'] = $this->voice;
-        }
-        if ($this->llm !== null) {
-            $out['llm'] = $this->llm;
-        }
-        if ($this->video !== null) {
-            $out['video'] = $this->video->toArray();
-        }
-        if ($this->subagent !== null) {
-            $out['subagent'] = $this->subagent;
-        }
-        if ($this->search !== null) {
-            $out['search'] = $this->search;
-        }
-        if ($this->instructions !== null) {
-            $out['instructions'] = $this->instructions;
+        if ($this->dispatch !== null) {
+            $out['dispatch'] = $this->dispatch->toArray();
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting;
@@ -125,11 +107,11 @@ final readonly class AgentConfigRequest
         if ($this->guardrail !== null) {
             $out['guardrail'] = $this->guardrail;
         }
-        if ($this->skills !== null) {
-            $out['skills'] = $this->skills;
+        if ($this->harness !== null) {
+            $out['harness'] = Json::enumValue($this->harness);
         }
-        if ($this->plugins !== null) {
-            $out['plugins'] = $this->plugins;
+        if ($this->instructions !== null) {
+            $out['instructions'] = $this->instructions;
         }
         if ($this->keyterms !== null) {
             $out['keyterms'] = $this->keyterms;
@@ -137,14 +119,50 @@ final readonly class AgentConfigRequest
         if ($this->knowledgeNamespace !== null) {
             $out['knowledge_namespace'] = $this->knowledgeNamespace;
         }
+        if ($this->llm !== null) {
+            $out['llm'] = $this->llm;
+        }
+        if ($this->mode !== null) {
+            $out['mode'] = Json::enumValue($this->mode);
+        }
+        if ($this->plugins !== null) {
+            $out['plugins'] = $this->plugins;
+        }
         if ($this->sandbox !== null) {
             $out['sandbox'] = Json::enumValue($this->sandbox);
+        }
+        if ($this->search !== null) {
+            $out['search'] = $this->search;
+        }
+        if ($this->skills !== null) {
+            $out['skills'] = $this->skills;
+        }
+        if ($this->speed !== null) {
+            $out['speed'] = $this->speed;
+        }
+        if ($this->sts !== null) {
+            $out['sts'] = $this->sts;
+        }
+        if ($this->stt !== null) {
+            $out['stt'] = $this->stt;
+        }
+        if ($this->subagent !== null) {
+            $out['subagent'] = $this->subagent;
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
         }
-        if ($this->dispatch !== null) {
-            $out['dispatch'] = $this->dispatch->toArray();
+        if ($this->tts !== null) {
+            $out['tts'] = $this->tts;
+        }
+        if ($this->video !== null) {
+            $out['video'] = $this->video->toArray();
+        }
+        if ($this->visibleTools !== null) {
+            $out['visible_tools'] = $this->visibleTools;
+        }
+        if ($this->voice !== null) {
+            $out['voice'] = $this->voice;
         }
         return $out;
     }

@@ -14,25 +14,25 @@ T = TypeVar("T", bound="SkippedVendor")
 class SkippedVendor:
     """
     Attributes:
-        vendor (str):  Example: twilio.
         reason (str):  Example: cannot search by administrative_area.
+        vendor (str):  Example: twilio.
     """
 
-    vendor: str
     reason: str
+    vendor: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        vendor = self.vendor
-
         reason = self.reason
+
+        vendor = self.vendor
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "vendor": vendor,
                 "reason": reason,
+                "vendor": vendor,
             }
         )
 
@@ -41,13 +41,13 @@ class SkippedVendor:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        vendor = d.pop("vendor")
-
         reason = d.pop("reason")
 
+        vendor = d.pop("vendor")
+
         skipped_vendor = cls(
-            vendor=vendor,
             reason=reason,
+            vendor=vendor,
         )
 
         skipped_vendor.additional_properties = d

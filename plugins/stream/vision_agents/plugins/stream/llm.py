@@ -37,6 +37,7 @@ class LLM(llm.LLM):
         customer_id: Optional[str] = None,
         config_id: str = "",
         options: Optional[dict[str, Any]] = None,
+        backend: Optional[Backend] = None,
     ):
         """Route completions to `target`.
 
@@ -52,6 +53,8 @@ class LLM(llm.LLM):
             config_id: A stored router config to take the options from, by name or by id.
             options: Per-call overrides of that config's llm block. Usually built by
                 `Router.llm.realtime`.
+            backend: A backend to use as it is, instead of building one from `url` and
+                `customer_id`.
         """
         super().__init__()
         self.provider_name = "stream"
@@ -61,7 +64,7 @@ class LLM(llm.LLM):
         self.tags = tags or {}
         self.config_id = config_id
         self.options = options or {}
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = backend or Backend(url=url, customer_id=customer_id)
 
         self._socket: Optional[Socket] = None
         self._reader: Optional[asyncio.Task] = None

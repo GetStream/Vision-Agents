@@ -21,45 +21,44 @@ T = TypeVar("T", bound="ClassifyRequest")
 class ClassifyRequest:
     """
     Attributes:
-        state (Any): What the questions are about: a string for plain text, or a JSON object whose parts a question can
-            name, such as `message`.
-             Example: I was charged twice this month and nobody has answered my email..
         questions (ClassifyRequestQuestions): Keyed by ids of the caller's own choosing, which is how the answers come
             back. An id is not part of what is asked, so a question carries its whole meaning in its instructions.
-        target (str | Unset): A provider/model or a capability shortcut. Empty takes classify-fast.
-             Example: classify-fast.
+        state (Any): What the questions are about: a string for plain text, or a JSON object whose parts a question can
+            name, such as `message`. Example: I was charged twice this month and nobody has answered my email..
         tags (ClassifyRequestTags | Unset):
+        target (str | Unset): A provider/model or a capability shortcut. Empty takes classify-fast. Example: classify-
+            fast.
     """
 
-    state: Any
     questions: ClassifyRequestQuestions
-    target: str | Unset = UNSET
+    state: Any
     tags: ClassifyRequestTags | Unset = UNSET
+    target: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        state = self.state
-
         questions = self.questions.to_dict()
 
-        target = self.target
+        state = self.state
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
+        target = self.target
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "state": state,
                 "questions": questions,
+                "state": state,
             }
         )
-        if target is not UNSET:
-            field_dict["target"] = target
         if tags is not UNSET:
             field_dict["tags"] = tags
+        if target is not UNSET:
+            field_dict["target"] = target
 
         return field_dict
 
@@ -71,11 +70,9 @@ class ClassifyRequest:
         from ..models.classify_request_tags import ClassifyRequestTags
 
         d = dict(src_dict)
-        state = d.pop("state")
-
         questions = ClassifyRequestQuestions.from_dict(d.pop("questions"))
 
-        target = d.pop("target", UNSET)
+        state = d.pop("state")
 
         _tags = d.pop("tags", UNSET)
         tags: ClassifyRequestTags | Unset
@@ -84,11 +81,13 @@ class ClassifyRequest:
         else:
             tags = ClassifyRequestTags.from_dict(_tags)
 
+        target = d.pop("target", UNSET)
+
         classify_request = cls(
-            state=state,
             questions=questions,
-            target=target,
+            state=state,
             tags=tags,
+            target=target,
         )
 
         classify_request.additional_properties = d

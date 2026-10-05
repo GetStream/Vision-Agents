@@ -11,11 +11,11 @@ use GetStream\VisionAgents\Json;
 final readonly class TagValueSummary
 {
     public function __construct(
-        public string $value,
         public int $costMicrosTotal,
         public int $requestCount,
         // This value's share of what the key covers, from 0 to 1.
         public float $share,
+        public string $value,
     ) {
     }
 
@@ -25,10 +25,10 @@ final readonly class TagValueSummary
     public static function fromArray(array $data): self
     {
         return new self(
-            value: Json::string($data, 'value'),
             costMicrosTotal: Json::int($data, 'cost_micros_total'),
             requestCount: Json::int($data, 'request_count'),
             share: Json::float($data, 'share'),
+            value: Json::string($data, 'value'),
         );
     }
 
@@ -40,10 +40,10 @@ final readonly class TagValueSummary
     public function toArray(): array
     {
         $out = [];
-        $out['value'] = $this->value;
         $out['cost_micros_total'] = $this->costMicrosTotal;
         $out['request_count'] = $this->requestCount;
         $out['share'] = $this->share;
+        $out['value'] = $this->value;
         return $out;
     }
 }

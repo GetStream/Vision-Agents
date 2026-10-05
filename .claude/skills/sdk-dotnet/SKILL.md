@@ -160,16 +160,3 @@ xUnit v3 (4.0.1) on the Microsoft Testing Platform (`global.json` sets the runne
   request is checked on the wire too.
 - `LiveTests` skip unless `VISION_AGENTS_LIVE_URL` is set. They hold real conversations and
   wait for what the router writes behind a request instead of sleeping.
-
-## Pending: cursor pagination
-
-Go has moved; this SDK still needs to. `listSessions`, `searchSessions`, `listResponses` and
-`listResponseItems` take `cursor` instead of `offset` and return `{items, has_more,
-next_cursor}` instead of an array. See the `pagination` skill and `sdks/go/client`.
-
-## Pending: session update (Go is done)
-
-The Go SDK moved to `PATCH /v1/agents/sessions/{id}` (`updateSession`), which changes title,
-description, custom, instructions, models and voice in one call. Regenerate, then expose
-`session.UpdateAsync(...)` and `agent.Sessions.UpdateAsync(id, ...)`; drop `UpdateSettingsAsync`. See "Updating a session" in the `sdk` skill. The `/settings` and
-`/instructions` endpoints are deprecated.

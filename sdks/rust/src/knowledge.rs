@@ -38,12 +38,14 @@ impl Knowledge {
     /// The router queues the read and cuts the page into passages the way it cuts a
     /// document; this waits for it, so what comes back already says whether it worked. Still
     /// pending if it was not read within three minutes. Empty `title` and `description` are
-    /// left out.
+    /// left out. `refresh_hours` has the page read again that often; `None` is never, and
+    /// adding a page again without it turns its schedule off.
     pub async fn add_url(
         &self,
         url: &str,
         title: &str,
         description: &str,
+        refresh_hours: Option<i64>,
     ) -> Result<types::KnowledgeUrl> {
         if self.namespace.is_empty() {
             return Err(Error::configuration(
@@ -55,6 +57,7 @@ impl Knowledge {
             url: url.into(),
             title: (!title.is_empty()).then(|| title.into()),
             description: (!description.is_empty()).then(|| description.into()),
+            refresh_hours,
         };
         let mut page = self.client.add_knowledge_url(&request).await?;
 

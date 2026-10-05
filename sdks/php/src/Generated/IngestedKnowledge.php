@@ -11,9 +11,9 @@ use GetStream\VisionAgents\Json;
 final readonly class IngestedKnowledge
 {
     public function __construct(
-        public string $namespace,
         // How many documents were read.
         public int $documents,
+        public string $namespace,
         // How many passages they were cut into and written as.
         public int $passages,
     ) {
@@ -25,8 +25,8 @@ final readonly class IngestedKnowledge
     public static function fromArray(array $data): self
     {
         return new self(
-            namespace: Json::string($data, 'namespace'),
             documents: Json::int($data, 'documents'),
+            namespace: Json::string($data, 'namespace'),
             passages: Json::int($data, 'passages'),
         );
     }
@@ -39,8 +39,8 @@ final readonly class IngestedKnowledge
     public function toArray(): array
     {
         $out = [];
-        $out['namespace'] = $this->namespace;
         $out['documents'] = $this->documents;
+        $out['namespace'] = $this->namespace;
         $out['passages'] = $this->passages;
         return $out;
     }

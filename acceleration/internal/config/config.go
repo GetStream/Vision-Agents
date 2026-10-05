@@ -66,6 +66,7 @@ type Config struct {
 	VoicesBucketURL string     `koanf:"voices_bucket_url"`
 	Postgres        Postgres   `koanf:"postgres"`
 	Redis           Redis      `koanf:"redis"`
+	Node            Node       `koanf:"node"`
 	Auth            Auth       `koanf:"auth"`
 	RateLimit       RateLimit  `koanf:"rate_limit"`
 	DataMove        DataMove   `koanf:"data_move"`
@@ -86,6 +87,16 @@ type Redis struct {
 	Addr     string `koanf:"addr"`
 	Username string `koanf:"username"`
 	Password string `koanf:"password"`
+}
+
+// Node is how one process of a deployment is reached by the others, which is what lets a
+// request for a session land on any of them.
+type Node struct {
+	// Advertise is the host and port this node's peers reach it at, which is not Addr:
+	// Addr is where to listen, and a node listening on every interface still has one
+	// address its peers use. Empty means this host's own address and the port from Addr,
+	// which is right wherever a pod's address is reachable from its peers.
+	Advertise string `koanf:"advertise"`
 }
 
 // Auth decides who the router believes a caller is.
@@ -152,6 +163,7 @@ var variables = map[string]string{
 	"redis.addr":          "ROUTER_REDIS_ADDR",
 	"redis.username":      "ROUTER_REDIS_USERNAME",
 	"redis.password":      "ROUTER_REDIS_PASSWORD",
+	"node.advertise":      "ROUTER_NODE_ADVERTISE",
 	"auth.mode":           "ROUTER_AUTH_MODE",
 	"auth.kek":            "ROUTER_AUTH_KEK",
 	"data_move.retention": "ROUTER_DATA_MOVE_RETENTION",
@@ -303,6 +315,7 @@ func (c Config) export() error {
 		"redis.addr":                  c.Redis.Addr,
 		"redis.username":              c.Redis.Username,
 		"redis.password":              c.Redis.Password,
+		"node.advertise":              c.Node.Advertise,
 		"auth.mode":                   c.Auth.Mode,
 		"auth.kek":                    c.Auth.KEK,
 		"stream.api_key":              c.Stream.APIKey,

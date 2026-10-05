@@ -11,19 +11,19 @@ use GetStream\VisionAgents\Json;
 final readonly class PhoneVendor
 {
     public function __construct(
-        public string $vendor,
+        /** @var list<PhoneCapability|string> */
+        public array $capabilities,
         // Whether this service can actually work with the vendor.
         public bool $implemented,
         // Implemented and holding every credential it needs.
         public bool $ready,
-        /** @var list<PhoneCapability|string> */
-        public array $capabilities,
-        // What this service can do at the vendor. Eight vendors buy numbers and two of those also bridge calls, so a...
-        /** @var list<PhoneOperation|string>|null */
-        public ?array $operations = null,
+        public string $vendor,
         // The environment variables the vendor needs and does not have.
         /** @var list<string>|null */
         public ?array $missingCredentials = null,
+        // What this service can do at the vendor. Eight vendors buy numbers and two of those also bridge calls, so a...
+        /** @var list<PhoneOperation|string>|null */
+        public ?array $operations = null,
     ) {
     }
 
@@ -33,12 +33,12 @@ final readonly class PhoneVendor
     public static function fromArray(array $data): self
     {
         return new self(
-            vendor: Json::string($data, 'vendor'),
+            capabilities: Json::enums($data, 'capabilities', PhoneCapability::class),
             implemented: Json::bool($data, 'implemented'),
             ready: Json::bool($data, 'ready'),
-            capabilities: Json::enums($data, 'capabilities', PhoneCapability::class),
-            operations: array_key_exists('operations', $data) && $data['operations'] !== null ? Json::enums($data, 'operations', PhoneOperation::class) : null,
+            vendor: Json::string($data, 'vendor'),
             missingCredentials: array_key_exists('missing_credentials', $data) && $data['missing_credentials'] !== null ? Json::strings($data, 'missing_credentials') : null,
+            operations: array_key_exists('operations', $data) && $data['operations'] !== null ? Json::enums($data, 'operations', PhoneOperation::class) : null,
         );
     }
 
@@ -50,15 +50,15 @@ final readonly class PhoneVendor
     public function toArray(): array
     {
         $out = [];
-        $out['vendor'] = $this->vendor;
+        $out['capabilities'] = Json::enumValues($this->capabilities);
         $out['implemented'] = $this->implemented;
         $out['ready'] = $this->ready;
-        $out['capabilities'] = Json::enumValues($this->capabilities);
-        if ($this->operations !== null) {
-            $out['operations'] = Json::enumValues($this->operations);
-        }
+        $out['vendor'] = $this->vendor;
         if ($this->missingCredentials !== null) {
             $out['missing_credentials'] = $this->missingCredentials;
+        }
+        if ($this->operations !== null) {
+            $out['operations'] = Json::enumValues($this->operations);
         }
         return $out;
     }

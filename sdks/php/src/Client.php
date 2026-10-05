@@ -18,14 +18,14 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\StreamFactoryInterface;
 
 /**
- * The router held once: where it is, who is calling it, and one way to send it a request.
+ * The router held once: where it is, who is calling it, and its resources.
  *
- * One method per HTTP method, not one per endpoint. The shapes are generated into
- * `Generated\`, so a wrapper per operation would say nothing they do not, and a new endpoint
- * would need one written before it could be called:
+ *     $session = $client->agent('docs')->sessions->create(title: 'Pricing');
+ *     $run = $client->simulations->run($simulation->id);
+ *     $stt = $client->router('clinic')->stt->realtime();
  *
- *     $configs = $client->get('/v1/agents/configs', query: ['name' => 'docs']);
- *     $client->delete('/v1/agents/sessions/{id}', ['id' => $id]);
+ * The one-method-per-HTTP-method layer underneath (`get`, `post`, ...) is what the resources
+ * are written on, not something to call from an app.
  *
  * Synchronous, over any PSR-18 client. Inside a worker, where requests should suspend a fiber
  * rather than stall the loop, install amphp/http-client-psr7 and it is preferred.
@@ -33,6 +33,8 @@ use Psr\Http\Message\StreamFactoryInterface;
 final readonly class Client
 {
     public Backend $backend;
+    public Memories $memories;
+    public Simulations $simulations;
     private ClientInterface $http;
     private RequestFactoryInterface $requests;
     private StreamFactoryInterface $streams;
@@ -47,6 +49,8 @@ final readonly class Client
         $this->requests = $requests ?? Http::requests();
         $this->streams = $streams ?? Http::streams();
         $this->http = $http ?? Http::client();
+        $this->memories = new Memories($this);
+        $this->simulations = new Simulations($this);
     }
 
     /**
@@ -82,6 +86,19 @@ final readonly class Client
     }
 
     /**
+     * Everything the backend routes, through a stored router config, which holds the target
+     * each modality answers with.
+     *
+     * @param string $name a stored router config, by name or id; empty has every call say what
+     *     it wants for itself
+     * @param array<string, string> $tags cost labels carried onto everything routed here
+     */
+    public function router(string $name = '', array $tags = []): Router
+    {
+        return new Router($this, $name, $tags);
+    }
+
+    /**
      * Mints a guest so somebody can talk to an agent before they sign up.
      *
      * Nothing is remembered here. A PHP process is a backend, and one that remembered a guest
@@ -93,7 +110,7 @@ final readonly class Client
      */
     public function guestUser(string $id = '', string $name = '', ?array $custom = null): GuestUser
     {
-        $body = new GuestUserRequest($id === '' ? null : $id, $name === '' ? null : $name, $custom);
+        $body = new GuestUserRequest(custom: $custom, id: $id === '' ? null : $id, name: $name === '' ? null : $name);
         return GuestUser::fromArray(Json::asObject($this->post('/v1/agents/guests', body: $body->toArray())));
     }
 
@@ -112,7 +129,7 @@ final readonly class Client
         if ($guestId === '' || $userId === '') {
             throw new ConfigurationException('claiming a guest needs the guest and the account');
         }
-        $body = new ClaimGuestRequest($guestId, $userId);
+        $body = new ClaimGuestRequest(guestId: $guestId, userId: $userId);
         return ClaimGuestResult::fromArray(Json::asObject($this->post('/v1/agents/guests/claim', body: $body->toArray())));
     }
 

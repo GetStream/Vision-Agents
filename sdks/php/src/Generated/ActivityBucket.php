@@ -11,17 +11,17 @@ use GetStream\VisionAgents\Json;
 final readonly class ActivityBucket
 {
     public function __construct(
-        public \DateTimeImmutable $bucket,
         // Distinct end users who opened a session or asked something of an agent in the bucket. A guest who later tur...
         public int $activeUsers,
-        public int $sessions,
+        public \DateTimeImmutable $bucket,
+        public int $calls,
         // Responses the agents produced, which is one per thing asked of them.
         public int $messages,
-        public int $calls,
-        // How long those calls lasted. One still running counts up to now.
-        public float $voiceMinutes,
         // The part of voice_minutes that arrived over a phone number.
         public float $phoneMinutes,
+        public int $sessions,
+        // How long those calls lasted. One still running counts up to now.
+        public float $voiceMinutes,
     ) {
     }
 
@@ -31,13 +31,13 @@ final readonly class ActivityBucket
     public static function fromArray(array $data): self
     {
         return new self(
-            bucket: Json::date($data, 'bucket'),
             activeUsers: Json::int($data, 'active_users'),
-            sessions: Json::int($data, 'sessions'),
-            messages: Json::int($data, 'messages'),
+            bucket: Json::date($data, 'bucket'),
             calls: Json::int($data, 'calls'),
-            voiceMinutes: Json::float($data, 'voice_minutes'),
+            messages: Json::int($data, 'messages'),
             phoneMinutes: Json::float($data, 'phone_minutes'),
+            sessions: Json::int($data, 'sessions'),
+            voiceMinutes: Json::float($data, 'voice_minutes'),
         );
     }
 
@@ -49,13 +49,13 @@ final readonly class ActivityBucket
     public function toArray(): array
     {
         $out = [];
-        $out['bucket'] = Json::dateValue($this->bucket);
         $out['active_users'] = $this->activeUsers;
-        $out['sessions'] = $this->sessions;
-        $out['messages'] = $this->messages;
+        $out['bucket'] = Json::dateValue($this->bucket);
         $out['calls'] = $this->calls;
-        $out['voice_minutes'] = $this->voiceMinutes;
+        $out['messages'] = $this->messages;
         $out['phone_minutes'] = $this->phoneMinutes;
+        $out['sessions'] = $this->sessions;
+        $out['voice_minutes'] = $this->voiceMinutes;
         return $out;
     }
 }

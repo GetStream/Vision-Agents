@@ -3,14 +3,13 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"gopkg.in/yaml.v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -73,27 +72,6 @@ func (s *PostureSuite) TestEveryOperationTheSpecOpensIsReachableByAUsersDevice()
 		s.NotEqual(http.StatusForbidden, status, operation.method+" "+operation.path)
 	}
 	s.NotZero(opened, "the spec opens nothing to a client")
-}
-
-func (s *PostureSuite) TestTheRoutesLeftOutOfTheSpecAreStillDecidedOneWayOrTheOther() {
-	// Excluding an operation from generation drops it from the embedded spec the two
-	// tests above read, which is the one way an inverted default can fail open: nothing
-	// refuses what nothing can see. So unspecifiedRoutes has to name every excluded
-	// operation, not merely be right about the ones it happens to name.
-	for route, open := range s.excludedRoutes() {
-		s.Contains(unspecifiedRoutes, route,
-			"%s is excluded from generation, so the middleware cannot see it", route)
-		s.Equal(open, unspecifiedRoutes[route], "%s is open in the spec but not here", route)
-
-		method, path, found := strings.Cut(route, " ")
-		s.Require().True(found, route)
-		status, _ := s.client.call(method, fill(path), nil)
-		if open {
-			s.NotEqual(http.StatusForbidden, status, route)
-		} else {
-			s.Equal(http.StatusForbidden, status, route)
-		}
-	}
 }
 
 func (s *PostureSuite) TestACallerWithNoCredentialIsToldToAuthenticateFirst() {
@@ -163,65 +141,28 @@ func (s *PostureSuite) assertRefusedAlike(wrongly func(http.Header)) {
 	s.Equal(http.StatusUnauthorized, status)
 
 	_, nothingAtAll := s.unauthenticatedClient.call(http.MethodGet, "/v1/stt/providers", nil)
-	s.Equal(string(nothingAtAll), string(refusal))
+	s.Equal(withoutDuration(nothingAtAll), withoutDuration(refusal))
 }
 
-// operations are the ones the embedded spec describes, which is what the middleware reads.
+// withoutDuration is an answer with the time it took taken out of it, which two refusals
+// are never going to agree on. What is left is what a caller could tell them apart by.
+func withoutDuration(body []byte) string {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return string(body)
+	}
+	delete(fields, "duration")
+	rendered, err := json.Marshal(fields)
+	if err != nil {
+		return string(body)
+	}
+	return string(rendered)
+}
+
+// operations are the ones the spec describes, which is what the middleware reads. The routes
+// served by hand are among them, declared so that nothing is open because nothing saw it.
 func (s *PostureSuite) operations() []operationSummary {
-	operations, err := specifiedOperations((&Server{}).newAPI(chi.NewRouter()).OpenAPI())
-	s.Require().NoError(err)
-	return operations
-}
-
-// excludedRoutes reads the operations kept out of generation, as routes and whether each
-// is open to a client.
-//
-// Both files are read off disk rather than from the embedded spec, because what is being
-// checked is the very thing the embedded spec is missing: the generator's exclude list on
-// one side and the operations it names on the other.
-func (s *PostureSuite) excludedRoutes() map[string]bool {
-	var codegen struct {
-		OutputOptions struct {
-			Excluded []string `yaml:"exclude-operation-ids"`
-		} `yaml:"output-options"`
-	}
-	s.read("../../api/oapi-codegen.yaml", &codegen)
-
-	var spec struct {
-		Paths map[string]map[string]struct {
-			OperationID string `yaml:"operationId"`
-			Open        bool   `yaml:"x-client-accessible"`
-			Security    *[]map[string][]string
-		} `yaml:"paths"`
-	}
-	s.read("../../api/legacy.yaml", &spec)
-
-	excluded := map[string]bool{}
-	for _, id := range codegen.OutputOptions.Excluded {
-		excluded[id] = false
-	}
-
-	routes := map[string]bool{}
-	for path, item := range spec.Paths {
-		for method, operation := range item {
-			if _, ok := excluded[operation.OperationID]; !ok {
-				continue
-			}
-			free := operation.Security != nil && len(*operation.Security) == 0
-			routes[strings.ToUpper(method)+" "+path] = operation.Open || free
-			excluded[operation.OperationID] = true
-		}
-	}
-	for id, found := range excluded {
-		s.True(found, "%s is excluded from generation but is not in the spec", id)
-	}
-	return routes
-}
-
-func (s *PostureSuite) read(path string, into any) {
-	raw, err := os.ReadFile(path)
-	s.Require().NoError(err)
-	s.Require().NoError(yaml.Unmarshal(raw, into))
+	return specifiedOperations((&Server{}).newAPI(chi.NewRouter()).OpenAPI())
 }
 
 // empty is a body that validates nowhere, for a call that has to be refused before a

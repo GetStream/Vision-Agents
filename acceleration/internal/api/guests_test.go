@@ -140,7 +140,7 @@ func (s *GuestsSuite) TestOnlyTheAppsOwnBackendMayClaimAGuest() {
 // over HTTP would reach Stream for the token.
 func (s *GuestsSuite) recordGuest() string {
 	id := guestPrefix + s.utils.uuid()
-	s.Require().NoError(s.store.RecordGuest(context.Background(), &store.GuestUser{
+	s.Require().NoError(s.store.RecordGuest(context.Background(), &store.User{
 		ID: id, CustomerID: s.customerID(), Name: "Guest",
 	}))
 	return id

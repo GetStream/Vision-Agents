@@ -8,16 +8,18 @@ module GetStream
   module VisionAgents
     # Everything the acceleration backend routes, configured once.
     #
-    #   router = GetStream::VisionAgents::Router.new("healthcare")
-    #   router.stt.realtime(languages: ["en"]) do |stt|
+    #   api = GetStream::VisionAgents::Client.new
+    #   router = api.router("healthcare")   # the config holds the targets
+    #   router.stt.realtime(diarize: true) do |stt|
     #     stt.send_audio(pcm)
     #     stt.each { |frame| puts frame["text"] if frame["type"] == "transcript" }
     #   end
     #   transcript = router.stt.recording("https://example.com/call.mp3", diarize: true)
     #   hits = router.search("perioperative antibiotic guidance", results: 5)
     #
-    # Everything in the named config is a default, and every keyword on a call overrides one
-    # field of it.
+    # Get one from Client#router, which is where the URL and credentials were settled. Which
+    # model answers (target) lives in the named config; every keyword on a call overrides one
+    # field of it for that call only.
     class Router
       ROUTER_FILE = "router.yaml"
       ROUTER_STAMP = ".router_sync"
@@ -30,10 +32,11 @@ module GetStream
       # @param config [String] a stored router config, by name or id. Without one every call
       #   says what it wants for itself.
       # @param tags [Hash] cost labels carried onto everything routed here.
-      def initialize(config = "", tags: {}, client: nil)
+      # @param client [Client] the client the router comes from; see Client#router.
+      def initialize(config = "", client:, tags: {})
         @config = config.to_s
         @tags = tags.to_h { |key, value| [key.to_s, value.to_s] }
-        @client = client.is_a?(Client) ? client : Client.new(**(client || {}))
+        @client = client
         @stt = SpeechToText.new(self)
         @tts = TextToSpeech.new(self)
         @llm = Completions.new(self)
@@ -358,8 +361,8 @@ module GetStream
       # A transcription stream: send 16 kHz mono PCM with send_audio and read transcript
       # frames off it.
       #
-      # @param options any field of the stt block: target, languages, interim, endpointing,
-      #   diarize, keyterms, format, redact.
+      # @param options per-call overrides of the config's stt block: languages, interim,
+      #   endpointing, eager_end_of_turn, diarize, keyterms, format, redact.
       def realtime(**options, &block)
         Router.hold(@router.open("stt", Router.block("SttOptions", options), sample_rate: SAMPLE_RATE), &block)
       end
@@ -385,8 +388,8 @@ module GetStream
 
       # A speaking stream.
       #
-      # @param options any field of the tts block: target, providers, voice, languages,
-      #   speed, emotion, stability, format.
+      # @param options per-call overrides of the config's tts block: voice, languages, speed,
+      #   emotion, stability, format.
       def realtime(**options, &block)
         Router.hold(@router.open("tts", Router.block("TtsOptions", options), kind: Speaking), &block)
       end
@@ -408,7 +411,7 @@ module GetStream
 
       # An answering stream.
       #
-      # @param options any field of the llm block: target, providers, max_output_tokens,
+      # @param options per-call overrides of the config's llm block: max_output_tokens,
       #   temperature, reasoning_effort, format, verbosity, tool_choice.
       def realtime(**options, &block)
         Router.hold(@router.open("llm", Router.block("LlmOptions", options), kind: Answering), &block)
@@ -426,7 +429,7 @@ module GetStream
       # A speech-to-speech stream: send 16 kHz mono PCM with send_audio, text with
       # send_frame(type: "text", text:), and read audio and transcript frames off it.
       #
-      # @param options any field of the sts block: target, instructions, voice, languages,
+      # @param options per-call overrides of the config's sts block: instructions, voice, languages,
       #   turn_detection, silence_ms, interrupt_response, input_transcript,
       #   output_transcript, tools, text, images.
       def realtime(**options, &block)

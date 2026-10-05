@@ -35,6 +35,7 @@ class Router:
 
     def __init__(self):
         self.started: dict[str, dict[str, Any]] = {}
+        self.headers: dict[str, dict[str, str]] = {}
         self.spoken: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.transcriptions: list[dict[str, Any]] = []
         self.speeches: list[dict[str, Any]] = []
@@ -68,6 +69,7 @@ class Router:
 
     async def _stream(self, request: web.Request) -> web.WebSocketResponse:
         modality = request.match_info["modality"]
+        self.headers[modality] = dict(request.headers)
         socket = web.WebSocketResponse()
         await socket.prepare(request)
 
@@ -195,6 +197,24 @@ class TestRouter:
         assert opening["config_id"] == "healthcare"
         assert opening["tags"] == {"project": "clinic"}
         assert opening["stt"] == {}, "a call that overrides nothing sends nothing"
+
+    async def test_a_router_from_the_client_calls_as_the_client(self, backend: Router):
+        client = stream.Client(
+            backend=stream.Backend(
+                url=backend.url, customer_id="acme", acting_for="jlahey"
+            )
+        )
+        router = client.router("healthcare")
+
+        for session in (router.stt.realtime(), router.tts.realtime()):
+            assert session.backend is client.backend
+
+        async with router.stt.realtime():
+            opening = await backend.opening("stt")
+
+        assert opening["config_id"] == "healthcare"
+        assert backend.headers["stt"]["X-Stream-User-Id"] == "jlahey"
+        assert backend.headers["stt"]["X-Customer-Id"] == "acme"
 
     async def test_a_keyword_overrides_one_field_of_the_config(
         self, router: stream.Router, backend: Router

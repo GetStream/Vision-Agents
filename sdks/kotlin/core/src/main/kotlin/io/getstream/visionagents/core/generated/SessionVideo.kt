@@ -36,20 +36,20 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * 
  *
- * @param source Track or processor source. Omitted requires one unambiguous available source.
  * @param maxFrames Number of recent frames captured for a visual task. Default one.
+ * @param source Track or processor source. Omitted requires one unambiguous available source.
  */
 @Serializable
 
 internal data class SessionVideo (
 
-    /* Track or processor source. Omitted requires one unambiguous available source. */
-    @SerialName(value = "source")
-    val source: kotlin.String? = null,
-
     /* Number of recent frames captured for a visual task. Default one. */
     @SerialName(value = "max_frames")
-    val maxFrames: kotlin.Int? = null
+    val maxFrames: kotlin.Int? = null,
+
+    /* Track or processor source. Omitted requires one unambiguous available source. */
+    @SerialName(value = "source")
+    val source: kotlin.String? = null
 
 ) {
 

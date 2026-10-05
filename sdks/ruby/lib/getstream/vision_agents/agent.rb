@@ -50,12 +50,14 @@ module GetStream
       #   config's name.
       # @param instructions [String] the system prompt, over whatever the config says.
       # @param guardrail [String] a guardrail.md, enforced in the backend.
-      # @param pipeline [Hash] models over the config's: llm, stt, tts, sts, subagent, search,
-      #   voice, greeting, language, backchannel, max_tokens, tool_timeout_ms, keyterms, video.
-      # @param skills [Array<Skill>] skills of your own, replacing the built-in set.
-      # @param use_skills [Boolean] false turns the built-in skills off without naming others.
-      # @param sandbox [Sandbox] where delegated code runs.
-      # @param tasks [Integer] how much delegated work may run at once.
+      # @param pipeline [Hash] models over the config's: llm, stt, tts, sts, search, voice,
+      #   greeting, language, backchannel, max_tokens, tool_timeout_ms, keyterms, video, and
+      #   subagent, which is harness and so only reaches the config through #sync.
+      # @param harness [String] which harness the config runs; nil is "default". Like skills
+      #   and sandbox it is agent config, written by #sync, never sent with a session.
+      # @param skills [Array<Skill>] skills of your own, stored by #sync in place of the
+      #   built-in set.
+      # @param sandbox [Sandbox] where delegated code runs, stored by #sync.
       # @param cost_tracking [Hash] labels on every request the session makes.
       # @param memory_filter [Hash] who the memories are about, under user_id, and what
       #   narrows recall.
@@ -63,7 +65,7 @@ module GetStream
       # @param edge [Edge] creates the Stream calls the backend joins; built from the
       #   environment the first time a call is needed.
       def initialize(config: nil, folder: nil, name: nil, instructions: nil, guardrail: nil, pipeline: {},
-                     skills: nil, use_skills: true, sandbox: nil, tasks: nil, cost_tracking: nil,
+                     harness: nil, skills: nil, sandbox: nil, cost_tracking: nil,
                      memory_filter: nil, user_id: nil, tools: nil, client: nil, edge: nil)
         @folder = folder.is_a?(String) ? Folder.load(folder) : folder
         @config = config || @folder&.name
@@ -72,15 +74,13 @@ module GetStream
 
         unknown = pipeline.keys.map(&:to_sym) - PIPELINE
         raise ConfigurationError, "the pipeline has no #{unknown.join(", ")}" unless unknown.empty?
-        raise ConfigurationError, "tasks cannot be negative" if tasks&.negative?
 
         @instructions = instructions
         @guardrail = guardrail
         @pipeline = pipeline.transform_keys(&:to_sym)
+        @harness = harness
         @skills = skills
-        @use_skills = use_skills
         @sandbox = sandbox.is_a?(String) ? Sandbox.new(sandbox) : sandbox
-        @tasks = tasks
         @cost_tracking = cost_tracking&.to_h { |key, value| [key.to_s, value.to_s] }
         @memory_filter = memory_filter&.to_h { |key, value| [key.to_s, value.to_s] }
         @user_id = user_id || Agent.user_id_of(@name)
@@ -245,6 +245,21 @@ module GetStream
         result
       end
 
+      # Changes some of how the agent is configured. A field left out keeps what is stored,
+      # so setting a guardrail leaves the instructions, skills and models alone.
+      #
+      # Server side only: how an agent is configured is not a device's to change.
+      #
+      # @param patch any AgentConfigPatch field: instructions, guardrail, llm, voice, speed,
+      #   harness, visible_tools, dispatch and the rest.
+      # @return [Hash] the AgentConfig as it now is.
+      def update_config(**patch)
+        stored = @client.get("/v1/agents/configs", query: { name: @config }).find { |each| each["name"] == @config }
+        raise Error, "there is no agent called #{@config} to update" unless stored
+
+        @client.patch("/v1/agents/configs/{id}", path: { id: stored.fetch("id") }, body: patch)
+      end
+
       # Turns a name into something a call can be joined under.
       def self.user_id_of(name)
         id = name.to_s.downcase.gsub(/[^a-z0-9_-]/, "-").gsub(/\A-+|-+\z/, "")
@@ -253,16 +268,14 @@ module GetStream
 
       # Renders the agent into a session request. Only what the code set is sent: the config
       # the session starts from decides the rest, and a schema default copied in here would
-      # silently overrule it.
+      # silently overrule it. The harness is the config's, so none of it is sent here.
       def session_request(call, options)
         request = {
           agent: @config, user_id: @user_id, user_name: @name, agent_id: @user_id,
-          instructions: @instructions, tags: @cost_tracking, memory: memory,
-          subagent: @pipeline[:subagent], tasks: @tasks, sandbox: @sandbox&.provider
+          instructions: @instructions, tags: @cost_tracking, memory: memory
         }
         request.merge!(@pipeline.except(:language, :subagent))
         request[:languages] = [@pipeline[:language]] if @pipeline[:language]
-        request[:skills] = (@skills || []).map(&:request) if replaces_skills?
         request[:tools] = @tools.declarations unless @tools.empty?
         request.merge!(call.compact).merge!(options).compact
       end
@@ -304,12 +317,6 @@ module GetStream
         raise ConfigurationError, "#{@name} is not holding a conversation; join a call or open a chat first"
       end
 
-      # An absent skill list and an empty one mean different things: one leaves the built-in
-      # set alone, the other turns delegation off.
-      def replaces_skills?
-        (@skills && !@skills.empty?) || !@use_skills
-      end
-
       def memory
         return nil if @memory_filter.nil? || @memory_filter.empty?
 
@@ -329,15 +336,16 @@ module GetStream
         @guardrail || @folder&.guardrail || ""
       end
 
-      # Go's syncFolder fingerprint: the folder with the code's overrides, then the subagent
-      # and the cost labels folded in when either is set.
+      # Go's syncFolder fingerprint: the folder with the code's overrides, then the code's
+      # harness, subagent and sandbox and the cost labels folded in when any is set.
       def fingerprint
         hash = Folder.fingerprint(@folder&.declaration.to_s, instructions_to_sync, guardrail_to_sync,
-                                  synced_skills, @folder&.knowledge || [], @folder&.knowledge_urls || [])
-        subagent = @pipeline[:subagent].to_s
-        return hash if subagent.empty? && (@cost_tracking.nil? || @cost_tracking.empty?)
+                                  synced_skills, @folder&.knowledge || [], @folder&.knowledge_urls || [],
+                                  @folder&.simulations)
+        harness = "#{@harness}#{@pipeline[:subagent]}#{@sandbox&.provider}"
+        return hash if harness.empty? && (@cost_tracking.nil? || @cost_tracking.empty?)
 
-        Folder.fingerprint(hash, subagent, go_map(@cost_tracking || {}), [], [], [])
+        Folder.fingerprint(hash, harness, go_map(@cost_tracking || {}), [], [], [])
       end
 
       # How Go's fmt.Sprint writes a map[string]string, which is what the fingerprint hashes.
@@ -357,8 +365,13 @@ module GetStream
           knowledge: @folder&.knowledge&.map { |document| { source: document.source, text: document.text } }
                             &.then { |d| d unless d.empty? },
           knowledge_urls: @folder&.knowledge_urls&.map(&:declaration)&.then { |p| p unless p.empty? },
+          # nil when the folder has no simulations/, which leaves the stored ones alone; empty
+          # when it has none, which deletes them.
+          simulations: @folder&.simulations&.map(&:declaration),
           mode: presence(settings["mode"]), stt: presence(settings["stt"]), tts: presence(settings["tts"]),
-          sts: settings["sts"], voice: presence(settings["voice"]), llm: presence(settings["llm"]),
+          sts: settings["sts"], voice: presence(settings["voice"]),
+          speed: (settings["speed"] unless settings["speed"].to_f.zero?), llm: presence(settings["llm"]),
+          harness: presence(@harness) || presence(settings["harness"]),
           search: presence(settings["search"]), greeting: presence(settings["greeting"]),
           plugins: settings["plugins"]&.then { |p| p unless p.empty? },
           keyterms: settings["keyterms"]&.then { |k| k unless k.empty? },
@@ -391,7 +404,7 @@ module GetStream
     #
     #   docs = api.agent("docs")
     #   session = docs.sessions.create(title: "Is Stream better?")
-    #   docs.sessions.search("billing")
+    #   docs.sessions.search("billing")["items"]
     class Sessions
       def initialize(agent)
         @agent = agent
@@ -400,7 +413,8 @@ module GetStream
 
       # Opens a conversation and starts watching it. Held in writing unless a call_id is given.
       #
-      # @param options any CreateSessionRequest field, plus interim and decisions.
+      # @param options any CreateSessionRequest field (id, a UUID to hold the session by;
+      #   title, description, project_id, custom, incognito, ...), plus interim and decisions.
       def create(**options)
         watch = { interim: options.delete(:interim) || false, decisions: options.delete(:decisions) || false }
         options[:text] = true unless options[:call_id]
@@ -408,18 +422,31 @@ module GetStream
         Session.watching(@client, created, tools: @agent.tools, **watch)
       end
 
-      # The agent's conversations, newest first, the ones that ended included. Rows rather
-      # than live handles: reading a conversation back is not holding one.
+      # A page of the agent's conversations, most recently updated first, the ones that ended
+      # included. Rows rather than live handles: reading a conversation back is not holding
+      # one. Pass the page's next_cursor as cursor, with the same filters, for the next.
       #
-      # @param filters project, user_id, state (running or closed), custom (a Hash every one
-      #   of whose pairs must match), created_after, created_before, limit, offset.
-      def query(**filters)
-        @client.get("/v1/agents/sessions", query: filters.merge(agent: @agent.config))
+      # @param project_id [String] one project's. A search covers every project, so it
+      #   cannot be combined with text.
+      # @param user_id [String] one user's, which only a server-side caller may ask for.
+      # @param modality [String] text, voice or video.
+      # @param state [String] live or ended.
+      # @param agent_id [String] the sessions created with this agent id.
+      # @param limit [Integer] up to 200; nil is 25.
+      # @return [Hash] the SessionPage: items, has_more and next_cursor.
+      def query(project_id: nil, user_id: nil, modality: nil, state: nil, agent_id: nil, limit: nil, cursor: nil)
+        filter = { agent: @agent.config, project_id: project_id, user_id: user_id, modality: modality, state: state,
+                   agent_id: agent_id }
+        @client.post("/v1/agents/sessions/query", body: query_body(filter, limit, cursor))
       end
 
-      # Finds a conversation by what it was called: title, description, project and agent name.
-      def search(text, **filters)
-        @client.get("/v1/agents/sessions/search", query: filters.merge(agent: @agent.config, q: text))
+      # Finds a conversation by what it was called: title, description, project and agent
+      # name, best match first. Takes the filters of #query but project_id, since a search
+      # covers every project, and pages the same way.
+      def search(text, user_id: nil, modality: nil, state: nil, agent_id: nil, limit: nil, cursor: nil)
+        filter = { agent: @agent.config, user_id: user_id, modality: modality, state: state, agent_id: agent_id,
+                   text: { "$q" => text } }
+        @client.post("/v1/agents/sessions/query", body: query_body(filter, limit, cursor))
       end
 
       # One conversation, whether or not it is still being held.
@@ -427,9 +454,37 @@ module GetStream
         @client.get("/v1/agents/sessions/{id}", path: { id: id })
       end
 
+      # Changes one conversation, whether or not it is still being held. One that ended can
+      # still be renamed and relabelled; instructions, models and voice need it running.
+      # Server side only.
+      #
+      # @param fields any UpdateSessionRequest field; see Session#update.
+      # @return [Hash] the session as the router now has it.
+      def update(id, **fields)
+        @client.patch("/v1/agents/sessions/{id}", path: { id: id }, body: fields)
+      end
+
+      # Deletes a conversation, running or ended: it is stopped, and its turns and what it
+      # remembered are deleted with it. The user's other memories are kept.
+      def delete(id)
+        @client.delete("/v1/agents/sessions/{id}", path: { id: id })
+      end
+
+      # Deletes what one conversation remembered, running or ended. Server side only.
+      def delete_memories(id)
+        @client.delete("/v1/agents/sessions/{id}/memories", path: { id: id })
+      end
+
       # A session's turns, read back without holding the conversation.
       def responses(id)
         Responses.new(@client, id)
+      end
+
+      private
+
+      # Each filter field is a bare value, the short form of {"$eq": value}; nil leaves it out.
+      def query_body(filter, limit, cursor)
+        { filter: filter.compact, limit: limit, cursor: cursor }
       end
     end
   end

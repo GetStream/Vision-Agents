@@ -11,14 +11,14 @@ use GetStream\VisionAgents\Json;
 final readonly class PlacedCall
 {
     public function __construct(
-        public string $vendorCallId,
         // The vendor's own word for where the call is, e.g. "queued".
         public string $status,
-        // Who is placing the call.
-        public ?string $vendor = null,
+        public string $vendorCallId,
         // The Stream call the answered leg is routed into. An agent that is not in it hears nothing when the person p...
         public ?string $callId = null,
         public ?string $callType = null,
+        // Who is placing the call.
+        public ?string $vendor = null,
     ) {
     }
 
@@ -28,11 +28,11 @@ final readonly class PlacedCall
     public static function fromArray(array $data): self
     {
         return new self(
-            vendorCallId: Json::string($data, 'vendor_call_id'),
             status: Json::string($data, 'status'),
-            vendor: array_key_exists('vendor', $data) && $data['vendor'] !== null ? Json::string($data, 'vendor') : null,
+            vendorCallId: Json::string($data, 'vendor_call_id'),
             callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
             callType: array_key_exists('call_type', $data) && $data['call_type'] !== null ? Json::string($data, 'call_type') : null,
+            vendor: array_key_exists('vendor', $data) && $data['vendor'] !== null ? Json::string($data, 'vendor') : null,
         );
     }
 
@@ -44,16 +44,16 @@ final readonly class PlacedCall
     public function toArray(): array
     {
         $out = [];
-        $out['vendor_call_id'] = $this->vendorCallId;
         $out['status'] = $this->status;
-        if ($this->vendor !== null) {
-            $out['vendor'] = $this->vendor;
-        }
+        $out['vendor_call_id'] = $this->vendorCallId;
         if ($this->callId !== null) {
             $out['call_id'] = $this->callId;
         }
         if ($this->callType !== null) {
             $out['call_type'] = $this->callType;
+        }
+        if ($this->vendor !== null) {
+            $out['vendor'] = $this->vendor;
         }
         return $out;
     }

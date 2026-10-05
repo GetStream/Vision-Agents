@@ -17,92 +17,92 @@ T = TypeVar("T", bound="Contact")
 class Contact:
     """
     Attributes:
-        id (str):
-        to_number (str):
-        state (ContactState):
         attempts (int):
-        instructions (str | Unset):
+        id (str):
+        state (ContactState):
+        to_number (str):
         call_id (str | Unset): The call this contact became, which is what the call paths take.
-        vendor_call_id (str | Unset):
         error (str | Unset): Why they could not be rung, when they could not be.
+        instructions (str | Unset):
+        vendor_call_id (str | Unset):
     """
 
-    id: str
-    to_number: str
-    state: ContactState
     attempts: int
-    instructions: str | Unset = UNSET
+    id: str
+    state: ContactState
+    to_number: str
     call_id: str | Unset = UNSET
-    vendor_call_id: str | Unset = UNSET
     error: str | Unset = UNSET
+    instructions: str | Unset = UNSET
+    vendor_call_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
+        attempts = self.attempts
 
-        to_number = self.to_number
+        id = self.id
 
         state = self.state.value
 
-        attempts = self.attempts
-
-        instructions = self.instructions
+        to_number = self.to_number
 
         call_id = self.call_id
 
-        vendor_call_id = self.vendor_call_id
-
         error = self.error
+
+        instructions = self.instructions
+
+        vendor_call_id = self.vendor_call_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "id": id,
-                "to_number": to_number,
-                "state": state,
                 "attempts": attempts,
+                "id": id,
+                "state": state,
+                "to_number": to_number,
             }
         )
-        if instructions is not UNSET:
-            field_dict["instructions"] = instructions
         if call_id is not UNSET:
             field_dict["call_id"] = call_id
-        if vendor_call_id is not UNSET:
-            field_dict["vendor_call_id"] = vendor_call_id
         if error is not UNSET:
             field_dict["error"] = error
+        if instructions is not UNSET:
+            field_dict["instructions"] = instructions
+        if vendor_call_id is not UNSET:
+            field_dict["vendor_call_id"] = vendor_call_id
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        id = d.pop("id")
+        attempts = d.pop("attempts")
 
-        to_number = d.pop("to_number")
+        id = d.pop("id")
 
         state = ContactState(d.pop("state"))
 
-        attempts = d.pop("attempts")
-
-        instructions = d.pop("instructions", UNSET)
+        to_number = d.pop("to_number")
 
         call_id = d.pop("call_id", UNSET)
 
-        vendor_call_id = d.pop("vendor_call_id", UNSET)
-
         error = d.pop("error", UNSET)
 
+        instructions = d.pop("instructions", UNSET)
+
+        vendor_call_id = d.pop("vendor_call_id", UNSET)
+
         contact = cls(
-            id=id,
-            to_number=to_number,
-            state=state,
             attempts=attempts,
-            instructions=instructions,
+            id=id,
+            state=state,
+            to_number=to_number,
             call_id=call_id,
-            vendor_call_id=vendor_call_id,
             error=error,
+            instructions=instructions,
+            vendor_call_id=vendor_call_id,
         )
 
         contact.additional_properties = d

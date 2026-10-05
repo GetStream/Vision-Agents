@@ -17,58 +17,58 @@ class TranscriptEntity:
     """Something the recording named, for the providers that pick them out.
 
     Attributes:
-        type_ (str):  Example: person.
         text (str):
-        start_ms (int | Unset):
+        type_ (str):  Example: person.
         end_ms (int | Unset):
+        start_ms (int | Unset):
     """
 
-    type_: str
     text: str
-    start_ms: int | Unset = UNSET
+    type_: str
     end_ms: int | Unset = UNSET
+    start_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        type_ = self.type_
-
         text = self.text
 
-        start_ms = self.start_ms
+        type_ = self.type_
 
         end_ms = self.end_ms
+
+        start_ms = self.start_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "type": type_,
                 "text": text,
+                "type": type_,
             }
         )
-        if start_ms is not UNSET:
-            field_dict["start_ms"] = start_ms
         if end_ms is not UNSET:
             field_dict["end_ms"] = end_ms
+        if start_ms is not UNSET:
+            field_dict["start_ms"] = start_ms
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        type_ = d.pop("type")
-
         text = d.pop("text")
 
-        start_ms = d.pop("start_ms", UNSET)
+        type_ = d.pop("type")
 
         end_ms = d.pop("end_ms", UNSET)
 
+        start_ms = d.pop("start_ms", UNSET)
+
         transcript_entity = cls(
-            type_=type_,
             text=text,
-            start_ms=start_ms,
+            type_=type_,
             end_ms=end_ms,
+            start_ms=start_ms,
         )
 
         transcript_entity.additional_properties = d

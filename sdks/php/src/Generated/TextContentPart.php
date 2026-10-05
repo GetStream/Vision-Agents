@@ -11,8 +11,8 @@ use GetStream\VisionAgents\Json;
 final readonly class TextContentPart
 {
     public function __construct(
-        public string $type,
         public string $text,
+        public string $type,
     ) {
     }
 
@@ -22,8 +22,8 @@ final readonly class TextContentPart
     public static function fromArray(array $data): self
     {
         return new self(
-            type: Json::string($data, 'type'),
             text: Json::string($data, 'text'),
+            type: Json::string($data, 'type'),
         );
     }
 
@@ -35,8 +35,8 @@ final readonly class TextContentPart
     public function toArray(): array
     {
         $out = [];
-        $out['type'] = $this->type;
         $out['text'] = $this->text;
+        $out['type'] = $this->type;
         return $out;
     }
 }

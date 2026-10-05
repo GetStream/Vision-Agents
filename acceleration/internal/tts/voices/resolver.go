@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -17,11 +18,11 @@ import (
 // the call. A provider's own library voice is passed straight through, so nothing about
 // existing configs changes.
 type Resolver struct {
-	store *store.Store
+	store *appconfig.Store
 }
 
-// NewResolver returns a resolver backed by the store.
-func NewResolver(backing *store.Store) *Resolver {
+// NewResolver returns a resolver backed by the configuration store.
+func NewResolver(backing *appconfig.Store) *Resolver {
 	return &Resolver{store: backing}
 }
 

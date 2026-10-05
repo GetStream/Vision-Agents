@@ -14,11 +14,11 @@ final readonly class GuestUser
         public string $id,
         // A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role gue...
         public string $token,
-        public ?string $name = null,
         /** @var array<string, mixed>|null */
         public ?array $custom = null,
         // When the token stops working. A guest coming back after it asks for another.
         public ?\DateTimeImmutable $expiresAt = null,
+        public ?string $name = null,
     ) {
     }
 
@@ -30,9 +30,9 @@ final readonly class GuestUser
         return new self(
             id: Json::string($data, 'id'),
             token: Json::string($data, 'token'),
-            name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             expiresAt: array_key_exists('expires_at', $data) && $data['expires_at'] !== null ? Json::date($data, 'expires_at') : null,
+            name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
         );
     }
 
@@ -46,14 +46,14 @@ final readonly class GuestUser
         $out = [];
         $out['id'] = $this->id;
         $out['token'] = $this->token;
-        if ($this->name !== null) {
-            $out['name'] = $this->name;
-        }
         if ($this->custom !== null) {
             $out['custom'] = Json::objectValue($this->custom);
         }
         if ($this->expiresAt !== null) {
             $out['expires_at'] = Json::dateValue($this->expiresAt);
+        }
+        if ($this->name !== null) {
+            $out['name'] = $this->name;
         }
         return $out;
     }

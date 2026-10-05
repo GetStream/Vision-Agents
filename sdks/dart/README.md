@@ -22,9 +22,9 @@ final agents = VisionAgents(url: Uri.parse('https://your-router'), customerId: '
 
 // In writing. No call is joined, nothing is transcribed or spoken.
 final chat = await agents.agent('support').chat();
-chat.send('What are your opening hours?');
+await chat.responses.create('What are your opening hours?');
 // chat.conversation.value is the transcript and what the agent is doing, and
-// chat.conversation.stream says each time it changes.
+// chat.conversation.stream says each time it changes. The question shows there at once.
 
 // Out loud. The agent joins a call and so does this device.
 final voice = await VoiceSession.start(agents, agent: 'support');
@@ -58,11 +58,17 @@ final lookup = AgentTool(
   name: 'lookup_order',
   description: "Look up one of the caller's orders by its order number.",
   parameters: AgentTool.strings({'order_id': 'the order number'}, required: ['order_id']),
+  displayTitle: 'Looking up your order',
+  executor: ToolExecutor.client,
   run: (arguments) async => Orders.local.find('${arguments['order_id']}'),
 );
 
 final chat = await agents.agent('support').chat(SessionOptions(tools: [lookup]));
 ```
+
+`displayTitle` is what the people in a conversation kept in Stream Chat see while it runs, and
+`ToolExecutor.client` shows the call as waiting on this person's device. Leave either out and
+the router decides.
 
 ### Going back, and branching off
 
@@ -71,7 +77,7 @@ final chat = await agents.agent('support').chat(SessionOptions(tools: [lookup]))
 the `id` of an `AgentResponse`, not the `turnId` a socket event carries:
 
 ```dart
-final turns = await chat.responses.list();
+final turns = (await chat.responses.list()).items;
 await chat.rewind(turns.first.id);
 final branch = await chat.fork(ForkOptions(responseId: turns.first.id));
 await branch.start();
@@ -81,6 +87,27 @@ A text session is kept in Stream Chat unless it is `incognito`, and a conversati
 cannot be rewound, since its transcript would bring the turns back; fork it at the response
 instead.
 
+### Renaming a conversation
+
+`update` changes the title, description and custom labels, and leaves out what is left null.
+Those are all a device may change; instructions and models are its backend's. An ended session
+is renamed through `sessions`:
+
+```dart
+await chat.update(title: 'Refund for order A-1042');
+await agents.sessions.update(endedId, title: 'Refund', custom: {'topic': 'billing'});
+```
+
+### Ending a conversation, and deleting one
+
+`close` stops the session: the agent leaves, and the turns and what it remembered are kept, so
+it is still listed and can be forked. `delete` takes it away, turns and memories included.
+
+```dart
+await chat.close();
+await agents.sessions.delete(chat.id);
+```
+
 ### Guests, finding conversations, looking something up
 
 ```dart
@@ -88,11 +115,20 @@ final guest = await agents.guestUser(name: 'Ada', store: yourGuestStore);
 final asGuest = agents.withGuest(guest);
 
 final found = await asGuest.sessions.search('refund');
+final live = await asGuest.agent('support').sessions.query(
+  const SessionQuery(state: SessionState.live, limit: 20),
+);
+final more = await asGuest.agent('support').sessions.query(
+  SessionQuery(state: SessionState.live, limit: 20, cursor: live.nextCursor),
+);
+
+// The router comes from the client; what it routes to lives in the "healthcare" config.
 final answer = await agents.router(config: 'healthcare').search('perioperative antibiotic guidance');
 ```
 
 A guest is kept in the `GuestStore` you hand it (shared preferences, secure storage) and reused
-until it expires.
+until it expires. Lists come a page at a time: ask again with the page's `nextCursor`, which is
+null on the last one.
 
 ## What is deliberately not here
 
@@ -107,6 +143,7 @@ ever fails.
 | A token to join the agent's call | `CallCredentials`, which `join` is handed |
 | A Stream Chat token | A connected `StreamChatClient` for `ChatTranscriptView` |
 | Claiming a guest's history for a signed-in user | `claimGuestUser`, which is server-side only |
+| Renaming a session or changing its models | `updateSession`, which is server-side only |
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which declares this caller a
 device, even against a local router with no proxy in front.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
@@ -67,6 +68,15 @@ type Query struct {
 	State string
 	// AgentID narrows to the sessions created with this agent id.
 	AgentID string
+	// ConfigID narrows to the sessions one agent config ran.
+	ConfigID string
+	// Custom narrows to the sessions whose custom object holds every one of these pairs,
+	// which is how a caller finds again what it labelled.
+	Custom map[string]string
+	// CreatedAfter and CreatedBefore bound when the session started, after inclusive and
+	// before not, so two windows that meet share no session.
+	CreatedAfter  time.Time
+	CreatedBefore time.Time
 	// Limit is up to 200. Zero is 25.
 	Limit int
 	// Cursor is the NextCursor of the page before, with the same filters. Empty is the
@@ -280,6 +290,14 @@ func (s *Sessions) queryOf(text string, query Query) acceleration.SessionQuery {
 		Modality:  equals(query.Modality),
 		State:     equals(query.State),
 		AgentId:   equals(query.AgentID),
+		ConfigId:  equals(query.ConfigID),
+	}
+	if len(query.Custom) > 0 {
+		custom := query.Custom
+		filter.Custom = &custom
+	}
+	if window := timeRangeOf(query.CreatedAfter, query.CreatedBefore); window != nil {
+		filter.CreatedAt = window
 	}
 	if text != "" {
 		filter.Text = &acceleration.TextMatch{Q: text}
@@ -289,6 +307,21 @@ func (s *Sessions) queryOf(text string, query Query) acceleration.SessionQuery {
 		Limit:  pointer(int64(query.Limit)),
 		Cursor: pointer(query.Cursor),
 	}
+}
+
+// timeRangeOf is the window the two bounds name, or nil when neither was given.
+func timeRangeOf(after, before time.Time) *acceleration.TimeRange {
+	if after.IsZero() && before.IsZero() {
+		return nil
+	}
+	window := &acceleration.TimeRange{}
+	if !after.IsZero() {
+		window.Gte = &after
+	}
+	if !before.IsZero() {
+		window.Lt = &before
+	}
+	return window
 }
 
 // equals is a filter field matching value exactly, or nil to leave the field out.

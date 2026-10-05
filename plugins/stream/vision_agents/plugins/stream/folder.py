@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +19,7 @@ GUARDRAIL_FILE = "guardrail.md"
 SKILLS_DIR = "skills"
 KNOWLEDGE_DIR = "knowledge"
 KNOWLEDGE_URLS_FILE = "urls.yaml"
+SIMULATIONS_DIR = "simulations"
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,13 @@ _DURATION_UNITS = {
     "m": 60.0,
     "h": 3600.0,
 }
+_GO_ESCAPES = (
+    ("<", "\\u003c"),
+    (">", "\\u003e"),
+    ("&", "\\u0026"),
+    ("\u2028", "\\u2028"),
+    ("\u2029", "\\u2029"),
+)
 
 
 @dataclass
@@ -50,6 +58,77 @@ class KnowledgeURL:
     url: str
     title: str = ""
     description: str = ""
+    refresh_hours: int = 0
+    """How often the backend reads the page again on its own. Zero is never."""
+
+
+@dataclass
+class Simulation:
+    """One conversation a `simulations/*.yaml` file declares, run against the agent.
+
+    The fields are in the Go SDK's order, since the fingerprint is taken over them as JSON.
+    """
+
+    name: str
+    scenario: str
+    assertion: str
+    mode: str = ""
+    variations: int = 0
+    max_turns: int = 0
+    caller_target: str = ""
+    judge_target: str = ""
+    caller_stt: str = ""
+    caller_tts: str = ""
+    caller_voice: str = ""
+    tags: dict[str, str] | None = None
+
+
+@dataclass
+class SandboxSettings:
+    """How the agent's sandbox is built and how long code may run in it.
+
+    Any of them builds an image on top of `image`, which the provider keeps, so only the
+    first sandbox from a given setup waits for the build.
+    """
+
+    image: str = ""
+    """The container image to start from, which must have Python. Empty is slim Python."""
+    setup: list[str] = field(default_factory=list)
+    """Shell commands run once on top of the image when it is built."""
+    timeout_seconds: float = 0.0
+    """How long one run of code may take, at most 30 minutes. Zero is 30 seconds."""
+    cpu: int = 0
+    memory_gb: int = 0
+    disk_gb: int = 0
+
+
+@dataclass
+class MCPServerSettings:
+    """An MCP server outside the plugin catalog, which the router opens by its URL."""
+
+    name: str
+    """What its tools are prefixed with, as `<name>__<tool>`."""
+    url: str
+    tools: list[str] = field(default_factory=list)
+    """Offer only the tools matching these names or patterns such as `search_*`.
+    Empty offers every tool."""
+
+
+@dataclass
+class PluginOptionsSettings:
+    """How the router reaches one catalog plugin the agent names."""
+
+    plugin: str
+    readonly: bool = False
+    """Reach the plugin's read-only endpoint, for a vendor that runs one."""
+    scopes: list[str] = field(default_factory=list)
+    """Asked for at consent in place of the catalog's. Empty keeps the catalog's."""
+    toolsets: list[str] = field(default_factory=list)
+    """Limit the server to these groups of tools, such as calcom's bookings. Empty
+    offers every tool."""
+    tools: list[str] = field(default_factory=list)
+    """Offer only the tools matching these names or patterns such as `get_*`.
+    Empty offers every tool."""
 
 
 @dataclass
@@ -68,12 +147,26 @@ class Settings:
     tts: str = ""
     sts: str | None = None
     voice: str = ""
+    speed: float = 0.0
+    """The voice's rate of delivery, 1 being its own. Zero leaves it there."""
     llm: str = ""
-    subagent: str = ""
+    harness: str = ""
+    thinking_llm: str = ""
+    """The model a voice agent hands its skills to. A text agent runs on its llm alone."""
     search: str = ""
     greeting: str = ""
     sandbox: str = ""
+    sandbox_options: SandboxSettings | None = None
+    """How the sandbox is built. None when the file says nothing about it."""
     plugins: list[str] = field(default_factory=list)
+    """Catalog MCP servers the app connects once, on the dashboard, for every session."""
+    user_plugins: list[str] = field(default_factory=list)
+    """Catalog MCP servers each end user connects with their own account, in the chat."""
+    plugin_options: list[PluginOptionsSettings] = field(default_factory=list)
+    """How those plugins are reached, such as linear's read-only endpoint, and the
+    scopes their logins ask for."""
+    mcp_servers: list[MCPServerSettings] = field(default_factory=list)
+    """MCP servers outside the catalog, opened by the router with no login."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -99,6 +192,7 @@ class Folder:
           skills/think.md
           knowledge/pricing.md
           knowledge/urls.yaml
+          simulations/lunch.yaml
     """
 
     path: Path
@@ -112,6 +206,9 @@ class Folder:
     skills: list[Skill] = field(default_factory=list)
     knowledge: list[Document] = field(default_factory=list)
     knowledge_urls: list[KnowledgeURL] = field(default_factory=list)
+    simulations: list[Simulation] | None = None
+    """What `simulations/*.yaml` declare. None when there is no `simulations/`, which leaves
+    the stored ones alone; empty when it has none, which deletes them."""
 
     def knowledge_namespace(self) -> str:
         """Where the directory's knowledge is looked up, which is the agent's own name."""
@@ -151,6 +248,12 @@ class Folder:
             hasher.update(page.title.encode())
             hasher.update(b"\n")
             hasher.update(page.description.encode())
+            if page.refresh_hours:
+                hasher.update(f"\nrefresh_hours:{page.refresh_hours}".encode())
+        if self.simulations is not None:
+            hasher.update(b"\nsimulations:")
+            for simulation in self.simulations:
+                hasher.update(_go_json(simulation).encode())
         return hasher.hexdigest()
 
 
@@ -183,6 +286,7 @@ def load(path: str | Path) -> Folder:
     folder.knowledge_urls = _load_knowledge_urls(
         root / KNOWLEDGE_DIR / KNOWLEDGE_URLS_FILE
     )
+    folder.simulations = _load_simulations(root / SIMULATIONS_DIR)
     return folder
 
 
@@ -281,18 +385,34 @@ def _declare(path: Path) -> Settings:
             settings.sts = _word(value)
         elif field_name == "voice":
             settings.voice = _word(value)
+        elif field_name == "speed":
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float))
+            ):
+                raise ValueError(f"{path} should give speed as a number")
+            settings.speed = float(value or 0)
         elif field_name == "llm":
             settings.llm = _word(value)
-        elif field_name == "subagent":
-            settings.subagent = _word(value)
+        elif field_name == "harness":
+            settings.harness = _word(value)
+        elif field_name == "thinking_llm":
+            settings.thinking_llm = _word(value)
         elif field_name == "search":
             settings.search = _word(value)
         elif field_name == "greeting":
             settings.greeting = _word(value)
         elif field_name == "sandbox":
             settings.sandbox = _word(value)
+        elif field_name == "sandbox_options":
+            settings.sandbox_options = _sandbox_options(path, value)
         elif field_name == "plugins":
             settings.plugins = _terms(path, field_name, value)
+        elif field_name == "user_plugins":
+            settings.user_plugins = _terms(path, field_name, value)
+        elif field_name == "plugin_options":
+            settings.plugin_options = _plugin_options(path, value)
+        elif field_name == "mcp_servers":
+            settings.mcp_servers = _mcp_servers(path, value)
         elif field_name == "keyterms":
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":
@@ -317,6 +437,12 @@ def _word(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _text(value: object) -> str:
+    """One setting as written rather than trimmed, the way Go reads it, for the ones a
+    fingerprint is taken over field by field."""
+    return "" if value is None else str(value)
 
 
 def _terms(path: Path, field_name: str, value: object) -> list[str]:
@@ -356,6 +482,92 @@ def _dispatch(path: Path, value: object) -> dict[str, str]:
     if extra:
         raise ValueError(f"{path} unknown dispatch setting: {sorted(extra)[0]}")
     return {str(key): _word(item) for key, item in value.items() if _word(item)}
+
+
+def _plugin_options(path: Path, value: object) -> list[PluginOptionsSettings]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{path} should give plugin_options as a list")
+    options = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"{path} should give each of plugin_options as a mapping")
+        extra = set(item) - {"plugin", "readonly", "scopes", "toolsets", "tools"}
+        if extra:
+            raise ValueError(
+                f"{path} unknown plugin_options setting: {sorted(extra)[0]}"
+            )
+        readonly = item.get("readonly", False)
+        if not isinstance(readonly, bool):
+            raise ValueError(
+                f"{path} should give plugin_options readonly as true or false"
+            )
+        options.append(
+            PluginOptionsSettings(
+                plugin=_word(item.get("plugin")),
+                readonly=readonly,
+                scopes=_terms(path, "plugin_options.scopes", item.get("scopes")),
+                toolsets=_terms(path, "plugin_options.toolsets", item.get("toolsets")),
+                tools=_terms(path, "plugin_options.tools", item.get("tools")),
+            )
+        )
+    return options
+
+
+def _mcp_servers(path: Path, value: object) -> list[MCPServerSettings]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{path} should give mcp_servers as a list")
+    servers = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"{path} should give each of mcp_servers as a mapping")
+        extra = set(item) - {"name", "url", "tools"}
+        if extra:
+            raise ValueError(f"{path} unknown mcp_servers setting: {sorted(extra)[0]}")
+        servers.append(
+            MCPServerSettings(
+                name=_word(item.get("name")),
+                url=_word(item.get("url")),
+                tools=_terms(path, "mcp_servers.tools", item.get("tools")),
+            )
+        )
+    return servers
+
+
+def _sandbox_options(path: Path, value: object) -> SandboxSettings:
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give sandbox_options as a mapping")
+    extra = set(value) - {"image", "setup", "timeout", "cpu", "memory_gb", "disk_gb"}
+    if extra:
+        raise ValueError(f"{path} unknown sandbox_options setting: {sorted(extra)[0]}")
+    options = SandboxSettings(
+        image=_word(value.get("image")),
+        setup=_terms(path, "sandbox_options.setup", value.get("setup")),
+    )
+    timeout = value.get("timeout")
+    if timeout is not None:
+        matched = _DURATION.fullmatch(str(timeout).strip())
+        seconds = (
+            float(matched.group(1)) * _DURATION_UNITS[matched.group(2)]
+            if matched
+            else 0.0
+        )
+        if not 0 < seconds <= 30 * 60:
+            raise ValueError(
+                f"sandbox_options.timeout must be a duration up to 30m, not {timeout!r}"
+            )
+        options.timeout_seconds = seconds
+    for size in ("cpu", "memory_gb", "disk_gb"):
+        given = value.get(size, 0)
+        if type(given) is not int or given < 0:
+            raise ValueError(f"sandbox_options.{size} must be a whole number")
+    options.cpu = value.get("cpu", 0)
+    options.memory_gb = value.get("memory_gb", 0)
+    options.disk_gb = value.get("disk_gb", 0)
+    return options
 
 
 def _looks_like_agent(path: Path) -> bool:
@@ -471,16 +683,23 @@ def _load_knowledge_urls(path: Path) -> list[KnowledgeURL]:
         if isinstance(item, str):
             page = KnowledgeURL(url=item)
         elif isinstance(item, dict):
-            extra = set(item) - {"url", "title", "description"}
+            extra = set(item) - {"url", "title", "description", "refresh_hours"}
             if extra:
                 raise ValueError(
                     f"{path}: {sorted(extra)[0]!r} is not something a page says; "
-                    "url, title and description are"
+                    "url, title, description and refresh_hours are"
+                )
+            hours = item.get("refresh_hours", 0)
+            if "refresh_hours" in item and (type(hours) is not int or hours < 1):
+                raise ValueError(
+                    f"{path}: refresh_hours is how many hours between reads, so it is "
+                    "at least 1; leave it out for never"
                 )
             page = KnowledgeURL(
                 url=_word(item.get("url")),
                 title=_word(item.get("title")),
                 description=_word(item.get("description")),
+                refresh_hours=hours,
             )
         else:
             raise ValueError(f"{path}: a page is a url, or a mapping naming one")
@@ -488,3 +707,90 @@ def _load_knowledge_urls(path: Path) -> list[KnowledgeURL]:
             raise ValueError(f"{path}: {page.url!r} is not an http or https url")
         pages.append(page)
     return pages
+
+
+def _load_simulations(path: Path) -> list[Simulation] | None:
+    """Read every .yaml and .yml file in `simulations/`, each a list of simulations.
+
+    A key nobody knows is refused, as in `agent.yaml`, and so is a name two simulations
+    share, since a sync finds a simulation by its name.
+    """
+    if not path.is_dir():
+        return None
+
+    known = {item.name for item in fields(Simulation)}
+    simulations: list[Simulation] = []
+    named: dict[str, str] = {}
+    for file in sorted(path.iterdir(), key=lambda entry: entry.name):
+        if not file.is_file() or file.suffix.lower() not in (".yaml", ".yml"):
+            continue
+        listed = yaml.safe_load(file.read_text()) or []
+        if not isinstance(listed, list):
+            raise ValueError(f"{file} should list simulations")
+
+        for item in listed:
+            if not isinstance(item, dict):
+                raise ValueError(f"{file}: a simulation is a mapping")
+            extra = set(item) - known
+            if extra:
+                raise ValueError(
+                    f"{file}: {sorted(extra)[0]!r} is not something a simulation says"
+                )
+            for count in ("variations", "max_turns"):
+                if item.get(count) is not None and type(item[count]) is not int:
+                    raise ValueError(f"{file}: {count} should be a whole number")
+            tags = item.get("tags")
+            if tags is not None and not isinstance(tags, dict):
+                raise ValueError(f"{file}: tags should be a mapping of label to value")
+
+            simulation = Simulation(
+                name=_text(item.get("name")),
+                scenario=_text(item.get("scenario")),
+                assertion=_text(item.get("assertion")),
+                mode=_text(item.get("mode")),
+                variations=item.get("variations") or 0,
+                max_turns=item.get("max_turns") or 0,
+                caller_target=_text(item.get("caller_target")),
+                judge_target=_text(item.get("judge_target")),
+                caller_stt=_text(item.get("caller_stt")),
+                caller_tts=_text(item.get("caller_tts")),
+                caller_voice=_text(item.get("caller_voice")),
+                tags=None
+                if tags is None
+                else {str(key): _text(value) for key, value in tags.items()},
+            )
+            if not simulation.name:
+                raise ValueError(f"{file}: a simulation needs a name")
+            if not simulation.scenario:
+                raise ValueError(
+                    f"{file}: simulation {simulation.name!r} needs a scenario"
+                )
+            if not simulation.assertion:
+                raise ValueError(
+                    f"{file}: simulation {simulation.name!r} needs an assertion"
+                )
+            if simulation.mode not in ("", "text", "audio"):
+                raise ValueError(
+                    f"{file}: simulation {simulation.name!r} is text or audio, "
+                    f"not {simulation.mode!r}"
+                )
+            if simulation.name in named:
+                raise ValueError(
+                    f"{file}: simulation {simulation.name!r} is also declared in "
+                    f"{named[simulation.name]}"
+                )
+            named[simulation.name] = file.name
+            simulations.append(simulation)
+    return simulations
+
+
+def _go_json(simulation: Simulation) -> str:
+    """A simulation as Go's `json.Marshal` writes it, so both SDKs fingerprint it alike:
+    fields in order, map keys sorted, and `<`, `>` and `&` escaped."""
+    encoded = asdict(simulation)
+    if simulation.tags is not None:
+        encoded["tags"] = dict(sorted(simulation.tags.items()))
+    text = json.dumps(encoded, ensure_ascii=False, separators=(",", ":"))
+    for raw, escaped in _GO_ESCAPES:
+        text = text.replace(raw, escaped)
+    return text

@@ -11,8 +11,8 @@ import Observation
 @MainActor
 @Observable
 public final class AgentSession {
-    /// The session the router opened.
-    public let session: Session
+    /// The session the router opened, as of the last `update`.
+    public private(set) var session: Session
 
     /// The transcript and what the agent is doing.
     public private(set) var conversation = Conversation()
@@ -30,7 +30,14 @@ public final class AgentSession {
     public var state: Conversation.State { conversation.state }
 
     /// This session's turns as the router wrote them down: asking, reading back, rewinding.
-    public let responses: Responses
+    ///
+    /// What is asked here is shown in `turns` straight away, since a conversation in writing
+    /// is never heard back.
+    public var responses: Responses {
+        Responses(
+            backend: backend, sessionID: session.id, kept: !session.conversationID.isEmpty,
+            asked: { [weak self] text in self?.conversation.said(text) })
+    }
 
     private let backend: Backend
     private let socket: SessionSocket
@@ -40,7 +47,6 @@ public final class AgentSession {
     init(backend: Backend, session: Session, tools: [AgentTool]) {
         self.session = session
         self.backend = backend
-        responses = Responses(backend: backend, sessionID: session.id)
         self.tools = Dictionary(tools.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         socket = SessionSocket(
             url: backend.socketURL(
@@ -83,14 +89,6 @@ public final class AgentSession {
         }
     }
 
-    /// Says this to the agent, as though it had been heard.
-    public func send(_ text: String) async throws {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        conversation.said(trimmed)
-        try await socket.send(.respond(trimmed))
-    }
-
     /// Speaks this without going through the model.
     public func say(_ text: String) async throws {
         try await socket.send(.say(text))
@@ -106,7 +104,18 @@ public final class AgentSession {
         try await socket.send(.instructions(instructions))
     }
 
-    /// Ends the session and closes the socket.
+    /// Renames or relabels this conversation. Nil leaves a field as it is, and `custom`
+    /// replaces the labels whole.
+    @discardableResult
+    public func update(
+        title: String? = nil, description: String? = nil, custom: [String: JSONValue]? = nil
+    ) async throws -> Session {
+        session = try await VisionAgents(backend: backend).sessions.update(
+            session.id, title: title, description: description, custom: custom)
+        return session
+    }
+
+    /// Ends the session and closes the socket. What it recorded and remembered is kept.
     public func close() async {
         try? await socket.send(.close)
         await socket.close()
@@ -114,6 +123,13 @@ public final class AgentSession {
         pump = nil
         isConnected = false
         conversation.state = .ended
+    }
+
+    /// Deletes this conversation: it is stopped, and its turns and what it remembered go with
+    /// it.
+    public func delete() async throws {
+        try await VisionAgents(backend: backend).sessions.delete(session.id)
+        await close()
     }
 
     private func stopped(_ error: AgentsError?) {

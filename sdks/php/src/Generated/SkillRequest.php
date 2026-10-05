@@ -13,12 +13,12 @@ final readonly class SkillRequest
     public function __construct(
         // The agent config this skill belongs to. A skill is not shared: two agents that both need one have one each,...
         public string $configId,
-        // How the config names it, which is unique among that config's own skills.
-        public string $name,
         // The one line the fast model sees.
         public string $description,
         // The full prompt, which only the subagent sees.
         public string $instructions,
+        // How the config names it, which is unique among that config's own skills.
+        public string $name,
         // Capture task-scoped visual evidence before reasoning.
         public ?bool $captureVideo = null,
         // How long the work may run before it is abandoned. Zero is the default.
@@ -33,9 +33,9 @@ final readonly class SkillRequest
     {
         return new self(
             configId: Json::string($data, 'config_id'),
-            name: Json::string($data, 'name'),
             description: Json::string($data, 'description'),
             instructions: Json::string($data, 'instructions'),
+            name: Json::string($data, 'name'),
             captureVideo: array_key_exists('capture_video', $data) && $data['capture_video'] !== null ? Json::bool($data, 'capture_video') : null,
             deadlineMs: array_key_exists('deadline_ms', $data) && $data['deadline_ms'] !== null ? Json::int($data, 'deadline_ms') : null,
         );
@@ -50,9 +50,9 @@ final readonly class SkillRequest
     {
         $out = [];
         $out['config_id'] = $this->configId;
-        $out['name'] = $this->name;
         $out['description'] = $this->description;
         $out['instructions'] = $this->instructions;
+        $out['name'] = $this->name;
         if ($this->captureVideo !== null) {
             $out['capture_video'] = $this->captureVideo;
         }

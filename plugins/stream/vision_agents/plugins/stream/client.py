@@ -11,17 +11,22 @@ from ._generated.api.default import (
     claim_guest_user,
     create_guest_user,
     list_agent_configs,
+    patch_agent_config,
+    truncate_memories,
 )
 from ._generated.models import (
     AgentConfig,
+    AgentConfigPatch,
     ClaimGuestRequest,
     ClaimGuestResult,
     GuestUser,
     GuestUserRequest,
     GuestUserRequestCustom,
 )
-from .responses import RouterError, _unwrapped
+from .responses import RouterError, _deleted, _unwrapped
+from .router import Router
 from .sessions import Sessions
+from .simulations import Simulations
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +61,7 @@ class Client:
         docs = api.agent("docs")
 
         session = await docs.sessions.create(
-            stream.SessionOptions(title="Is Stream better?", project="docs")
+            stream.SessionOptions(title="Is Stream better?", project_id="docs")
         )
         answer = await session.responses.create("Is Stream better than Sendbird?")
         async for item in answer.items.unwind():
@@ -100,6 +105,8 @@ class Client:
             user_id=user_id,
             authenticate=authenticate,
         )
+        self.memories = Memories(self.backend)
+        self.simulations = Simulations(self.backend)
 
     @property
     def server_side(self) -> bool:
@@ -133,6 +140,25 @@ class Client:
         configured is refused when a conversation is opened rather than here.
         """
         return Agent(self.backend, name)
+
+    def router(self, config: str = "", tags: Optional[dict[str, str]] = None) -> Router:
+        """Route through a stored router config, named by what it was stored under or its id.
+
+        No request is made. The config holds the defaults, which model answers included, and
+        the empty name is a router told what to do per call instead.
+
+        Example:
+            ```python
+            router = stream.Client().router("clinic")
+            async with router.stt.realtime() as stt:
+                await stt.process_audio(pcm, participant)
+            ```
+
+        Args:
+            config: A stored router config, by name or by id.
+            tags: Cost labels carried onto everything routed here.
+        """
+        return Router(config, tags=tags, backend=self.backend)
 
     async def guest_user(self, options: Optional[GuestOptions] = None) -> GuestUser:
         """Mint a guest so somebody can talk to an agent before they sign up.
@@ -181,6 +207,27 @@ class Client:
         return _unwrapped(claimed, f"claiming the guest {guest_id}")
 
 
+class Memories:
+    """What agents remember about the app's users between conversations."""
+
+    def __init__(self, backend: Backend):
+        self._backend = backend
+
+    async def truncate(self, user_id: str) -> None:
+        """Delete everything remembered about one user: every session's and every agent's,
+        whatever memory filter it was written under. Server side only.
+
+        Args:
+            user_id: The ``user_id`` of the memory filter the sessions were opened with.
+        """
+        if not user_id:
+            raise ValueError("truncating memories needs a user id")
+        truncated = await truncate_memories.asyncio_detailed(
+            user_id, client=self._backend.client()
+        )
+        _deleted(truncated, f"truncating the memories of {user_id}")
+
+
 class Agent:
     """One configured agent, and its conversations."""
 
@@ -224,3 +271,17 @@ class Agent:
             if stored.name == self.name:
                 return stored
         return None
+
+    async def update_config(self, patch: AgentConfigPatch) -> AgentConfig:
+        """Change some of how the agent is configured, and return the config as it now is.
+
+        A field left out of the patch keeps what is stored, so setting a guardrail leaves the
+        instructions, skills and models alone. Server side only.
+        """
+        config = await self.config()
+        if config is None:
+            raise RouterError(f"there is no agent called {self.name} to update")
+        patched = await patch_agent_config.asyncio(
+            config.id, client=self._backend.client(), body=patch
+        )
+        return _unwrapped(patched, f"updating the agent {self.name}")
