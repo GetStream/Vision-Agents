@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.agent_channels import AgentChannels
+    from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
@@ -45,6 +46,9 @@ class SyncAgentRequest:
                 number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
                 that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
                 of it is.
+            connectors (list[AgentConnectorBinding] | Unset): The connectors agent.yaml binds. Sent, they are the whole of
+                the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are
+                left alone.
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
             greeting (str | Unset):
@@ -93,6 +97,7 @@ class SyncAgentRequest:
     name: str
     agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
+    connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
@@ -142,6 +147,13 @@ class SyncAgentRequest:
         channels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.channels, Unset):
             channels = self.channels.to_dict()
+
+        connectors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connectors, Unset):
+            connectors = []
+            for connectors_item_data in self.connectors:
+                connectors_item = connectors_item_data.to_dict()
+                connectors.append(connectors_item)
 
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
@@ -262,6 +274,8 @@ class SyncAgentRequest:
             field_dict["agent_plugins"] = agent_plugins
         if channels is not UNSET:
             field_dict["channels"] = channels
+        if connectors is not UNSET:
+            field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
         if greeting is not UNSET:
@@ -320,6 +334,9 @@ class SyncAgentRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_channels import AgentChannels
+        from ..models.agent_connector_binding import (
+            AgentConnectorBinding,
+        )
         from ..models.agent_dispatch import AgentDispatch
         from ..models.knowledge_document import KnowledgeDocument
         from ..models.knowledge_url_declaration import (
@@ -372,6 +389,15 @@ class SyncAgentRequest:
             channels = UNSET
         else:
             channels = AgentChannels.from_dict(_channels)
+
+        _connectors = d.pop("connectors", UNSET)
+        connectors: list[AgentConnectorBinding] | Unset = UNSET
+        if _connectors is not UNSET:
+            connectors = []
+            for connectors_item_data in _connectors:
+                connectors_item = AgentConnectorBinding.from_dict(connectors_item_data)
+
+                connectors.append(connectors_item)
 
         _dispatch = d.pop("dispatch", UNSET)
         dispatch: AgentDispatch | Unset
@@ -532,6 +558,7 @@ class SyncAgentRequest:
             name=name,
             agent_plugins=agent_plugins,
             channels=channels,
+            connectors=connectors,
             dispatch=dispatch,
             greeting=greeting,
             guardrail=guardrail,

@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_channels import AgentChannels
     from ..models.agent_config_request_tags import AgentConfigRequestTags
+    from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
@@ -38,6 +39,11 @@ class AgentConfigRequest:
             number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
             that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
             of it is.
+        connectors (list[AgentConnectorBinding] | Unset): The connectors whose tools this agent may call, each under an
+            alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an
+            update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by
+            saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a
+            connection that is not the app's own or is to another connector, is refused.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
         greeting (str | Unset):
@@ -97,6 +103,7 @@ class AgentConfigRequest:
     name: str
     agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
+    connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
@@ -143,6 +150,13 @@ class AgentConfigRequest:
         channels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.channels, Unset):
             channels = self.channels.to_dict()
+
+        connectors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connectors, Unset):
+            connectors = []
+            for connectors_item_data in self.connectors:
+                connectors_item = connectors_item_data.to_dict()
+                connectors.append(connectors_item)
 
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
@@ -244,6 +258,8 @@ class AgentConfigRequest:
             field_dict["agent_plugins"] = agent_plugins
         if channels is not UNSET:
             field_dict["channels"] = channels
+        if connectors is not UNSET:
+            field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
         if greeting is not UNSET:
@@ -303,6 +319,9 @@ class AgentConfigRequest:
         from ..models.agent_config_request_tags import (
             AgentConfigRequestTags,
         )
+        from ..models.agent_connector_binding import (
+            AgentConnectorBinding,
+        )
         from ..models.agent_dispatch import AgentDispatch
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
@@ -342,6 +361,15 @@ class AgentConfigRequest:
             channels = UNSET
         else:
             channels = AgentChannels.from_dict(_channels)
+
+        _connectors = d.pop("connectors", UNSET)
+        connectors: list[AgentConnectorBinding] | Unset = UNSET
+        if _connectors is not UNSET:
+            connectors = []
+            for connectors_item_data in _connectors:
+                connectors_item = AgentConnectorBinding.from_dict(connectors_item_data)
+
+                connectors.append(connectors_item)
 
         _dispatch = d.pop("dispatch", UNSET)
         dispatch: AgentDispatch | Unset
@@ -467,6 +495,7 @@ class AgentConfigRequest:
             name=name,
             agent_plugins=agent_plugins,
             channels=channels,
+            connectors=connectors,
             dispatch=dispatch,
             greeting=greeting,
             guardrail=guardrail,

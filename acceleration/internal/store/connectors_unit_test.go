@@ -74,7 +74,7 @@ func TestEveryShippedBuiltInParses(t *testing.T) {
 	for _, manifest := range manifests {
 		ids = append(ids, manifest.ID)
 	}
-	require.Equal(t, []string{"linear", "slack"}, ids)
+	require.Equal(t, []string{"calcom", "calendly", "github", "gong", "linear", "salesforce", "slack"}, ids)
 }
 
 func TestAnInvalidBuiltInIsRefusedNamingTheFileAndTheField(t *testing.T) {

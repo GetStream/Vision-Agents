@@ -41,6 +41,7 @@ type SyncAgentRequest struct {
 	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
 	McpServers    *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
 	Channels      *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
+	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Harness       *Harness                   `json:"harness,omitempty"`
@@ -168,6 +169,12 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if found && existing.SyncHash == hash {
 		return &syncAgentResponse{Body: SyncAgentResult{Unchanged: true, Config: agentConfigOf(existing)}}, nil
 	}
+	// Before anything is written, for the same reason as the simulations in syncComplaint.
+	if message, ok, err := s.unboundConnectors(ctx, customerID, body.Connectors); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 	config := existing
 	if !found {
 		config = store.AgentConfig{CustomerID: customerID, Name: name}
@@ -191,6 +198,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	}
 	config.MCPServers = servers
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 
@@ -286,6 +296,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 		return fmt.Sprintf("there is no harness called %q", *body.Harness), false
 	}
 	if complaint, ok := dispatchComplaint(body.Dispatch); !ok {
+		return complaint, false
+	}
+	if complaint, ok := connectorBindingsComplaint(body.Connectors); !ok {
 		return complaint, false
 	}
 	if complaint, ok := sandboxOptionsComplaint(body.SandboxOptions); !ok {
@@ -409,6 +422,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.AgentPlugins != nil {
 		config.AgentPlugins = pluginEntriesOf(*body.AgentPlugins)
+	}
+	if body.Connectors != nil {
+		config.Connectors = storedBindings(*body.Connectors)
 	}
 	if body.UserPlugins != nil {
 		config.UserPlugins = pluginEntriesOf(*body.UserPlugins)

@@ -601,6 +601,62 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connections": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List connections
+         * @description One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectorConnections"];
+        readonly put?: never;
+        /**
+         * Create a connection
+         * @description A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["createConnectorConnection"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a connection
+         * @description An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getConnectorConnection"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a connection
+         * @description Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnectorConnection"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connectors": {
         readonly parameters: {
             readonly query?: never;
@@ -2777,6 +2833,8 @@ export type components = {
         readonly AgentConfig: {
             readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description The bindings exactly as they were written. Absent when there are none. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             /** Format: date-time */
             readonly created_at: string;
             readonly dispatch?: components["schemas"]["AgentDispatch"];
@@ -2819,6 +2877,8 @@ export type components = {
         readonly AgentConfigPatch: {
             readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
@@ -2861,6 +2921,8 @@ export type components = {
             readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
             /** @description Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels. */
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
@@ -2911,6 +2973,37 @@ export type components = {
             /** @description Provider-specific voice id. */
             readonly voice?: string;
         };
+        /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against. */
+        readonly AgentConnectorBinding: {
+            readonly connection: components["schemas"]["AgentConnectorSelection"];
+            /** @description A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_. */
+            readonly connector_id: string;
+            /** @description The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place. */
+            readonly name: string;
+            /**
+             * @description Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
+             * @default false
+             */
+            readonly required?: boolean;
+            /**
+             * Format: int64
+             * @description How long one tool call may take, in milliseconds. Omitted, the session's default applies.
+             */
+            readonly timeout_ms?: number;
+            /** @description The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. */
+            readonly tools: readonly components["schemas"]["ConnectorToolGrant"][];
+        };
+        /** @description Which connection a binding's tools are called through. */
+        readonly AgentConnectorSelection: {
+            /** @description Required for fixed, and refused for session. */
+            readonly connection_id?: string;
+            readonly type: components["schemas"]["AgentConnectorSelectionType"];
+        };
+        /**
+         * @description fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+         * @enum {string}
+         */
+        readonly AgentConnectorSelectionType: "fixed" | "session";
         /** @description What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled. */
         readonly AgentDispatch: {
             /** @description A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config. */
@@ -3518,6 +3611,82 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectorClientOwner: "operator" | "customer" | "dcr" | "cimd";
+        /** @description One account at one connector, owned by the app or by one of its users. Credentials are never shown. */
+        readonly ConnectorConnection: {
+            /** @description The provider account, known once it is connected. */
+            readonly account_id?: string;
+            /** @description How the connection authenticates, one of its connector's schemes. */
+            readonly auth_scheme: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /**
+             * Format: int64
+             * @description The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+             */
+            readonly definition_revision: number;
+            /**
+             * Format: date-time
+             * @description When the current credential expires. Absent when there is none or it does not.
+             */
+            readonly expires_at?: string;
+            readonly granted_scopes: readonly string[] | null;
+            readonly id: string;
+            /** @description What the connection was created with, the connector's defaults filled in. */
+            readonly inputs: {
+                readonly [key: string]: string;
+            };
+            readonly label?: string;
+            /** @description What the provider said about the account when it was connected, such as a workspace id. Empty until then. */
+            readonly metadata: {
+                readonly [key: string]: string;
+            };
+            readonly owner: components["schemas"]["ConnectorConnectionOwner"];
+            /**
+             * Format: int64
+             * @description Advances with every new credential, starting at 1.
+             */
+            readonly revision: number;
+            readonly status: components["schemas"]["ConnectorConnectionStatus"];
+            /** Format: date-time */
+            readonly updated_at: string;
+        };
+        /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
+        readonly ConnectorConnectionOwner: {
+            readonly type: components["schemas"]["ConnectorConnectionOwnerType"];
+            /** @description The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id. */
+            readonly user_id?: string;
+        };
+        /**
+         * @description app is the app's own account, user one user's.
+         * @enum {string}
+         */
+        readonly ConnectorConnectionOwnerType: "app" | "user";
+        readonly ConnectorConnectionPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ConnectorConnection"][] | null;
+            /** @description Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
+        readonly ConnectorConnectionRequest: {
+            /** @description One of the connector's schemes. Omitted is its only one; a connector with several needs it named. */
+            readonly auth_scheme?: string;
+            /** @description A built-in, such as slack, or one of the app's own. */
+            readonly connector_id: string;
+            /** @description Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern. */
+            readonly inputs?: {
+                readonly [key: string]: string;
+            };
+            /** @description A name to tell connections apart by. */
+            readonly label?: string;
+            readonly owner: components["schemas"]["ConnectorConnectionOwner"];
+        };
+        /**
+         * @description pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
+         * @enum {string}
+         */
+        readonly ConnectorConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
         /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
         readonly ConnectorDefinition: {
             readonly category?: string;
@@ -3559,6 +3728,13 @@ export type components = {
             readonly name: string;
             /** @description A regular expression the whole value must match. */
             readonly pattern?: string;
+        };
+        /** @description One tool a binding allows. */
+        readonly ConnectorToolGrant: {
+            /** @description The tool as the connector names it. */
+            readonly name: string;
+            /** @description The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. */
+            readonly schema_digest: string;
         };
         readonly Contact: {
             readonly attempts: number;
@@ -5465,6 +5641,8 @@ export type components = {
             readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
             /** @description Lines this agent answers on besides Stream Chat, each a number the app connected. */
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
@@ -7560,6 +7738,165 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    readonly listConnectorConnections: {
+        readonly parameters: {
+            readonly query: {
+                /** @description Keeps one connector's. */
+                readonly connector_id?: string;
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. */
+                readonly owner_type: components["schemas"]["ConnectorConnectionOwnerType"];
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of connections */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorConnectionPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    readonly createConnectorConnection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectorConnectionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The pending connection */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorConnection"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    readonly getConnectorConnection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The connection */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorConnection"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    readonly deleteConnectorConnection: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists. */
+                readonly force?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The connection is deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description Internal Server Error */
             readonly 500: {
                 headers: {

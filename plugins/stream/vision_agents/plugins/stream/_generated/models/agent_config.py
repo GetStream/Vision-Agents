@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_channels import AgentChannels
     from ..models.agent_config_tags import AgentConfigTags
+    from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
@@ -43,6 +44,8 @@ class AgentConfig:
             number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
             that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
             of it is.
+        connectors (list[AgentConnectorBinding] | Unset): The bindings exactly as they were written. Absent when there
+            are none.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
         greeting (str | Unset):
@@ -85,6 +88,7 @@ class AgentConfig:
     updated_at: datetime.datetime
     agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
+    connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
@@ -139,6 +143,13 @@ class AgentConfig:
         channels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.channels, Unset):
             channels = self.channels.to_dict()
+
+        connectors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connectors, Unset):
+            connectors = []
+            for connectors_item_data in self.connectors:
+                connectors_item = connectors_item_data.to_dict()
+                connectors.append(connectors_item)
 
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
@@ -242,6 +253,8 @@ class AgentConfig:
             field_dict["agent_plugins"] = agent_plugins
         if channels is not UNSET:
             field_dict["channels"] = channels
+        if connectors is not UNSET:
+            field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
         if greeting is not UNSET:
@@ -299,6 +312,9 @@ class AgentConfig:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_channels import AgentChannels
         from ..models.agent_config_tags import AgentConfigTags
+        from ..models.agent_connector_binding import (
+            AgentConnectorBinding,
+        )
         from ..models.agent_dispatch import AgentDispatch
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
@@ -346,6 +362,15 @@ class AgentConfig:
             channels = UNSET
         else:
             channels = AgentChannels.from_dict(_channels)
+
+        _connectors = d.pop("connectors", UNSET)
+        connectors: list[AgentConnectorBinding] | Unset = UNSET
+        if _connectors is not UNSET:
+            connectors = []
+            for connectors_item_data in _connectors:
+                connectors_item = AgentConnectorBinding.from_dict(connectors_item_data)
+
+                connectors.append(connectors_item)
 
         _dispatch = d.pop("dispatch", UNSET)
         dispatch: AgentDispatch | Unset
@@ -470,6 +495,7 @@ class AgentConfig:
             updated_at=updated_at,
             agent_plugins=agent_plugins,
             channels=channels,
+            connectors=connectors,
             dispatch=dispatch,
             greeting=greeting,
             guardrail=guardrail,
