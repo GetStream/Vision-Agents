@@ -59,28 +59,28 @@ type ConnectorInput struct {
 	Default string   `json:"default,omitempty" doc:"Used when the connection gives no value. An input without one is required."`
 }
 
-// ConnectorClient is where the OAuth client a connection uses may come from, and how that client
+// ConnectorClient is how the OAuth client a connection uses is registered, and how that client
 // authenticates.
 type ConnectorClient struct {
-	From       []ConnectorClientSource   `json:"from,omitempty" uniqueItems:"true" doc:"Where the OAuth client may come from. Empty when the connector needs none."`
-	AuthMethod ConnectorClientAuthMethod `json:"auth_method,omitempty"`
+	Registration []ConnectorClientRegistration `json:"registration,omitempty" uniqueItems:"true" doc:"The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client."`
+	AuthMethod   ConnectorClientAuthMethod     `json:"auth_method,omitempty"`
 	// The algorithms core.Manifest.Validate accepts (assertionAlgs in
 	// internal/connectors/core/manifest.go).
 	Alg string `json:"alg,omitempty" enum:"RS256,PS256" doc:"How a private_key_jwt assertion is signed, and set only for it."`
 }
 
 func (*ConnectorClient) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "Where the OAuth client a connection uses may come from, and how the client " +
+	schema.Description = "How the OAuth client a connection uses is registered, and how the client " +
 		"authenticates at the token endpoint."
 	schema.AdditionalProperties = false
 	return schema
 }
 
-// ConnectorClientSource is where an OAuth client comes from.
-type ConnectorClientSource string
+// ConnectorClientRegistration is one way an OAuth client is registered.
+type ConnectorClientRegistration string
 
-func (ConnectorClientSource) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "ConnectorClientSource",
+func (ConnectorClientRegistration) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ConnectorClientRegistration",
 		"operator is this deployment's own client, customer one the app registered, dcr one "+
 			"registered on the fly (RFC 7591) and cimd one named by a metadata document.",
 		string(core.ClientOperator), string(core.ClientCustomer), string(core.ClientDCR), string(core.ClientCIMD))
@@ -294,23 +294,23 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 	}
 	var client core.ClientPolicy
 	if sent.Client != nil {
-		for _, source := range sent.Client.From {
+		for _, registration := range sent.Client.Registration {
 			// An operator client is the deployment's own, read from the variables a
 			// built-in's client.env names, and the deployment has none registered with an
 			// app's own server.
-			if core.ClientSource(source) == core.ClientOperator {
-				return core.Manifest{}, errors.New("client.from cannot be operator for a custom connector: this deployment has no client registered with it")
+			if core.ClientRegistration(registration) == core.ClientOperator {
+				return core.Manifest{}, errors.New("client.registration cannot be operator for a custom connector: this deployment has no client registered with it")
 			}
-			client.From = append(client.From, core.ClientSource(source))
+			client.Registration = append(client.Registration, core.ClientRegistration(registration))
 		}
 		client.AuthMethod = core.ClientAuthMethod(sent.Client.AuthMethod)
 		client.Alg = sent.Client.Alg
 	}
-	// oauth2_code tries only the sources client.from names and fails with ErrNoClient when it
+	// oauth2_code tries only the mechanisms client.registration names and fails with ErrNoClient when it
 	// names none (pickClient in internal/connectors/schemes/oauth2code/client.go), so such a
 	// definition could be stored and never connected.
-	if slices.Contains(sent.Schemes, "oauth2_code") && len(client.From) == 0 {
-		return core.Manifest{}, errors.New("client.from is required with oauth2_code: name where the OAuth client may come from (customer, cimd or dcr)")
+	if slices.Contains(sent.Schemes, "oauth2_code") && len(client.Registration) == 0 {
+		return core.Manifest{}, errors.New("client.registration is required with oauth2_code: name how the OAuth client is registered (customer, cimd or dcr)")
 	}
 	manifest := core.Manifest{
 		ID: sent.ID,
@@ -346,9 +346,9 @@ func connectorOf(definition store.ConnectorDefinition) Connector {
 	for _, in := range manifest.Inputs {
 		inputs = append(inputs, ConnectorInput{Name: in.Name, Enum: in.Enum, Pattern: in.Pattern, Default: in.Default})
 	}
-	sources := make([]ConnectorClientSource, 0, len(manifest.Client.From))
-	for _, source := range manifest.Client.From {
-		sources = append(sources, ConnectorClientSource(source))
+	registrations := make([]ConnectorClientRegistration, 0, len(manifest.Client.Registration))
+	for _, registration := range manifest.Client.Registration {
+		registrations = append(registrations, ConnectorClientRegistration(registration))
 	}
 	return Connector{
 		ID:          definition.ID,
@@ -361,9 +361,9 @@ func connectorOf(definition store.ConnectorDefinition) Connector {
 		Inputs:      inputs,
 		Scopes:      append([]string{}, manifest.Scopes.List...),
 		Client: ConnectorClient{
-			From:       sources,
-			AuthMethod: ConnectorClientAuthMethod(manifest.Client.AuthMethod),
-			Alg:        manifest.Client.Alg,
+			Registration: registrations,
+			AuthMethod:   ConnectorClientAuthMethod(manifest.Client.AuthMethod),
+			Alg:          manifest.Client.Alg,
 		},
 		CreatedAt: definition.CreatedAt,
 	}

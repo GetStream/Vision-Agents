@@ -49,7 +49,7 @@ type server struct {
 // Endpoint roles read: authorize, token, revoke, issuer, resource, mcp.
 //
 //   - With issuer set, its metadata is read (RFC 8414).
-//   - Without issuer, and with authorize or token missing or a client.from that
+//   - Without issuer, and with authorize or token missing or a client.registration that
 //     registers a client (cimd, dcr), the issuer is found from the mcp endpoint's protected resource
 //     metadata (RFC 9728), as MCP 2025-11-25 «Authorization Server Discovery» does.
 //   - Without either, nothing is fetched: the endpoints are static, as for a provider
@@ -62,7 +62,7 @@ func (s *Scheme) discover(ctx context.Context, m core.ResolvedManifest) (server,
 		Revocation: m.Endpoints["revoke"],
 		Resource:   m.Endpoints["resource"],
 	}
-	registers := slices.Contains(m.Client.From, core.ClientCIMD) || slices.Contains(m.Client.From, core.ClientDCR)
+	registers := slices.Contains(m.Client.Registration, core.ClientCIMD) || slices.Contains(m.Client.Registration, core.ClientDCR)
 	if d.Issuer == "" && (d.Authorize == "" || d.Token == "" || registers) {
 		mcp := m.Endpoints["mcp"]
 		if mcp == "" {

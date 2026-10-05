@@ -14,7 +14,7 @@
 #         token_endpoint_auth_methods_supported [none], no client_id_metadata_document_supported.
 id: calcom
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
-# client.policy to client.from.
+# client.policy to client.registration.
 revision: 2
 # [proto]:61-63
 name: Cal.com
@@ -29,7 +29,7 @@ endpoints:
 schemes: [oauth2_code]
 client:
   # [as] has a registration_endpoint for public clients and no CIMD flag; [proto]:66.
-  from: [dcr]
+  registration: [dcr]
 # No scopes: [prm] names none and [mcp] lists none, so the scope parameter is left out, as
 # MCP 2025-11-25 «Scope Selection Strategy» asks («omitting the scope parameter if
 # scopes_supported is undefined»). The prototype asked for none either ([proto]:60-66).

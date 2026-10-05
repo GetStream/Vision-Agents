@@ -23,12 +23,13 @@ type Scheme interface {
 	// Complete turns a callback or a supplied value into long-lived StoredCredentials and the public
 	// values the manifest asked to capture.
 	Complete(ctx context.Context, in CompleteInput) (StoredCredentials, AccountInfo, error)
-	// AccessCredential gets a short-lived AccessCredential from StoredCredentials. It may
-	// rotate the StoredCredentials; the resolver persists what comes back under the lock. A
+	// Retrieve gets a short-lived AccessCredential from StoredCredentials, refreshing over
+	// the network when it must, as aws.CredentialsProvider.Retrieve does. It may rotate
+	// the StoredCredentials; the resolver persists what comes back under the lock. A
 	// failed renewal returns an *OutcomeError and no StoredCredentials, and, while the old
 	// access credential has not expired yet, that credential beside the error, so the call
 	// can still go out.
-	AccessCredential(ctx context.Context, stored StoredCredentials, m ResolvedManifest) (AccessCredential, StoredCredentials, error)
+	Retrieve(ctx context.Context, stored StoredCredentials, m ResolvedManifest) (AccessCredential, StoredCredentials, error)
 	// Wrap applies the credential to every outbound request: a header, a signature or a TLS
 	// client certificate. base is the egress transport (egress.NewClient passes it), so
 	// Wrap runs first and the egress check runs on the request Wrap produced, right before

@@ -281,7 +281,7 @@ const connectorHTTPTimeout = 10 * time.Second
 //
 // ClientMetadataURL is left empty, which turns CIMD off. The client metadata document it
 // would name is served by the consent flow (AI-844), and a client_id URL that answers 404
-// fails every consent that tries it. Until then a client.from naming cimd falls through to
+// fails every consent that tries it. Until then a client.registration naming cimd falls through to
 // the next source it names. Clients is nil too, so no operator or customer client is found until
 // client records exist (AI-846); only dcr can supply a client.
 func newConnectorRegistry(settings config.Config) (core.Registry, error) {

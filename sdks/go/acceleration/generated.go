@@ -485,16 +485,16 @@ func (e ConnectorClientAuthMethod) Valid() bool {
 	}
 }
 
-// Defines values for ConnectorClientSource.
+// Defines values for ConnectorClientRegistration.
 const (
-	Cimd     ConnectorClientSource = "cimd"
-	Customer ConnectorClientSource = "customer"
-	Dcr      ConnectorClientSource = "dcr"
-	Operator ConnectorClientSource = "operator"
+	Cimd     ConnectorClientRegistration = "cimd"
+	Customer ConnectorClientRegistration = "customer"
+	Dcr      ConnectorClientRegistration = "dcr"
+	Operator ConnectorClientRegistration = "operator"
 )
 
-// Valid indicates whether the value is a known member of the ConnectorClientSource enum.
-func (e ConnectorClientSource) Valid() bool {
+// Valid indicates whether the value is a known member of the ConnectorClientRegistration enum.
+func (e ConnectorClientRegistration) Valid() bool {
 	switch e {
 	case Cimd:
 		return true
@@ -2904,7 +2904,7 @@ type ConnectionStatus string
 type Connector struct {
 	Category *string `json:"category,omitempty"`
 
-	// Client Where the OAuth client a connection uses may come from, and how the client authenticates at the token endpoint.
+	// Client How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 	Client ConnectorClient `json:"client"`
 
 	// CreatedAt When this revision was stored.
@@ -2931,7 +2931,7 @@ type Connector struct {
 	Scopes *[]string `json:"scopes"`
 }
 
-// ConnectorClient Where the OAuth client a connection uses may come from, and how the client authenticates at the token endpoint.
+// ConnectorClient How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 type ConnectorClient struct {
 	// Alg How a private_key_jwt assertion is signed, and set only for it.
 	Alg *ConnectorClientAlg `json:"alg,omitempty"`
@@ -2939,8 +2939,8 @@ type ConnectorClient struct {
 	// AuthMethod How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
 	AuthMethod *ConnectorClientAuthMethod `json:"auth_method,omitempty"`
 
-	// From Where the OAuth client may come from. Empty when the connector needs none.
-	From *[]ConnectorClientSource `json:"from,omitempty"`
+	// Registration The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client.
+	Registration *[]ConnectorClientRegistration `json:"registration,omitempty"`
 }
 
 // ConnectorClientAlg How a private_key_jwt assertion is signed, and set only for it.
@@ -2949,8 +2949,8 @@ type ConnectorClientAlg string
 // ConnectorClientAuthMethod How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
 type ConnectorClientAuthMethod string
 
-// ConnectorClientSource operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
-type ConnectorClientSource string
+// ConnectorClientRegistration operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+type ConnectorClientRegistration string
 
 // ConnectorInput defines model for ConnectorInput.
 type ConnectorInput struct {
@@ -3151,7 +3151,7 @@ type CreateSessionRequest struct {
 type CustomConnectorRequest struct {
 	Category *string `json:"category,omitempty"`
 
-	// Client Where the OAuth client a connection uses may come from, and how the client authenticates at the token endpoint.
+	// Client How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 	Client      *ConnectorClient `json:"client,omitempty"`
 	Description *string          `json:"description,omitempty"`
 

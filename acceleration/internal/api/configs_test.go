@@ -921,7 +921,7 @@ func (s *ConfigsSuite) customConnector(backend *testClient) string {
 	id := "custom_t" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	s.Require().Equal(http.StatusOK, backend.do(http.MethodPost, "/v1/agents/connectors", map[string]any{
 		"id": id, "name": "Our CRM", "endpoint": "https://8.8.8.8/mcp", "schemes": []string{"oauth2_code"},
-		"client": map[string]any{"from": []string{"dcr"}},
+		"client": map[string]any{"registration": []string{"dcr"}},
 	}, nil))
 	return id
 }

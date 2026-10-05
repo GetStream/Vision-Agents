@@ -777,7 +777,7 @@ func (namedScheme) Complete(context.Context, core.CompleteInput) (core.StoredCre
 	return core.StoredCredentials{}, core.AccountInfo{}, errors.New("a named scheme does not connect")
 }
 
-func (namedScheme) AccessCredential(context.Context, core.StoredCredentials, core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+func (namedScheme) Retrieve(context.Context, core.StoredCredentials, core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
 	return core.AccessCredential{}, core.StoredCredentials{}, errors.New("a named scheme does not connect")
 }
 

@@ -57,7 +57,7 @@ func (s *OAuth2CodeSuite) TestTheSlackManifestBuildsThePrototypesAuthorizeURL() 
 	resolved := s.resolve("../../providers/slack.yaml", nil)
 	// Nothing is fetched for a manifest that pins its endpoints, so the client has nowhere
 	// to go.
-	scheme := s.scheme(&http.Client{}, oauth2code.Config{Clients: func(context.Context, core.ConnectionRef, core.ResolvedManifest, core.ClientSource) (oauth2code.Client, bool, error) {
+	scheme := s.scheme(&http.Client{}, oauth2code.Config{Clients: func(context.Context, core.ConnectionRef, core.ResolvedManifest, core.ClientRegistration) (oauth2code.Client, bool, error) {
 		return oauth2code.Client{ID: "operator-client", Secret: "operator-secret"}, true, nil
 	}})
 	out, err := scheme.Begin(s.ctx, core.BeginInput{
@@ -144,7 +144,7 @@ func (s *OAuth2CodeSuite) TestAClientMetadataDocumentIsUsedBeforeDynamicRegistra
 
 	resolved := s.resolve("../../providers/linear.yaml", nil)
 	resolved.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
-	resolved.Client.From = []core.ClientSource{core.ClientDCR, core.ClientCIMD}
+	resolved.Client.Registration = []core.ClientRegistration{core.ClientDCR, core.ClientCIMD}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{ClientMetadataURL: clientID})
 
 	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
@@ -160,7 +160,7 @@ func (s *OAuth2CodeSuite) TestWithoutCIMDSupportTheSchemeFallsBackToRegistration
 	srv := fakeprovider.New(s.T())
 	resolved := s.resolve("../../providers/linear.yaml", nil)
 	resolved.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
-	resolved.Client.From = []core.ClientSource{core.ClientCIMD, core.ClientDCR}
+	resolved.Client.Registration = []core.ClientRegistration{core.ClientCIMD, core.ClientDCR}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{ClientMetadataURL: "https://router.example/oauth/client-metadata.json"})
 
 	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
@@ -300,7 +300,7 @@ func (s *OAuth2CodeSuite) TestARealmIDInTheCallbackIsCapturedAsTheUnverifiedAcco
 func (s *OAuth2CodeSuite) TestASignedCallbackCompletesAndKeepsItsShopUnverified() {
 	srv := fakeprovider.New(s.T(), fakeprovider.SignedCallback)
 	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/shopify.yaml", map[string]string{"shop": srv.Shop}))
-	resolved.Client.From = []core.ClientSource{core.ClientOperator}
+	resolved.Client.Registration = []core.ClientRegistration{core.ClientOperator}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
 
 	_, account, err := s.connect(srv, scheme, resolved)
@@ -405,7 +405,7 @@ func (s *OAuth2CodeSuite) TestADiscoveredAuthorizeEndpointKeepsItsQuery() {
 func (s *OAuth2CodeSuite) TestByDefaultEndpointsAreHeldToTheEgressPolicy() {
 	srv := fakeprovider.New(s.T())
 	resolved := s.static(srv, s.resolve("../../providers/linear.yaml", nil))
-	resolved.Client.From = []core.ClientSource{core.ClientOperator}
+	resolved.Client.Registration = []core.ClientRegistration{core.ClientOperator}
 	scheme, err := oauth2code.New(oauth2code.Config{HTTP: srv.Client(), Clients: s.operator(srv)})
 	s.Require().NoError(err)
 
@@ -498,7 +498,7 @@ func (s *OAuth2CodeSuite) static(srv *fakeprovider.Server, m core.ResolvedManife
 
 // operator answers the fake's preregistered client as the operator's.
 func (s *OAuth2CodeSuite) operator(srv *fakeprovider.Server) oauth2code.ClientLookup {
-	return func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientSource) (oauth2code.Client, bool, error) {
+	return func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistration) (oauth2code.Client, bool, error) {
 		if source != core.ClientOperator {
 			return oauth2code.Client{}, false, nil
 		}
@@ -603,7 +603,7 @@ func (s *OAuth2CodeSuite) metadataServer(documents func(base string) map[string]
 
 // operatorClient answers any lookup for the operator with a fixed public client, for
 // resolved manifests whose servers are metadata servers rather than the fake.
-func operatorClient(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientSource) (oauth2code.Client, bool, error) {
+func operatorClient(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistration) (oauth2code.Client, bool, error) {
 	return oauth2code.Client{ID: "operator-client"}, source == core.ClientOperator, nil
 }
 
@@ -621,6 +621,6 @@ func asMetadata(issuer, authorize string) map[string]any {
 func (s *OAuth2CodeSuite) discovering(endpoints map[string]string) core.ResolvedManifest {
 	resolved := s.resolve("../../providers/linear.yaml", nil)
 	resolved.Endpoints = endpoints
-	resolved.Client.From = []core.ClientSource{core.ClientOperator}
+	resolved.Client.Registration = []core.ClientRegistration{core.ClientOperator}
 	return resolved
 }

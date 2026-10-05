@@ -1719,7 +1719,7 @@ components:
       type: object
     ConnectorClient:
       additionalProperties: false
-      description: Where the OAuth client a connection uses may come from, and how the client authenticates at the token endpoint.
+      description: How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
       properties:
         alg:
           description: How a private_key_jwt assertion is signed, and set only for it.
@@ -1729,10 +1729,10 @@ components:
           type: string
         auth_method:
           $ref: '#/components/schemas/ConnectorClientAuthMethod'
-        from:
-          description: Where the OAuth client may come from. Empty when the connector needs none.
+        registration:
+          description: The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client.
           items:
-            $ref: '#/components/schemas/ConnectorClientSource'
+            $ref: '#/components/schemas/ConnectorClientRegistration'
           nullable: true
           type: array
           uniqueItems: true
@@ -1746,7 +1746,7 @@ components:
         - private_key_jwt
         - tls_client_auth
       type: string
-    ConnectorClientSource:
+    ConnectorClientRegistration:
       description: operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
       enum:
         - operator

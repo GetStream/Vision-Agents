@@ -33,7 +33,7 @@ var ErrTokenTypeNotRevocable = errors.New("oauth2code: the provider does not rev
 // no access token, rather than leave without one.
 var errNoAccessToken = errors.New("oauth2code: the credential has no access token")
 
-// AccessCredential returns the access token in stored, renewed first when it is inside the
+// Retrieve returns the access token in stored, renewed first when it is inside the
 // margin of its expiry (RFC 6749 section 6). The StoredCredentials that come back are stored
 // itself when nothing was renewed, and new ones when a refresh succeeded; a failed refresh
 // returns no StoredCredentials, stored is never written to, and the error is a *core.OutcomeError the resolver acts on. When the
@@ -46,7 +46,7 @@ var errNoAccessToken = errors.New("oauth2code: the credential has no access toke
 // while the window opened by the first attempt is still running: a retired token keeps
 // working inside it, so the retry cannot be the replay RFC 9700 section 4.14.2 revokes a
 // grant for. Without a grace, a retry could be exactly that, so there is none.
-func (s *Scheme) AccessCredential(ctx context.Context, stored core.StoredCredentials, m core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
 	current, err := open(stored)
 	if err != nil {
 		return core.AccessCredential{}, core.StoredCredentials{}, err

@@ -14,13 +14,13 @@ type ToolSource interface {
 	// Discover lists what the connection offers, each tool with a schema digest, so a
 	// ToolGrant can pin the exact schema it was reviewed against.
 	Discover(ctx context.Context, b ResolvedBinding) ([]ToolSpec, error)
-	// Open returns a ToolSet that exposes only the granted tools whose digest still
+	// Open returns a Toolset that exposes only the granted tools whose digest still
 	// matches.
-	Open(ctx context.Context, b ResolvedBinding, grants []ToolGrant) (ToolSet, error)
+	Open(ctx context.Context, b ResolvedBinding, grants []ToolGrant) (Toolset, error)
 }
 
-// ToolSet is the tools of one opened ToolSource, for one session.
-type ToolSet interface {
+// Toolset is the tools of one opened ToolSource, for one session.
+type Toolset interface {
 	// Tools is in llm's shape rather than harness's, so core never pulls in harness, and
 	// through it llmrouter and store, and the store can still validate against core.
 	Tools() []llm.Tool
@@ -48,13 +48,13 @@ type Binding struct {
 	// Name is the alias the tools are exposed under.
 	Name        string
 	ConnectorID string
-	// ConnectionType is fixed, an app-owned ConnectionID chosen in the config, or session,
+	// Selection is fixed, an app-owned ConnectionID chosen in the config, or session,
 	// the verified caller's own connection chosen when the session starts.
-	ConnectionType string
-	ConnectionID   string
-	Tools          []ToolGrant
-	Required       bool
-	Timeout        time.Duration
+	Selection    string
+	ConnectionID string
+	Tools        []ToolGrant
+	Required     bool
+	Timeout      time.Duration
 }
 
 // ToolGrant is one exact tool, pinned to the schema it was granted against. There is no

@@ -22,7 +22,7 @@
 #         2026-10-02T22:13:25Z, scopes_supported [offline_access].
 id: github
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
-# client.policy to client.from.
+# client.policy to client.registration.
 revision: 2
 # [proto]:78-80
 name: GitHub
@@ -52,7 +52,7 @@ client:
   # approve or install it, which is why a customer may bring its own; that is our policy,
   # not a vendor fact. The list order is not the order: oauth2_code tries a customer's
   # client before the operator's (ownerOrder in schemes/oauth2code/client.go).
-  from: [operator, customer]
+  registration: [operator, customer]
   # client_id and client_secret go in the token request body: [oauth], [user]. [as] lists no
   # methods, so without this oauth2_code would pick client_secret_basic, which neither page
   # documents.

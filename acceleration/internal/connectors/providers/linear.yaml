@@ -10,7 +10,7 @@
 # acceleration/docs/connectors/architecture.md on connectors/planning.
 id: linear
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
-# client.policy to client.from.
+# client.policy to client.registration.
 revision: 2
 # [proto]:68-70
 name: Linear
@@ -26,7 +26,7 @@ endpoints:
 schemes: [oauth2_code]
 client:
   # «OAuth 2.1 with dynamic client registration»: [mcp]; [proto]:73.
-  from: [dcr]
+  registration: [dcr]
 scopes:
   # [proto]:74-76. [mcp] names read as the scope that keeps a connection read-only.
   list: [read, write]

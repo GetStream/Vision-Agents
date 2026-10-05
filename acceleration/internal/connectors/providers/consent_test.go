@@ -25,7 +25,7 @@ import (
 // ConsentSuite runs each built-in manifest's oauth2_code consent, Begin, the browser and
 // Complete, against the fake provider. Every endpoint role a manifest writes is pointed at
 // the fake and no other is added, so each consent takes the discovery path its manifest
-// chose, with its own client.from, scopes and capture rules.
+// chose, with its own client.registration, scopes and capture rules.
 type ConsentSuite struct {
 	suite.Suite
 	ctx context.Context
@@ -119,7 +119,7 @@ func (s *ConsentSuite) TestGitHubSendsTheClientSecretInTheTokenRequestBody() {
 func (s *ConsentSuite) TestGitHubTakesACustomersClientBeforeTheOperators() {
 	srv := fakeprovider.New(s.T())
 	resolved := s.atFake(srv, s.resolve("github", nil))
-	scheme := s.scheme(srv, func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientSource) (oauth2code.Client, bool, error) {
+	scheme := s.scheme(srv, func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistration) (oauth2code.Client, bool, error) {
 		if source == core.ClientCustomer {
 			return oauth2code.Client{ID: srv.ClientID, Secret: srv.ClientSecret}, true, nil
 		}
@@ -127,7 +127,7 @@ func (s *ConsentSuite) TestGitHubTakesACustomersClientBeforeTheOperators() {
 	})
 
 	out := s.begin(scheme, resolved)
-	s.Equal(srv.ClientID, s.query(out.AuthorizeURL).Get("client_id"), "the customer's client, though client.from lists the operator first")
+	s.Equal(srv.ClientID, s.query(out.AuthorizeURL).Get("client_id"), "the customer's client, though client.registration lists the operator first")
 	_, _, err := s.complete(srv, scheme, resolved, out)
 	s.Require().NoError(err)
 }
@@ -259,8 +259,8 @@ func (s *ConsentSuite) atFake(srv *fakeprovider.Server, m core.ResolvedManifest)
 
 // preregistered answers the fake's preregistered client for source, and no client for any
 // other source.
-func (s *ConsentSuite) preregistered(srv *fakeprovider.Server, source core.ClientSource) oauth2code.ClientLookup {
-	return func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, asked core.ClientSource) (oauth2code.Client, bool, error) {
+func (s *ConsentSuite) preregistered(srv *fakeprovider.Server, source core.ClientRegistration) oauth2code.ClientLookup {
+	return func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, asked core.ClientRegistration) (oauth2code.Client, bool, error) {
 		if asked != source {
 			return oauth2code.Client{}, false, nil
 		}

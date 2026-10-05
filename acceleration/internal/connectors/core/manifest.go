@@ -83,11 +83,14 @@ type Var struct {
 	Values map[string]string `yaml:"values" json:"values"`
 }
 
-// ClientPolicy says where the OAuth client may come from and how it authenticates at the
-// token endpoint.
+// ClientPolicy says how the OAuth client is registered and how it authenticates at the token
+// endpoint.
 type ClientPolicy struct {
-	From       []ClientSource   `yaml:"from,omitempty" json:"from,omitempty"`
-	AuthMethod ClientAuthMethod `yaml:"auth_method,omitempty" json:"auth_method,omitempty"`
+	// Registration lists the client registration mechanisms the connector allows: the two
+	// kinds of pre-registration (operator, customer) and the two on-the-fly ones (dcr, cimd).
+	// MCP's authorization spec, «Client Registration Approaches», names the same mechanisms.
+	Registration []ClientRegistration `yaml:"registration,omitempty" json:"registration,omitempty"`
+	AuthMethod   ClientAuthMethod     `yaml:"auth_method,omitempty" json:"auth_method,omitempty"`
 	// Alg is the signing algorithm of a private_key_jwt assertion, and set only for it.
 	Alg string `yaml:"alg,omitempty" json:"alg,omitempty"`
 	// Env is the prefix of the operator's client id and secret variables.
@@ -169,17 +172,18 @@ const (
 	FromCallbackQuery ValueSource = "callback_query"
 )
 
-// ClientSource is where the OAuth client a connection uses comes from: who registered it, or
-// how it is registered on the fly.
-type ClientSource string
+// ClientRegistration is how the OAuth client a connection uses is registered: in advance by the
+// operator or the customer, or on the fly. «Client registration» is the OAuth and MCP term
+// (RFC 7591; MCP spec 2025-11-25, «Client Registration Approaches»).
+type ClientRegistration string
 
-// The sources from the architecture doc's «Axes where providers differ», row 10. A broker's
+// The mechanisms from the architecture doc's «Axes where providers differ», row 10. A broker's
 // client is not here: a broker sits behind the CredentialStore, not in a manifest.
 const (
-	ClientOperator ClientSource = "operator"
-	ClientCustomer ClientSource = "customer"
-	ClientDCR      ClientSource = "dcr"
-	ClientCIMD     ClientSource = "cimd"
+	ClientOperator ClientRegistration = "operator"
+	ClientCustomer ClientRegistration = "customer"
+	ClientDCR      ClientRegistration = "dcr"
+	ClientCIMD     ClientRegistration = "cimd"
 )
 
 // ClientAuthMethod is how the client authenticates at the token endpoint.
@@ -210,11 +214,11 @@ const (
 )
 
 var (
-	valueSources      = []ValueSource{FromTokenResponse, FromIDToken, FromCallbackQuery}
-	clientSources     = []ClientSource{ClientOperator, ClientCustomer, ClientDCR, ClientCIMD}
-	clientAuthMethods = []ClientAuthMethod{AuthNone, AuthClientSecretPost, AuthClientSecretBasic, AuthPrivateKeyJWT, AuthTLSClientAuth}
-	rateLimitScopes   = []RateLimitScope{RateLimitPerApp, RateLimitPerTenant, RateLimitPerUser}
-	hookPoints        = []string{HookBeforeAuthorize, HookBeforeComplete, HookAfterToken}
+	valueSources        = []ValueSource{FromTokenResponse, FromIDToken, FromCallbackQuery}
+	clientRegistrations = []ClientRegistration{ClientOperator, ClientCustomer, ClientDCR, ClientCIMD}
+	clientAuthMethods   = []ClientAuthMethod{AuthNone, AuthClientSecretPost, AuthClientSecretBasic, AuthPrivateKeyJWT, AuthTLSClientAuth}
+	rateLimitScopes     = []RateLimitScope{RateLimitPerApp, RateLimitPerTenant, RateLimitPerUser}
+	hookPoints          = []string{HookBeforeAuthorize, HookBeforeComplete, HookAfterToken}
 	// assertionAlgs are JWS algorithms (RFC 7518 section 3.1) a private_key_jwt assertion
 	// may use: PS256 is what Microsoft requires for certificate credentials (architecture
 	// doc, stress-test row 8), RS256 the common default for the rest.
@@ -446,9 +450,9 @@ func (m Manifest) Validate() error {
 		}
 	}
 
-	for i, source := range m.Client.From {
-		if !slices.Contains(clientSources, source) {
-			fail(fmt.Sprintf("client.from[%d]", i), "%q is not one of %v", source, clientSources)
+	for i, registration := range m.Client.Registration {
+		if !slices.Contains(clientRegistrations, registration) {
+			fail(fmt.Sprintf("client.registration[%d]", i), "%q is not one of %v", registration, clientRegistrations)
 		}
 	}
 	if m.Client.AuthMethod != "" && !slices.Contains(clientAuthMethods, m.Client.AuthMethod) {
