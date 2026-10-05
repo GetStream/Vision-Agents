@@ -37,6 +37,7 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 	asked := hookAsk{apiKey: apiKey, pathApp: pathApp}
 	c.mu.Lock()
 	held, ok := c.hookKeys[asked]
+	before := c.hookGeneration
 	c.mu.Unlock()
 	if ok && c.now().Sub(held.at) < identityTTL {
 		return held.verifiers, nil
@@ -47,6 +48,11 @@ func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) (
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// An app written while its keys were being read may have dropped one of them, which is
+	// then read again next time rather than kept.
+	if c.hookGeneration != before {
+		return verifiers, nil
+	}
 	// Anybody can name a key or an app on a hook, so what is kept is bounded.
 	if len(c.hookKeys) >= maxHookAsks {
 		clear(c.hookKeys)

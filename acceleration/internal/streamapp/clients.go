@@ -60,6 +60,9 @@ type Clients struct {
 	checks  map[string]checked
 	// hookKeys are the secrets hooks were last checked against, by what they named.
 	hookKeys map[hookAsk]heldVerifiers
+	// hookGeneration counts each time hookKeys is forgotten, which any customer's
+	// invalidation does, so keys read across one are not kept as though read after.
+	hookGeneration uint64
 	// generation counts each customer's invalidations, so an answer resolved across one is
 	// not kept as though it came after.
 	generation map[string]uint64
@@ -225,6 +228,7 @@ func (c *Clients) forget(customer string) {
 	}
 	// The keys a hook is checked against may have changed with the app.
 	clear(c.hookKeys)
+	c.hookGeneration++
 	// What the customer's app holds is asked again too, since whatever changed it may
 	// have changed that.
 	for key, answer := range c.checks {

@@ -7,11 +7,14 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -381,6 +384,55 @@ func (s *StoredSuite) TestADeploymentSignedHookWaitsForTheDeploymentApp() {
 	s.Require().NoError(err, "a registered app's hooks do not wait on the deployment's")
 	s.Require().Len(verifiers, 1)
 	s.Equal(s.customer, verifiers[0].CustomerID)
+}
+
+// afterKeysRead runs do once, as soon as an app's keys have been read through the store it
+// is added to, as a registration landing at that moment would.
+type afterKeysRead struct {
+	once sync.Once
+	do   func()
+}
+
+func (a *afterKeysRead) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (a *afterKeysRead) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	if event.Operation() == "SELECT" && strings.Contains(event.Query, `"stream_app_keys"`) {
+		a.once.Do(a.do)
+	}
+}
+
+func (s *StoredSuite) TestAHookKeyDroppedWhileItWasReadIsNotKept() {
+	// A registration dropping a key lands while a hook reads the app's keys. Kept, what the
+	// hook read would verify hooks signed with the dropped key until it expired.
+	s.register("old-key")
+	reading, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "streamapp"))
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(reading.Close()) })
+	source, err := NewStored(StoredOptions{Store: reading, Sealer: s.sealer, Deployment: s.deployment})
+	s.Require().NoError(err)
+	clients := NewClients(source, ClientsOptions{})
+	reading.DB().AddQueryHook(&afterKeysRead{do: func() {
+		s.register("new-key")
+		clients.Invalidate(s.customer)
+	}})
+
+	first, err := clients.Verifiers(s.ctx, "", s.app)
+	s.Require().NoError(err)
+	s.Equal([]string{"old-key"}, apiKeysOf(first), "what was read before the registration answers that hook")
+	second, err := clients.Verifiers(s.ctx, "", s.app)
+	s.Require().NoError(err)
+
+	s.Equal([]string{"new-key"}, apiKeysOf(second), "and is not kept past it")
+}
+
+func apiKeysOf(verifiers []Verifier) []string {
+	keys := make([]string, 0, len(verifiers))
+	for _, verifier := range verifiers {
+		keys = append(keys, verifier.APIKey)
+	}
+	return keys
 }
 
 // floored is app mode's source with the fallback on and a floor answering as given.
