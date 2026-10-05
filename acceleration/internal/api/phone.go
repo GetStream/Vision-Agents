@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -319,6 +320,9 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	}
 
 	placed, err := s.phone.Call(ctx, call)
+	if errors.Is(err, dlc.ErrRefused) {
+		return nil, huma.Error403Forbidden(err.Error())
+	}
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
 		return nil, huma.Error404NotFound(err.Error())
 	}

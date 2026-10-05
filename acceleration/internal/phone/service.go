@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -28,6 +29,7 @@ type Service struct {
 	store     *store.Store
 	stream    *Stream
 	recorder  *routing.Recorder
+	gate      *dlc.Gate
 	publicURL string
 	logger    *slog.Logger
 }
@@ -41,6 +43,8 @@ type ServiceOptions struct {
 	// Recorder files purchases as request rows, so a number's monthly charge shows up in
 	// cost reporting next to what the models cost.
 	Recorder *routing.Recorder
+	// Gate refuses a call to somebody who opted out, or past what the sandbox allows.
+	Gate *dlc.Gate
 	// PublicURL is where this service is reachable from the internet, which the three
 	// vendors that fetch a call plan on answer need in order to fetch it. Without it those
 	// vendors say so rather than placing a call nothing will answer.
@@ -62,6 +66,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		store:     options.Store,
 		stream:    options.Stream,
 		recorder:  options.Recorder,
+		gate:      options.Gate,
 		publicURL: strings.TrimSuffix(options.PublicURL, "/"),
 		logger:    options.Logger,
 	}, nil
@@ -420,6 +425,9 @@ type Placed struct {
 // rule the answered leg arrives with nothing pointing it at a call, so this creates both and
 // pins the rule to the call the agent is waiting in, the way Transfer does.
 func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error) {
+	if err := s.gate.Allow(ctx, request.Owner.CustomerID, dlc.Voice, request.To); err != nil {
+		return Placed{}, err
+	}
 	if s.stream == nil {
 		return Placed{}, errors.New("phone: placing a call needs stream credentials")
 	}
@@ -636,6 +644,10 @@ func (s *Service) ReleaseCall(ctx context.Context, callType, callID string) erro
 	resources, err := s.store.ReleaseCallResources(ctx, callType, callID)
 	if err != nil {
 		return fmt.Errorf("phone: release call resources: %w", err)
+	}
+	if len(resources) > 0 {
+		began := slices.MinFunc(resources, func(a, b store.CallResource) int { return a.CreatedAt.Compare(b.CreatedAt) })
+		s.gate.Talked(ctx, began.CustomerID, time.Since(began.CreatedAt))
 	}
 	for _, resource := range resources {
 		if err := s.stream.DeleteRoute(ctx, resource.RouteID); err != nil {
