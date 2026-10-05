@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -24,7 +26,7 @@ type TokenError struct {
 }
 
 func (e *TokenError) Error() string {
-	return fmt.Sprintf("oauth2code: token endpoint refused the code (HTTP %d): %s", e.Status, e.Code)
+	return fmt.Sprintf("oauth2code: token endpoint answered HTTP %d: %s", e.Status, e.Code)
 }
 
 // tokenResponse is the part of a token response (RFC 6749 section 5.1) the scheme reads
@@ -57,42 +59,9 @@ func (s *Scheme) exchange(ctx context.Context, p core.Profile, a attempt, c clie
 		// RFC 8707 section 2.2.
 		form.Set("resource", a.Resource)
 	}
-	var basic bool
-	switch c.AuthMethod {
-	case core.AuthNone:
-		// RFC 6749 section 4.1.3: client_id is REQUIRED when the client does not
-		// authenticate.
-		form.Set("client_id", c.ID)
-	case core.AuthClientSecretPost:
-		// RFC 6749 section 2.3.1, the body form.
-		form.Set("client_id", c.ID)
-		form.Set("client_secret", c.Secret)
-	case core.AuthClientSecretBasic:
-		basic = true
-	default:
-		return tokenResponse{}, nil, fmt.Errorf("oauth2code: client authentication %q is not implemented", c.AuthMethod)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, a.TokenEndpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return tokenResponse{}, nil, err
-	}
-	if basic {
-		// RFC 6749 section 2.3.1: id and secret are each form-urlencoded (Appendix B) before
-		// they become the Basic credentials, which SetBasicAuth alone does not do.
-		request.SetBasicAuth(url.QueryEscape(c.ID), url.QueryEscape(c.Secret))
-	}
-	// RFC 6749 section 4.1.3: the body is application/x-www-form-urlencoded; section 5.1
-	// answers JSON.
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("Accept", "application/json")
-	response, err := s.cfg.HTTP.Do(request)
+	response, raw, err := s.tokenPost(ctx, a.TokenEndpoint, form, c)
 	if err != nil {
 		return tokenResponse{}, nil, fmt.Errorf("oauth2code: token: %w", err)
-	}
-	defer response.Body.Close()
-	raw, err := read(response.Body)
-	if err != nil {
-		return tokenResponse{}, nil, err
 	}
 	body, err := decodeObject(raw)
 	if err != nil {
@@ -112,6 +81,63 @@ func (s *Scheme) exchange(ctx context.Context, p core.Profile, a attempt, c clie
 		return tokenResponse{}, nil, err
 	}
 	return token, raw, nil
+}
+
+// errNotSent marks a request that failed before any of it was written, so it cannot have
+// taken effect at the provider.
+var errNotSent = errors.New("oauth2code: the request was not sent")
+
+// tokenPost sends form to a token or revocation endpoint, authenticated as c, and returns
+// the response with its body read. RFC 7009 section 2.1 has a revocation request
+// authenticate as RFC 6749 section 2.3 says a token request does, so both use this. An error
+// from a request that was never written wraps errNotSent; the response comes back with an
+// error when its body could not be read.
+func (s *Scheme) tokenPost(ctx context.Context, endpoint string, form url.Values, c client) (*http.Response, []byte, error) {
+	var basic bool
+	switch c.AuthMethod {
+	case core.AuthNone:
+		// RFC 6749 section 4.1.3: client_id is REQUIRED when the client does not
+		// authenticate.
+		form.Set("client_id", c.ID)
+	case core.AuthClientSecretPost:
+		// RFC 6749 section 2.3.1, the body form.
+		form.Set("client_id", c.ID)
+		form.Set("client_secret", c.Secret)
+	case core.AuthClientSecretBasic:
+		basic = true
+	default:
+		return nil, nil, fmt.Errorf("oauth2code: client authentication %q is not implemented", c.AuthMethod)
+	}
+	// Whether any of the request reached the wire. WroteRequest fires after the attempt to
+	// write it, failed or not, so a request cut off halfway counts as sent.
+	var wrote atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) { wrote.Store(true) }})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, nil, err
+	}
+	if basic {
+		// RFC 6749 section 2.3.1: id and secret are each form-urlencoded (Appendix B) before
+		// they become the Basic credentials, which SetBasicAuth alone does not do.
+		request.SetBasicAuth(url.QueryEscape(c.ID), url.QueryEscape(c.Secret))
+	}
+	// RFC 6749 section 4.1.3: the body is application/x-www-form-urlencoded; section 5.1
+	// answers JSON.
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response, err := s.cfg.HTTP.Do(request)
+	if err != nil {
+		if !wrote.Load() {
+			return nil, nil, fmt.Errorf("%w: %w", errNotSent, err)
+		}
+		return nil, nil, err
+	}
+	defer response.Body.Close()
+	raw, err := read(response.Body)
+	if err != nil {
+		return response, nil, err
+	}
+	return response, raw, nil
 }
 
 // parseToken reads RFC 6749 section 5.1's members. access_token is REQUIRED; the others

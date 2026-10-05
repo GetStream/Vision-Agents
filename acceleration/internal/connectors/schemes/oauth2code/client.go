@@ -27,7 +27,8 @@ var (
 )
 
 // supportedMethods are the token endpoint authentication methods this package implements
-// (RFC 7591 section 2 defines all three). private_key_jwt comes with part 2 (AI-836).
+// (RFC 7591 section 2 defines all three). PrivateKeyJWT builds a private_key_jwt assertion
+// but is not listed until a client record can hold a private key (T19).
 var supportedMethods = []core.ClientAuthMethod{core.AuthNone, core.AuthClientSecretBasic, core.AuthClientSecretPost}
 
 // Client is a preregistered OAuth client: the operator's app or a customer's own.
@@ -103,7 +104,7 @@ func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, p core.
 				continue
 			}
 			// CIMD section 4.1: no shared secret, so the client is public here.
-			// private_key_jwt, which §4.1 also allows, comes with part 2 (AI-836).
+			// private_key_jwt, which §4.1 also allows, waits for a key store (PrivateKeyJWT).
 			return client{Owner: owner, ID: s.cfg.ClientMetadataURL, AuthMethod: core.AuthNone}, nil
 		case core.ClientDCR:
 			if d.Registration == "" {

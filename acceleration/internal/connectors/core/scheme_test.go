@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -77,6 +78,24 @@ func (s *MaterialSuite) TestALogLineLeavesThePayloadOut() {
 	s.NotContains(text.String(), "rt-very-secret")
 	s.NotContains(structured.String(), "rt-very-secret")
 	s.Contains(structured.String(), "oauth2_code")
+}
+
+type OutcomeErrorSuite struct {
+	suite.Suite
+}
+
+func TestOutcomeErrorSuite(t *testing.T) {
+	suite.Run(t, new(OutcomeErrorSuite))
+}
+
+func (s *OutcomeErrorSuite) TestTheResolverReadsTheOutcomeThroughAWrappedError() {
+	cause := errors.New("token endpoint answered 400 invalid_grant")
+	err := fmt.Errorf("mint: %w", &OutcomeError{Outcome: Outcome{Kind: OutcomeInvalidGrant}, Err: cause})
+	var failed *OutcomeError
+	s.Require().ErrorAs(err, &failed)
+	s.Equal(OutcomeInvalidGrant, failed.Outcome.Kind)
+	s.ErrorIs(err, cause)
+	s.Equal("mint: invalid_grant: token endpoint answered 400 invalid_grant", err.Error())
 }
 
 func (s *MaterialSuite) TestJSONKeepsThePayloadForSealing() {
