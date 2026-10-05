@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -255,6 +256,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		spec.ConversationID = conv.CID()
 		conv.ShowTools(spec.VisibleTools)
+		conv.AcceptLogins(Logins(spec))
 		// A resume was deliberately not given an agent id, because only the conversation
 		// knows the one its transcript was written under.
 		spec.AgentID = conv.Agent()
@@ -372,17 +374,24 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		tools = append(tools, builtin.Tools...)
 	}
 
-	mcp, pluginTools := attachPlugins(ctx, spec, m.options.Store, m.logger)
+	var pluginHTTP *http.Client
+	if m.options.PluginAuth != nil {
+		pluginHTTP = m.options.PluginAuth.HTTP
+	}
+	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, pluginHTTP, m.logger)
 	tools = append(tools, pluginTools...)
+	tools = append(tools, unconnectedTools(unconnected)...)
 	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
 	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
+	if mcp != nil || len(unconnected) > 0 {
+		runner = &pluginRunner{mcp: mcp, unconnected: unconnected, next: runner}
+	}
 	if mcp != nil {
-		runner = &pluginRunner{mcp: mcp, next: runner}
 		created.closers = append(created.closers, mcp.Close)
 	}
 	if own := m.userPlugins(spec, runner); own != nil {
-		tools = append(tools, plugins.UserTools(spec.UserPlugins)...)
+		tools = append(tools, plugins.UserTools(own.offered)...)
 		runner = own
 		created.closers = append(created.closers, own.Close)
 	}

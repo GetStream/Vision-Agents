@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
@@ -19,6 +21,11 @@ import (
 const PrefixSeparator = "__"
 
 const sessionHeader = "Mcp-Session-Id"
+
+// publicClient is how plugin traffic leaves the router when a caller gives no client. A
+// config names its MCP servers, a login its shop and the servers' metadata their auth
+// servers, so it only reaches public hosts.
+var publicClient = egress.NewClient(0, nil)
 
 // ErrUnauthorized is a server refusing the token a connection was opened with: it expired
 // early, was revoked, or the account was disconnected at the provider. The login has to be
@@ -58,7 +65,41 @@ type client struct {
 }
 
 type initializeResult struct {
-	Instructions string `json:"instructions"`
+	Instructions string     `json:"instructions"`
+	ServerInfo   serverInfo `json:"serverInfo"`
+}
+
+// serverInfo is the server's Implementation (MCP 2025-11-25, «Lifecycle»). Everything but
+// name and version is optional, and older servers send only those.
+type serverInfo struct {
+	Name        string    `json:"name"`
+	Title       string    `json:"title"`
+	Version     string    `json:"version"`
+	Description string    `json:"description"`
+	WebsiteURL  string    `json:"websiteUrl"`
+	Icons       []mcpIcon `json:"icons"`
+}
+
+type mcpIcon struct {
+	Src string `json:"src"`
+}
+
+// Branding is how an MCP server describes itself at initialize, for showing it to people.
+// Any of it may be empty.
+type Branding struct {
+	// Title is the server's display title, or its name when it gives none.
+	Title       string
+	Description string
+	Version     string
+	// IconURL is the first of its icons served over https; a data: icon is not kept.
+	IconURL    string
+	WebsiteURL string
+}
+
+var initializeParams = map[string]any{
+	"protocolVersion": "2025-03-26",
+	"capabilities":    map[string]any{},
+	"clientInfo":      map[string]string{"name": "vision-agents", "version": "0"},
 }
 
 type rpcRequest struct {
@@ -105,7 +146,7 @@ type mcpContent struct {
 // rather than failing the call.
 func Open(ctx context.Context, conns []Connection, transport *http.Client) (*Runtime, []harness.Tool, []error) {
 	if transport == nil {
-		transport = http.DefaultClient
+		transport = publicClient
 	}
 	runtime := &Runtime{owned: map[string]*client{}}
 	var tools []harness.Tool
@@ -169,11 +210,7 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 		http:     transport,
 		nextID:   1,
 	}
-	raw, err := opened.call(ctx, "initialize", map[string]any{
-		"protocolVersion": "2025-03-26",
-		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]string{"name": "vision-agents", "version": "0"},
-	})
+	raw, err := opened.call(ctx, "initialize", initializeParams)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -193,6 +230,57 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 		return nil, nil, fmt.Errorf("plugins: tools/list: %w", err)
 	}
 	return opened, listed.Tools, nil
+}
+
+// Describe asks a server how it describes itself, with an initialize and nothing after it.
+func Describe(ctx context.Context, conn Connection, transport *http.Client) (Branding, error) {
+	if transport == nil {
+		transport = publicClient
+	}
+	opened := &client{pluginID: conn.PluginID, endpoint: conn.Endpoint, token: conn.AccessToken, http: transport, nextID: 1}
+	raw, err := opened.call(ctx, "initialize", initializeParams)
+	if err != nil {
+		return Branding{}, err
+	}
+	var initialized initializeResult
+	if err := json.Unmarshal(raw, &initialized); err != nil {
+		return Branding{}, fmt.Errorf("plugins: initialize: %w", err)
+	}
+	info := initialized.ServerInfo
+	branding := Branding{
+		Title:       clip(info.Title, 128),
+		Description: clip(info.Description, 1024),
+		Version:     clip(info.Version, 64),
+		WebsiteURL:  httpsURL(info.WebsiteURL),
+	}
+	if branding.Title == "" {
+		branding.Title = clip(info.Name, 128)
+	}
+	for _, icon := range info.Icons {
+		if branding.IconURL = httpsURL(icon.Src); branding.IconURL != "" {
+			break
+		}
+	}
+	return branding, nil
+}
+
+// clip trims text a server sent and cuts it to at most limit runes.
+func clip(text string, limit int) string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) > limit {
+		runes = runes[:limit]
+	}
+	return string(runes)
+}
+
+// httpsURL is raw when it is an https URL short enough to keep, and "" otherwise.
+func httpsURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || len(raw) > 2048 {
+		return ""
+	}
+	return raw
 }
 
 // Instructions are what the server opened for pluginID said at initialize about using its

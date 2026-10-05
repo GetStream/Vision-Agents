@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -19,17 +20,24 @@ import (
 )
 
 // attachPlugins opens the MCP servers this config is logged into, and the ones it names by
-// URL, and returns their tools. A server that will not start is skipped so a broken Slack
-// login does not refuse the call.
-func attachPlugins(ctx context.Context, spec Spec, db *store.Store, logger *slog.Logger) (*plugins.Runtime, []harness.Tool) {
+// URL that need no login or the app's, and returns their tools. A server that will not start
+// is skipped so a broken Slack login does not refuse the call. A server named by URL that
+// needs the app's login and has none is returned in unconnected. A nil transport reaches
+// only public hosts.
+func attachPlugins(ctx context.Context, spec Spec, db *store.Store, transport *http.Client, logger *slog.Logger) (runtime *plugins.Runtime, tools []harness.Tool, unconnected []string) {
 	var wanted []plugins.Connection
+	logins := map[string]store.PluginConnection{}
 	if db != nil && spec.ConfigID != "" {
 		conns, err := db.ConnectedPlugins(ctx, spec.CustomerID, spec.ConfigID)
 		if err != nil {
 			logger.Warn("not loading plugin connections", "config", spec.ConfigID, "error", err)
 		}
 		for _, conn := range conns {
-			plugin, err := ConfiguredPlugin(conn.PluginID, spec.PluginOptions)
+			if _, listed := plugins.Lookup(conn.PluginID); !listed {
+				logins[conn.PluginID] = conn
+				continue
+			}
+			plugin, err := ConfiguredPlugin(EntryFor(conn.PluginID, spec.AgentPlugins, spec.UserPlugins))
 			if err != nil {
 				logger.Warn("plugin is not usable", "plugin", conn.PluginID, "error", err)
 				continue
@@ -48,34 +56,113 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, logger *slog
 		}
 	}
 	for _, server := range spec.MCPServers {
-		wanted = append(wanted, plugins.Connection{PluginID: server.Name, Endpoint: server.URL, Tools: server.Tools})
+		if server.User {
+			continue
+		}
+		if server.NeedsLogin == nil {
+			needs, err := askLogin(ctx, server, transport)
+			if err != nil {
+				logger.Warn("mcp server could not be asked whether it needs a login", "server", server.Name, "error", err)
+				continue
+			}
+			server.NeedsLogin = &needs
+		}
+		connection := plugins.Connection{PluginID: server.Name, Endpoint: server.URL, Tools: server.Tools}
+		if server.AppLogin() {
+			conn, ok := logins[server.Name]
+			if !ok || conn.InstanceURL != server.URL {
+				logger.Warn("mcp server is not connected", "server", server.Name, "config", spec.ConfigID)
+				unconnected = append(unconnected, server.Name)
+				continue
+			}
+			connection.AccessToken = FreshToken(ctx, db, &conn, logger)
+		}
+		wanted = append(wanted, connection)
 	}
 	if len(wanted) == 0 {
-		return nil, nil
+		return nil, nil, unconnected
 	}
 
-	runtime, tools, failures := plugins.Open(ctx, wanted, nil)
+	runtime, tools, failures := plugins.Open(ctx, wanted, transport)
 	for _, failure := range failures {
 		logger.Warn("plugin did not connect", "error", failure)
 	}
-	return runtime, tools
+	return runtime, tools, unconnected
 }
 
-// ConfiguredPlugin is a catalog plugin as the config's plugin options ask for it.
-func ConfiguredPlugin(id string, options []store.PluginOptions) (plugins.Plugin, error) {
-	plugin, ok := plugins.Lookup(id)
-	if !ok {
-		return plugins.Plugin{}, fmt.Errorf("session: no plugin called %s", id)
+// loginQuestionTimeout bounds asking a server that could not be asked when its config was
+// saved whether it needs a login.
+const loginQuestionTimeout = 5 * time.Second
+
+func askLogin(ctx context.Context, server store.MCPServer, transport *http.Client) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, loginQuestionTimeout)
+	defer cancel()
+	return (&plugins.Auth{HTTP: transport}).NeedsLogin(ctx, server.URL)
+}
+
+// unconnectedTools stand in for the tools of servers that need the app's login and have
+// none, so the model can say what to do rather than not know the server is there.
+func unconnectedTools(servers []string) []harness.Tool {
+	tools := make([]harness.Tool, 0, len(servers))
+	for _, server := range servers {
+		tools = append(tools, harness.Tool{
+			Name: plugins.Prefix(server, plugins.ListToolsSuffix),
+			Description: fmt.Sprintf("List what %s can do. It fails until the app connects %s "+
+				"on the dashboard; say so if it does.", server, server),
+			Parameters: map[string]any{"type": "object", "properties": map[string]any{}},
+		})
 	}
-	for _, option := range options {
-		if option.Plugin == id {
-			return plugin.Configured(plugins.Options{
-				Readonly: option.Readonly, Scopes: option.Scopes, Toolsets: option.Toolsets,
-				Tools: option.Tools,
-			})
+	return tools
+}
+
+// notConnected is what a server that needs the app's login and has none fails with.
+func notConnected(server string) error {
+	return fmt.Errorf("%s is not connected: connect %s on the dashboard", server, server)
+}
+
+// ConfiguredPlugin is a catalog plugin as the config's entry for it asks for it.
+func ConfiguredPlugin(entry store.PluginEntry) (plugins.Plugin, error) {
+	plugin, ok := plugins.Lookup(entry.Name)
+	if !ok {
+		return plugins.Plugin{}, fmt.Errorf("session: no plugin called %s", entry.Name)
+	}
+	return plugin.Configured(plugins.Options{
+		Readonly: entry.Readonly, Scopes: entry.Scopes, Toolsets: entry.Toolsets, Tools: entry.Tools,
+	})
+}
+
+// EntryFor is the first entry naming id in lists, or one with nothing but its name. An
+// app's login may be for a plugin its config does not name yet, which is the catalog's.
+func EntryFor(id string, lists ...[]store.PluginEntry) store.PluginEntry {
+	for _, entries := range lists {
+		for _, entry := range entries {
+			if entry.Name == id {
+				return entry
+			}
 		}
 	}
-	return plugin, nil
+	return store.PluginEntry{Name: id}
+}
+
+// ServerPlugin is an MCP server a config names by URL, as the plugin its login is made for.
+func ServerPlugin(server store.MCPServer) plugins.Plugin {
+	return plugins.Plugin{
+		ID: server.Name, Name: server.Name, URL: server.URL,
+		Scopes: server.Scopes, Tools: server.Tools, ByURL: true,
+	}
+}
+
+// Logins are the servers each end user logs into in the conversation: the user_plugins and
+// the servers named by URL with user set. Only they may ask for a login there; the app logs
+// into the rest on the dashboard.
+func Logins(spec Spec) []string {
+	ids := store.PluginNames(spec.UserPlugins)
+	for _, server := range spec.MCPServers {
+		if server.User {
+			ids = append(ids, server.Name)
+		}
+	}
+	return ids
 }
 
 // serverInstructionsLimit caps what one server named by URL adds to the agent's
@@ -127,22 +214,28 @@ func FreshToken(ctx context.Context, db *store.Store, conn *store.PluginConnecti
 // no end user whose account it would be. An anonymous caller goes by a name nobody checked,
 // so a login made under it would be anybody's who used the same name.
 func (m *Manager) userPlugins(spec Spec, next agent.ToolRunner) *userPluginRunner {
-	if len(spec.UserPlugins) == 0 || m.options.Store == nil || spec.ConfigID == "" {
+	var offered []plugins.Plugin
+	for _, entry := range spec.UserPlugins {
+		if plugin, err := ConfiguredPlugin(entry); err == nil {
+			offered = append(offered, plugin)
+		}
+	}
+	for _, server := range spec.MCPServers {
+		if server.User {
+			offered = append(offered, ServerPlugin(server))
+		}
+	}
+	if len(offered) == 0 || m.options.Store == nil || spec.ConfigID == "" {
 		return nil
 	}
 	if spec.Caller.UserID == "" || spec.CallerKind == auth.KindAnonymous {
 		m.logger.Warn("not offering user plugins to a session with no verified end user",
-			"config", spec.ConfigID, "plugins", spec.UserPlugins)
+			"config", spec.ConfigID, "plugins", store.PluginNames(spec.UserPlugins))
 		return nil
 	}
 	named := map[string]plugins.Plugin{}
-	for _, id := range spec.UserPlugins {
-		if plugin, err := ConfiguredPlugin(id, spec.PluginOptions); err == nil {
-			named[id] = plugin
-		}
-	}
-	if len(named) == 0 {
-		return nil
+	for _, plugin := range offered {
+		named[plugin.ID] = plugin
 	}
 	signer := m.options.PluginAuth
 	if signer == nil {
@@ -152,6 +245,7 @@ func (m *Manager) userPlugins(spec Spec, next agent.ToolRunner) *userPluginRunne
 		customerID: spec.CustomerID,
 		configID:   spec.ConfigID,
 		userID:     spec.Caller.UserID,
+		offered:    offered,
 		named:      named,
 		db:         m.options.Store,
 		auth:       signer,
@@ -170,6 +264,8 @@ type userPluginRunner struct {
 	auth                         *plugins.Auth
 	logger                       *slog.Logger
 	next                         agent.ToolRunner
+	// offered are the plugins the caller may connect, in the order their tools are offered.
+	offered []plugins.Plugin
 
 	mu sync.Mutex
 	// open is the MCP session per plugin, opened at the first call after the user logged
@@ -246,7 +342,8 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 	}
 
 	conn, err := r.db.UserPluginConnection(ctx, r.customerID, r.configID, r.userID, plugin.ID)
-	if err != nil || conn.Status != store.PluginConnected || conn.AccessToken == "" {
+	if err != nil || conn.Status != store.PluginConnected || conn.AccessToken == "" ||
+		plugin.ByURL && conn.InstanceURL != plugin.URL {
 		prompt, err := r.authorize(ctx, plugin)
 		return nil, nil, prompt, err
 	}
@@ -259,7 +356,7 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 		Endpoint:    endpoint,
 		AccessToken: FreshToken(ctx, r.db, &conn, r.logger),
 		Tools:       plugin.Tools,
-	}}, nil)
+	}}, r.auth.HTTP)
 	if runtime == nil {
 		return nil, nil, "", errors.Join(failures...)
 	}
@@ -288,11 +385,16 @@ func (r *userPluginRunner) authorize(ctx context.Context, plugin plugins.Plugin)
 		ClientID:      pending.ClientID,
 		TokenEndpoint: pending.TokenEndpoint,
 	}
+	logo := r.auth.LogoURL(plugin.ID)
+	if plugin.ByURL {
+		conn.InstanceURL = plugin.URL
+		logo = ""
+	}
 	if err := r.db.UpsertPluginConnection(ctx, &conn); err != nil {
 		return "", err
 	}
 	r.logger.Info("asked an end user to connect a plugin", "plugin", plugin.ID, "config", r.configID)
-	return plugins.AuthorizationResult(plugin, pending.AuthorizeURL, r.auth.LogoURL(plugin.ID)), nil
+	return plugins.AuthorizationResult(plugin, pending.AuthorizeURL, logo), nil
 }
 
 // Close drops every MCP session the caller opened.
@@ -307,11 +409,18 @@ func (r *userPluginRunner) Close() {
 
 // pluginRunner runs prefixed MCP tools itself and hands everything else to the caller bridge.
 type pluginRunner struct {
-	mcp  *plugins.Runtime
-	next agent.ToolRunner
+	mcp *plugins.Runtime
+	// unconnected are the servers whose stand-in tools fail with how to connect them.
+	unconnected []string
+	next        agent.ToolRunner
 }
 
 func (r *pluginRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	for _, server := range r.unconnected {
+		if call.Name == plugins.Prefix(server, plugins.ListToolsSuffix) {
+			return nil, notConnected(server)
+		}
+	}
 	if r.mcp != nil && r.mcp.Owns(call.Name) {
 		text, err := r.mcp.Call(ctx, call)
 		return llm.TextParts(text), err

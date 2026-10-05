@@ -18,6 +18,7 @@ import (
 
 // Auth is the OAuth 2.1 + PKCE client used to connect a hosted MCP server.
 type Auth struct {
+	// HTTP reaches the servers and their auth servers. Nil reaches only public hosts.
 	HTTP         *http.Client
 	PublicURL    string
 	DashboardURL string
@@ -42,6 +43,7 @@ type Token struct {
 
 type protectedResource struct {
 	AuthorizationServers []string `json:"authorization_servers"`
+	ScopesSupported      []string `json:"scopes_supported"`
 }
 
 type authServer struct {
@@ -73,15 +75,7 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 		return Pending{}, err
 	}
 	transport := a.client()
-	resource, err := a.discoverResource(ctx, transport, endpoint)
-	if err != nil {
-		return Pending{}, err
-	}
-	issuer := first(resource.AuthorizationServers)
-	if issuer == "" {
-		issuer = originOf(endpoint)
-	}
-	meta, err := a.discoverServer(ctx, transport, issuer)
+	resource, meta, err := a.discover(ctx, transport, endpoint)
 	if err != nil {
 		return Pending{}, err
 	}
@@ -89,13 +83,19 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 		return Pending{}, fmt.Errorf("plugins: %s did not advertise oauth endpoints", plugin.ID)
 	}
 
-	clientID, _ := envClient(plugin.ID)
+	clientID := ""
+	if !plugin.ByURL {
+		clientID, _ = envClient(plugin.ID)
+	}
 	if clientID == "" && meta.RegistrationEndpoint != "" {
 		registered, err := a.register(ctx, transport, meta.RegistrationEndpoint)
 		if err != nil {
 			return Pending{}, err
 		}
 		clientID = registered.ClientID
+	}
+	if clientID == "" && plugin.ByURL {
+		return Pending{}, fmt.Errorf("plugins: %s does not advertise dynamic client registration", plugin.Name)
 	}
 	if clientID == "" {
 		return Pending{}, fmt.Errorf(
@@ -121,8 +121,12 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 	query.Set("code_challenge", challenge)
 	query.Set("code_challenge_method", "S256")
 	query.Set("resource", resourceOf(endpoint))
-	if len(plugin.Scopes) > 0 {
-		query.Set("scope", strings.Join(plugin.Scopes, " "))
+	scopes := plugin.Scopes
+	if len(scopes) == 0 && plugin.ByURL {
+		scopes = resource.ScopesSupported
+	}
+	if len(scopes) > 0 {
+		query.Set("scope", strings.Join(scopes, " "))
 	}
 	for name, value := range plugin.AuthorizeParams {
 		query.Set(name, value)
@@ -221,13 +225,14 @@ func (a *Auth) Refresh(ctx context.Context, pluginID, tokenEndpoint, clientID, r
 	return token, nil
 }
 
-// DashboardRedirect is where the browser should land after the callback.
-func (a *Auth) DashboardRedirect(configID string) string {
+// DashboardRedirect is where the browser should land after the callback. plugin_connected
+// tells a dashboard that opened the login in a popup to close it.
+func (a *Auth) DashboardRedirect(configID, pluginID string) string {
 	base := strings.TrimRight(a.DashboardURL, "/")
 	if base == "" {
 		base = "http://localhost:3000"
 	}
-	return base + "/agents/" + configID
+	return base + "/agents/" + configID + "?plugin_connected=" + url.QueryEscape(pluginID)
 }
 
 func (a *Auth) callbackURL() string {
@@ -250,26 +255,91 @@ func (a *Auth) client() *http.Client {
 	if a != nil && a.HTTP != nil {
 		return a.HTTP
 	}
-	return http.DefaultClient
+	return publicClient
+}
+
+// CheckLogin reports why the MCP server at endpoint cannot be logged into with a client the
+// router registers itself, or nil when it can. A server that could not be reached at all
+// fails with a *url.Error.
+func (a *Auth) CheckLogin(ctx context.Context, endpoint string) error {
+	_, meta, err := a.discover(ctx, a.client(), endpoint)
+	if err != nil {
+		return err
+	}
+	if meta.AuthorizationEndpoint == "" || meta.TokenEndpoint == "" {
+		return fmt.Errorf("plugins: %s did not advertise oauth endpoints", endpoint)
+	}
+	if meta.RegistrationEndpoint == "" {
+		return fmt.Errorf("plugins: %s does not advertise dynamic client registration", endpoint)
+	}
+	return nil
+}
+
+// NeedsLogin reports whether the MCP server at endpoint requires an OAuth login: it
+// publishes protected-resource metadata naming an authorization server, or refuses a request
+// without a token with a 401 that says how to authenticate. A server that could not be
+// reached fails with a *url.Error, and one failing on its side says nothing either way.
+func (a *Auth) NeedsLogin(ctx context.Context, endpoint string) (bool, error) {
+	transport := a.client()
+	for _, candidate := range resourceCandidates(endpoint) {
+		var meta protectedResource
+		if getJSON(ctx, transport, candidate, &meta) == nil && len(meta.AuthorizationServers) > 0 {
+			return true, nil
+		}
+	}
+	response, err := unauthenticated(ctx, transport, endpoint)
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= http.StatusInternalServerError {
+		return false, fmt.Errorf("plugins: %s: %s", endpoint, response.Status)
+	}
+	return response.StatusCode == http.StatusUnauthorized && response.Header.Get("WWW-Authenticate") != "", nil
+}
+
+// discover reads the server's protected-resource metadata and then its authorization
+// server's, which is its own origin when the server names none.
+func (a *Auth) discover(ctx context.Context, transport *http.Client, endpoint string) (protectedResource, authServer, error) {
+	resource, err := a.discoverResource(ctx, transport, endpoint)
+	if err != nil {
+		return protectedResource{}, authServer{}, err
+	}
+	issuer := first(resource.AuthorizationServers)
+	if issuer == "" {
+		issuer = originOf(endpoint)
+	}
+	meta, err := a.discoverServer(ctx, transport, issuer)
+	return resource, meta, err
 }
 
 // discoverResource reads RFC 9728 metadata, at the endpoint's path first (section 3.1, and
-// where Sentry and Google Calendar publish it) and then at the origin.
+// where Sentry and Google Calendar publish it), then at the origin, then wherever the
+// server's WWW-Authenticate points when it refuses a request without a login (section 5.1).
 func (a *Auth) discoverResource(ctx context.Context, transport *http.Client, endpoint string) (protectedResource, error) {
 	var meta protectedResource
-	wellKnown := originOf(endpoint) + "/.well-known/oauth-protected-resource"
-	candidates := []string{wellKnown}
-	if parsed, err := url.Parse(endpoint); err == nil && strings.Trim(parsed.Path, "/") != "" {
-		candidates = []string{wellKnown + "/" + strings.Trim(parsed.Path, "/"), wellKnown}
-	}
-	for _, candidate := range candidates {
+	for _, candidate := range resourceCandidates(endpoint) {
 		if err := getJSON(ctx, transport, candidate, &meta); err == nil {
+			return meta, nil
+		}
+	}
+	if link := resourceMetadataLink(ctx, transport, endpoint); link != "" {
+		if err := getJSON(ctx, transport, link, &meta); err == nil {
 			return meta, nil
 		}
 	}
 	// A server that has not published metadata yet can still do DCR against its own
 	// origin, so a miss here is not fatal.
 	return protectedResource{}, nil
+}
+
+// resourceCandidates are where RFC 9728 metadata for endpoint may be, in the order to try.
+func resourceCandidates(endpoint string) []string {
+	wellKnown := originOf(endpoint) + "/.well-known/oauth-protected-resource"
+	if parsed, err := url.Parse(endpoint); err == nil && strings.Trim(parsed.Path, "/") != "" {
+		return []string{wellKnown + "/" + strings.Trim(parsed.Path, "/"), wellKnown}
+	}
+	return []string{wellKnown}
 }
 
 // discoverServer reads the authorization server's metadata: RFC 8414 first, then OpenID
@@ -359,6 +429,37 @@ func getJSON(ctx context.Context, transport *http.Client, url string, target any
 		return fmt.Errorf("%s: %s", url, response.Status)
 	}
 	return json.NewDecoder(response.Body).Decode(target)
+}
+
+// resourceMetadataLink is the resource_metadata the server's WWW-Authenticate names when it
+// refuses a request without a login, or empty.
+func resourceMetadataLink(ctx context.Context, transport *http.Client, endpoint string) string {
+	response, err := unauthenticated(ctx, transport, endpoint)
+	if err != nil {
+		return ""
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		return ""
+	}
+	_, link, ok := strings.Cut(response.Header.Get("WWW-Authenticate"), `resource_metadata="`)
+	if !ok {
+		return ""
+	}
+	link, _, _ = strings.Cut(link, `"`)
+	return link
+}
+
+// unauthenticated is how the server answers a ping sent without a token.
+func unauthenticated(ctx context.Context, transport *http.Client, endpoint string) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
+		strings.NewReader(`{"jsonrpc":"2.0","id":0,"method":"ping"}`))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	return transport.Do(request)
 }
 
 func pkce() (verifier, challenge string, err error) {

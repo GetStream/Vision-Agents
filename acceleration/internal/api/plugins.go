@@ -3,10 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
 	"net/http"
+	"reflect"
+	"slices"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -65,7 +68,7 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 		return nil, err
 	}
 
-	listed := make([]PluginConnection, 0, len(conns)+len(config.Plugins))
+	listed := make([]PluginConnection, 0, len(conns)+len(config.AgentPlugins))
 	held := map[string]bool{}
 	for _, conn := range conns {
 		plugin, ok := plugins.Lookup(conn.PluginID)
@@ -75,7 +78,7 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 		held[plugin.ID] = true
 		listed = append(listed, pluginConnectionOf(plugin, conn, s.auth().LogoURL(plugin.ID)))
 	}
-	for _, id := range config.Plugins {
+	for _, id := range store.PluginNames(config.AgentPlugins) {
 		plugin, ok := plugins.Lookup(id)
 		if !ok || held[id] {
 			continue
@@ -85,7 +88,44 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 			store.PluginConnection{Status: string(PluginConnectionStatusNotConnected)},
 			s.auth().LogoURL(plugin.ID)))
 	}
+	for _, server := range config.MCPServers {
+		if !server.AppLogin() {
+			continue
+		}
+		status := PluginConnectionStatusNotConnected
+		for _, conn := range conns {
+			if conn.PluginID == server.Name && conn.InstanceURL == server.URL {
+				status = PluginConnectionStatus(conn.Status)
+				break
+			}
+		}
+		name := server.Name
+		if server.Branding != nil && server.Branding.Title != "" {
+			name = server.Branding.Title
+		}
+		listed = append(listed, PluginConnection{PluginId: server.Name, Name: name, Status: status})
+	}
 	return &listConfigPluginsResponse{Body: listed}, nil
+}
+
+// appPlugin is what the app logs into once for a config: a catalog plugin as the config's
+// entry asks for it, or an MCP server the config names by URL that needs a login and not
+// each end user's. One that could not be asked at save is tried, and fails at discovery if
+// it has no login.
+func appPlugin(config store.AgentConfig, id string) (plugins.Plugin, error) {
+	if _, ok := plugins.Lookup(id); ok {
+		return session.ConfiguredPlugin(session.EntryFor(id, config.AgentPlugins, config.UserPlugins))
+	}
+	for _, server := range config.MCPServers {
+		if server.Name != id || (server.NeedsLogin != nil && !*server.NeedsLogin) {
+			continue
+		}
+		if server.User {
+			return plugins.Plugin{}, fmt.Errorf("%s is connected by each end user, in the conversation", id)
+		}
+		return session.ServerPlugin(server), nil
+	}
+	return plugins.Plugin{}, errors.New(unknownPlugin)
 }
 
 // authorizePlugin starts a plugin login and returns the URL the browser should open.
@@ -95,9 +135,6 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 
-	if _, ok := plugins.Lookup(string(request.PluginId)); !ok {
-		return nil, huma.Error400BadRequest(unknownPlugin)
-	}
 	if s.store == nil {
 		return nil, huma.Error400BadRequest(noConfigs)
 	}
@@ -105,7 +142,7 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 	if err != nil {
 		return nil, huma.Error404NotFound(unknownConfig)
 	}
-	plugin, err := session.ConfiguredPlugin(string(request.PluginId), config.PluginOptions)
+	plugin, err := appPlugin(config, string(request.PluginId))
 	if err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
@@ -134,6 +171,9 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 		ClientID:      pending.ClientID,
 		TokenEndpoint: pending.TokenEndpoint,
 	}
+	if plugin.ByURL {
+		conn.InstanceURL = plugin.URL
+	}
 	if err := s.store.UpsertPluginConnection(ctx, &conn); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
@@ -149,11 +189,13 @@ func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPlugin
 	if s.store == nil {
 		return nil, huma.Error400BadRequest(noConfigs)
 	}
-	if _, ok := plugins.Lookup(string(request.PluginId)); !ok {
-		return nil, huma.Error400BadRequest(unknownPlugin)
-	}
-	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
+	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
+	if err != nil {
 		return nil, huma.Error404NotFound(unknownConfig)
+	}
+	named := func(server store.MCPServer) bool { return server.Name == string(request.PluginId) }
+	if _, ok := plugins.Lookup(string(request.PluginId)); !ok && !slices.ContainsFunc(config.MCPServers, named) {
+		return nil, huma.Error400BadRequest(unknownPlugin)
 	}
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
 		return nil, huma.Error404NotFound(unknownPlugin)
@@ -242,17 +284,24 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	// An end user connected their own account from a conversation: there is no editor to
 	// go back to, and the config already names the plugin for every user.
 	s.pluginEvents.Changed(conn.CustomerID, conn.ConfigID)
+	plugin, listed := plugins.Lookup(conn.PluginID)
 	if conn.UserID != "" {
-		plugin, _ := plugins.Lookup(conn.PluginID)
+		name := conn.PluginID
+		if listed {
+			name = plugin.Name
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = fmt.Fprintf(w, connectedPage, html.EscapeString(plugin.Name))
+		_, _ = fmt.Fprintf(w, connectedPage, html.EscapeString(name))
 		return
 	}
-	if err := s.store.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	// A server the config names by URL is named there already, under mcp_servers.
+	if listed {
+		if err := s.store.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
-	http.Redirect(w, r, auth.DashboardRedirect(conn.ConfigID), http.StatusFound)
+	http.Redirect(w, r, auth.DashboardRedirect(conn.ConfigID, conn.PluginID), http.StatusFound)
 }
 
 // connectedPage is what an end user's browser shows once their login is stored.
@@ -335,7 +384,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Path:        "/v1/agents/configs/{id}/plugins",
 		Summary:     "The plugin logins this agent holds",
 		Description: "The app's own logins, then every plugin the config names that has none yet, as " +
-			"not_connected. An end user's logins, made for user_plugins, are never listed.",
+			"not_connected, then every MCP server it names by URL that needs a login and has no user, " +
+			"which the app logs into the same way. An end user's logins, made for user_plugins or a server " +
+			"with user, are never listed.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The config's connections"},
 		},
@@ -347,7 +398,7 @@ func (s *Server) registerPlugins(api huma.API) {
 		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize",
 		Summary:     "Start a plugin login",
 		Description: "Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. " +
-			"Shopify and Salesforce need an instance url, because they have no single global host.\n" +
+			"Shopify needs an instance url, because it has no single global host.\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		Responses: map[string]*huma.Response{
@@ -388,7 +439,7 @@ type listConfigPluginsResponse struct {
 
 type authorizePluginRequest struct {
 	Id       string `path:"id" doc:"The resource, as returned when it was created."`
-	PluginId string `path:"plugin_id" doc:"A built-in catalog id such as slack or calendly."`
+	PluginId string `path:"plugin_id" doc:"A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into."`
 	Body     *AuthorizePluginRequest
 }
 
@@ -398,7 +449,7 @@ type authorizePluginResponse struct {
 
 type disconnectPluginRequest struct {
 	Id       string `path:"id" doc:"The resource, as returned when it was created."`
-	PluginId string `path:"plugin_id" doc:"A built-in catalog id such as slack or calendly."`
+	PluginId string `path:"plugin_id" doc:"A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into."`
 }
 
 // Plugin One hosted MCP server from the built-in catalog.
@@ -410,9 +461,9 @@ type Plugin struct {
 	InstanceRequired *bool     `json:"instance_required,omitempty"`
 	LogoUrl          string    `json:"logo_url" readOnly:"true" doc:"Where this deployment serves the plugin's logo, as an SVG needing no credential."`
 	Name             string    `json:"name"`
-	Readonly         *bool     `json:"readonly,omitempty" doc:"True when the plugin has a read-only endpoint an agent may pick in plugin_options."`
-	Toolsets         *[]string `json:"toolsets,omitempty" doc:"The groups of tools an agent may limit the plugin to in plugin_options. Absent when it cannot be limited."`
-	ScopesSupported  *[]string `json:"scopes_supported,omitempty" doc:"The OAuth scopes an agent may ask for in plugin_options, as the server advertises them. Absent when the server says nothing, and any scope is then passed through."`
+	Readonly         *bool     `json:"readonly,omitempty" doc:"True when the plugin has a read-only endpoint an agent may pick on its entry."`
+	Toolsets         *[]string `json:"toolsets,omitempty" doc:"The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited."`
+	ScopesSupported  *[]string `json:"scopes_supported,omitempty" doc:"The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through."`
 }
 
 func (*Plugin) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -427,7 +478,7 @@ type PluginConnection struct {
 	InstanceHint     *string                `json:"instance_hint,omitempty"`
 	InstanceRequired *bool                  `json:"instance_required,omitempty"`
 	InstanceUrl      *string                `json:"instance_url,omitempty"`
-	LogoUrl          string                 `json:"logo_url" readOnly:"true" doc:"Where this deployment serves the plugin's logo, as an SVG needing no credential."`
+	LogoUrl          string                 `json:"logo_url" readOnly:"true" doc:"Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL."`
 	Name             string                 `json:"name"`
 	PluginId         string                 `json:"plugin_id"`
 	Status           PluginConnectionStatus `json:"status" enum:"pending,connected,failed,not_connected"`
@@ -467,12 +518,12 @@ func (e PluginConnectionStatus) Valid() bool {
 
 // AuthorizePluginRequest is the AuthorizePluginRequest schema.
 type AuthorizePluginRequest struct {
-	InstanceUrl *string `json:"instance_url,omitempty" doc:"The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL."`
+	InstanceUrl *string `json:"instance_url,omitempty" doc:"The shop hostname. Required for plugins that have no single global URL."`
 }
 
 // PluginEvent is one MCP event an agent subscribes to on a plugin it names.
 type PluginEvent struct {
-	Plugin       string          `json:"plugin" minLength:"1" doc:"A catalog plugin the config names under plugins or user_plugins."`
+	Plugin       string          `json:"plugin" minLength:"1" doc:"A catalog plugin the config names under agent_plugins or user_plugins."`
 	Event        string          `json:"event" minLength:"1" doc:"The event's name, as the server's events/list gives it, such as comment.created."`
 	Arguments    *map[string]any `json:"arguments,omitempty" doc:"The event's filters, as its inputSchema describes them."`
 	Instructions *string         `json:"instructions,omitempty" doc:"What the agent does with the event when it arrives, added to its instructions for that conversation."`
@@ -485,33 +536,94 @@ func (*PluginEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.
 	return schema
 }
 
-// PluginOptions is what an agent changes about one catalog plugin it names.
-type PluginOptions struct {
-	Plugin   string    `json:"plugin" minLength:"1" doc:"A catalog plugin id. It applies once the config names the plugin under plugins or user_plugins, and to the app's login made from the dashboard."`
+// PluginWithOptions names one catalog plugin an agent reaches, with how it is reached.
+type PluginWithOptions struct {
+	Name     string    `json:"name" minLength:"1" doc:"A catalog plugin id, such as linear."`
 	Readonly *bool     `json:"readonly,omitempty" doc:"Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear."`
 	Scopes   *[]string `json:"scopes,omitempty" maxItems:"32" doc:"The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set."`
 	Toolsets *[]string `json:"toolsets,omitempty" maxItems:"32" doc:"Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login."`
 	Tools    *[]string `json:"tools,omitempty" maxItems:"128" doc:"Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool."`
 }
 
-func (*PluginOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "How an agent reaches one catalog plugin it names, and what its login " +
-		"asks for. A login made before a change keeps what it was granted, so connect it " +
-		"again for the change to take."
+func (*PluginWithOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One catalog plugin an agent names, with how it is reached and what " +
+		"its login asks for. A login made before a change keeps what it was granted, so " +
+		"connect it again for the change to take."
 	return schema
+}
+
+// PluginEntry is one catalog plugin an agent names: its id alone, or a PluginWithOptions.
+// It is a type of its own so that it answers in the shape it was given.
+type PluginEntry PluginWithOptions
+
+func (e PluginEntry) MarshalJSON() ([]byte, error) {
+	if e.Readonly == nil && e.Scopes == nil && e.Toolsets == nil && e.Tools == nil {
+		return json.Marshal(e.Name)
+	}
+	return json.Marshal(PluginWithOptions(e))
+}
+
+func (e *PluginEntry) UnmarshalJSON(raw []byte) error {
+	var name string
+	if json.Unmarshal(raw, &name) == nil {
+		*e = PluginEntry{Name: name}
+		return nil
+	}
+	var object PluginWithOptions
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return err
+	}
+	*e = PluginEntry(object)
+	return nil
+}
+
+func (PluginEntry) Schema(registry huma.Registry) *huma.Schema {
+	one := 1
+	schema := &huma.Schema{
+		Description: "One catalog plugin an agent names: its id, such as sentry, or an object " +
+			"naming it with how it is reached.",
+		OneOf: []*huma.Schema{
+			{Type: huma.TypeString, MinLength: &one},
+			registry.Schema(reflect.TypeFor[PluginWithOptions](), true, "PluginWithOptions"),
+		},
+	}
+	schema.PrecomputeMessages()
+	registry.Map()["PluginEntry"] = schema
+	return &huma.Schema{Ref: "#/components/schemas/PluginEntry"}
 }
 
 // McpServer is an MCP server outside the catalog that an agent reaches by its URL.
 type McpServer struct {
-	Name  string    `json:"name" minLength:"1" maxLength:"32" pattern:"^[a-z][a-z0-9_-]*$" doc:"What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id."`
-	Url   string    `json:"url" minLength:"1" maxLength:"2048" doc:"Its Streamable HTTP endpoint, over https."`
-	Tools *[]string `json:"tools,omitempty" maxItems:"128" doc:"Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool."`
+	Name       string             `json:"name" minLength:"1" maxLength:"32" pattern:"^[a-z][a-z0-9_-]*$" doc:"What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id."`
+	Url        string             `json:"url" minLength:"1" maxLength:"2048" doc:"Its Streamable HTTP endpoint, over https."`
+	Tools      *[]string          `json:"tools,omitempty" maxItems:"128" doc:"Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool."`
+	Scopes     *[]string          `json:"scopes,omitempty" maxItems:"32" doc:"The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted."`
+	User       *bool              `json:"user,omitempty" doc:"Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a login may set it."`
+	Branding   *McpServerBranding `json:"branding,omitempty" readOnly:"true" doc:"How the server described itself when the config was saved. Absent when it did not answer."`
+	NeedsLogin *bool              `json:"needs_login,omitempty" readOnly:"true" doc:"Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again."`
+}
+
+// McpServerBranding is what an MCP server said about itself at initialize.
+type McpServerBranding struct {
+	Title       *string `json:"title,omitempty" doc:"Its display title, or its name when it gives none."`
+	Description *string `json:"description,omitempty"`
+	Version     *string `json:"version,omitempty"`
+	IconUrl     *string `json:"icon_url,omitempty" doc:"Its first icon served over https, as the server links it."`
+	WebsiteUrl  *string `json:"website_url,omitempty"`
+}
+
+func (*McpServerBranding) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "The serverInfo an MCP server answers initialize with. Every field is " +
+		"optional, and a server that sends only its name and version is titled by its name."
+	return schema
 }
 
 func (*McpServer) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "An MCP server the plugin catalog does not have. Every session opens " +
-		"it at the start, with no login, and offers its tools to the model; the instructions " +
-		"the server gives are added to the agent's own."
+		"it at the start and offers its tools to the model; the instructions the server gives " +
+		"are added to the agent's own. It is opened with no login unless it sets scopes or " +
+		"user, when it logs in with OAuth as its protected-resource metadata says, registering " +
+		"a client of its own, and saving it is refused when the server advertises no such login."
 	return schema
 }
 

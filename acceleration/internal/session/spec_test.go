@@ -48,11 +48,11 @@ func (s *SpecSuite) TestAConfigsSpeedBecomesTheSessions() {
 
 func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
 	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []string{"slack", "calendly"},
+		CustomerID:   "acme",
+		AgentPlugins: []store.PluginEntry{{Name: "slack"}, {Name: "calendly"}},
 	})
 
-	s.Equal([]string{"slack", "calendly"}, spec.Plugins)
+	s.Equal([]store.PluginEntry{{Name: "slack"}, {Name: "calendly"}}, spec.AgentPlugins)
 }
 
 func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {
@@ -100,12 +100,13 @@ func (s *SpecSuite) TestAnMCPServersToolsAndInstructionsJoinTheSession() {
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": body.ID, "result": result})
 	}))
 	defer server.Close()
+	needsLogin := false
 	spec := Spec{
 		Instructions: "Be brief.",
-		MCPServers:   []store.MCPServer{{Name: "tablejourney", URL: server.URL}},
+		MCPServers:   []store.MCPServer{{Name: "tablejourney", URL: server.URL, NeedsLogin: &needsLogin}},
 	}
 
-	mcp, tools := attachPlugins(context.Background(), spec, nil, slog.New(slog.DiscardHandler))
+	mcp, tools, _ := attachPlugins(context.Background(), spec, nil, server.Client(), slog.New(slog.DiscardHandler))
 	defer mcp.Close()
 	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
 
