@@ -2,9 +2,9 @@
 
 Oct 1, 2026 · @Kanat Kiialbaev
 
-Exported from Claude Docs on 2026-10-05 (https://claude.ai/code/artifact/e4d97114-1334-4181-beab-c5721909c201). The Claude Doc is the source of truth; this copy is a snapshot.
+Exported from Claude Docs on 2026-10-06 (https://claude.ai/code/artifact/e4d97114-1334-4181-beab-c5721909c201). The Claude Doc is the source of truth; this copy is a snapshot.
 
-33 subtasks in 7 phases, each one PR, in the order they can land, plus 21 subtasks (T37 to T57) added on October 5 from the channel decisions. Status on October 5: 9 merged on accelerate (T1 to T7, T9, T15) and 5 in review (T8, T10, T16, T20, T32). They implement [Accelerate connectors: architecture design](architecture.md) on top of the code that exists today. Connector-layer subtasks are Linear sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support); the channel bridge and the omni-channel conversation have their own parent issues, AI-866 and AI-867. Each subtask's Linear number follows its title.
+33 subtasks in 7 phases, each one PR, in the order they can land, plus 21 subtasks (T37 to T57) added on October 5 from the channel decisions. Status on October 5: 14 merged on accelerate (T1 to T10, T15, T16, T20, T32). They implement [Accelerate connectors: architecture design](architecture.md) on top of the code that exists today. Connector-layer subtasks are Linear sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support); the channel bridge and the omni-channel conversation have their own parent issues, AI-866 and AI-867. Each subtask's Linear number follows its title.
 
 ## Ground rules
 
@@ -53,7 +53,7 @@ Five PRs with no user-visible change. They give later PRs a place to put code, a
 
 **Status: merged** in [#709](https://github.com/GetStream/Vision-Agents/pull/709) (`4020114e`), October 1.
 
-- **Description.** Create `internal/connectors/core` with the interfaces from the design doc: `Scheme`, `Source`, `Runtime`, `Backend`, `Resolver`, `Verifier`, `Hook`, the `Registry`, and the value types `Material`, `Credential`, `Outcome`, `Need`, `ConnectionRef`, `Signal`, `Bound`. No implementation. Add the two guard tests: `TestCoreImportsNoAdapter` (`core` imports nothing under `schemes/`, `sources/`, `backends/`, `signals/`, `providers/`) and `TestCoreNamesNoProvider` (no string literal in `core` equals a connector id or a name in the deny list).
+- **Description.** Create `internal/connectors/core` with the interfaces from the design doc: `Scheme`, `ToolSource`, `Toolset`, `CredentialStore`, `Resolver`, `Verifier`, `Hook`, the `Registry`, and the value types `StoredCredentials`, `AccessCredential`, `Outcome`, `CredentialRequest`, `ConnectionRef`, `Signal`, `ResolvedBinding`. No implementation. Add the two guard tests: `TestCoreImportsNoAdapter` (`core` imports nothing under `schemes/`, `sources/`, `credentialstores/`, `signals/`, `providers/`) and `TestCoreNamesNoProvider` (no string literal in `core` equals a connector id or a name in the deny list).
 - **Scope.** `internal/connectors/core/*.go`, doc comments, the two tests.
 - **Out of scope.** Any adapter; the manifest model (T4).
 - **Dependencies.** None.
@@ -97,7 +97,7 @@ Three PRs: the schema and the store methods, nothing that calls them yet. Migrat
 
 **Status: merged** in [#729](https://github.com/GetStream/Vision-Agents/pull/729) (`f955bc49`), October 2.
 
-- **Description.** Migration `connector_connections` with the branch's columns (`20260929170000_connectors.sql`) plus the design's changes: `auth_scheme TEXT` and `tls_scheme TEXT NULL` instead of the `auth_type` CHECK, `definition_revision`, `inputs jsonb`, `metadata jsonb`, `material_sealed BYTEA`, `material_kek_version`. Migration `connector_authorization_attempts` as on the branch with `kind TEXT` and `kek_version`. `ALTER TABLE agent_configs ADD COLUMN connectors JSONB`. Store: create, get, list by owner, soft delete, `ConnectorConnectionReferenced`, and the attempt methods (create with cleanup, by state, by id, consume once).
+- **Description.** Migration `connector_connections` with the branch's columns (`20260929170000_connectors.sql`) plus the design's changes: `auth_scheme TEXT` and `tls_scheme TEXT NULL` instead of the `auth_type` CHECK, `definition_revision`, `inputs jsonb`, `metadata jsonb`, `credentials_sealed BYTEA`, `credentials_kek_version`. Migration `connector_authorization_attempts` as on the branch with `kind TEXT` and `kek_version`. `ALTER TABLE agent_configs ADD COLUMN connectors JSONB`. Store: create, get, list by owner, soft delete, `ConnectorConnectionReferenced`, and the attempt methods (create with cleanup, by state, by id, consume once).
 - **Scope.** Two migrations, store methods and models, integration tests.
 - **Out of scope.** The advisory lock and revisioned save (T8); any handler.
 - **Dependencies.** T6, T1.
@@ -105,9 +105,9 @@ Three PRs: the schema and the store methods, nothing that calls them yet. Migrat
 
 ### T8. Locked grant backend: advisory lock, checkpoint, revision CAS, sealed material · [AI-839](https://linear.app/stream/issue/AI-839)
 
-**Status: in review** in [#733](https://github.com/GetStream/Vision-Agents/pull/733), October 5.
+**Status: merged** in [#733](https://github.com/GetStream/Vision-Agents/pull/733) (`7a2759ee`), October 5.
 
-- **Description.** `internal/connectors/backends/pgsealed` implementing `core.Backend`: `WithLocked` with a session-level `pg_advisory_lock` on (tenant, connection), a `checkpoint` closure, and the revision compare-and-swap, copied from the branch (`store/connectors.go:198-347`). Seal and open `Material` with AAD bound to tenant, connection id and revision (from `connectors/secrets.go`).
+- **Description.** `internal/connectors/credentialstores/pgsealed` implementing `core.CredentialStore`: `Update` with a session-level `pg_advisory_lock` on (tenant, connection), a `checkpoint` closure, and the revision compare-and-swap, copied from the branch (`store/connectors.go:198-347`). Seal and open `StoredCredentials` with AAD bound to tenant, connection id and revision (from `connectors/secrets.go`).
 - **Scope.** The backend package, the `SaveConnectorConnectionAtRevision` store method, integration tests ported from the branch: one committed revision under concurrent rotation, lost response leaves `needs_reauthorization` and never replays a refresh token.
 - **Out of scope.** Refresh itself (T10); the resolver (T12).
 - **Dependencies.** T7, T1, T3.
@@ -121,7 +121,7 @@ Three PRs. The OAuth scheme is the branch's `internal/mcp/oauth.go` (961 lines) 
 
 **Status: merged** in [#730](https://github.com/GetStream/Vision-Agents/pull/730) (`06a90667`), October 2.
 
-- **Description.** `internal/connectors/schemes/oauth2code` implementing `Begin` and `Complete`: RFC 9728 and 8414 discovery with manifest overrides, CIMD first then DCR, client auth `none`, `client_secret_post`, `client_secret_basic`, PKCE S256, `resource`, `state`, the authorize URL built from the `Profile` (scope separator and extra params from the manifest, not from `connector.ID == "slack"`), code exchange with the `iss` check, then `capture` and `identity` rules from T4 on the token response and callback query. Provider branches in `oauth.go:265,823-830,832-887` and the Slack and Calendly fields of `tokenResponse` are deleted, not ported.
+- **Description.** `internal/connectors/schemes/oauth2code` implementing `Begin` and `Complete`: RFC 9728 and 8414 discovery with manifest overrides, CIMD first then DCR, client auth `none`, `client_secret_post`, `client_secret_basic`, PKCE S256, `resource`, `state`, the authorize URL built from the `ResolvedManifest` (scope separator and extra params from the manifest, not from `connector.ID == "slack"`), code exchange with the `iss` check, then `capture` and `identity` rules from T4 on the token response and callback query. Provider branches in `oauth.go:265,823-830,832-887` and the Slack and Calendly fields of `tokenResponse` are deleted, not ported.
 - **Scope.** The scheme package, the public client metadata document, tests against T5 for CIMD, DCR, confidential client, denial, replayed state, `iss` mismatch, comma scopes, `realmId` capture.
 - **Out of scope.** Refresh, `Classify`, `Wrap`, `Revoke` (T10); the HTTP handlers (T17).
 - **Dependencies.** T3, T4, T5, T2.
@@ -129,17 +129,17 @@ Three PRs. The OAuth scheme is the branch's `internal/mcp/oauth.go` (961 lines) 
 
 ### T10. Scheme oauth2\_code, part 2: mint, classify, wrap, revoke · [AI-836](https://linear.app/stream/issue/AI-836)
 
-**Status: in review** in [#734](https://github.com/GetStream/Vision-Agents/pull/734), October 5.
+**Status: merged** in [#734](https://github.com/GetStream/Vision-Agents/pull/734) (`138c405e`), October 5.
 
-- **Description.** `Mint` renews from `Material` using `RefreshPolicy` (margin, `send_scope`, rotating with a grace retry inside the window, `token_ttl` warning), returns the new `Material`. `Classify` maps responses to `Outcome`: `invalid_grant` and `invalid_refresh_token` to InvalidGrant, network and 5xx to Uncertain or Transient as the branch does (`oauth.go:539-595`), 403 `insufficient_scope` and a 401 `claims` challenge to ScopeRequired, 429 to RateLimited with `Retry-After`. `Wrap` sets the bearer header. `Revoke` calls the manifest's `revoke` endpoint when present and reports best effort.
+- **Description.** `Retrieve` renews from `StoredCredentials` using `RefreshPolicy` (margin, `send_scope`, rotating with a grace retry inside the window, `token_ttl` warning), returns the new `StoredCredentials`. `Classify` maps responses to `Outcome`: `invalid_grant` and `invalid_refresh_token` to InvalidGrant, network and 5xx to Uncertain or Transient as the branch does (`oauth.go:539-595`), 403 `insufficient_scope` and a 401 `claims` challenge to ScopeRequired, 429 to RateLimited with `Retry-After`. `Wrap` sets the bearer header. `Revoke` calls the manifest's `revoke` endpoint when present and reports best effort.
 - **Scope.** The same package; tests against T5 for every outcome; a `private_key_jwt` client auth method as one file, used by nothing yet.
 - **Out of scope.** The lock and status transitions (T12).
 - **Dependencies.** T9.
-- **Acceptance.** A refresh under the grace window with the old token succeeds once; `scope` is sent only when the policy says; a lost response returns Uncertain and the caller's `Material` is unchanged; each outcome has a table-driven test.
+- **Acceptance.** A refresh under the grace window with the old token succeeds once; `scope` is sent only when the policy says; a lost response returns Uncertain and the caller's `StoredCredentials` is unchanged; each outcome has a table-driven test.
 
 ### T11. Static schemes and the scheme contract suite · [AI-840](https://linear.app/stream/issue/AI-840)
 
-- **Description.** `schemes/apikey`, `schemes/bearer`, `schemes/none`, each a few dozen lines: `Begin` returns Done, `Complete` seals the supplied value, `Mint` returns it with no expiry, `Wrap` sets the configured header (with the forbidden-header list from `api/connectors.go:1050-1057`). Plus `core/contracttest.SchemeContract`, a table-driven suite any scheme runs: round trip, concurrent mint commits once, no secret in URL, log or error text, `Classify` covers the six outcomes, `Revoke` is honest.
+- **Description.** `schemes/apikey`, `schemes/bearer`, `schemes/none`, each a few dozen lines: `Begin` returns Done, `Complete` seals the supplied value, `Retrieve` returns it with no expiry, `Wrap` sets the configured header (with the forbidden-header list from `api/connectors.go:1050-1057`). Plus `core/contracttest.SchemeContract`, a table-driven suite any scheme runs: round trip, concurrent Retrieve commits once, no secret in URL, log or error text, `Classify` covers the six outcomes, `Revoke` is honest.
 - **Scope.** Three scheme packages, the contract package, and its application to all four schemes.
 - **Out of scope.** `basic`, `mtls`, `aws_sigv4`, `github_app` (phase 6 and later).
 - **Dependencies.** T3, T5, T10.
@@ -151,7 +151,7 @@ Three PRs. After them a connection with a grant can be turned into an authorized
 
 ### T12. Credential resolver · [AI-843](https://linear.app/stream/issue/AI-843)
 
-- **Description.** `core.Resolver` implementation: `Resolve(ref, need)` loads the connection, checks status, opens `Material` through the backend, calls `Scheme.Mint` on a detached context with its own deadline under the backend lock with the checkpoint before any refresh, persists rotated material at the next revision, maps `Outcome` to status and `last_error` (`needs_reauthorization`, `connected`, temporary), and caches the fast path by (connection, revision) with an explicit maximum age. `Invalidate(ref, why)` moves the connection to `needs_reauthorization` and drops the cache entry. This replaces the branch's `connectors.ResolveCredentials` (`runtime.go:26-153`), whose refresh ran on the tool call's context.
+- **Description.** `core.Resolver` implementation: `Resolve(ref, need)` loads the connection, checks status, opens `StoredCredentials through the credential store`, calls `Scheme.Retrieve` on a detached context with its own deadline under the backend lock with the checkpoint before any refresh, persists rotated material at the next revision, maps `Outcome` to status and `last_error` (`needs_reauthorization`, `connected`, temporary), and caches the fast path by (connection, revision) with an explicit maximum age. `Invalidate(ref, why)` moves the connection to `needs_reauthorization` and drops the cache entry. This replaces the branch's `connectors.ResolveCredentials` (`runtime.go:26-153`), whose refresh ran on the tool call's context.
 - **Scope.** `internal/connectors/core/resolver.go`, integration tests: refresh race, lost response, interruption during refresh does not change status, disconnect blocks a new resolve within the cache window.
 - **Out of scope.** Request wrapping (T13); rate limiting (T28).
 - **Dependencies.** T8, T10, T11.
@@ -159,8 +159,8 @@ Three PRs. After them a connection with a grant can be turned into an authorized
 
 ### T13. Transport composition and the wrapping order · [AI-845](https://linear.app/stream/issue/AI-845)
 
-- **Description.** `core.Bound.Transport`: builds the outbound client with `egress.NewClient(timeout, scheme.Wrap)`. `Scheme.Wrap` (and `tls_scheme` when set) is the outer layer and sees the final request; the egress transport sits under it, checks the URL and dials only a checked public IP. Egress is last on purpose: it must judge the request that actually leaves, after the scheme has finished with it. One transport per connection, cached, closed on disconnect. A `RoundTrip` test proves a signing scheme sees the final headers and body and that a private destination is refused before anything leaves the router.
-- **Egress (from [AI-829](https://linear.app/stream/issue/AI-829), PR #707).** Build every connector client with `egress.NewClient(timeout, scheme.Wrap)` and nothing else; never replace the returned client's `Transport`. It owns the redirect policy (same origin only, no method change), the URL check before and after `wrap`, and the dial-time public-IP check, so the order is fixed by construction. Close a connection's client with `CloseIdleConnections`, which reaches the inner transport through the wrapper. The dial-time check runs after `wrap`, so a scheme that mints or refreshes a token per request does so before a name that resolves to a private address is refused; the token never leaves the process. If minting itself must not happen, call `egress.ValidatePublicHTTPSURL` on the endpoint first.
+- **Description.** `core.ResolvedBinding.Transport`: builds the outbound client with `egress.NewClient(timeout, scheme.Wrap)`. `Scheme.Wrap` (and `tls_scheme` when set) is the outer layer and sees the final request; the egress transport sits under it, checks the URL and dials only a checked public IP. Egress is last on purpose: it must judge the request that actually leaves, after the scheme has finished with it. One transport per connection, cached, closed on disconnect. A `RoundTrip` test proves a signing scheme sees the final headers and body and that a private destination is refused before anything leaves the router.
+- **Egress (from [AI-829](https://linear.app/stream/issue/AI-829), PR #707).** Build every connector client with `egress.NewClient(timeout, scheme.Wrap)` and nothing else; never replace the returned client's `Transport`. It owns the redirect policy (same origin only, no method change), the URL check before and after `wrap`, and the dial-time public-IP check, so the order is fixed by construction. Close a connection's client with `CloseIdleConnections`, which reaches the inner transport through the wrapper. The dial-time check runs after `wrap`, so a scheme that retrieves or refreshes a token per request does so before a name that resolves to a private address is refused; the token never leaves the process. If Retrieve itself must not run, call `egress.ValidatePublicHTTPSURL` on the endpoint first.
 - **Scope.** `internal/connectors/core/transport.go`, tests with a recording scheme.
 - **Out of scope.** `mtls` itself (later). Network-level egress isolation ([AI-864](https://linear.app/stream/issue/AI-864)).
 - **Dependencies.** T12, T2.
@@ -168,7 +168,7 @@ Three PRs. After them a connection with a grant can be turned into an authorized
 
 ### T14. Source mcp · [AI-849](https://linear.app/stream/issue/AI-849)
 
-- **Description.** `internal/connectors/sources/mcp` implementing `core.Source` from the branch's `internal/mcp/mcp.go`: `Discover` with the official Go SDK, paginated `tools/list`, `ToolSchemaDigest` over name, description and input schema; `Open` returns a `Runtime` with the allowlist, digest check, JSON Schema validation of arguments, prefixed names and collision detection, 4 MiB response and 32 KiB result caps, `isError` kept as an error. Plus `core/contracttest.SourceContract`.
+- **Description.** `internal/connectors/sources/mcp` implementing `core.ToolSource` from the branch's `internal/mcp/mcp.go`: `Discover` with the official Go SDK, paginated `tools/list`, `ToolSchemaDigest` over name, description and input schema; `Open` returns a `Toolset` with the allowlist, digest check, JSON Schema validation of arguments, prefixed names and collision detection, 4 MiB response and 32 KiB result caps, `isError` kept as an error. Plus `core/contracttest.SourceContract`.
 - **Scope.** The source package, the contract suite, tests against a local MCP server from T5.
 - **Out of scope.** The dispatcher and envelope (T21); `http` and `openapi` sources (T25).
 - **Dependencies.** T3, T13, T5.
@@ -182,7 +182,7 @@ Five PRs. Each registers its operations with `huma.Register` beside Go request a
 
 **Status: merged** in [#727](https://github.com/GetStream/Vision-Agents/pull/727) (`c72ad203`), October 2.
 
-- **Description.** `GET /v1/agents/connectors` (search built-ins and the app's custom definitions), `GET /v1/agents/connectors/{id}`, `POST /v1/agents/connectors` for a custom MCP definition (id `custom_*`, public https endpoint, scheme from the registry). Responses expose the non-secret manifest: schemes, inputs, scopes, client policy.
+- **Description.** `GET /v1/agents/connectors` (search built-ins and the app's custom definitions), `GET /v1/agents/connectors/{id}`, `POST /v1/agents/connectors` for a custom MCP definition (id `custom_*`, public https endpoint, scheme from the registry). Responses expose the non-secret manifest: schemes, inputs, scopes, client registration methods.
 - **Scope.** `internal/api/connectors.go` (new file on `accelerate`), OpenAPI regen, Go SDK regen, handler tests.
 - **Out of scope.** Connections (T16); editing a built-in.
 - **Dependencies.** T6.
@@ -190,7 +190,7 @@ Five PRs. Each registers its operations with `huma.Register` beside Go request a
 
 ### T16. Connections CRUD with owner checks · [AI-841](https://linear.app/stream/issue/AI-841)
 
-**Status: in review** in [#731](https://github.com/GetStream/Vision-Agents/pull/731), October 5. Its paths `/v1/agents/connections/{id}` are where T44 and T45 add `proxy` and `token`.
+**Status: merged** in [#731](https://github.com/GetStream/Vision-Agents/pull/731) (`3c0beee2`), October 5. Its paths `/v1/agents/connections/{id}` are where T44 and T45 add `proxy` and `token`.
 
 - **Description.** `POST /v1/agents/connections` (connector id, owner `app` or `user`, inputs validated by the manifest, label), `GET /v1/agents/connections` with filters, `GET` and `DELETE /v1/agents/connections/{id}`. Owner rule from the branch: a user-owned connection is created only by the server-side backend and only for the verified user it acts for; reads of another user's connection return not-found. Delete is the soft delete from T7 and refuses a connection still bound by a fixed binding unless `force=true` (`ConnectorConnectionReferenced`).
 - **Scope.** Handlers, OpenAPI and Go SDK regen, tests for cross-user and anonymous callers.
@@ -216,11 +216,11 @@ Five PRs. Each registers its operations with `huma.Register` beside Go request a
 
 ### T19. OAuth client records per app and connector · [AI-846](https://linear.app/stream/issue/AI-846)
 
-- **Description.** Table `connector_oauth_clients` (`customer_id`, `connector_id`, `client_id`, sealed secret, auth method, `policy: operator | customer`) with `PUT` and `DELETE /v1/agents/connectors/{id}/oauth-client`. T17's authorize reads the client from this record (customer BYO) or from the operator environment (`<ID>_MCP_CLIENT_ID`), instead of per-request `oauth_client_id` and `oauth_client_secret` sealed into each grant.
+- **Description.** Table `connector_oauth_clients` (`customer_id`, `connector_id`, `client_id`, sealed secret, auth method, `registration: operator | customer`) with `PUT` and `DELETE /v1/agents/connectors/{id}/oauth-client`. T17's authorize reads the client from this record (customer BYO) or from the operator environment (`<ID>_MCP_CLIENT_ID`), instead of per-request `oauth_client_id` and `oauth_client_secret` sealed into each grant.
 - **Scope.** Migration, store, handlers, the change in T17's lookup, OpenAPI and Go SDK regen.
-- **Out of scope.** White-label redirects; token export (T45); the provider app id and the managed policy for an app the Router creates (T40).
+- **Out of scope.** White-label redirects; token export (T45); the provider app id and the managed registration method for an app the Router creates (T40).
 - **Dependencies.** T16, T17.
-- **Acceptance.** Rotating a customer secret touches one row and the next refresh of every connection of that connector uses it; a connector whose manifest says `policy: [operator]` refuses a customer client.
+- **Acceptance.** Rotating a customer secret touches one row and the next refresh of every connection of that connector uses it; a connector whose manifest says `registration: [operator]` refuses a customer client.
 
 ## Phase 5: agent config and session
 
@@ -228,7 +228,7 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 
 ### T20. Agent config connector bindings · [AI-842](https://linear.app/stream/issue/AI-842)
 
-**Status: in review** in [#735](https://github.com/GetStream/Vision-Agents/pull/735), October 5.
+**Status: merged** in [#735](https://github.com/GetStream/Vision-Agents/pull/735) (`5db5d199`), October 5. Open: T16's unforced delete should become one `UPDATE … WHERE NOT EXISTS` now that bindings are written.
 
 - **Description.** The `connectors[]` field on `AgentConfigRequest`, `AgentConfig` and `SyncAgentRequest`: `name` (alias), `connector_id`, `connection {type: fixed | session, connection_id}`, `tools[{name, schema_digest}]`, `required`, `timeout_ms`. Validation from the branch's `connectorBindingsComplaint` (`api/connectors.go:1147-1192`): alias pattern, no `__`, unique aliases, fixed needs a connection id, session must not carry one, digest is 64 hex chars, timeout 1 to 30,000 ms. Omission on update leaves bindings unchanged; `[]` clears them; a sync replaces them.
 - **Scope.** `internal/api/configs.go`, `config_patch.go`, `sync.go`, store read and write of the column from T7, OpenAPI and Go SDK regen, tests.
@@ -266,7 +266,7 @@ Ten PRs that can run in any order once their dependencies are in. The first two 
 
 ### T24. Scheme oauth2\_client\_credentials · [AI-847](https://linear.app/stream/issue/AI-847)
 
-- **Description.** One package: `Begin` is non-interactive, `Material` holds client id and sealed secret, `Mint` posts `grant_type=client_credentials` to the manifest's token endpoint and caches until expiry, `Classify` and `Wrap` reuse the OAuth helpers. Add the Salesforce manifest's `oauth2_client_credentials` entry and a fake-provider personality.
+- **Description.** One package: `Begin` is non-interactive, `StoredCredentials hold client id and sealed secret, Retrieve` posts `grant_type=client_credentials` to the manifest's token endpoint and caches until expiry, `Classify` and `Wrap` reuse the OAuth helpers. Add the Salesforce manifest's `oauth2_client_credentials` entry and a fake-provider personality.
 - **Scope.** `schemes/oauth2cc`, its `SchemeContract` run, the Salesforce manifest line.
 - **Out of scope.** `oauth2_jwt_bearer`.
 - **Dependencies.** T11, T12.
@@ -274,7 +274,7 @@ Ten PRs that can run in any order once their dependencies are in. The first two 
 
 ### T25. Source http: operations defined as data · [AI-852](https://linear.app/stream/issue/AI-852)
 
-- **Description.** `sources/http`: a connection's manifest or custom definition lists operations (`name`, `description`, `method`, `path` template, parameter mapping to path, query, header or body, `body: json | form`, response filter); `Discover` returns them as `ToolSpec` with digests; `Open` runs them through `Bound.Transport` with the same envelope. A Twilio-shaped `POST .../Messages.json` with a form body is the test case.
+- **Description.** `sources/http`: a connection's manifest or custom definition lists operations (`name`, `description`, `method`, `path` template, parameter mapping to path, query, header or body, `body: json | form`, response filter); `Discover` returns them as `ToolSpec` with digests; `Open` runs them through `ResolvedBinding.Transport` with the same envelope. A Twilio-shaped `POST .../Messages.json` with a form body is the test case.
 - **Scope.** The source package, `SourceContract` run, manifest schema extension for `operations`.
 - **Out of scope.** `openapi` source; `provided_arguments`.
 - **Dependencies.** T14, T13.
@@ -329,7 +329,7 @@ Ten PRs that can run in any order once their dependencies are in. The first two 
 
 ### T32. Built-in manifests for the other five providers · [AI-838](https://linear.app/stream/issue/AI-838)
 
-**Status: in review** in [#732](https://github.com/GetStream/Vision-Agents/pull/732), October 5.
+**Status: merged** in [#732](https://github.com/GetStream/Vision-Agents/pull/732) (`6b309464`), October 5.
 
 - **Description.** Calendly, Cal.com, GitHub, Gong and Salesforce as YAML under `providers/`, from the branch's `connectors.yaml` and the design's stress-test findings; the Shopify callback hook `shopify.callback_hmac` if Shopify returns.
 - **Scope.** YAML, fixtures, `ManifestContract` runs. No Go outside `providers/`.
@@ -400,8 +400,8 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T40. Provider app record for each customer · [AI-871](https://linear.app/stream/issue/AI-871)
 
-- **Required for Slack.** Description. One record for each (`app_pk`, connector): provider app id, `client_id`, owner `stream` or `customer`, and who created it. It extends T19's `connector_oauth_clients` with the provider app id and a new client policy value, `managed`: an app the Router created for this customer (T54). The secrets, `client_secret` and `signing_secret`, live in a `store.ConnectorConnection` with owner `app` and are read through `core.Resolver`, sealed with the same `auth.Sealer` and keyring as every connector secret (architecture doc, decision 7). The shared Stream app (policy `operator`) serves only Stream's own agents, so Athena's first Slack channel runs on a Stream-owned record before T54 exists.
-- Scope. Migration or T19 extension, store, the `managed` policy value, tests.
+- **Required for Slack.** Description. One record for each (`app_pk`, connector): provider app id, `client_id`, owner `stream` or `customer`, and who created it. It extends T19's `connector_oauth_clients` with the provider app id and a new client registration method, `managed`: an app the Router created for this customer (T54). The secrets, `client_secret` and `signing_secret`, live in a `store.ConnectorConnection` with owner `app` and are read through `core.Resolver`, sealed with the same `auth.Sealer` and keyring as every connector secret (architecture doc, decision 7). The shared Stream app (registration `operator`) serves only Stream's own agents, so Athena's first Slack channel runs on a Stream-owned record before T54 exists.
+- Scope. Migration or T19 extension, store, the `managed` registration method, tests.
 - Out of scope. Creating the app at the provider (T54).
 - Dependencies. T19, T11.
 - Unblocks. T35, T38, T45, T46, T54.
@@ -409,7 +409,7 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T54. Slack app for each customer with apps.manifest.create · [AI-872](https://linear.app/stream/issue/AI-872)
 
-- **Proposal.** Description. The Router creates the customer's Slack app with [`apps.manifest.create`](https://docs.slack.dev/reference/methods/apps.manifest.create) from a manifest template: scopes, events, `request_url` = the T38 URL, `token_rotation_enabled: true`, optional `allowed_ip_address_ranges` (at most 10). It needs an app configuration token that a workspace admin gives once; `tooling.tokens.rotate` keeps it alive. The app stays in the customer's workspace without public distribution, so Slack's non-Marketplace rate limit does not apply. The built-in `slack.yaml` gets revision 2 with `managed` in `client.policy`; today it lists `[operator]` only.
+- **Proposal.** Description. The Router creates the customer's Slack app with [`apps.manifest.create`](https://docs.slack.dev/reference/methods/apps.manifest.create) from a manifest template: scopes, events, `request_url` = the T38 URL, `token_rotation_enabled: true`, optional `allowed_ip_address_ranges` (at most 10). It needs an app configuration token that a workspace admin gives once; `tooling.tokens.rotate` keeps it alive. The app stays in the customer's workspace without public distribution, so Slack's non-Marketplace rate limit does not apply. The built-in `slack.yaml` gets a new revision with `managed` in `client.registration`; today, at revision 3, it lists `[operator]` only.
 - Scope. The Slack create and delete calls, config-token storage and rotation, `slack.yaml` revision 2, tests against a fake Slack.
 - Out of scope. The Stream-owned app for Stream's own agents (T40).
 - Dependencies. T40.
@@ -427,7 +427,7 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T45. Token export · [AI-874](https://linear.app/stream/issue/AI-874)
 
-- **Proposal, opt-in.** Description. An optional `Export` on `core.Scheme`, for bearer schemes only: `core.Credential` keeps its secret private today ([`core/scheme.go:115-130`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/scheme.go#L115-L130)). `POST /v1/agents/connections/{id}/token`, server-side only. Only the customer's own provider unit exports; export is off by default for each connector and refused when the app restricts tokens to the Router IP ranges. A bot token for `Binding.Selection: fixed`; a user token only in that user's own session. One audit row for each export.
+- **Proposal, opt-in.** Description. An optional `Export` on `core.Scheme`, for bearer schemes only: `core.AccessCredential` keeps its secret private today ([`core/scheme.go:115-130`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/scheme.go#L115-L130)). `POST /v1/agents/connections/{id}/token`, server-side only. Only the customer's own provider unit exports; export is off by default for each connector and refused when the app restricts tokens to the Router IP ranges. A bot token for `Binding.Selection: fixed`; a user token only in that user's own session. One audit row for each export.
 - Scope. Scheme extension, `oauth2code` and `apikey` export, handler, OpenAPI and Go SDK regen.
 - Dependencies. T12, T40, T47.
 - Acceptance. A Stream-owned app refuses export; each export writes one audit row; no response ever contains a refresh token.

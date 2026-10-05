@@ -2,9 +2,33 @@
 
 Oct 2, 2026 · @Kanat Kiialbaev
 
-Exported from Claude Docs on 2026-10-05 (https://claude.ai/code/artifact/b2be31d9-a1ea-44f4-a413-b8c65adf46f6). The Claude Doc is the source of truth; this copy is a snapshot.
+Exported from Claude Docs on 2026-10-06 (https://claude.ai/code/artifact/b2be31d9-a1ea-44f4-a413-b8c65adf46f6). The Claude Doc is the source of truth; this copy is a snapshot.
+
+One agent answers a person on SMS, WhatsApp, Slack, iMessage and phone calls. The agent keeps one history for each person. Part 1 shows the design and the end-to-end flows. Part 2 holds the other parts of the design and the details: step tables, code references, rules and open questions.
 
 The section [Terms](#m729fz3d1s3.24616) defines each term and its name in the code.
+
+# Part 1 · Overview
+
+## Summary
+
+1. **What we build.** One agent answers a person on SMS, WhatsApp, Slack, iMessage and phone calls. Inbound channels bring messages to the agent. Tools let the agent act in other services.
+2. **Channel bridge in the Router.** It receives the provider webhook. It writes each external thread word for word into its own thread channel. The message hook that exists today wakes the agent. The bridge sends the reply back to the same thread.
+3. **Omni-channel with episode cards.** The omni-channel is the person's agent channel. It keeps one episode card for each call and each text thread. When the episode ends, the Router writes a summary into the card.
+4. **Connectors serve both sides.** One connector layer serves tools and inbound channels: `store.ConnectorConnection`, `core.Resolver`, `core.Scheme`, `core.Verifier`, the proxy and token export. Tools use the `sources` block of `core.Manifest`. Inbound channels use the new `channel` block. An inbound channel is never a kind of tool.
+5. **One provider unit for each customer.** Each customer has its own Slack app, WhatsApp business account, Telegram bot or SMS account.
+6. **Flexible integration.** A customer uses the whole platform or only some parts: tokens, events, the proxy or our agent. This is the same [flexibility](#m729fz3d1s3.112218) as Vercel Connect.
+7. **Open questions.** Thierry has not agreed to the design yet. How to join one person across channels is not decided. See Why this design.
+
+## Flexibility: the customer chooses how much of the platform to use
+
+The design gives the same flexibility as Vercel Connect. Vercel Connect gives customer code a token and forwards provider events ([tokens](https://vercel.com/docs/connect/concepts/tokens), [triggers](https://vercel.com/docs/connect/concepts/triggers)). The Router gives both. The Router can also run the agent, keep the history and send the replies.
+
+&#91;embedded content: integration modes A, B, C and Vercel Connect · who runs each layer\]
+
+The proxy implements no Slack method. It sends the request on unchanged, so a new Slack method needs no change in the Router.
+
+Details: [Integration modes](#m729fz3d1s3.78034) · [Direct calls: the proxy](#m729fz3d1s3.84393) · [Direct calls: token export](#m729fz3d1s3.85357).
 
 ## The whole picture
 
@@ -12,33 +36,83 @@ The agent has two sides. On the left, inbound channels bring messages to the age
 
 &#91;embedded content: the agent · inbound channels, agent channel, tools, connections\]
 
-Slack shows why both sides use the same layer. The Slack inbound channel needs a bot token: the Slack app receives events and the bot posts replies. The Slack tool uses a user token today ([`internal/connectors/providers/slack.yaml:1-4`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/providers/slack.yaml#L1-L4)). Thus one Slack app has two `store.ConnectorConnection` rows. The Router keeps both rows. In the design, one `core.Resolver` gives both tokens.
-
 An inbound channel is not a tool. An inbound channel starts a conversation. The LLM calls a tool inside a conversation.
-
-## Short answer
-
-1. The agent receives messages through **inbound channels**. Examples: phone, Stream Chat, Slack.
-2. The agent does actions through **tools**. Example: read a Slack thread.
-3. **Connectors serve both sides.** The connector layer is one layer under tools and inbound channels: `ConnectorDefinition`, `store.ConnectorConnection`, `core.Resolver`, `core.Scheme`, `core.Verifier`, the proxy and token export. Tools use the `sources` block of `core.Manifest` (exists). Inbound channels use the `channel` block (new). One connector has one block or both: Linear has only `sources`; Telegram, Linq and Sendblue have only `channel`; Slack and WhatsApp have both. An inbound channel is still never a kind of tool: the channel bridge does not call the LLM as a tool, it starts a conversation and delivers the reply.
-4. In the code today, “connector” means tools only. The Router has no Slack, WhatsApp or iMessage inbound channel.
-5. **Omni-channel** means one conversation history for all inbound channels. The **omni-channel is the person's agent channel. It keeps one episode card for each call and each text thread**.
-6. Each external thread gets its own thread channel with the messages word for word. The channel bridge receives messages from Slack, SMS or WhatsApp and writes them there.
-7. **The channel bridge runs in the Router. It writes messages to the thread channel and one episode card to the omni-channel. The message hook that exists today then wakes the agent. When the episode ends, the Router writes a summary into its card**.
-
-## Where each part runs
-
-The Router and the Stream Chat API are two services. The thread channel and the omni-channel live in the Stream Chat API. The channel bridge, the message hook and `session.Session` run in the Router. The numbers follow one Slack message and its reply.
-
-&#91;embedded content: where each part runs · Router, Stream Chat API, Slack · 8 calls\]
-
-The Router calls the Stream Chat API to write the episode card and the messages (steps 2, 3 and 6). The Stream Chat API calls the Router only through the message hook webhook (step 4). Slack calls the Router only through its Events API webhook (step 1).
 
 ## End to end: SMS, WhatsApp and a phone call
 
 The diagram shows one person who sends an SMS, writes in WhatsApp and then calls. SMS and WhatsApp enter through the channel bridge in the Router. The phone call enters through the call hook: the number vendor bridges the call into Stream Video. One contact map in the Router turns the phone number into one omni-channel for the person. Each SMS thread, WhatsApp thread and call keeps its text in its own thread channel or call channel. The omni-channel gets one episode card for each of them.
 
 &#91;embedded content: one person on SMS, WhatsApp and a phone call · one omni-channel\]
+
+Details: [End to end: where each step runs](#m729fz3d1s3.109197) · [How the agent knows it is the same person](#m729fz3d1s3.51172).
+
+### Step by step: one SMS
+
+The diagram shows every call between services for one SMS and its reply. Read it from top to bottom. The Stream Chat API has two columns. The omni-channel, the person's agent channel, gets the episode card. The thread channel of this SMS thread gets the messages word for word. Steps 18–21 close the episode after an idle period.
+
+&#91;embedded content: one SMS · 21 steps, 3 webhooks\]
+
+Details: [One SMS: every call](#m729fz3d1s3.109230).
+
+### Step by step: how the Router gets a token
+
+The channel bridge (step 15 of the SMS diagram) and every tool get a token the same way: through `core.Resolver`. The token stays in the Router.
+
+&#91;embedded content: how the Router gets a token · 11 steps\]
+
+Details: [How the Router gets a token: what exists](#m729fz3d1s3.109277).
+
+### Step by step: one phone call
+
+A phone call does not use the channel bridge, a connector or a tool. The person and the agent talk in a Stream Video call, and the agent speaks its replies. The omni-channel, the person's agent channel, gets one episode card for the call and later the summary. A call is one episode. The full transcript goes to the call channel: it is the thread channel of a call.
+
+&#91;embedded content: one phone call · steps 1–9, then the episode card in the omni-channel (10–18)\]
+
+Details: [One phone call: every call](#m729fz3d1s3.109250).
+
+### Why the omni-channel gets summaries, not the raw text
+
+**Decision:** the omni-channel gets one episode card with the summary for each episode. An episode is one call, or one run of messages on one external thread. The raw text stays in the call channel or the thread channel. The model gets a smaller context: the episode cards, the last messages of the current thread word for word, and memory facts. This is our proposal.
+
+**Example.** On Monday the person has an 8-minute call and books a cleaning for Thursday at 15:00. On Tuesday the person sends an SMS: «can I move it to 4?». The model context has one line, «Call on Monday, 8 min: booked a cleaning, Thursday 15:00», and the SMS. The full transcript stays in the call channel for an operator or a dispute.
+
+Details: [Episodes: the options and the episode card](#m729fz3d1s3.109318).
+
+## Why this design, and an example
+
+**This design is our proposal.** Thierry has not agreed to it yet.
+
+Reasons:
+
+- All inbound channels write episode cards to one omni-channel. Thus the agent has one shared history across channels.
+- The Router keeps the bot token. The Router refreshes and revokes it the same way as tool tokens.
+- The message hook exists today. The channel bridge needs no new entry into `session.Session`.
+
+Botpress, Twilio Conversation Orchestrator, Intercom Fin and Chatwoot use the same pattern. A channel adapter in the platform writes each message into one shared conversation. The agent reads that conversation.
+
+**Example: Athena in the Slack channel #support.** The `store.ConnectorConnection` owner is `app`, because several people are in the session (architecture doc, one-way door 7).
+
+1. An admin clicks “Connect Slack” one time. The Router creates a `store.ConnectorConnection` row with the bot token (owner `app`, account = Slack team). If Slack MCP does not accept the bot token, the tool needs a second row with the user token ([`providers/slack.yaml`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/providers/slack.yaml)).
+2. A user writes in #support: «@athena what did we decide yesterday about the release?».
+3. Slack sends an event. The channel bridge checks the signature. It writes the message to the thread channel of this Slack thread. The omni-channel gets an episode card.
+4. The message hook receives the message and starts `session.Session`.
+5. The agent calls the tool `slack.read_thread` with the user token from its own row. If Slack MCP accepts the bot token, the second row is not necessary (`unverified`).
+6. `chatlog.Log` writes the reply to the thread channel. The channel bridge sends the reply to the Slack thread with the bot token.
+7. The next day, the user opens Athena in the browser and speaks. The voice session reads the omni-channel of the user. The agent sees the episode card of the Slack thread from yesterday. This is omni-channel.
+
+**To decide with Thierry:**
+
+- [ ] Does he agree to the channel bridge in the Router? He asked «how do we want to approach this?» on October 1.
+- [ ] Is the omni-channel with episode cards the required history for all inbound channels?
+- [ ] How do we join one person from different inbound channels into one omni-channel?
+
+Details: [Architecture changes](#m729fz3d1s3.42018) · [Cost of this design](#m729fz3d1s3.109598) · [How other companies do it](#m729fz3d1s3.72499).
+
+# Part 2 · Details
+
+This part holds the other parts of the design and the details: step tables, code references, rules and open questions. Each section of Part 1 links to its details here.
+
+## End to end: where each step runs
 
 | Step | Where |
 | --- | --- |
@@ -49,11 +123,15 @@ The diagram shows one person who sends an SMS, writes in WhatsApp and then calls
 | The phone call goes to | an episode card in the person's omni-channel. The transcript stays in the call channel `agent:<call id>` |
 | The agent sees SMS, WhatsApp and the call together | yes, as episode cards in the omni-channel |
 
-### Step by step: one SMS
+## Where each part runs
 
-The diagram shows every call between services for one SMS and its reply. Read it from top to bottom. The Stream Chat API has two columns. The omni-channel, the person's agent channel, gets the episode card. The thread channel of this SMS thread gets the messages word for word. Steps 18–21 close the episode after an idle period.
+The Router and the Stream Chat API are two services. The thread channel and the omni-channel live in the Stream Chat API. The channel bridge, the message hook and `session.Session` run in the Router. The numbers follow one Slack message and its reply.
 
-&#91;embedded content: one SMS · 15 steps, 3 webhooks\]
+&#91;embedded content: where each part runs · Router, Stream Chat API, Slack · 8 calls\]
+
+The Router calls the Stream Chat API to write the episode card and the messages (steps 2, 3 and 6). The Stream Chat API calls the Router only through the message hook webhook (step 4). Slack calls the Router only through its Events API webhook (step 1).
+
+## One SMS: every call
 
 **How Stream Chat gives the Router a new message.** The Router subscribes to a Stream Chat webhook. At start, the Router adds its own URL to the event hooks of the Stream app, for the event `message.new` only (`PointMessageHook` → `UpdateApp`, [`internal/chat/hooks.go:26-32,80-116`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/chat/hooks.go#L26-L32)). Stream Chat then sends every new message of the app to `/v1/chat/hooks/stream`. The Router checks the signature and keeps only messages in an agent channel, with text and without `source` ([`internal/api/messagehooks.go:61-128`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/messagehooks.go#L61-L128)).
 
@@ -85,19 +163,7 @@ The diagram shows every call between services for one SMS and its reply. Read it
 
 **No dependency cycle.** Webhooks only come into the Router (steps 2, 6, 12). The Router calls Stream Chat (steps 4, 5, 9, 11, 19, 21) and the vendor (step 16). Stream Chat and the vendor never call each other. The runtime loop at step 12 stops at step 13.
 
-### Step by step: how the Router gets a token
-
-The channel bridge (step 15 of the SMS diagram) and every tool get a token the same way: through `core.Resolver`. The token stays in the Router.
-
-&#91;embedded content: how the Router gets a token · 11 steps\]
-
-What exists at [`ead4a273`](https://github.com/GetStream/Vision-Agents/commit/ead4a273f4d3623fff2a2286d5422725aa0af2e2): `store.ConnectorConnection` with a sealed grant, and `core.Scheme` with `oauth2code` (`Mint`, `Wrap`). `core.Resolver` and its `Backend` are interfaces only ([`internal/connectors/core/resolver.go:15-41`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/resolver.go#L15-L41)). The resolver cache in step 2 is design: `Invalidate` «drops anything cached», but no cache exists yet.
-
-### Step by step: one phone call
-
-A phone call does not use the channel bridge, a connector or a tool. The person and the agent talk in a Stream Video call, and the agent speaks its replies. The omni-channel, the person's agent channel, gets one episode card for the call and later the summary. A call is one episode. The full transcript goes to the call channel: it is the thread channel of a call.
-
-&#91;embedded content: one phone call · steps 1–9, then the episode card in the omni-channel (10–18)\]
+## One phone call: every call
 
 | # | Who calls whom | How | In code? | Source |
 | --- | --- | --- | --- | --- |
@@ -121,9 +187,11 @@ Thus the call channel already exists today. What is missing is the omni-channel,
 
 The reply does not go back through a connector or a tool. The agent speaks it in the call.
 
-### Why the omni-channel gets summaries, not the raw text
+## How the Router gets a token: what exists
 
-**Decision:** the omni-channel gets one episode card with the summary for each episode. An episode is one call, or one run of messages on one external thread. The raw text stays in the call channel or the thread channel. The model gets a smaller context: the episode cards, the last messages of the current thread word for word, and memory facts. This is our proposal.
+What exists at [`ead4a273`](https://github.com/GetStream/Vision-Agents/commit/ead4a273f4d3623fff2a2286d5422725aa0af2e2): `store.ConnectorConnection` with a sealed grant, and `core.Scheme` with `oauth2code` (`Retrieve`, `Wrap`). `core.Resolver` and its `CredentialStore` are interfaces only ([`internal/connectors/core/resolver.go:15-41`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/resolver.go#L15-L41)). The resolver cache in step 2 is design: `Invalidate` «drops anything cached», but no cache exists yet.
+
+## Episodes: the options and the episode card
 
 **What the code does today.**
 
@@ -140,8 +208,6 @@ The reply does not go back through a connector or a tool. The agent speaks it in
 | Wrong detail in the summary | no risk | risk | risk, but the raw record is next to it |
 | Timing | instant | needs an LLM pass after each episode. An SMS 10 seconds after a call can arrive before the summary | the same. Until the summary is ready, use the last raw lines |
 | New code | none | summarizer and an episode-end trigger | summarizer, episode-end trigger, context builder |
-
-**Example.** On Monday the person has an 8-minute call and books a cleaning for Thursday at 15:00. On Tuesday the person sends an SMS: «can I move it to 4?». The model context has one line, «Call on Monday, 8 min: booked a cleaning, Thursday 15:00», and the SMS. The full transcript stays in the call channel for an operator or a dispute.
 
 #### The episode card
 
@@ -314,15 +380,15 @@ Connectors are a layer under both sides. A connector is not a tool and not an in
 - where the event keeps the account, thread, author and text (JSON paths, like the capture rules in the design);
 - where and how to send a reply (endpoint and body template).
 
-Inbound channels do not need the tool parts: `core.Binding`, `core.ToolGrant`, `core.Source` and the Dispatcher. An inbound channel does not go through the LLM as a tool call. It starts a conversation and delivers the reply. One Slack app can be an inbound channel and a tool at the same time. Vercel does this: one connector gives channel credentials and MCP tools (architecture doc, one-way door 9, «eve with Vercel Connect»).
+Inbound channels do not need the tool parts: `core.Binding`, `core.ToolGrant`, `core.ToolSource` and the Dispatcher. An inbound channel does not go through the LLM as a tool call. It starts a conversation and delivers the reply. One Slack app can be an inbound channel and a tool at the same time. Vercel does this: one connector gives channel credentials and MCP tools (architecture doc, one-way door 9, «eve with Vercel Connect»).
 
 **What exists in code at `ead4a273`:** the manifests [`providers/slack.yaml`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/providers/slack.yaml) and [`linear.yaml`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/providers/linear.yaml) (tools only), the table `connector_connections` and [`schemes/oauth2code`](https://github.com/GetStream/Vision-Agents/tree/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/schemes/oauth2code). `core.Resolver` and `core.Verifier` are interfaces only ([`internal/connectors/core/resolver.go:17`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/resolver.go#L17), [`signal.go:7`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/signal.go#L7)). There are no implementations: `grep -rn ") Verify(r\|core.Resolver" internal` finds nothing outside tests, October 2. The Dispatcher is in the architecture doc only.
+
+Slack shows why both sides use the same layer. The Slack inbound channel needs a bot token: the Slack app receives events and the bot posts replies. The Slack tool uses a user token today ([`internal/connectors/providers/slack.yaml:1-4`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/providers/slack.yaml#L1-L4)). Thus one Slack app has two `store.ConnectorConnection` rows. The Router keeps both rows. In the design, one `core.Resolver` gives both tokens.
 
 ## Integration modes: full platform, customizations, pass-through
 
 The platform has three layers. Each layer has a public API. A customer uses all three layers or only some of them. Our own upper layers call the lower layers through the same API. In every mode, the customer has its own Slack app. This is the target design. It is not in the code.
-
-**How tools reach Slack today.** Tools go through the hosted Slack MCP server, not through the Slack Web API: `mcp: https://mcp.slack.com/mcp` and the only source `kind: mcp` ([`providers/slack.yaml:28,109-111`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/providers/slack.yaml#L28)). Slack defines the tool list. The Router discovers it and pins each schema digest in `core.ToolGrant`. We implement no Slack API method for tools. The limit: the agent can use only what the Slack MCP server offers. The channel bridge is the one exception. It receives the Events API webhook and sends `chat.postMessage`. This surface is small and fixed, and the manifest `channel` block describes it.
 
 **Three layers.**
 
@@ -338,26 +404,13 @@ The platform has three layers. Each layer has a public API. A customer uses all 
 - **B · Platform with customizations.** Mode A, plus customer code for what the Slack MCP server does not offer. A hosted tool calls any Slack Web API method through the proxy. Raw events, for example buttons, reactions and modals, go to a customer URL or worker.
 - **C · Pass-through.** Layers 1 and 3 only. We register the customer's Slack app and keep its tokens. We forward Slack events to the customer. The customer calls our agent through the Router API, keeps the history itself and replies through the proxy or with an exported token. Mode C is the loosest coupling: the customer can use the proxy, token export and event forwarding together. Today the customer opens a text session with `incognito: true`, so that we record nothing, and sends each message with `POST /v1/agents/sessions/{id}/responses`. The session keeps the history while it runs. The session API has no field for history from the caller ([`CreateSessionRequest`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/generated.go#L2040), [`CreateResponseRequest`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/generated.go#L2027)). Thus a thread that outlives a session needs a new history field.
 
-&#91;embedded content: three integration modes · who runs each layer\]
-
-**Each customer has its own Slack app, in every mode.** The Router creates it with Slack [`apps.manifest.create`](https://docs.slack.dev/reference/methods/apps.manifest.create). The response has `client_id`, `client_secret` and `signing_secret`. The app has the customer's name and icon. A customer can also bring its own app (`client.policy: customer`). The shared Stream app (`client.policy: operator`) serves only Stream's own agents, for example Athena. Reasons:
-
-- A Slack ban or rate limit touches one customer only. Slack evaluates Web API rate limits for each app «per method, per workspace» ([rate limits](https://docs.slack.dev/apis/web-api/rate-limits)).
-- Each app has its own Request URL, for example `/v1/connectors/events/{provider_app_id}`. The URL names the tenant and the `signing_secret`. Thus the Router needs no global lookup by `team_id`.
-- The app is created in the customer's workspace and is not distributed. Slack limits distributed apps outside the Marketplace: since May 29, 2025, `conversations.history` and `conversations.replies` allow 1 request per minute ([changelog](https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps)). Internal apps are outside this limit: «internal customer-built applications are not impacted». Thus the app stays in one workspace, without public distribution.
-- To create the app, the Router needs an app configuration token. It belongs to one user and one workspace. It expires after 12 hours, and `tooling.tokens.rotate` renews it ([app manifests](https://docs.slack.dev/app-manifests/configuring-apps-with-app-manifests)). Thus a workspace admin gives it to Stream once, at connect time.
+The diagram in [Flexibility](#m729fz3d1s3.112218) shows which layers Stream runs in each mode.
 
 ### Direct calls: the proxy
 
 The customer calls any Slack Web API method through the Router. The Router adds the token and sends the request on. The Router knows no Slack method. Thus we keep no layer over the Slack API. The proxy is the default way for direct calls.
 
 &#91;embedded content: the proxy · 8 steps, the token stays in the Router\]
-
-- Endpoint, as a proposal: `ANY /v1/agents/connections/{id}/proxy/{path}`. It is server-side only.
-- The base URL comes from the manifest. Only provider hosts are allowed, so a token never goes to another host.
-- On a 401 the Router calls `Invalidate`, refreshes and retries once.
-- Each call writes an audit row. The Router limits the rate for each customer. It returns the Slack `429` and `Retry-After` as they are.
-- The Router calls Slack from fixed egress IP addresses. Slack can restrict the tokens of an app to a list of IP ranges ([security](https://docs.slack.dev/authentication/best-practices-for-security)). For apps we create, we set the Router ranges. Then a leaked token does not work outside the Router. The manifest sets this list in `settings.allowed_ip_address_ranges`, at most 10 items ([app manifest](https://docs.slack.dev/reference/app-manifest)).
 
 ### Direct calls: token export
 
@@ -372,6 +425,40 @@ Some customer code must call Slack itself, for example with Slack Bolt. For this
 | Revoke | at once | when the token expires |
 | Cost | one more hop. The Router is on the path of each call | none |
 | Use | default | opt-in, for each connector |
+
+**Trade-off.** The proxy keeps the strongest guarantee: neither the LLM nor customer code sees the token. It costs one hop, and the Router is on the path of each call. Token export removes the hop, but the token leaves the Router. A Slack app for each customer keeps both risks inside one customer.
+
+## Integration modes: one Slack app for each customer
+
+**Each need, compared with Vercel Connect.**
+
+| What the customer wants | Our design | Vercel Connect |
+| --- | --- | --- |
+| We run everything: agent, history, replies | Mode A · full platform | Connect gives tokens and events only. The agent is customer code |
+| Its own code where the Slack MCP server is not enough | Mode B · a hosted tool calls any Slack Web API method through the proxy | Customer code calls Slack with a token |
+| Its own agent and its own history | Mode C · pass-through: we keep the Slack app and the tokens, the customer calls our agent through the Router API | Yes: customer code runs the agent, for example with the Vercel Chat SDK and the Vercel AI SDK |
+| Call Slack with the official Slack SDK | The proxy (default): the SDK base URL points to the Router, and the token stays in the Router. Token export: opt-in | `getToken`: the token goes to customer code |
+| Raw Slack events: buttons, reactions, modals | Event forwarding to a customer URL, signed with a key of that customer | Triggers: verified, then forwarded to at most three destinations and signed with a key of the connector |
+| Its own Slack app | Yes, in every mode | Yes |
+
+**How tools reach Slack today.** Tools go through the hosted Slack MCP server, not through the Slack Web API: `mcp: https://mcp.slack.com/mcp` and the only source `kind: mcp` ([`providers/slack.yaml:28,109-111`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/providers/slack.yaml#L28)). Slack defines the tool list. The Router discovers it and pins each schema digest in `core.ToolGrant`. We implement no Slack API method for tools. The limit: the agent can use only what the Slack MCP server offers. The channel bridge is the one exception. It receives the Events API webhook and sends `chat.postMessage`. This surface is small and fixed, and the manifest `channel` block describes it.
+
+**Each customer has its own Slack app, in every mode.** The Router creates it with Slack [`apps.manifest.create`](https://docs.slack.dev/reference/methods/apps.manifest.create). The response has `client_id`, `client_secret` and `signing_secret`. The app has the customer's name and icon. A customer can also bring its own app (`client.registration: customer`). The shared Stream app (`client.registration: operator`) serves only Stream's own agents, for example Athena. Reasons:
+
+- A Slack ban or rate limit touches one customer only. Slack evaluates Web API rate limits for each app «per method, per workspace» ([rate limits](https://docs.slack.dev/apis/web-api/rate-limits)).
+- Each app has its own Request URL, for example `/v1/connectors/events/{provider_app_id}`. The URL names the tenant and the `signing_secret`. Thus the Router needs no global lookup by `team_id`.
+- The app is created in the customer's workspace and is not distributed. Slack limits distributed apps outside the Marketplace: since May 29, 2025, `conversations.history` and `conversations.replies` allow 1 request per minute ([changelog](https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps)). Internal apps are outside this limit: «internal customer-built applications are not impacted». Thus the app stays in one workspace, without public distribution.
+- To create the app, the Router needs an app configuration token. It belongs to one user and one workspace. It expires after 12 hours, and `tooling.tokens.rotate` renews it ([app manifests](https://docs.slack.dev/app-manifests/configuring-apps-with-app-manifests)). Thus a workspace admin gives it to Stream once, at connect time.
+
+## Direct calls: rules, the Slack SDK and code changes
+
+**The proxy.**
+
+- Endpoint, as a proposal: `ANY /v1/agents/connections/{id}/proxy/{path}`. It is server-side only.
+- The base URL comes from the manifest. Only provider hosts are allowed, so a token never goes to another host.
+- On a 401 the Router calls `Invalidate`, refreshes and retries once.
+- Each call writes an audit row. The Router limits the rate for each customer. It returns the Slack `429` and `Retry-After` as they are.
+- The Router calls Slack from fixed egress IP addresses. Slack can restrict the tokens of an app to a list of IP ranges ([security](https://docs.slack.dev/authentication/best-practices-for-security)). For apps we create, we set the Router ranges. Then a leaked token does not work outside the Router. The manifest sets this list in `settings.allowed_ip_address_ranges`, at most 10 items ([app manifest](https://docs.slack.dev/reference/app-manifest)).
 
 Nango offers both: a proxy where «tokens never touch your code» ([proxy](https://nango.dev/platform/request-proxy)) and credential retrieval ([get connection](https://nango.dev/docs/reference/backend/http-api/connection/get.md)). Pipedream Connect gives credentials only for the customer's own OAuth client: «the connected account must be using your own OAuth client» ([retrieve account](https://pipedream.com/docs/connect/api-reference/retrieve-account.md)).
 
@@ -423,15 +510,13 @@ Vercel Connect is less strict. Code with a project OIDC token can request a user
 1. A provider app record for each (app\_pk, connector): Slack `app_id`, `client_id`, sealed `client_secret` and `signing_secret`, owner Stream or customer. The Router creates it with `apps.manifest.create`.
 2. An event endpoint for each provider app. `core.Verifier` checks the event with the `signing_secret` of that app.
 3. The proxy operation, server-side only.
-4. Token export. `core.Credential` keeps its secret private: «Nothing else reads it» ([`core/scheme.go:115-130`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/scheme.go#L115-L130)). Thus `core.Scheme` gets an optional `Export`. Only bearer schemes implement it: `oauth2code`, later `api_key`.
+4. Token export. `core.AccessCredential` keeps its secret private: «Nothing else reads it» ([`core/scheme.go:115-130`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/scheme.go#L115-L130)). Thus `core.Scheme` gets an optional `Export`. Only bearer schemes implement it: `oauth2code`, later `api_key`.
 5. The token operation, server-side only.
 6. An audit table for proxy calls and token requests.
 7. Event destinations for raw event forwarding (modes B and C).
 8. A session call that takes the history from the caller (mode C). Today there is none.
 9. SDK methods in the Go SDK first, then in the other SDKs (AGENTS.md, «SDK changes»).
 10. The schemes `api_key` and `client_credentials`. `core.Scheme` already plans them ([`core/scheme.go:20`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/scheme.go#L20)).
-
-**Trade-off.** The proxy keeps the strongest guarantee: neither the LLM nor customer code sees the token. It costs one hop, and the Router is on the path of each call. Token export removes the hop, but the token leaves the Router. A Slack app for each customer keeps both risks inside one customer.
 
 ## Dependency direction: why there is no cycle
 
@@ -503,15 +588,7 @@ The tenant of every connector record is the customer's Stream app. In the Router
 
 **No org level.** Org links stay out of this design. In the Stream platform, `app_pk` separates all data, and `org_id` is only an attribute of the app. Checked on the live `chat` database on October 5: 124 of 131 tables have `app_pk` or `app_id`; only `moderation_stats_daily` has `org_id`, as «a non-key column». In Stream's chat backend, `ApplicationConfig` keeps `OrganizationID` as a field of the app, and org is used for billing, features, logs and dashboard access. If a customer later wants one Slack workspace for several of its apps (for example staging and production), a separate org-level link can come on top, like project links in Vercel Connect.
 
-## Why this design, and an example
-
-**This design is our proposal.** Thierry has not agreed to it yet.
-
-Reasons:
-
-- All inbound channels write episode cards to one omni-channel. Thus the agent has one shared history across channels.
-- The Router keeps the bot token. The Router refreshes and revokes it the same way as tool tokens.
-- The message hook exists today. The channel bridge needs no new entry into `session.Session`.
+## Cost of this design
 
 **Cost:** the Router gets channel bridge code. The channel bridge does four tasks:
 
@@ -522,21 +599,13 @@ Reasons:
 
 The first channel bridge is for Slack. This is the first Athena scenario: «slack connection and multiplayer» (Nash, October 1).
 
-**Example: Athena in the Slack channel #support.** The `store.ConnectorConnection` owner is `app`, because several people are in the session (architecture doc, one-way door 7).
+**Cost.**
 
-1. An admin clicks “Connect Slack” one time. The Router creates a `store.ConnectorConnection` row with the bot token (owner `app`, account = Slack team). If Slack MCP does not accept the bot token, the tool needs a second row with the user token ([`providers/slack.yaml`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/providers/slack.yaml)).
-2. A user writes in #support: «@athena what did we decide yesterday about the release?».
-3. Slack sends an event. The channel bridge checks the signature. It writes the message to the thread channel of this Slack thread. The omni-channel gets an episode card.
-4. The message hook receives the message and starts `session.Session`.
-5. The agent calls the tool `slack.read_thread` with the user token from its own row. If Slack MCP accepts the bot token, the second row is not necessary (`unverified`).
-6. `chatlog.Log` writes the reply to the thread channel. The channel bridge sends the reply to the Slack thread with the bot token.
-7. The next day, the user opens Athena in the browser and speaks. The voice session reads the omni-channel of the user. The agent sees the episode card of the Slack thread from yesterday. This is omni-channel.
-
-**To decide with Thierry:**
-
-- [ ] Does he agree to the channel bridge in the Router? He asked «how do we want to approach this?» on October 1.
-- [ ] Is the omni-channel with episode cards the required history for all inbound channels?
-- [ ] How do we join one person from different inbound channels into one omni-channel?
+- Build: the channel bridge, the contact map and the five connector-layer additions. Agent channels, the message hook and the token store exist today.
+- Run: one service. There is no second deployment and no second on-call rotation.
+- Each SMS: two Stream Chat writes (the message and the reply) and two `message.new` webhooks. The price per message for our Stream app: `unverified`.
+- Latency: one more round trip, Router → Stream Chat → message hook → Router. It is not measured: `unverified`. Measure it on staging. If it is too slow, the channel bridge can write the message and also call `Session.Ask` directly. Then the session has two entries.
+- Load: vendor webhooks come into the Router. If they need their own scaling, move the channel bridge to a separate service.
 
 ## How other companies do it
 
@@ -557,17 +626,11 @@ Platforms that run the agent inside the platform use the same pattern as this de
 - The channel bridge runs in a separate service, as the Azure Bot Connector Service does. Then the bot token is outside the Router. That service needs its own encryption, refresh and revoke. It also needs its own Stream Chat webhook for `message.new` and a second copy of the contact map.
 - A later move is still possible. The channel bridge talks to the Router only through Stream Chat channels. Thus a move to a separate service changes the deployment, not the design.
 
-**Cost.**
-
-- Build: the channel bridge, the contact map and the five connector-layer additions. Agent channels, the message hook and the token store exist today.
-- Run: one service. There is no second deployment and no second on-call rotation.
-- Each SMS: two Stream Chat writes (the message and the reply) and two `message.new` webhooks. The price per message for our Stream app: `unverified`.
-- Latency: one more round trip, Router → Stream Chat → message hook → Router. It is not measured: `unverified`. Measure it on staging. If it is too slow, the channel bridge can write the message and also call `Session.Ask` directly. Then the session has two entries.
-- Load: vendor webhooks come into the Router. If they need their own scaling, move the channel bridge to a separate service.
-
 ## What a connector is in the code today
 
 The merged AI-816 work (#727, #729, #730) covers tools only. It stores accounts at providers and gives their tokens to the agent. Checked on [`connectors/planning`](https://github.com/GetStream/Vision-Agents/tree/connectors/planning) @ [`ead4a273`](https://github.com/GetStream/Vision-Agents/commit/ead4a273f4d3623fff2a2286d5422725aa0af2e2), October 2.
+
+In the code today, «connector» means tools only. The Router has no Slack, WhatsApp or iMessage inbound channel.
 
 | Code name | What it does | Example | Where in code |
 | --- | --- | --- | --- |
