@@ -28,6 +28,10 @@ The Go SDK (`agents.PluginSettings`) and the Python folder reader (`PluginSettin
 `plugins/stream`) have moved, and the Python reader now accepts `scopes` and `user` on
 `mcp_servers`. Other SDKs follow.
 
+### The connector catalog answers `Connector` and `ConnectorPage`
+
+`listConnectors`, `getConnector` and `createConnector` (`/v1/agents/connectors`) answered schemas named `ConnectorDefinition` and `ConnectorDefinitionPage`. They are `Connector` and `ConnectorPage` now; the JSON is unchanged. Go, JavaScript and Python clients use the new type names.
+
 ### Deleting a session deletes it; stopping one is `POST .../stop`
 
 `DELETE /v1/agents/sessions/{id}` used to end a session and keep everything. It now deletes
