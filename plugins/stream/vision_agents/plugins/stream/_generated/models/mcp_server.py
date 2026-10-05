@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
+
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="McpServer")
 
@@ -19,16 +21,23 @@ class McpServer:
             name (str): What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog
                 plugin's id.
             url (str): Its Streamable HTTP endpoint, over https.
+            tools (list[str] | Unset): Offer the model only the server's tools matching these names or path.Match patterns.
+                A tool left out is neither listed nor callable. Left out offers every tool.
     """
 
     name: str
     url: str
+    tools: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
 
         url = self.url
+
+        tools: list[str] | Unset = UNSET
+        if not isinstance(self.tools, Unset):
+            tools = self.tools
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -38,6 +47,8 @@ class McpServer:
                 "url": url,
             }
         )
+        if tools is not UNSET:
+            field_dict["tools"] = tools
 
         return field_dict
 
@@ -48,9 +59,12 @@ class McpServer:
 
         url = d.pop("url")
 
+        tools = cast(list[str], d.pop("tools", UNSET))
+
         mcp_server = cls(
             name=name,
             url=url,
+            tools=tools,
         )
 
         mcp_server.additional_properties = d

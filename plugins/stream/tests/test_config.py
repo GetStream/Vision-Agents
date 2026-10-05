@@ -597,6 +597,7 @@ class TestSyncAgent:
         (support_dir / "agent.yaml").write_text(
             "name: support\nmcp_servers:\n"
             "  - name: tablejourney\n    url: https://tablejourney.com/mcp\n"
+            "    tools: [search_*]\n"
         )
 
         result = await stream.sync_agent(
@@ -604,7 +605,41 @@ class TestSyncAgent:
         )
 
         assert router.configs[result.config.id]["mcp_servers"] == [
-            {"name": "tablejourney", "url": "https://tablejourney.com/mcp"}
+            {
+                "name": "tablejourney",
+                "url": "https://tablejourney.com/mcp",
+                "tools": ["search_*"],
+            }
+        ]
+
+    async def test_how_each_plugin_is_reached_is_sent(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nuser_plugins: [linear, calcom]\nplugin_options:\n"
+            "  - plugin: linear\n    readonly: true\n"
+            "  - plugin: calcom\n    toolsets: [bookings]\n    tools: [get_*]\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["plugin_options"] == [
+            {
+                "plugin": "linear",
+                "readonly": True,
+                "scopes": [],
+                "toolsets": [],
+                "tools": [],
+            },
+            {
+                "plugin": "calcom",
+                "readonly": False,
+                "scopes": [],
+                "toolsets": ["bookings"],
+                "tools": ["get_*"],
+            },
         ]
 
     async def test_sts_can_be_selected_and_cleared(self, router: Router, support_dir):

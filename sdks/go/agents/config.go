@@ -212,10 +212,34 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		}
 		body.PluginEvents = &events
 	}
+	if len(settings.PluginOptions) > 0 {
+		options := make([]acceleration.PluginOptions, 0, len(settings.PluginOptions))
+		for _, option := range settings.PluginOptions {
+			declared := acceleration.PluginOptions{Plugin: option.Plugin}
+			if option.Readonly {
+				declared.Readonly = &option.Readonly
+			}
+			if len(option.Scopes) > 0 {
+				declared.Scopes = &option.Scopes
+			}
+			if len(option.Toolsets) > 0 {
+				declared.Toolsets = &option.Toolsets
+			}
+			if len(option.Tools) > 0 {
+				declared.Tools = &option.Tools
+			}
+			options = append(options, declared)
+		}
+		body.PluginOptions = &options
+	}
 	if len(settings.MCPServers) > 0 {
 		servers := make([]acceleration.McpServer, 0, len(settings.MCPServers))
 		for _, server := range settings.MCPServers {
-			servers = append(servers, acceleration.McpServer{Name: server.Name, Url: server.URL})
+			declared := acceleration.McpServer{Name: server.Name, Url: server.URL}
+			if len(server.Tools) > 0 {
+				declared.Tools = &server.Tools
+			}
+			servers = append(servers, declared)
 		}
 		body.McpServers = &servers
 	}

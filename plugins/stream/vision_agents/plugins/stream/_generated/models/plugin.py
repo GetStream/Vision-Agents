@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -24,6 +24,11 @@ class Plugin:
         name (str):
         instance_hint (str | Unset):
         instance_required (bool | Unset):
+        readonly (bool | Unset): True when the plugin has a read-only endpoint an agent may pick in plugin_options.
+        scopes_supported (list[str] | Unset): The OAuth scopes an agent may ask for in plugin_options, as the server
+            advertises them. Absent when the server says nothing, and any scope is then passed through.
+        toolsets (list[str] | Unset): The groups of tools an agent may limit the plugin to in plugin_options. Absent
+            when it cannot be limited.
     """
 
     category: str
@@ -33,6 +38,9 @@ class Plugin:
     name: str
     instance_hint: str | Unset = UNSET
     instance_required: bool | Unset = UNSET
+    readonly: bool | Unset = UNSET
+    scopes_supported: list[str] | Unset = UNSET
+    toolsets: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,6 +58,16 @@ class Plugin:
 
         instance_required = self.instance_required
 
+        readonly = self.readonly
+
+        scopes_supported: list[str] | Unset = UNSET
+        if not isinstance(self.scopes_supported, Unset):
+            scopes_supported = self.scopes_supported
+
+        toolsets: list[str] | Unset = UNSET
+        if not isinstance(self.toolsets, Unset):
+            toolsets = self.toolsets
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -65,6 +83,12 @@ class Plugin:
             field_dict["instance_hint"] = instance_hint
         if instance_required is not UNSET:
             field_dict["instance_required"] = instance_required
+        if readonly is not UNSET:
+            field_dict["readonly"] = readonly
+        if scopes_supported is not UNSET:
+            field_dict["scopes_supported"] = scopes_supported
+        if toolsets is not UNSET:
+            field_dict["toolsets"] = toolsets
 
         return field_dict
 
@@ -85,6 +109,12 @@ class Plugin:
 
         instance_required = d.pop("instance_required", UNSET)
 
+        readonly = d.pop("readonly", UNSET)
+
+        scopes_supported = cast(list[str], d.pop("scopes_supported", UNSET))
+
+        toolsets = cast(list[str], d.pop("toolsets", UNSET))
+
         plugin = cls(
             category=category,
             description=description,
@@ -93,6 +123,9 @@ class Plugin:
             name=name,
             instance_hint=instance_hint,
             instance_required=instance_required,
+            readonly=readonly,
+            scopes_supported=scopes_supported,
+            toolsets=toolsets,
         )
 
         plugin.additional_properties = d

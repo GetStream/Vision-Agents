@@ -1600,10 +1600,11 @@ type AgentConfig struct {
 	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
-	Mode         AgentMode      `json:"mode"`
-	Name         string         `json:"name"`
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
-	Plugins      *[]string      `json:"plugins,omitempty"`
+	Mode          AgentMode        `json:"mode"`
+	Name          string           `json:"name"`
+	PluginEvents  *[]PluginEvent   `json:"plugin_events,omitempty"`
+	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
+	Plugins       *[]string        `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -1651,9 +1652,10 @@ type AgentConfigPatch struct {
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
-	Name         *string        `json:"name,omitempty"`
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
-	Plugins      *[]string      `json:"plugins,omitempty"`
+	Name          *string          `json:"name,omitempty"`
+	PluginEvents  *[]PluginEvent   `json:"plugin_events,omitempty"`
+	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
+	Plugins       *[]string        `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -1713,6 +1715,9 @@ type AgentConfigRequest struct {
 
 	// PluginEvents MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+
+	// PluginOptions How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. A plugin without any is reached as the catalog has it.
+	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
 
 	// Plugins Hosted MCP servers this agent may reach, named from the built-in catalog.
 	Plugins *[]string `json:"plugins,omitempty"`
@@ -3009,6 +3014,9 @@ type McpServer struct {
 	// Name What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
 	Name string `json:"name"`
 
+	// Tools Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
+	Tools *[]string `json:"tools,omitempty"`
+
 	// Url Its Streamable HTTP endpoint, over https.
 	Url string `json:"url"`
 }
@@ -3185,6 +3193,15 @@ type Plugin struct {
 	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential.
 	LogoUrl *string `json:"logo_url,omitempty"`
 	Name    string  `json:"name"`
+
+	// Readonly True when the plugin has a read-only endpoint an agent may pick in plugin_options.
+	Readonly *bool `json:"readonly,omitempty"`
+
+	// ScopesSupported The OAuth scopes an agent may ask for in plugin_options, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
+	ScopesSupported *[]string `json:"scopes_supported,omitempty"`
+
+	// Toolsets The groups of tools an agent may limit the plugin to in plugin_options. Absent when it cannot be limited.
+	Toolsets *[]string `json:"toolsets,omitempty"`
 }
 
 // PluginAuthorization defines model for PluginAuthorization.
@@ -3224,6 +3241,24 @@ type PluginEvent struct {
 
 	// Plugin A catalog plugin the config names under plugins or user_plugins.
 	Plugin string `json:"plugin"`
+}
+
+// PluginOptions How an agent reaches one catalog plugin it names, and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
+type PluginOptions struct {
+	// Plugin A catalog plugin id. It applies once the config names the plugin under plugins or user_plugins, and to the app's login made from the dashboard.
+	Plugin string `json:"plugin"`
+
+	// Readonly Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
+	Readonly *bool `json:"readonly,omitempty"`
+
+	// Scopes The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
+	Scopes *[]string `json:"scopes,omitempty"`
+
+	// Tools Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
+	Tools *[]string `json:"tools,omitempty"`
+
+	// Toolsets Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
+	Toolsets *[]string `json:"toolsets,omitempty"`
 }
 
 // Policy What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
@@ -4309,7 +4344,10 @@ type SyncAgentRequest struct {
 
 	// PluginEvents MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
-	Plugins      *[]string      `json:"plugins,omitempty"`
+
+	// PluginOptions How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for.
+	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
+	Plugins       *[]string        `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`

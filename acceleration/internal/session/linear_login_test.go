@@ -132,6 +132,24 @@ func (s *LinearLoginSuite) TestTheButtonOpensLinearsOwnConsentPage() {
 		"Linear answered something other than the consent page: %.200s", body)
 }
 
+// The read-only endpoint is a resource of its own at Linear that accepts only read, so a
+// login for it that asked for write, or named the other resource, would be refused.
+func (s *LinearLoginSuite) TestAReadonlyLoginOpensLinearsConsentPageForTheReadOnlyServer() {
+	readonly, err := ConfiguredPlugin("linear", []store.PluginOptions{{Plugin: "linear", Readonly: true}})
+	s.Require().NoError(err)
+	s.runner.named["linear"] = readonly
+
+	found := s.asked(s.run("linear__list_tools", ""))
+	query := s.authorizeURL(found).Query()
+	s.Equal("https://mcp.linear.app/mcp/readonly", query.Get("resource"))
+	s.Equal("read", query.Get("scope"))
+
+	status, body := s.get(found.AuthorizeURL)
+	s.Equal(http.StatusOK, status)
+	s.Contains(body, "Authorization Request",
+		"Linear answered something other than the consent page: %.200s", body)
+}
+
 func (s *LinearLoginSuite) TestTheLogoTheCardPointsAtIsOneWeServe() {
 	found := s.asked(s.run("linear__list_tools", ""))
 

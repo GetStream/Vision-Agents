@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -94,9 +95,19 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
 
-	plugin, ok := plugins.Lookup(string(request.PluginId))
-	if !ok {
+	if _, ok := plugins.Lookup(string(request.PluginId)); !ok {
 		return nil, huma.Error400BadRequest(unknownPlugin)
+	}
+	if s.store == nil {
+		return nil, huma.Error400BadRequest(noConfigs)
+	}
+	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, huma.Error404NotFound(unknownConfig)
+	}
+	plugin, err := session.ConfiguredPlugin(string(request.PluginId), config.PluginOptions)
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	instance := ""
@@ -105,12 +116,6 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 	}
 	if _, err := plugin.Endpoint(instance); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
-	}
-	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
-	}
-	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error404NotFound(unknownConfig)
 	}
 
 	pending, err := s.auth().StartAuthorize(ctx, plugin, instance)
@@ -277,6 +282,18 @@ func pluginOf(plugin plugins.Plugin, logoURL string) Plugin {
 		rendered.InstanceRequired = &required
 	}
 	rendered.InstanceHint = optional(plugin.InstanceHint)
+	if plugin.ReadonlyURL != "" {
+		readonly := true
+		rendered.Readonly = &readonly
+	}
+	if len(plugin.Toolsets) > 0 {
+		toolsets := plugin.Toolsets
+		rendered.Toolsets = &toolsets
+	}
+	if len(plugin.ScopesSupported) > 0 {
+		scopes := plugin.ScopesSupported
+		rendered.ScopesSupported = &scopes
+	}
 	return rendered
 }
 
@@ -386,13 +403,16 @@ type disconnectPluginRequest struct {
 
 // Plugin One hosted MCP server from the built-in catalog.
 type Plugin struct {
-	Category         string  `json:"category"`
-	Description      string  `json:"description"`
-	Id               string  `json:"id"`
-	InstanceHint     *string `json:"instance_hint,omitempty"`
-	InstanceRequired *bool   `json:"instance_required,omitempty"`
-	LogoUrl          string  `json:"logo_url" readOnly:"true" doc:"Where this deployment serves the plugin's logo, as an SVG needing no credential."`
-	Name             string  `json:"name"`
+	Category         string    `json:"category"`
+	Description      string    `json:"description"`
+	Id               string    `json:"id"`
+	InstanceHint     *string   `json:"instance_hint,omitempty"`
+	InstanceRequired *bool     `json:"instance_required,omitempty"`
+	LogoUrl          string    `json:"logo_url" readOnly:"true" doc:"Where this deployment serves the plugin's logo, as an SVG needing no credential."`
+	Name             string    `json:"name"`
+	Readonly         *bool     `json:"readonly,omitempty" doc:"True when the plugin has a read-only endpoint an agent may pick in plugin_options."`
+	Toolsets         *[]string `json:"toolsets,omitempty" doc:"The groups of tools an agent may limit the plugin to in plugin_options. Absent when it cannot be limited."`
+	ScopesSupported  *[]string `json:"scopes_supported,omitempty" doc:"The OAuth scopes an agent may ask for in plugin_options, as the server advertises them. Absent when the server says nothing, and any scope is then passed through."`
 }
 
 func (*Plugin) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -465,10 +485,27 @@ func (*PluginEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.
 	return schema
 }
 
+// PluginOptions is what an agent changes about one catalog plugin it names.
+type PluginOptions struct {
+	Plugin   string    `json:"plugin" minLength:"1" doc:"A catalog plugin id. It applies once the config names the plugin under plugins or user_plugins, and to the app's login made from the dashboard."`
+	Readonly *bool     `json:"readonly,omitempty" doc:"Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear."`
+	Scopes   *[]string `json:"scopes,omitempty" maxItems:"32" doc:"The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set."`
+	Toolsets *[]string `json:"toolsets,omitempty" maxItems:"32" doc:"Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login."`
+	Tools    *[]string `json:"tools,omitempty" maxItems:"128" doc:"Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool."`
+}
+
+func (*PluginOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How an agent reaches one catalog plugin it names, and what its login " +
+		"asks for. A login made before a change keeps what it was granted, so connect it " +
+		"again for the change to take."
+	return schema
+}
+
 // McpServer is an MCP server outside the catalog that an agent reaches by its URL.
 type McpServer struct {
-	Name string `json:"name" minLength:"1" maxLength:"32" pattern:"^[a-z][a-z0-9_-]*$" doc:"What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id."`
-	Url  string `json:"url" minLength:"1" maxLength:"2048" doc:"Its Streamable HTTP endpoint, over https."`
+	Name  string    `json:"name" minLength:"1" maxLength:"32" pattern:"^[a-z][a-z0-9_-]*$" doc:"What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id."`
+	Url   string    `json:"url" minLength:"1" maxLength:"2048" doc:"Its Streamable HTTP endpoint, over https."`
+	Tools *[]string `json:"tools,omitempty" maxItems:"128" doc:"Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool."`
 }
 
 func (*McpServer) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

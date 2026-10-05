@@ -176,6 +176,8 @@ type Spec struct {
 	// UserPlugins are hosted MCP servers the caller reaches with their own account, named
 	// from the catalog. A session with no caller is offered none of them.
 	UserPlugins []string
+	// PluginOptions change how those plugins are reached and what their logins ask for.
+	PluginOptions []store.PluginOptions
 	// MCPServers are MCP servers outside the catalog, opened by their URL with no login.
 	MCPServers []store.MCPServer
 	// ServerInstructions are what those servers said at initialize about using their
@@ -268,6 +270,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
 		UserPlugins:        config.UserPlugins,
+		PluginOptions:      config.PluginOptions,
 		MCPServers:         config.MCPServers,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,

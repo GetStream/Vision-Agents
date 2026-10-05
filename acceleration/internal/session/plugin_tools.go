@@ -29,8 +29,9 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, logger *slog
 			logger.Warn("not loading plugin connections", "config", spec.ConfigID, "error", err)
 		}
 		for _, conn := range conns {
-			plugin, ok := plugins.Lookup(conn.PluginID)
-			if !ok {
+			plugin, err := ConfiguredPlugin(conn.PluginID, spec.PluginOptions)
+			if err != nil {
+				logger.Warn("plugin is not usable", "plugin", conn.PluginID, "error", err)
 				continue
 			}
 			endpoint, err := plugin.Endpoint(conn.InstanceURL)
@@ -42,11 +43,12 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, logger *slog
 				PluginID:    conn.PluginID,
 				Endpoint:    endpoint,
 				AccessToken: FreshToken(ctx, db, &conn, logger),
+				Tools:       plugin.Tools,
 			})
 		}
 	}
 	for _, server := range spec.MCPServers {
-		wanted = append(wanted, plugins.Connection{PluginID: server.Name, Endpoint: server.URL})
+		wanted = append(wanted, plugins.Connection{PluginID: server.Name, Endpoint: server.URL, Tools: server.Tools})
 	}
 	if len(wanted) == 0 {
 		return nil, nil
@@ -57,6 +59,23 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, logger *slog
 		logger.Warn("plugin did not connect", "error", failure)
 	}
 	return runtime, tools
+}
+
+// ConfiguredPlugin is a catalog plugin as the config's plugin options ask for it.
+func ConfiguredPlugin(id string, options []store.PluginOptions) (plugins.Plugin, error) {
+	plugin, ok := plugins.Lookup(id)
+	if !ok {
+		return plugins.Plugin{}, fmt.Errorf("session: no plugin called %s", id)
+	}
+	for _, option := range options {
+		if option.Plugin == id {
+			return plugin.Configured(plugins.Options{
+				Readonly: option.Readonly, Scopes: option.Scopes, Toolsets: option.Toolsets,
+				Tools: option.Tools,
+			})
+		}
+	}
+	return plugin, nil
 }
 
 // serverInstructionsLimit caps what one server named by URL adds to the agent's
@@ -118,7 +137,7 @@ func (m *Manager) userPlugins(spec Spec, next agent.ToolRunner) *userPluginRunne
 	}
 	named := map[string]plugins.Plugin{}
 	for _, id := range spec.UserPlugins {
-		if plugin, ok := plugins.Lookup(id); ok {
+		if plugin, err := ConfiguredPlugin(id, spec.PluginOptions); err == nil {
 			named[id] = plugin
 		}
 	}
@@ -239,6 +258,7 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 		PluginID:    plugin.ID,
 		Endpoint:    endpoint,
 		AccessToken: FreshToken(ctx, r.db, &conn, r.logger),
+		Tools:       plugin.Tools,
 	}}, nil)
 	if runtime == nil {
 		return nil, nil, "", errors.Join(failures...)

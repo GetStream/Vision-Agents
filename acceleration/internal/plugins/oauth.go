@@ -120,7 +120,7 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 	query.Set("state", state)
 	query.Set("code_challenge", challenge)
 	query.Set("code_challenge_method", "S256")
-	query.Set("resource", endpoint)
+	query.Set("resource", resourceOf(endpoint))
 	if len(plugin.Scopes) > 0 {
 		query.Set("scope", strings.Join(plugin.Scopes, " "))
 	}
@@ -385,6 +385,13 @@ func originOf(raw string) string {
 		return raw
 	}
 	return parsed.Scheme + "://" + parsed.Host
+}
+
+// resourceOf is the server an endpoint is on, without the query that picks its toolsets,
+// so a login is for the server and changing toolsets needs no new one.
+func resourceOf(endpoint string) string {
+	resource, _, _ := strings.Cut(endpoint, "?")
+	return resource
 }
 
 func first(values []string) string {

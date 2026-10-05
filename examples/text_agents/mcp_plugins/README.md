@@ -49,6 +49,75 @@ The three Google entries can carry the same client id and secret: they are separ
 the router reads one pair per plugin, and the Cloud project has to have each API enabled.
 `salesforce` has no single global host, so its login is given the org's `instance_url`.
 
+### Read-only, and which scopes a login asks for
+
+`plugin_options` changes how a plugin is reached and what its login asks for. Left out,
+the plugin is reached as the catalog has it, which for Linear is `https://mcp.linear.app/mcp`
+asking for `read` and `write`:
+
+```yaml
+plugin_options:
+  - plugin: linear
+    readonly: true   # https://mcp.linear.app/mcp/readonly: no tool that writes, asks for read
+    scopes: [read]   # replaces the scopes the login asks for
+```
+
+`readonly` is only accepted for a plugin whose vendor runs a read-only server (Linear, so
+far), and the router refuses it for any other. A login made before a change keeps what it
+was granted, so connect the plugin again after changing either.
+
+`toolsets` limits a server to some of its tools, for a vendor that lets you choose. Cal.com
+does, and offers every tool when none are picked:
+
+```yaml
+plugin_options:
+  - plugin: calcom
+    toolsets: [bookings, availability, event-types]
+```
+
+Its toolsets are `profile`, `event-types`, `bookings`, `availability`, `schedules`,
+`calendars`, `teams`, `organizations`, `routing-forms` and `catalog`; `get_app_link` and
+`search_docs` come whichever are picked, and the router refuses a name not on that list.
+The login is for the server, not the toolsets, so changing them needs no new one.
+
+`scopes` does nothing for Cal.com: its MCP server ignores the scopes it is asked for and
+always asks your Cal.com account for the same fixed set. Toolsets are what narrow it.
+
+Cal.com also only registers clients whose redirect host is on its own list. `localhost`
+is, so a local router logs in; a router at any other host, getstream.io included, is
+refused at registration until Cal.com adds it.
+
+Google Drive asks for `drive.readonly` unless told otherwise. Its `create_file` and
+`copy_file` tools need `drive.file` as well, which reaches only the files the agent made or
+was given. `scopes` must be ones the server advertises; for Drive those are `drive`,
+`drive.readonly` and `drive.file`:
+
+```yaml
+plugin_options:
+  - plugin: google_drive
+    scopes:
+      - https://www.googleapis.com/auth/drive.readonly
+      - https://www.googleapis.com/auth/drive.file
+```
+
+### Only some tools
+
+Every tool a server offers goes to the model unless `tools` says otherwise. Fewer tools
+take less context and give the agent less it may do. `tools` takes names or patterns such
+as `get_*`, works on any plugin and on `mcp_servers`, and needs no new login:
+
+```yaml
+plugin_options:
+  - plugin: linear
+    tools: [list_issues, get_issue, save_comment]
+mcp_servers:
+  - name: tablejourney
+    url: https://tablejourney.com/mcp
+    tools: [search_*]
+```
+
+A tool left out is not listed, and the router refuses to run it.
+
 ## Sentry: once, for the company
 
 Sentry is a hosted MCP server from the router's catalog. Until somebody connects it, the

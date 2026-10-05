@@ -348,6 +348,9 @@ type AgentConfig struct {
 	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
 	// a conversation of its own when it arrives.
 	PluginEvents []PluginEvent `bun:"plugin_events,type:jsonb"`
+	// PluginOptions change how a plugin the config names is reached and what its login
+	// asks for. A plugin without any is the catalog's.
+	PluginOptions []PluginOptions `bun:"plugin_options,type:jsonb"`
 	// MCPServers are MCP servers outside the catalog that the agent's sessions open by
 	// their URL, with no login.
 	MCPServers []MCPServer `bun:"mcp_servers,type:jsonb"`
@@ -530,14 +533,31 @@ type PluginConnection struct {
 	DeletedAt     *time.Time `bun:"deleted_at"`
 }
 
-// PluginEvent is one MCP event an agent config subscribes to on a plugin it names.
 // MCPServer is an MCP server an agent reaches by its URL rather than from the catalog.
 type MCPServer struct {
 	// Name prefixes its tools, as a plugin's id does.
 	Name string `json:"name"`
 	URL  string `json:"url"`
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	// Empty offers every tool.
+	Tools []string `json:"tools,omitempty"`
 }
 
+// PluginOptions is what an agent config changes about one catalog plugin it names.
+type PluginOptions struct {
+	Plugin string `json:"plugin"`
+	// Readonly reaches the plugin's read-only endpoint.
+	Readonly bool `json:"readonly,omitempty"`
+	// Scopes are asked for at consent in place of the catalog's.
+	Scopes []string `json:"scopes,omitempty"`
+	// Toolsets limit the server to these groups of tools. Empty offers every tool.
+	Toolsets []string `json:"toolsets,omitempty"`
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	// Empty offers every tool.
+	Tools []string `json:"tools,omitempty"`
+}
+
+// PluginEvent is one MCP event an agent config subscribes to on a plugin it names.
 type PluginEvent struct {
 	Plugin string `json:"plugin"`
 	Event  string `json:"event"`

@@ -156,6 +156,68 @@ func (s *OAuthSuite) TestMetadataAtTheEndpointsPathIsFoundFirst() {
 	s.Equal("calendar", pending.PluginID)
 }
 
+// The read-only endpoint is its own resource, so the token has to be minted for it rather
+// than for the endpoint that writes.
+func (s *OAuthSuite) TestAReadonlyLoginIsForTheReadOnlyResourceAndAsksOnlyToRead() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://auth.example/authorize",
+			TokenEndpoint:         "https://auth.example/token",
+			RegistrationEndpoint:  "http://" + r.Host + "/register",
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(registration{ClientID: "dyn-1"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	plugin, err := Plugin{
+		ID: "tracker", Name: "Tracker", URL: server.URL + "/mcp", Scopes: []string{"read", "write"},
+		ReadonlyURL: server.URL + "/mcp/readonly", ReadonlyScopes: []string{"read"},
+	}.Configured(Options{Readonly: true})
+	s.Require().NoError(err)
+
+	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
+	pending, err := auth.StartAuthorize(context.Background(), plugin, "")
+	s.Require().NoError(err)
+
+	authorize, err := url.Parse(pending.AuthorizeURL)
+	s.Require().NoError(err)
+	s.Equal(server.URL+"/mcp/readonly", authorize.Query().Get("resource"))
+	s.Equal("read", authorize.Query().Get("scope"))
+}
+
+// The toolsets are a choice of tools on the server, not another server, so the login is
+// for the server and survives a change of toolsets.
+func (s *OAuthSuite) TestALoginForSomeToolsetsIsForTheWholeServer() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://auth.example/authorize",
+			TokenEndpoint:         "https://auth.example/token",
+			RegistrationEndpoint:  "http://" + r.Host + "/register",
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(registration{ClientID: "dyn-1"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	plugin, err := Plugin{
+		ID: "scheduler", Name: "Scheduler", URL: server.URL + "/mcp", Toolsets: []string{"bookings"},
+	}.Configured(Options{Toolsets: []string{"bookings"}})
+	s.Require().NoError(err)
+
+	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
+	pending, err := auth.StartAuthorize(context.Background(), plugin, "")
+	s.Require().NoError(err)
+
+	authorize, err := url.Parse(pending.AuthorizeURL)
+	s.Require().NoError(err)
+	s.Equal(server.URL+"/mcp", authorize.Query().Get("resource"))
+}
+
 func (s *OAuthSuite) TestTheDeploymentsOwnClientSendsItsSecret() {
 	s.T().Setenv("CALENDAR_MCP_CLIENT_ID", "web-client")
 	s.T().Setenv("CALENDAR_MCP_CLIENT_SECRET", "web-secret")

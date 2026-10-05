@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ..models.agent_dispatch import AgentDispatch
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
+    from ..models.plugin_options import PluginOptions
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
 
@@ -49,6 +50,7 @@ class AgentConfig:
         llm (str | Unset):
         mcp_servers (list[McpServer] | Unset):
         plugin_events (list[PluginEvent] | Unset):
+        plugin_options (list[PluginOptions] | Unset):
         plugins (list[str] | Unset):
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
@@ -87,6 +89,7 @@ class AgentConfig:
     llm: str | Unset = UNSET
     mcp_servers: list[McpServer] | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
+    plugin_options: list[PluginOptions] | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
@@ -151,6 +154,13 @@ class AgentConfig:
             for plugin_events_item_data in self.plugin_events:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
+
+        plugin_options: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.plugin_options, Unset):
+            plugin_options = []
+            for plugin_options_item_data in self.plugin_options:
+                plugin_options_item = plugin_options_item_data.to_dict()
+                plugin_options.append(plugin_options_item)
 
         plugins: list[str] | Unset = UNSET
         if not isinstance(self.plugins, Unset):
@@ -231,6 +241,8 @@ class AgentConfig:
             field_dict["mcp_servers"] = mcp_servers
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
+        if plugin_options is not UNSET:
+            field_dict["plugin_options"] = plugin_options
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
         if sandbox is not UNSET:
@@ -272,6 +284,7 @@ class AgentConfig:
         from ..models.agent_dispatch import AgentDispatch
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
+        from ..models.plugin_options import PluginOptions
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
 
@@ -329,6 +342,15 @@ class AgentConfig:
                 plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
 
                 plugin_events.append(plugin_events_item)
+
+        _plugin_options = d.pop("plugin_options", UNSET)
+        plugin_options: list[PluginOptions] | Unset = UNSET
+        if _plugin_options is not UNSET:
+            plugin_options = []
+            for plugin_options_item_data in _plugin_options:
+                plugin_options_item = PluginOptions.from_dict(plugin_options_item_data)
+
+                plugin_options.append(plugin_options_item)
 
         plugins = cast(list[str], d.pop("plugins", UNSET))
 
@@ -398,6 +420,7 @@ class AgentConfig:
             llm=llm,
             mcp_servers=mcp_servers,
             plugin_events=plugin_events,
+            plugin_options=plugin_options,
             plugins=plugins,
             sandbox=sandbox,
             sandbox_options=sandbox_options,

@@ -420,6 +420,34 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A plugin can be reached read-only, limited to some tools, and its scopes chosen
+
+`plugin_options` says how an agent reaches a catalog plugin and what its login asks for.
+`readonly: true` reaches the vendor's read-only MCP server, which for Linear is
+`https://mcp.linear.app/mcp/readonly` asking only for `read`; `scopes` replaces the scopes
+asked for at consent; `toolsets` limits the server to some groups of tools, which for
+Cal.com go on its URL as `?toolsets=`. Left out, the plugin is the catalog's. It is on
+`AgentConfig`, `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`, and the Go
+and Python folder readers read it. `readonly` on a plugin without a read-only server, or a
+toolset its catalog entry does not list, is a 400. `Plugin` in the catalog says which a
+plugin accepts, as `readonly`, `toolsets` and `scopes_supported`; a scope outside
+`scopes_supported` is a 400. Google Drive takes `drive.file` beside its default
+`drive.readonly`, for `create_file` and `copy_file`.
+
+`tools`, on `plugin_options` and on `mcp_servers`, offers the model only the tools named or
+matching a pattern such as `get_*`; the router refuses to run any other. Left out, every
+tool is offered.
+
+```yaml
+user_plugins: [linear, calcom]
+plugin_options:
+  - plugin: linear
+    readonly: true
+    tools: [list_issues, get_issue]
+  - plugin: calcom
+    toolsets: [bookings, availability]
+```
+
 ### AssemblyAI's Universal-3.6 Pro Realtime as a transcription model
 
 The router now streams to `assemblyai/universal-3-6-pro`, reachable by name or by any

@@ -109,6 +109,26 @@ class MCPServerSettings:
     name: str
     """What its tools are prefixed with, as `<name>__<tool>`."""
     url: str
+    tools: list[str] = field(default_factory=list)
+    """Offer only the tools matching these names or patterns such as `search_*`.
+    Empty offers every tool."""
+
+
+@dataclass
+class PluginOptionsSettings:
+    """How the router reaches one catalog plugin the agent names."""
+
+    plugin: str
+    readonly: bool = False
+    """Reach the plugin's read-only endpoint, for a vendor that runs one."""
+    scopes: list[str] = field(default_factory=list)
+    """Asked for at consent in place of the catalog's. Empty keeps the catalog's."""
+    toolsets: list[str] = field(default_factory=list)
+    """Limit the server to these groups of tools, such as calcom's bookings. Empty
+    offers every tool."""
+    tools: list[str] = field(default_factory=list)
+    """Offer only the tools matching these names or patterns such as `get_*`.
+    Empty offers every tool."""
 
 
 @dataclass
@@ -142,6 +162,9 @@ class Settings:
     """Catalog MCP servers the app connects once, on the dashboard, for every session."""
     user_plugins: list[str] = field(default_factory=list)
     """Catalog MCP servers each end user connects with their own account, in the chat."""
+    plugin_options: list[PluginOptionsSettings] = field(default_factory=list)
+    """How those plugins are reached, such as linear's read-only endpoint, and the
+    scopes their logins ask for."""
     mcp_servers: list[MCPServerSettings] = field(default_factory=list)
     """MCP servers outside the catalog, opened by the router with no login."""
     keyterms: list[str] = field(default_factory=list)
@@ -386,6 +409,8 @@ def _declare(path: Path) -> Settings:
             settings.plugins = _terms(path, field_name, value)
         elif field_name == "user_plugins":
             settings.user_plugins = _terms(path, field_name, value)
+        elif field_name == "plugin_options":
+            settings.plugin_options = _plugin_options(path, value)
         elif field_name == "mcp_servers":
             settings.mcp_servers = _mcp_servers(path, value)
         elif field_name == "keyterms":
@@ -459,6 +484,37 @@ def _dispatch(path: Path, value: object) -> dict[str, str]:
     return {str(key): _word(item) for key, item in value.items() if _word(item)}
 
 
+def _plugin_options(path: Path, value: object) -> list[PluginOptionsSettings]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{path} should give plugin_options as a list")
+    options = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"{path} should give each of plugin_options as a mapping")
+        extra = set(item) - {"plugin", "readonly", "scopes", "toolsets", "tools"}
+        if extra:
+            raise ValueError(
+                f"{path} unknown plugin_options setting: {sorted(extra)[0]}"
+            )
+        readonly = item.get("readonly", False)
+        if not isinstance(readonly, bool):
+            raise ValueError(
+                f"{path} should give plugin_options readonly as true or false"
+            )
+        options.append(
+            PluginOptionsSettings(
+                plugin=_word(item.get("plugin")),
+                readonly=readonly,
+                scopes=_terms(path, "plugin_options.scopes", item.get("scopes")),
+                toolsets=_terms(path, "plugin_options.toolsets", item.get("toolsets")),
+                tools=_terms(path, "plugin_options.tools", item.get("tools")),
+            )
+        )
+    return options
+
+
 def _mcp_servers(path: Path, value: object) -> list[MCPServerSettings]:
     if value is None:
         return []
@@ -468,11 +524,15 @@ def _mcp_servers(path: Path, value: object) -> list[MCPServerSettings]:
     for item in value:
         if not isinstance(item, dict):
             raise ValueError(f"{path} should give each of mcp_servers as a mapping")
-        extra = set(item) - {"name", "url"}
+        extra = set(item) - {"name", "url", "tools"}
         if extra:
             raise ValueError(f"{path} unknown mcp_servers setting: {sorted(extra)[0]}")
         servers.append(
-            MCPServerSettings(name=_word(item.get("name")), url=_word(item.get("url")))
+            MCPServerSettings(
+                name=_word(item.get("name")),
+                url=_word(item.get("url")),
+                tools=_terms(path, "mcp_servers.tools", item.get("tools")),
+            )
         )
     return servers
 

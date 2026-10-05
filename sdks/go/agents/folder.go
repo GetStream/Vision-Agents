@@ -169,6 +169,9 @@ type Settings struct {
 	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
 	// a text conversation when it arrives.
 	PluginEvents []PluginEventSettings `yaml:"plugin_events"`
+	// PluginOptions change how the router reaches plugins the agent names, such as
+	// linear's read-only endpoint, and the scopes their logins ask for.
+	PluginOptions []PluginOptionsSettings `yaml:"plugin_options"`
 	// MCPServers are MCP servers outside the plugin catalog, which the router opens by
 	// their URL with no login.
 	MCPServers []MCPServerSettings `yaml:"mcp_servers"`
@@ -191,11 +194,26 @@ type PluginEventSettings struct {
 	Instructions string `yaml:"instructions"`
 }
 
+// PluginOptionsSettings is how the agent reaches one catalog plugin it names.
+type PluginOptionsSettings struct {
+	Plugin string `yaml:"plugin"`
+	// Readonly reaches the plugin's read-only endpoint, for a vendor that runs one.
+	Readonly bool `yaml:"readonly"`
+	// Scopes are asked for at consent in place of the catalog's.
+	Scopes []string `yaml:"scopes"`
+	// Toolsets limit the server to these groups of tools, such as calcom's bookings.
+	Toolsets []string `yaml:"toolsets"`
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	Tools []string `yaml:"tools"`
+}
+
 // MCPServerSettings is an MCP server outside the plugin catalog. Name prefixes its tools,
 // as <name>__<tool>.
 type MCPServerSettings struct {
 	Name string `yaml:"name"`
 	URL  string `yaml:"url"`
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	Tools []string `yaml:"tools"`
 }
 
 // VideoSettings is which video a skill that captures it sees.

@@ -29,11 +29,30 @@ plugins:        # the company connects it once, every conversation reads that ac
   - sentry
 user_plugins:   # each person connects their own, the first time the agent needs it
   - google_calendar
+plugin_options: # optional: how one is reached, and what its login asks for
+  - plugin: linear
+    readonly: true  # the catalog's readonly_url and readonly_scopes
+    scopes: [read]  # replaces the scopes asked for at consent
+  - plugin: calcom
+    toolsets: [bookings, availability]  # ?toolsets=bookings,availability on the URL
+    tools: [get_*]  # offer only these tools, names or path.Match patterns
 ```
+
+`plugin_options` is read by `session.ConfiguredPlugin`, which every path that opens a
+server or starts a login goes through: `attachPlugins`, the user plugin runner, plugin
+events and `authorizePlugin`. `readonly` on a plugin with no `readonly_url` is a 400, and so
+is a scope missing from the entry's `scopes_supported` (copy it from the server's
+`/.well-known/oauth-protected-resource`; left out, any scope goes). `tools`, there and on
+`mcp_servers`, becomes `Connection.Tools`: `Open` drops every tool `Offered` does not match,
+so it is neither listed nor owned, and `Runtime.Call` refuses it. An
+option may name a plugin the config does not name yet, because an app's login only adds the
+plugin to `plugins` once it is made. The login does not remember the options it was made
+under, so changing them needs a fresh login; a user plugin whose server then refuses the
+old token asks again on its own.
 
 The catalog's `auth` field is not read: every catalog plugin logs in with OAuth. A public
 MCP server with no login does not go in the catalog: the config names it under
-`mcp_servers` (`{name, url}`, https, the name not a catalog id and without `__`).
+`mcp_servers` (`{name, url, tools}`, https, the name not a catalog id and without `__`).
 `attachPlugins` opens those with the catalog logins, with no token, as `<name>__<tool>`, and
 `serverInstructions` adds what each said at initialize to the agent's instructions (capped
 at 4000 bytes). The example's TableJourney server is this path. There are no headers or
@@ -208,6 +227,14 @@ plugin_events:
    - **No single global URL** (Shopify, Salesforce): `url: https://{instance}/...`,
      `instance_required: true` and an `instance_hint`. The app supplies the host when it
      connects, so this only works under `plugins:`; user logins pass no instance.
+   - **A read-only server:** `readonly_url` and `readonly_scopes`, for a vendor that runs
+     one at its own URL, as Linear does at `/mcp/readonly` (its own resource, accepting only
+     `read`). An agent picks it with `plugin_options`; the catalog default stays `url`.
+   - **Toolsets:** `toolsets`, the names a vendor lets the server be limited to with a
+     `toolsets` query parameter, as Cal.com does. An agent picks some in `plugin_options`;
+     a name not listed is a 400. `resource` at the authorize URL leaves the query off, so
+     the login is for the server and survives a change of toolsets. Check that a vendor's
+     `scope` does anything before relying on it: Cal.com's MCP authorize ignores it.
    - **One vendor can be several entries.** Google runs Drive and Docs as separate servers
      with separate scope sets, so they are `google_drive` and `google_docs`, not one `google`.
 3. **Add a logo** under `plugins/logos/<id>.svg`. They are our own plain 48x48 marks, not the

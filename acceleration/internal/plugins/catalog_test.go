@@ -62,6 +62,82 @@ func (s *CatalogSuite) TestLinearIsReachedWithDynamicRegistration() {
 	s.Equal([]string{"read", "write"}, plugin.Scopes)
 }
 
+func (s *CatalogSuite) TestReadonlyLinearIsReachedAtItsReadOnlyEndpointAskingOnlyToRead() {
+	plugin, ok := Lookup("linear")
+	s.Require().True(ok)
+
+	readonly, err := plugin.Configured(Options{Readonly: true})
+	s.Require().NoError(err)
+	url, err := readonly.Endpoint("")
+	s.Require().NoError(err)
+	s.Equal("https://mcp.linear.app/mcp/readonly", url)
+	s.Equal([]string{"read"}, readonly.Scopes)
+	s.Equal([]string{"read", "write"}, plugin.Scopes, "the catalog's own entry is left as it was")
+}
+
+func (s *CatalogSuite) TestScopesAConfigGivesReplaceTheCatalogs() {
+	plugin, ok := Lookup("linear")
+	s.Require().True(ok)
+
+	configured, err := plugin.Configured(Options{Scopes: []string{"read"}})
+	s.Require().NoError(err)
+	s.Equal("https://mcp.linear.app/mcp", configured.URL)
+	s.Equal([]string{"read"}, configured.Scopes)
+}
+
+func (s *CatalogSuite) TestDriveCanBeAskedForTheFilesItCreatesAsGooglesGuideDoes() {
+	plugin, ok := Lookup("google_drive")
+	s.Require().True(ok)
+	s.Equal([]string{"https://www.googleapis.com/auth/drive.readonly"}, plugin.Scopes, "read only unless asked")
+
+	wanted := []string{
+		"https://www.googleapis.com/auth/drive.readonly",
+		"https://www.googleapis.com/auth/drive.file",
+	}
+	configured, err := plugin.Configured(Options{Scopes: wanted})
+	s.Require().NoError(err)
+	s.Equal(wanted, configured.Scopes)
+}
+
+func (s *CatalogSuite) TestAScopeTheServerDoesNotAdvertiseIsRefused() {
+	drive, _ := Lookup("google_drive")
+	_, err := drive.Configured(Options{Scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"}})
+	s.ErrorContains(err, "gmail.readonly")
+
+	linear, _ := Lookup("linear")
+	_, err = linear.Configured(Options{Readonly: true, Scopes: []string{"write"}})
+	s.ErrorContains(err, `"write"`, "the read-only endpoint accepts only read")
+}
+
+func (s *CatalogSuite) TestAPluginWithNoReadOnlyEndpointCannotBeMadeReadonly() {
+	plugin, ok := Lookup("sentry")
+	s.Require().True(ok)
+
+	_, err := plugin.Configured(Options{Readonly: true})
+	s.ErrorContains(err, "read-only")
+}
+
+func (s *CatalogSuite) TestCalcomIsLimitedToTheToolsetsPickedOnItsURL() {
+	plugin, ok := Lookup("calcom")
+	s.Require().True(ok)
+
+	configured, err := plugin.Configured(Options{Toolsets: []string{"bookings", "availability"}})
+	s.Require().NoError(err)
+	url, err := configured.Endpoint("")
+	s.Require().NoError(err)
+	s.Equal("https://mcp.cal.com/mcp?toolsets=bookings,availability", url)
+}
+
+func (s *CatalogSuite) TestAToolsetThePluginDoesNotHaveIsRefused() {
+	calcom, _ := Lookup("calcom")
+	_, err := calcom.Configured(Options{Toolsets: []string{"invoices"}})
+	s.ErrorContains(err, `"invoices"`)
+
+	sentry, _ := Lookup("sentry")
+	_, err = sentry.Configured(Options{Toolsets: []string{"bookings"}})
+	s.ErrorContains(err, `"bookings"`, "a plugin with no toolsets cannot be limited")
+}
+
 func (s *CatalogSuite) TestGitHubIsReachedAtCopilotsMCPServer() {
 	plugin, ok := Lookup("github")
 	s.Require().True(ok)

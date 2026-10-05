@@ -1,7 +1,13 @@
 from pathlib import Path
 
 import pytest
-from vision_agents.plugins.stream.folder import SandboxSettings, find, load, resolve
+from vision_agents.plugins.stream.folder import (
+    PluginOptionsSettings,
+    SandboxSettings,
+    find,
+    load,
+    resolve,
+)
 
 
 def write(root: Path, name: str, content: str) -> None:
@@ -123,6 +129,39 @@ class TestFolder:
 
         assert settings.plugins == ["sentry"]
         assert settings.user_plugins == ["google_calendar"]
+
+    def test_the_declaration_says_how_each_plugin_is_reached(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nuser_plugins: [linear, calcom]\nplugin_options:\n"
+            "  - plugin: linear\n    readonly: true\n    scopes: [read]\n"
+            "  - plugin: calcom\n    toolsets: [bookings, availability]\n"
+            "    tools: [get_bookings]\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.plugin_options == [
+            PluginOptionsSettings(plugin="linear", readonly=True, scopes=["read"]),
+            PluginOptionsSettings(
+                plugin="calcom",
+                toolsets=["bookings", "availability"],
+                tools=["get_bookings"],
+            ),
+        ]
+
+    def test_a_plugin_option_nobody_knows_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nplugin_options:\n  - plugin: linear\n    read_only: true\n",
+        )
+
+        with pytest.raises(ValueError, match="read_only"):
+            load(root)
 
     def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
         root = tmp_path / "jean"

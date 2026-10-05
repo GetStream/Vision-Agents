@@ -82,6 +82,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := pluginEventsComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
+	if message, ok := pluginOptionsComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 	if message, ok := mcpServersComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
@@ -135,6 +138,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := pluginEventsComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := pluginOptionsComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
@@ -511,6 +517,83 @@ func pluginEventsComplaint(config store.AgentConfig) (string, bool) {
 	return "", true
 }
 
+// pluginOptionsComplaint reports what is wrong with the plugin options a config sets, if
+// anything. An option may be for a plugin the config does not name yet: an app's login
+// adds its plugin to plugins only once it is made, and has to be made as the option says.
+func pluginOptionsComplaint(config store.AgentConfig) (string, bool) {
+	seen := map[string]bool{}
+	for _, option := range config.PluginOptions {
+		plugin, ok := plugins.Lookup(option.Plugin)
+		if !ok {
+			return fmt.Sprintf("plugin_options: no plugin called %q", option.Plugin), false
+		}
+		if seen[option.Plugin] {
+			return fmt.Sprintf("plugin_options: %s is given twice", option.Plugin), false
+		}
+		seen[option.Plugin] = true
+		if _, err := plugin.Configured(plugins.Options{
+			Readonly: option.Readonly, Scopes: option.Scopes, Toolsets: option.Toolsets,
+			Tools: option.Tools,
+		}); err != nil {
+			return "plugin_options: " + strings.TrimPrefix(err.Error(), "plugins: "), false
+		}
+	}
+	return "", true
+}
+
+// pluginOptionsOf reads the plugin options a caller set, with blank scopes and toolsets
+// left out.
+func pluginOptionsOf(options *[]PluginOptions) []store.PluginOptions {
+	read := []store.PluginOptions{}
+	for _, option := range value(options) {
+		read = append(read, store.PluginOptions{
+			Plugin:   strings.TrimSpace(option.Plugin),
+			Readonly: value(option.Readonly),
+			Scopes:   nonBlank(value(option.Scopes)),
+			Toolsets: nonBlank(value(option.Toolsets)),
+			Tools:    nonBlank(value(option.Tools)),
+		})
+	}
+	return read
+}
+
+func nonBlank(values []string) []string {
+	var kept []string
+	for _, item := range values {
+		if item = strings.TrimSpace(item); item != "" {
+			kept = append(kept, item)
+		}
+	}
+	return kept
+}
+
+// renderedPluginOptions is a config's plugin options as the API shows them, or nothing for
+// none.
+func renderedPluginOptions(options []store.PluginOptions) *[]PluginOptions {
+	if len(options) == 0 {
+		return nil
+	}
+	rendered := make([]PluginOptions, 0, len(options))
+	for _, option := range options {
+		shown := PluginOptions{Plugin: option.Plugin}
+		if option.Readonly {
+			readonly := true
+			shown.Readonly = &readonly
+		}
+		if len(option.Scopes) > 0 {
+			scopes := option.Scopes
+			shown.Scopes = &scopes
+		}
+		if len(option.Toolsets) > 0 {
+			toolsets := option.Toolsets
+			shown.Toolsets = &toolsets
+		}
+		shown.Tools = shownTools(option.Tools)
+		rendered = append(rendered, shown)
+	}
+	return &rendered
+}
+
 // mcpServersComplaint reports what is wrong with the MCP servers a config names, if
 // anything. A name prefixes the server's tools the way a plugin's id does, so it may not be
 // one, nor hold the separator that splits a tool's name from it.
@@ -531,6 +614,9 @@ func mcpServersComplaint(config store.AgentConfig) (string, bool) {
 		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" {
 			return fmt.Sprintf("mcp_servers: %s needs an https url", server.Name), false
 		}
+		if err := plugins.CheckToolPatterns(server.Tools); err != nil {
+			return fmt.Sprintf("mcp_servers: %s: %s", server.Name, strings.TrimPrefix(err.Error(), "plugins: ")), false
+		}
 	}
 	return "", true
 }
@@ -540,11 +626,21 @@ func mcpServersOf(servers *[]McpServer) []store.MCPServer {
 	read := []store.MCPServer{}
 	for _, server := range value(servers) {
 		read = append(read, store.MCPServer{
-			Name: strings.TrimSpace(server.Name),
-			URL:  strings.TrimSpace(server.Url),
+			Name:  strings.TrimSpace(server.Name),
+			URL:   strings.TrimSpace(server.Url),
+			Tools: nonBlank(value(server.Tools)),
 		})
 	}
 	return read
+}
+
+// shownTools is a tool allowlist as the API shows it, or nothing for every tool.
+func shownTools(tools []string) *[]string {
+	if len(tools) == 0 {
+		return nil
+	}
+	shown := tools
+	return &shown
 }
 
 // renderedMCPServers is a config's MCP servers as the API shows them, or nothing for none.
@@ -554,7 +650,7 @@ func renderedMCPServers(servers []store.MCPServer) *[]McpServer {
 	}
 	rendered := make([]McpServer, 0, len(servers))
 	for _, server := range servers {
-		rendered = append(rendered, McpServer{Name: server.Name, Url: server.URL})
+		rendered = append(rendered, McpServer{Name: server.Name, Url: server.URL, Tools: shownTools(server.Tools)})
 	}
 	return &rendered
 }
@@ -678,6 +774,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.UserPlugins = *request.UserPlugins
 	}
 	config.PluginEvents = pluginEventsOf(request.PluginEvents)
+	config.PluginOptions = pluginOptionsOf(request.PluginOptions)
 	config.MCPServers = mcpServersOf(request.McpServers)
 	config.Keyterms = keytermsOf(request.Keyterms)
 	if request.VisibleTools != nil {
@@ -761,6 +858,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		rendered.UserPlugins = &named
 	}
 	rendered.PluginEvents = renderedPluginEvents(config.PluginEvents)
+	rendered.PluginOptions = renderedPluginOptions(config.PluginOptions)
 	rendered.McpServers = renderedMCPServers(config.MCPServers)
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms
@@ -995,6 +1093,7 @@ type AgentConfigRequest struct {
 	Name               string             `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Plugins            *[]string          `json:"plugins,omitempty" doc:"Hosted MCP servers this agent may reach, named from the built-in catalog."`
 	PluginEvents       *[]PluginEvent     `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
+	PluginOptions      *[]PluginOptions   `json:"plugin_options,omitempty" maxItems:"32" doc:"How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. A plugin without any is reached as the catalog has it."`
 	McpServers         *[]McpServer       `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
 	SandboxOptions     *SandboxOptions    `json:"sandbox_options,omitempty"`
@@ -1028,6 +1127,7 @@ type AgentConfig struct {
 	Name               string             `json:"name"`
 	Plugins            *[]string          `json:"plugins,omitempty"`
 	PluginEvents       *[]PluginEvent     `json:"plugin_events,omitempty"`
+	PluginOptions      *[]PluginOptions   `json:"plugin_options,omitempty"`
 	McpServers         *[]McpServer       `json:"mcp_servers,omitempty"`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
 	SandboxOptions     *SandboxOptions    `json:"sandbox_options,omitempty"`

@@ -268,7 +268,7 @@ func (s *Service) subscribe(ctx context.Context, config store.AgentConfig, want 
 		}
 	}
 
-	conn, err := s.connection(ctx, want.login)
+	conn, err := s.connection(ctx, config, want.login)
 	if err == nil {
 		var granted plugins.Subscribed
 		granted, err = plugins.Subscribe(ctx, conn, sub.Event, sub.Arguments,
@@ -296,7 +296,7 @@ func (s *Service) subscribe(ctx context.Context, config store.AgentConfig, want 
 func (s *Service) drop(ctx context.Context, config store.AgentConfig, sub store.PluginEventSubscription) {
 	login, err := s.login(ctx, sub)
 	if err == nil && sub.Status == store.PluginEventActive {
-		conn, err := s.connection(ctx, login)
+		conn, err := s.connection(ctx, config, login)
 		if err == nil {
 			err = plugins.Unsubscribe(ctx, conn, sub.Event, sub.Arguments, s.auth.EventsURL(sub.Token), s.transport)
 		}
@@ -323,10 +323,10 @@ func (s *Service) login(ctx context.Context, sub store.PluginEventSubscription) 
 	return store.PluginConnection{}, fmt.Errorf("pluginevents: no %s login", sub.PluginID)
 }
 
-func (s *Service) connection(ctx context.Context, login store.PluginConnection) (plugins.Connection, error) {
-	plugin, ok := plugins.Lookup(login.PluginID)
-	if !ok {
-		return plugins.Connection{}, fmt.Errorf("pluginevents: no plugin called %s", login.PluginID)
+func (s *Service) connection(ctx context.Context, config store.AgentConfig, login store.PluginConnection) (plugins.Connection, error) {
+	plugin, err := session.ConfiguredPlugin(login.PluginID, config.PluginOptions)
+	if err != nil {
+		return plugins.Connection{}, err
 	}
 	endpoint, err := plugin.Endpoint(login.InstanceURL)
 	if err != nil {

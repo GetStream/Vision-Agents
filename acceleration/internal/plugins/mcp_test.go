@@ -69,6 +69,49 @@ func (s *MCPSuite) TestOpenListsPrefixedToolsAndCallReturnsText() {
 	runtime.Close()
 }
 
+// A tool the agent left out of its allowlist is neither offered nor callable, so the model
+// cannot reach it by guessing its name.
+func (s *MCPSuite) TestOnlyTheToolsAnAgentAllowsAreOffered() {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body rpcRequest
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&body))
+		switch body.Method {
+		case "initialize":
+			writeRPC(w, body.ID, map[string]any{"protocolVersion": "2025-03-26"})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			writeRPC(w, body.ID, toolsListResult{Tools: []mcpTool{
+				{Name: "search_files"}, {Name: "read_file_content"}, {Name: "read_file_metadata"}, {Name: "create_file"},
+			}})
+		case "tools/call":
+			called = true
+			writeRPC(w, body.ID, toolsCallResult{})
+		}
+	}))
+	defer server.Close()
+
+	runtime, tools, failures := Open(context.Background(), []Connection{{
+		PluginID: "google_drive", Endpoint: server.URL, Tools: []string{"search_files", "read_*"},
+	}}, server.Client())
+	s.Empty(failures)
+
+	var offered []string
+	for _, tool := range tools {
+		offered = append(offered, tool.Name)
+	}
+	s.Equal([]string{"google_drive__search_files", "google_drive__read_file_content", "google_drive__read_file_metadata"}, offered)
+	_, err := runtime.Call(context.Background(), llm.ToolCall{Name: "google_drive__create_file"})
+	s.Error(err)
+	s.False(called, "a tool left out never reaches the server")
+}
+
+func (s *MCPSuite) TestAToolPatternThatCannotBeReadIsRefused() {
+	s.ErrorContains(CheckToolPatterns([]string{"read_[*"}), "read_[*")
+	s.NoError(CheckToolPatterns([]string{"read_*", "search_files"}))
+}
+
 func (s *MCPSuite) TestAServerOpenedWithoutALoginKeepsWhatItSaidAtInitialize() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.Empty(r.Header.Get("Authorization"))

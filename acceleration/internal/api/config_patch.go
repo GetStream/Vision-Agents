@@ -27,6 +27,7 @@ type AgentConfigPatch struct {
 	Plugins            *[]string          `json:"plugins,omitempty"`
 	UserPlugins        *[]string          `json:"user_plugins,omitempty"`
 	PluginEvents       *[]PluginEvent     `json:"plugin_events,omitempty" maxItems:"32"`
+	PluginOptions      *[]PluginOptions   `json:"plugin_options,omitempty" maxItems:"32"`
 	McpServers         *[]McpServer       `json:"mcp_servers,omitempty" maxItems:"16"`
 	Keyterms           *[]string          `json:"keyterms,omitempty"`
 	VisibleTools       *[]string          `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
@@ -149,6 +150,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if patch.PluginEvents != nil {
 		config.PluginEvents = pluginEventsOf(patch.PluginEvents)
 	}
+	if patch.PluginOptions != nil {
+		config.PluginOptions = pluginOptionsOf(patch.PluginOptions)
+	}
 	if patch.McpServers != nil {
 		config.MCPServers = mcpServersOf(patch.McpServers)
 	}
@@ -176,6 +180,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := pluginEventsComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := pluginOptionsComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {

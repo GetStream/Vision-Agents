@@ -2373,6 +2373,7 @@ export type components = {
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            readonly plugin_options?: readonly components["schemas"]["PluginOptions"][];
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
@@ -2413,6 +2414,7 @@ export type components = {
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name?: string;
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            readonly plugin_options?: readonly components["schemas"]["PluginOptions"][];
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
@@ -2457,6 +2459,8 @@ export type components = {
             readonly name: string;
             /** @description MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through. */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. A plugin without any is reached as the catalog has it. */
+            readonly plugin_options?: readonly components["schemas"]["PluginOptions"][];
             /** @description Hosted MCP servers this agent may reach, named from the built-in catalog. */
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
@@ -3596,6 +3600,8 @@ export type components = {
         readonly McpServer: {
             /** @description What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id. */
             readonly name: string;
+            /** @description Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool. */
+            readonly tools?: readonly string[];
             /** @description Its Streamable HTTP endpoint, over https. */
             readonly url: string;
         };
@@ -3753,6 +3759,12 @@ export type components = {
             /** @description Where this deployment serves the plugin's logo, as an SVG needing no credential. */
             readonly logo_url: string;
             readonly name: string;
+            /** @description True when the plugin has a read-only endpoint an agent may pick in plugin_options. */
+            readonly readonly?: boolean;
+            /** @description The OAuth scopes an agent may ask for in plugin_options, as the server advertises them. Absent when the server says nothing, and any scope is then passed through. */
+            readonly scopes_supported?: readonly string[];
+            /** @description The groups of tools an agent may limit the plugin to in plugin_options. Absent when it cannot be limited. */
+            readonly toolsets?: readonly string[];
         };
         readonly PluginAuthorization: {
             /** @description The URL the browser should open to finish the login. */
@@ -3784,6 +3796,19 @@ export type components = {
             readonly instructions?: string;
             /** @description A catalog plugin the config names under plugins or user_plugins. */
             readonly plugin: string;
+        };
+        /** @description How an agent reaches one catalog plugin it names, and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take. */
+        readonly PluginOptions: {
+            /** @description A catalog plugin id. It applies once the config names the plugin under plugins or user_plugins, and to the app's login made from the dashboard. */
+            readonly plugin: string;
+            /** @description Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear. */
+            readonly readonly?: boolean;
+            /** @description The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set. */
+            readonly scopes?: readonly string[];
+            /** @description Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool. */
+            readonly tools?: readonly string[];
+            /** @description Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login. */
+            readonly toolsets?: readonly string[];
         };
         /** @description What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. */
         readonly Policy: {
@@ -4738,6 +4763,8 @@ export type components = {
             readonly name: string;
             /** @description MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives. */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. */
+            readonly plugin_options?: readonly components["schemas"]["PluginOptions"][];
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];

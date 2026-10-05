@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -385,6 +386,7 @@ func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
 	write(t, root, "agent.yaml", `mcp_servers:
   - name: tablejourney
     url: https://tablejourney.com/mcp
+    tools: [search_*]
 `)
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
@@ -396,8 +398,43 @@ func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
 	router.mu.Lock()
 	defer router.mu.Unlock()
 	servers := router.syncs[0].McpServers
-	if servers == nil || len(*servers) != 1 || (*servers)[0].Name != "tablejourney" || (*servers)[0].Url != "https://tablejourney.com/mcp" {
+	if servers == nil || len(*servers) != 1 || (*servers)[0].Name != "tablejourney" || (*servers)[0].Url != "https://tablejourney.com/mcp" ||
+		(*servers)[0].Tools == nil || strings.Join(*(*servers)[0].Tools, ",") != "search_*" {
 		t.Errorf("the MCP servers went as %+v", servers)
+	}
+}
+
+func TestSyncSendsHowEachPluginIsReached(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", `user_plugins: [linear, calcom]
+plugin_options:
+  - plugin: linear
+    readonly: true
+    scopes: [read]
+  - plugin: calcom
+    toolsets: [bookings, availability]
+    tools: [get_bookings, get_availability]
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	options := router.syncs[0].PluginOptions
+	if options == nil || len(*options) != 2 || (*options)[0].Plugin != "linear" ||
+		(*options)[0].Readonly == nil || !*(*options)[0].Readonly ||
+		(*options)[0].Scopes == nil || len(*(*options)[0].Scopes) != 1 || (*(*options)[0].Scopes)[0] != "read" {
+		t.Fatalf("the plugin options went as %+v", options)
+	}
+	if toolsets := (*options)[1].Toolsets; toolsets == nil || strings.Join(*toolsets, ",") != "bookings,availability" {
+		t.Errorf("calcom's toolsets went as %+v", toolsets)
+	}
+	if tools := (*options)[1].Tools; tools == nil || strings.Join(*tools, ",") != "get_bookings,get_availability" {
+		t.Errorf("calcom's tools went as %+v", tools)
 	}
 }
 

@@ -97,6 +97,20 @@ func (s *UserPluginsSuite) TestAConnectedUserReachesTheirAccount() {
 	s.Equal("standup at 10", answered)
 }
 
+func (s *UserPluginsSuite) TestAToolTheAgentLeftOutIsNeitherListedNorRun() {
+	s.calendar.Tools = []string{"free_busy"}
+	s.runner.named["google_calendar"] = s.calendar
+	s.connect("good-token")
+
+	listed := s.run("google_calendar__list_tools", "")
+	_, err := s.runner.Run(context.Background(), llm.ToolCall{
+		ID: uuid.NewString(), Name: "google_calendar__call_tool", Arguments: `{"tool":"list_events","arguments":{}}`,
+	})
+
+	s.JSONEq(`{"tools":[]}`, listed)
+	s.Error(err)
+}
+
 func (s *UserPluginsSuite) TestALoginTheProviderRefusesIsAskedForAgain() {
 	s.connect("revoked-token")
 

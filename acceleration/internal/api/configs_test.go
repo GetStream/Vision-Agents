@@ -220,6 +220,105 @@ func (s *ConfigsSuite) TestAConfigRemembersTheMCPServersItNamesByURL() {
 	s.Nil(patched.McpServers)
 }
 
+func (s *ConfigsSuite) TestAConfigRemembersHowItReachesAPlugin() {
+	created := s.createConfig(map[string]any{
+		"name":           "triage",
+		"user_plugins":   []string{"linear"},
+		"plugin_options": []map[string]any{{"plugin": "linear", "readonly": true, "scopes": []string{"read", " "}}},
+	})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal([]PluginOptions{{Plugin: "linear", Readonly: pointerTo(true), Scopes: &[]string{"read"}}},
+		value(read.PluginOptions))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"plugin_options": []map[string]any{}}, &patched))
+	s.Nil(patched.PluginOptions)
+}
+
+func (s *ConfigsSuite) TestAReadonlyPluginWithNoReadOnlyEndpointIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":           "triage",
+		"plugins":        []string{"sentry"},
+		"plugin_options": []map[string]any{{"plugin": "sentry", "readonly": true}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "read-only")
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersWhichToolsetsAPluginIsLimitedTo() {
+	created := s.createConfig(map[string]any{
+		"name":           "scheduler",
+		"user_plugins":   []string{"calcom"},
+		"plugin_options": []map[string]any{{"plugin": "calcom", "toolsets": []string{"bookings", "availability"}}},
+	})
+
+	s.Equal([]PluginOptions{{Plugin: "calcom", Toolsets: &[]string{"bookings", "availability"}}},
+		value(created.PluginOptions))
+}
+
+func (s *ConfigsSuite) TestAToolsetThePluginDoesNotHaveIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":           "scheduler",
+		"plugin_options": []map[string]any{{"plugin": "calcom", "toolsets": []string{"invoices"}}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "invoices")
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEachServerOffers() {
+	created := s.createConfig(map[string]any{
+		"name":           "researcher",
+		"user_plugins":   []string{"google_drive"},
+		"plugin_options": []map[string]any{{"plugin": "google_drive", "tools": []string{"search_files", "read_*"}}},
+		"mcp_servers": []map[string]any{
+			{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"search_restaurants"}},
+		},
+	})
+
+	s.Equal([]PluginOptions{{Plugin: "google_drive", Tools: &[]string{"search_files", "read_*"}}},
+		value(created.PluginOptions))
+	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp", Tools: &[]string{"search_restaurants"}}},
+		value(created.McpServers))
+}
+
+func (s *ConfigsSuite) TestAToolPatternThatCannotBeReadIsRefused() {
+	for _, body := range []map[string]any{
+		{"name": "researcher", "plugin_options": []map[string]any{{"plugin": "google_drive", "tools": []string{"read_[*"}}}},
+		{"name": "researcher", "mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"read_[*"}}}},
+	} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", body)
+
+		s.Equal(http.StatusBadRequest, status)
+		s.Contains(failure, "read_[*")
+	}
+}
+
+func (s *ConfigsSuite) TestAScopeThePluginsServerDoesNotAcceptIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":           "researcher",
+		"plugin_options": []map[string]any{{"plugin": "google_drive", "scopes": []string{"https://www.googleapis.com/auth/gmail.readonly"}}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "gmail.readonly")
+}
+
+func (s *ConfigsSuite) TestOptionsForAPluginNotInTheCatalogAreRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":           "triage",
+		"plugin_options": []map[string]any{{"plugin": "jira", "readonly": true}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "jira")
+}
+
 func (s *ConfigsSuite) TestAnMCPServerThatCannotBeNamedOrReachedSafelyIsRefused() {
 	for _, refused := range []struct {
 		server  map[string]any

@@ -157,6 +157,7 @@ from .plugin_connection import PluginConnection
 from .plugin_connection_status import PluginConnectionStatus
 from .plugin_event import PluginEvent
 from .plugin_event_arguments import PluginEventArguments
+from .plugin_options import PluginOptions
 from .policy import Policy
 from .policy_tags import PolicyTags
 from .prepare_voice_request import PrepareVoiceRequest
@@ -440,6 +441,7 @@ __all__ = (
     "PluginConnectionStatus",
     "PluginEvent",
     "PluginEventArguments",
+    "PluginOptions",
     "Policy",
     "PolicyTags",
     "PrepareVoiceRequest",

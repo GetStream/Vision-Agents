@@ -3,6 +3,7 @@ package plugins
 import (
 	"embed"
 	"fmt"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -29,8 +30,34 @@ type Plugin struct {
 	InstanceHint     string `yaml:"instance_hint"`
 	// Scopes are asked for at consent. Empty asks for none and takes the server's default.
 	Scopes []string `yaml:"scopes"`
+	// ScopesSupported are what the server's protected-resource metadata says it accepts,
+	// which an agent's own scopes must come from. Empty checks nothing.
+	ScopesSupported []string `yaml:"scopes_supported"`
 	// AuthorizeParams go on the authorize URL as well, for a provider that needs them.
 	AuthorizeParams map[string]string `yaml:"authorize_params"`
+	// ReadonlyURL is the server's read-only endpoint, for a vendor that runs one, and
+	// ReadonlyScopes what is asked for at consent there instead of Scopes.
+	ReadonlyURL    string   `yaml:"readonly_url"`
+	ReadonlyScopes []string `yaml:"readonly_scopes"`
+	// Toolsets are the groups of tools the server can be limited to, by a toolsets query
+	// parameter on its URL. Empty means it cannot be.
+	Toolsets []string `yaml:"toolsets"`
+	// Tools are the agent's own allowlist of the server's tools, as names or path.Match
+	// patterns, set by Configured. Empty offers every tool.
+	Tools []string `yaml:"-"`
+}
+
+// Options are what an agent config changes about a catalog plugin.
+type Options struct {
+	// Readonly reaches the read-only endpoint.
+	Readonly bool
+	// Scopes are asked for at consent in place of the catalog's.
+	Scopes []string
+	// Toolsets limit the server to these groups of tools. Empty offers every tool.
+	Toolsets []string
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	// Empty offers every tool.
+	Tools []string
 }
 
 type catalogFile struct {
@@ -129,6 +156,42 @@ func Search(query string) []Plugin {
 		}
 	}
 	return found
+}
+
+// Configured is the plugin as an agent config asks for it: at its read-only endpoint when
+// readonly is set, asking for scopes at consent when any are given, and limited to the
+// toolsets and tools named.
+func (p Plugin) Configured(options Options) (Plugin, error) {
+	supported := p.ScopesSupported
+	if options.Readonly {
+		if p.ReadonlyURL == "" {
+			return Plugin{}, fmt.Errorf("plugins: %s has no read-only endpoint", p.Name)
+		}
+		p.URL = p.ReadonlyURL
+		p.Scopes = p.ReadonlyScopes
+		supported = p.ReadonlyScopes
+	}
+	if len(options.Scopes) > 0 {
+		for _, scope := range options.Scopes {
+			if len(supported) > 0 && !slices.Contains(supported, scope) {
+				return Plugin{}, fmt.Errorf("plugins: %s does not accept the scope %q", p.Name, scope)
+			}
+		}
+		p.Scopes = options.Scopes
+	}
+	if err := CheckToolPatterns(options.Tools); err != nil {
+		return Plugin{}, err
+	}
+	p.Tools = options.Tools
+	if len(options.Toolsets) > 0 {
+		for _, toolset := range options.Toolsets {
+			if !slices.Contains(p.Toolsets, toolset) {
+				return Plugin{}, fmt.Errorf("plugins: %s has no toolset %q", p.Name, toolset)
+			}
+		}
+		p.URL += "?toolsets=" + strings.Join(options.Toolsets, ",")
+	}
+	return p, nil
 }
 
 // Endpoint is the MCP URL this plugin is reached at. An instance is the shop or org

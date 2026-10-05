@@ -26,6 +26,7 @@ from ._generated.models import (
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
     McpServer,
+    PluginOptions,
     SandboxOptions,
     SimulationDeclaration,
     SimulationDeclarationMode,
@@ -355,9 +356,20 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.plugins = settings.plugins
     if settings.user_plugins:
         body.user_plugins = settings.user_plugins
+    if settings.plugin_options:
+        body.plugin_options = [
+            PluginOptions(
+                plugin=option.plugin,
+                readonly=option.readonly,
+                scopes=option.scopes,
+                toolsets=option.toolsets,
+                tools=option.tools,
+            )
+            for option in settings.plugin_options
+        ]
     if settings.mcp_servers:
         body.mcp_servers = [
-            McpServer(name=server.name, url=server.url)
+            McpServer(name=server.name, url=server.url, tools=server.tools)
             for server in settings.mcp_servers
         ]
     if settings.keyterms:

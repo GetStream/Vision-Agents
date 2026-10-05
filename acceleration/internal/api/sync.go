@@ -39,6 +39,7 @@ type SyncAgentRequest struct {
 	Plugins       *[]string                  `json:"plugins,omitempty"`
 	UserPlugins   *[]string                  `json:"user_plugins,omitempty" doc:"Plugins each end user connects with their own account, from the conversation, the first time the agent needs one."`
 	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
+	PluginOptions *[]PluginOptions           `json:"plugin_options,omitempty" maxItems:"32" doc:"How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for."`
 	McpServers    *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
@@ -176,6 +177,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := pluginEventsComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := pluginOptionsComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
@@ -403,6 +407,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.PluginEvents != nil {
 		config.PluginEvents = pluginEventsOf(body.PluginEvents)
+	}
+	if body.PluginOptions != nil {
+		config.PluginOptions = pluginOptionsOf(body.PluginOptions)
 	}
 	if body.McpServers != nil {
 		config.MCPServers = mcpServersOf(body.McpServers)

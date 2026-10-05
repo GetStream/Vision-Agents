@@ -19,6 +19,24 @@ user_plugins:
   - calendly
   - calcom
   - slack
+# How a plugin is reached and what its login asks for. Left out, each is the catalog's:
+# Linear at https://mcp.linear.app/mcp, asking for read and write. readonly reaches
+# https://mcp.linear.app/mcp/readonly instead, which has no tool that writes and asks only
+# for read; scopes replaces what the login asks for. A login made before a change keeps
+# what it was granted, so connect again after changing either. toolsets limits Cal.com to
+# some of its tools, and needs no new login. tools offers the model only the tools named,
+# or matching a pattern such as get_*, on any plugin or MCP server; left out, all of them.
+# plugin_options:
+#   - plugin: linear
+#     readonly: true
+#     scopes: [read]
+#     tools: [list_issues, get_issue]
+#   - plugin: calcom
+#     toolsets: [bookings, availability, event-types]
+#   - plugin: google_drive
+#     scopes:
+#       - https://www.googleapis.com/auth/drive.readonly
+#       - https://www.googleapis.com/auth/drive.file
 # Any other MCP server, by its URL. The router opens it for every conversation, with no
 # login, and offers its tools as tablejourney__<tool>.
 mcp_servers:
