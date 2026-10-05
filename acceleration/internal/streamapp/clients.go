@@ -250,9 +250,10 @@ func (c *Clients) Rejected(identity Identity) bool {
 	return true
 }
 
-// resolve asks the source, or reuses an answer younger than identityTTL. Errors are kept
-// too, for the same time, so a customer with nothing configured does not ask on every
-// write.
+// resolve asks the source, or reuses an answer younger than identityTTL. A settled refusal
+// is kept too, for the same time, so a customer with nothing configured does not ask on
+// every write. Any other error is the asking's, a database that blipped or a request that
+// ended, and says nothing about the customer, so the next use asks again.
 func (c *Clients) resolve(asked resolution, ask func() (Identity, error)) (Identity, error) {
 	c.mu.Lock()
 	if answer, ok := c.known[asked]; ok && c.now().Sub(answer.at) < identityTTL {
@@ -268,10 +269,19 @@ func (c *Clients) resolve(asked resolution, ask func() (Identity, error)) (Ident
 	defer c.mu.Unlock()
 	// An app written while this was being asked may have changed the answer, which is then
 	// asked again next time rather than kept.
-	if c.generation[asked.customer] == before {
+	if c.generation[asked.customer] == before && settled(err) {
 		c.known[asked] = resolved{identity: identity, err: err, at: c.now()}
 	}
 	return identity, err
+}
+
+// settled reports whether an answer says how the customer stands: an identity, or a
+// refusal that describes the customer's app or the deployment's and holds until one of
+// them changes. A deployment app not known yet is a wait, which may end at any moment.
+func settled(err error) bool {
+	return err == nil || errors.Is(err, ErrNoIdentity) || errors.Is(err, ErrStreamAppMoved) ||
+		errors.Is(err, ErrStreamAppDisconnected) || errors.Is(err, ErrReadOnly) ||
+		errors.Is(err, ErrDeploymentAppMismatch)
 }
 
 // bind is the client for an identity's credential, built the first time it is needed.

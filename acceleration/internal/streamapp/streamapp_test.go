@@ -191,6 +191,46 @@ func (s *StreamAppSuite) TestInvalidateMakesTheNextResolutionReadTheSource() {
 	s.Equal(int32(2), source.asked.Load())
 }
 
+// failingOnce fails its first resolution with err, and answers as its source does after.
+type failingOnce struct {
+	Source
+	err   error
+	asked atomic.Int32
+}
+
+func (f *failingOnce) For(ctx context.Context, customer string) (Identity, error) {
+	if f.asked.Add(1) == 1 {
+		return Identity{}, f.err
+	}
+	return f.Source.For(ctx, customer)
+}
+
+func (s *StreamAppSuite) TestAFailedResolutionIsAskedAgainNotKept() {
+	// One request that ended, or one blip of the database, is not the customer's answer
+	// for everybody else's requests.
+	clients := NewClients(&failingOnce{Source: deployment(), err: context.Canceled}, ClientsOptions{})
+
+	_, err := clients.For(context.Background(), "acme")
+	s.Require().ErrorIs(err, context.Canceled)
+	bound, err := clients.For(context.Background(), "acme")
+
+	s.Require().NoError(err)
+	s.Equal("deploy-key", bound.Identity.APIKey)
+}
+
+func (s *StreamAppSuite) TestASettledRefusalIsKept() {
+	// A customer with nothing configured does not ask the source on every write.
+	source := &failingOnce{Source: deployment(), err: ErrNoIdentity}
+	clients := NewClients(source, ClientsOptions{})
+
+	_, err := clients.For(context.Background(), "acme")
+	s.Require().ErrorIs(err, ErrNoIdentity)
+	_, err = clients.For(context.Background(), "acme")
+
+	s.ErrorIs(err, ErrNoIdentity)
+	s.Equal(int32(1), source.asked.Load())
+}
+
 func (s *StreamAppSuite) TestConcurrentFirstUseSharesOneClient() {
 	clients := NewClients(deployment(), ClientsOptions{})
 	got := make([]*getstream.Stream, 32)
