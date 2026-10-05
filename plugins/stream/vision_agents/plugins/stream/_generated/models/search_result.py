@@ -17,25 +17,25 @@ class SearchResult:
     """
     Attributes:
         url (str):
-        title (str | Unset):
-        text (str | Unset): The relevant extract, which is what a model reads.
         score (float | Unset): How relevant the provider judged it.
+        text (str | Unset): The relevant extract, which is what a model reads.
+        title (str | Unset):
     """
 
     url: str
-    title: str | Unset = UNSET
-    text: str | Unset = UNSET
     score: float | Unset = UNSET
+    text: str | Unset = UNSET
+    title: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         url = self.url
 
-        title = self.title
+        score = self.score
 
         text = self.text
 
-        score = self.score
+        title = self.title
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -44,12 +44,12 @@ class SearchResult:
                 "url": url,
             }
         )
-        if title is not UNSET:
-            field_dict["title"] = title
-        if text is not UNSET:
-            field_dict["text"] = text
         if score is not UNSET:
             field_dict["score"] = score
+        if text is not UNSET:
+            field_dict["text"] = text
+        if title is not UNSET:
+            field_dict["title"] = title
 
         return field_dict
 
@@ -58,17 +58,17 @@ class SearchResult:
         d = dict(src_dict)
         url = d.pop("url")
 
-        title = d.pop("title", UNSET)
+        score = d.pop("score", UNSET)
 
         text = d.pop("text", UNSET)
 
-        score = d.pop("score", UNSET)
+        title = d.pop("title", UNSET)
 
         search_result = cls(
             url=url,
-            title=title,
-            text=text,
             score=score,
+            text=text,
+            title=title,
         )
 
         search_result.additional_properties = d

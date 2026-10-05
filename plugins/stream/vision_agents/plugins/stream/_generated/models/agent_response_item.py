@@ -22,36 +22,40 @@ T = TypeVar("T", bound="AgentResponseItem")
 class AgentResponseItem:
     """
     Attributes:
-        response_id (str):
+        at (datetime.datetime):
+        kind (AgentResponseItemKind):
         ordinal (int): The position within the response, assigned by the writer rather than by the database, so items
             keep the order they happened in.
-        kind (AgentResponseItemKind):
-        at (datetime.datetime):
+        response_id (str):
+        payload (AgentResponseItemPayload | Unset): Whatever the kind carries that text cannot: a tool's arguments, a
+            guardrail's reason, the id that ties a call to its result.
         session_id (str | Unset):
         text (str | Unset):
         tool_name (str | Unset):
-        payload (AgentResponseItemPayload | Unset): Whatever the kind carries that text cannot: a tool's arguments, a
-            guardrail's reason, the id that ties a call to its result.
     """
 
-    response_id: str
-    ordinal: int
-    kind: AgentResponseItemKind
     at: datetime.datetime
+    kind: AgentResponseItemKind
+    ordinal: int
+    response_id: str
+    payload: AgentResponseItemPayload | Unset = UNSET
     session_id: str | Unset = UNSET
     text: str | Unset = UNSET
     tool_name: str | Unset = UNSET
-    payload: AgentResponseItemPayload | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        response_id = self.response_id
-
-        ordinal = self.ordinal
+        at = self.at.isoformat()
 
         kind = self.kind.value
 
-        at = self.at.isoformat()
+        ordinal = self.ordinal
+
+        response_id = self.response_id
+
+        payload: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.payload, Unset):
+            payload = self.payload.to_dict()
 
         session_id = self.session_id
 
@@ -59,28 +63,24 @@ class AgentResponseItem:
 
         tool_name = self.tool_name
 
-        payload: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.payload, Unset):
-            payload = self.payload.to_dict()
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "response_id": response_id,
-                "ordinal": ordinal,
-                "kind": kind,
                 "at": at,
+                "kind": kind,
+                "ordinal": ordinal,
+                "response_id": response_id,
             }
         )
+        if payload is not UNSET:
+            field_dict["payload"] = payload
         if session_id is not UNSET:
             field_dict["session_id"] = session_id
         if text is not UNSET:
             field_dict["text"] = text
         if tool_name is not UNSET:
             field_dict["tool_name"] = tool_name
-        if payload is not UNSET:
-            field_dict["payload"] = payload
 
         return field_dict
 
@@ -91,19 +91,13 @@ class AgentResponseItem:
         )
 
         d = dict(src_dict)
-        response_id = d.pop("response_id")
-
-        ordinal = d.pop("ordinal")
+        at = datetime.datetime.fromisoformat(d.pop("at"))
 
         kind = AgentResponseItemKind(d.pop("kind"))
 
-        at = datetime.datetime.fromisoformat(d.pop("at"))
+        ordinal = d.pop("ordinal")
 
-        session_id = d.pop("session_id", UNSET)
-
-        text = d.pop("text", UNSET)
-
-        tool_name = d.pop("tool_name", UNSET)
+        response_id = d.pop("response_id")
 
         _payload = d.pop("payload", UNSET)
         payload: AgentResponseItemPayload | Unset
@@ -112,15 +106,21 @@ class AgentResponseItem:
         else:
             payload = AgentResponseItemPayload.from_dict(_payload)
 
+        session_id = d.pop("session_id", UNSET)
+
+        text = d.pop("text", UNSET)
+
+        tool_name = d.pop("tool_name", UNSET)
+
         agent_response_item = cls(
-            response_id=response_id,
-            ordinal=ordinal,
-            kind=kind,
             at=at,
+            kind=kind,
+            ordinal=ordinal,
+            response_id=response_id,
+            payload=payload,
             session_id=session_id,
             text=text,
             tool_name=tool_name,
-            payload=payload,
         )
 
         agent_response_item.additional_properties = d

@@ -16,25 +16,25 @@ T = TypeVar("T", bound="RollupResult")
 class RollupResult:
     """
     Attributes:
-        granularity (Granularity):
         buckets_written (int):
+        granularity (Granularity):
     """
 
-    granularity: Granularity
     buckets_written: int
+    granularity: Granularity
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        granularity = self.granularity.value
-
         buckets_written = self.buckets_written
+
+        granularity = self.granularity.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "granularity": granularity,
                 "buckets_written": buckets_written,
+                "granularity": granularity,
             }
         )
 
@@ -43,13 +43,13 @@ class RollupResult:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        granularity = Granularity(d.pop("granularity"))
-
         buckets_written = d.pop("buckets_written")
 
+        granularity = Granularity(d.pop("granularity"))
+
         rollup_result = cls(
-            granularity=granularity,
             buckets_written=buckets_written,
+            granularity=granularity,
         )
 
         rollup_result.additional_properties = d

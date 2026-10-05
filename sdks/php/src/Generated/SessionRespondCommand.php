@@ -11,8 +11,8 @@ use GetStream\VisionAgents\Json;
 final readonly class SessionRespondCommand
 {
     public function __construct(
-        public string $type,
         public string $text,
+        public string $type,
         // Required for personal persistent text conversations; reuse on retries. Text only when present.
         public ?string $commandId = null,
         /** @var list<ImageSource>|null */
@@ -26,8 +26,8 @@ final readonly class SessionRespondCommand
     public static function fromArray(array $data): self
     {
         return new self(
-            type: Json::string($data, 'type'),
             text: Json::string($data, 'text'),
+            type: Json::string($data, 'type'),
             commandId: array_key_exists('command_id', $data) && $data['command_id'] !== null ? Json::string($data, 'command_id') : null,
             images: array_key_exists('images', $data) && $data['images'] !== null ? array_map(ImageSource::fromArray(...), Json::objects($data, 'images')) : null,
         );
@@ -41,8 +41,8 @@ final readonly class SessionRespondCommand
     public function toArray(): array
     {
         $out = [];
-        $out['type'] = $this->type;
         $out['text'] = $this->text;
+        $out['type'] = $this->type;
         if ($this->commandId !== null) {
             $out['command_id'] = $this->commandId;
         }

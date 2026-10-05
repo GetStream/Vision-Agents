@@ -11,13 +11,13 @@ use GetStream\VisionAgents\Json;
 final readonly class IndexedKnowledgeDocument
 {
     public function __construct(
+        public \DateTimeImmutable $createdAt,
         public string $id,
         public string $namespace,
-        // What the document was posted as, and what its passages are keyed by.
-        public string $source,
         // How many passages it was last cut into.
         public int $passages,
-        public \DateTimeImmutable $createdAt,
+        // What the document was posted as, and what its passages are keyed by.
+        public string $source,
         // When it was last written.
         public \DateTimeImmutable $updatedAt,
         // The document as it was last posted. Only reading one document fills it in, and one written before its text...
@@ -31,11 +31,11 @@ final readonly class IndexedKnowledgeDocument
     public static function fromArray(array $data): self
     {
         return new self(
+            createdAt: Json::date($data, 'created_at'),
             id: Json::string($data, 'id'),
             namespace: Json::string($data, 'namespace'),
-            source: Json::string($data, 'source'),
             passages: Json::int($data, 'passages'),
-            createdAt: Json::date($data, 'created_at'),
+            source: Json::string($data, 'source'),
             updatedAt: Json::date($data, 'updated_at'),
             text: array_key_exists('text', $data) && $data['text'] !== null ? Json::string($data, 'text') : null,
         );
@@ -49,11 +49,11 @@ final readonly class IndexedKnowledgeDocument
     public function toArray(): array
     {
         $out = [];
+        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['id'] = $this->id;
         $out['namespace'] = $this->namespace;
-        $out['source'] = $this->source;
         $out['passages'] = $this->passages;
-        $out['created_at'] = Json::dateValue($this->createdAt);
+        $out['source'] = $this->source;
         $out['updated_at'] = Json::dateValue($this->updatedAt);
         if ($this->text !== null) {
             $out['text'] = $this->text;

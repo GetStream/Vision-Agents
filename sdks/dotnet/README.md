@@ -61,8 +61,15 @@ record Weather(string City);
 
 `JoinAsync` creates the Stream call through getstream-net and has the backend join it.
 `ChatAsync` holds the same conversation in writing. `Config = "docs"` starts from a config
-stored under that name, and `ConfigId` from one by id. The model asks for a tool over the
-session socket, this process runs it, and the answer or the exception goes back the same way.
+stored under that name, and `ConfigId` from one by id. The harness is written onto the config
+when it syncs, and every session under that config runs with it. The model asks for a tool over
+the session socket, this process runs it, and the answer or the exception goes back the same way.
+
+A stored config is changed in place, and only what is set is sent:
+
+```csharp
+await api.Agent("support").UpdateConfigAsync(new AgentConfigPatch { Guardrail = "No refunds.", VisibleTools = ["athena_*"] });
+```
 
 On the phone:
 
@@ -94,7 +101,7 @@ dispatch
             return;
         }
         var agent = await dispatch.GetOrCreateAgentAsync(message, () => new Agent(new AgentOptions { ConfigId = message.ConfigId }));
-        await agent.Session!.RespondAsync(message.Text);
+        await agent.Responses.CreateAsync(message.Text);
     });
 
 await dispatch.RunAsync(stopping);
@@ -125,25 +132,38 @@ reason.
 
 ```
 agents/jean/
-  agent.yaml            required: what it runs on (llm, stt, tts, tags, dispatch, ...)
+  agent.yaml            required: what it runs on (llm, stt, tts, speed, harness, tags, dispatch, ...)
   instructions.md
   guardrail.md
   skills/think.md
   knowledge/pricing.md
-  knowledge/urls.yaml
+  knowledge/urls.yaml   urls, or {url, title, description, refresh_hours}
+  simulations/lunch.yaml
   .agent_sync           written by SyncAsync: the fingerprint last synced and when
 ```
 
 ```csharp
 var agent = new Agent(new AgentOptions { Config = "agents/jean" });
 await agent.SyncAsync();
-await agent.Knowledge.AddUrlAsync("https://example.com/pricing", title: "Pricing");
+await agent.Knowledge.AddUrlAsync("https://example.com/pricing", title: "Pricing", refreshHours: 24);
 ```
 
 `SyncAsync` sends the directory in one request. The fingerprint is the one the Go and
 Python SDKs take, so `.agent_sync` written by any of them is read back by this one, and an
 unchanged directory is only read back. A key `agent.yaml` does not know is refused. Joining
-syncs first.
+syncs first. Each file in `simulations/` is a list of `{name, scenario, assertion, mode, ...}`;
+a directory with the folder replaces the agent's simulations, and no directory leaves them alone.
+
+## Simulations
+
+```csharp
+var simulation = await api.Simulations.CreateAsync(new SimulationRequest
+{
+    ConfigId = config.Id, Name = "lunch", Scenario = "Order a club wrap.", Assertion = "One club wrap was ordered.",
+});
+var run = await api.Simulations.RunAsync(simulation.Id);
+run = await api.Simulations.Runs.GetAsync(run.Id);
+```
 
 ## Conversations, going back and branching off
 
@@ -153,19 +173,24 @@ var items = await session.Responses.Items.AllAsync();
 var branch = await session.ForkAsync(new ForkOptions { ResponseId = items[2].ResponseId, Title = "asked again" });
 
 var found = await api.Sessions.SearchAsync("pricing", new SessionQuery { Limit = 20 });
+var live = await api.Sessions.QueryAsync(new SessionQuery { Agent = "docs", State = "live", Cursor = found.NextCursor });
 ```
 
-A text conversation is kept in Stream Chat unless it is `Incognito`, which keeps nothing.
-One kept in Stream Chat cannot be rewound, since the channel still holds the later turns:
-fork it at the response instead.
+Lists come a page at a time: `Items`, and `NextCursor` while `HasMore`. A text conversation
+is kept in Stream Chat unless it is `Incognito`, which keeps nothing. One kept in Stream Chat
+cannot be rewound, since the channel still holds the later turns: fork it at the response instead.
 
-## Changing models mid-conversation
+`CloseAsync` stops a session and keeps what it recorded. `DeleteAsync` deletes it with its turns
+and memories, `DeleteMemoriesAsync` only what it remembered, and
+`api.Memories.TruncateAsync(userId)` everything remembered about a user.
+
+## Changing a session mid-conversation
 
 ```csharp
-await session.UpdateSettingsAsync(new SessionSettingsRequest { Llm = "llm-thinking", Thinking = "high" });
+await session.UpdateAsync(new UpdateSessionRequest { Llm = "llm-thinking", Thinking = "high", Title = "Pricing, thought through" });
 ```
 
-It applies from the next turn; a property left null is left as it is.
+Models and instructions apply from the next turn; a property left null is left as it is.
 
 Somebody who has not signed up is a guest. `GuestUserAsync` mints one, `AsGuest` is a client
 acting for them, and `ClaimGuestUserAsync` moves their conversations onto the account they
@@ -174,19 +199,21 @@ turn out to be.
 ## One modality at a time
 
 ```csharp
+// "healthcare" is a router config: it holds the target each modality runs on.
 var router = api.Router("healthcare");
 
 var transcript = await router.Stt.RecordingAsync(new Recorded { Url = "https://example.com/interview.mp4" });
 var speech = await router.Tts.RecordingAsync("Hello there.");
 var answer = await router.SearchAsync("perioperative antibiotic guidance");
 
-await using var llm = await router.Llm.RealtimeAsync(new LlmOptions { Target = "llm-fast" });
+await using var llm = await router.Llm.RealtimeAsync();
 await llm.AskAsync(new Question { Messages = [new Said("user", "Hello")] });
 await foreach (var delta in llm.ReadAllAsync()) { if (delta.Done) break; }
 ```
 
 `RealtimeAsync` opens the socket; `RecordingAsync` is the batch form, which is cheaper and
-more accurate. Anything named in the options overrides that field of the config.
+more accurate. A router comes from the client and its models from its config; the options
+carry settings such as language, never the target.
 
 ## Working on this package
 

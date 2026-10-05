@@ -18,34 +18,38 @@ T = TypeVar("T", bound="PhoneVendor")
 class PhoneVendor:
     """
     Attributes:
-        vendor (str):  Example: twilio.
+        capabilities (list[PhoneCapability]):
         implemented (bool): Whether this service can actually work with the vendor.
         ready (bool): Implemented and holding every credential it needs.
-        capabilities (list[PhoneCapability]):
+        vendor (str):  Example: twilio.
+        missing_credentials (list[str] | Unset): The environment variables the vendor needs and does not have.
         operations (list[PhoneOperation] | Unset): What this service can do at the vendor. Eight vendors buy numbers and
             two of those also bridge calls, so a number is not bought from a vendor that cannot answer on it by accident.
-        missing_credentials (list[str] | Unset): The environment variables the vendor needs and does not have.
     """
 
-    vendor: str
+    capabilities: list[PhoneCapability]
     implemented: bool
     ready: bool
-    capabilities: list[PhoneCapability]
-    operations: list[PhoneOperation] | Unset = UNSET
+    vendor: str
     missing_credentials: list[str] | Unset = UNSET
+    operations: list[PhoneOperation] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        vendor = self.vendor
+        capabilities = []
+        for capabilities_item_data in self.capabilities:
+            capabilities_item = capabilities_item_data.value
+            capabilities.append(capabilities_item)
 
         implemented = self.implemented
 
         ready = self.ready
 
-        capabilities = []
-        for capabilities_item_data in self.capabilities:
-            capabilities_item = capabilities_item_data.value
-            capabilities.append(capabilities_item)
+        vendor = self.vendor
+
+        missing_credentials: list[str] | Unset = UNSET
+        if not isinstance(self.missing_credentials, Unset):
+            missing_credentials = self.missing_credentials
 
         operations: list[str] | Unset = UNSET
         if not isinstance(self.operations, Unset):
@@ -54,42 +58,40 @@ class PhoneVendor:
                 operations_item = operations_item_data.value
                 operations.append(operations_item)
 
-        missing_credentials: list[str] | Unset = UNSET
-        if not isinstance(self.missing_credentials, Unset):
-            missing_credentials = self.missing_credentials
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "vendor": vendor,
+                "capabilities": capabilities,
                 "implemented": implemented,
                 "ready": ready,
-                "capabilities": capabilities,
+                "vendor": vendor,
             }
         )
-        if operations is not UNSET:
-            field_dict["operations"] = operations
         if missing_credentials is not UNSET:
             field_dict["missing_credentials"] = missing_credentials
+        if operations is not UNSET:
+            field_dict["operations"] = operations
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        vendor = d.pop("vendor")
-
-        implemented = d.pop("implemented")
-
-        ready = d.pop("ready")
-
         capabilities = []
         _capabilities = d.pop("capabilities")
         for capabilities_item_data in _capabilities:
             capabilities_item = PhoneCapability(capabilities_item_data)
 
             capabilities.append(capabilities_item)
+
+        implemented = d.pop("implemented")
+
+        ready = d.pop("ready")
+
+        vendor = d.pop("vendor")
+
+        missing_credentials = cast(list[str], d.pop("missing_credentials", UNSET))
 
         _operations = d.pop("operations", UNSET)
         operations: list[PhoneOperation] | Unset = UNSET
@@ -100,15 +102,13 @@ class PhoneVendor:
 
                 operations.append(operations_item)
 
-        missing_credentials = cast(list[str], d.pop("missing_credentials", UNSET))
-
         phone_vendor = cls(
-            vendor=vendor,
+            capabilities=capabilities,
             implemented=implemented,
             ready=ready,
-            capabilities=capabilities,
-            operations=operations,
+            vendor=vendor,
             missing_credentials=missing_credentials,
+            operations=operations,
         )
 
         phone_vendor.additional_properties = d

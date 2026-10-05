@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from http import HTTPStatus
 from typing import Any, AsyncIterator, List, Optional, Union
 
 from ._backend import Backend
+from ._generated.types import Response
 from ._generated.api.default import (
     create_response,
     list_response_items,
@@ -14,6 +16,8 @@ from ._generated.api.default import (
 from ._generated.models import (
     AgentResponse as ResponseRow,
     AgentResponseItem,
+    AgentResponseItemPage,
+    AgentResponsePage,
     CreateResponseRequest,
     Error,
     ImageSource,
@@ -55,26 +59,24 @@ class Items:
         or a thousand the same way.
         """
         page = min(limit or ITEM_PAGE, ITEM_CEILING)
-        offset = 0
+        cursor = ""
         while True:
-            read = await self.list(limit=page, offset=offset)
-            for item in read:
+            read = await self.list(limit=page, cursor=cursor)
+            for item in read.items:
                 yield item
-            # A short page is the last page. Asking again to see an empty one would double
-            # the requests for every conversation that happens to be a multiple of the page
-            # size, which is not worth avoiding one extra round trip in the rare exact fit.
-            if len(read) < page:
+            if not read.has_more or not read.next_cursor:
                 return
-            offset += len(read)
+            cursor = read.next_cursor
 
     async def list(
-        self, limit: Optional[int] = None, offset: Optional[int] = None
-    ) -> list[AgentResponseItem]:
-        """One page of items, for a caller doing its own paging."""
+        self, limit: Optional[int] = None, cursor: Optional[str] = None
+    ) -> AgentResponseItemPage:
+        """One page of items, for a caller doing its own paging. An empty cursor is the first
+        page, and the page's ``next_cursor`` the next."""
         listed = await list_response_items.asyncio(
             self._session_id,
             client=self._backend.client(),
-            **_set(response_id=self._response_id, limit=limit, offset=offset),
+            **_set(response_id=self._response_id, limit=limit, cursor=cursor),
         )
         return _unwrapped(listed, f"reading the items of {self._session_id}")
 
@@ -156,13 +158,14 @@ class Responses:
         )
 
     async def list(
-        self, limit: Optional[int] = None, offset: Optional[int] = None
-    ) -> list[ResponseRow]:
-        """The turns so far, oldest first."""
+        self, limit: Optional[int] = None, cursor: Optional[str] = None
+    ) -> AgentResponsePage:
+        """A page of the turns so far, oldest first. Pass the page's ``next_cursor`` for the
+        next one."""
         listed = await list_responses.asyncio(
             self._session_id,
             client=self._backend.client(),
-            **_set(limit=limit, offset=offset),
+            **_set(limit=limit, cursor=cursor),
         )
         return _unwrapped(listed, f"reading the turns of {self._session_id}")
 
@@ -209,6 +212,15 @@ def _unwrapped(answer: Any, what: str) -> Any:
     if answer is None:
         raise RouterError(f"{what}: the router answered with nothing")
     return answer
+
+
+def _deleted(answer: Response[Any], what: str) -> None:
+    """Raise what the router said instead of the 204 a delete answers with."""
+    if answer.status_code == HTTPStatus.NO_CONTENT:
+        return
+    if isinstance(answer.parsed, Error):
+        raise RouterError(f"{what}: {answer.parsed.error}")
+    raise RouterError(f"{what}: the router answered {answer.status_code}")
 
 
 def _set(**values: Any) -> dict[str, Any]:

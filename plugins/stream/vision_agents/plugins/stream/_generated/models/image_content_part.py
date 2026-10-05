@@ -20,25 +20,25 @@ T = TypeVar("T", bound="ImageContentPart")
 class ImageContentPart:
     """
     Attributes:
-        type_ (ImageContentPartType):
         image_url (ImageSource):
+        type_ (ImageContentPartType):
     """
 
-    type_: ImageContentPartType
     image_url: ImageSource
+    type_: ImageContentPartType
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        type_ = self.type_.value
-
         image_url = self.image_url.to_dict()
+
+        type_ = self.type_.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "type": type_,
                 "image_url": image_url,
+                "type": type_,
             }
         )
 
@@ -49,13 +49,13 @@ class ImageContentPart:
         from ..models.image_source import ImageSource
 
         d = dict(src_dict)
-        type_ = ImageContentPartType(d.pop("type"))
-
         image_url = ImageSource.from_dict(d.pop("image_url"))
 
+        type_ = ImageContentPartType(d.pop("type"))
+
         image_content_part = cls(
-            type_=type_,
             image_url=image_url,
+            type_=type_,
         )
 
         image_content_part.additional_properties = d

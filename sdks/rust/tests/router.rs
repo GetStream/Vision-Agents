@@ -6,9 +6,7 @@ use support::Server;
 use vision_agents::{Ask, Error, Recording, Router, types};
 
 fn router(server: &Server) -> Router {
-    Router::new(server.client())
-        .config("fast")
-        .tags([("env", "test")])
+    server.client().router("fast").tags([("env", "test")])
 }
 
 #[tokio::test]
@@ -18,7 +16,7 @@ async fn a_transcriber_opens_with_a_start_frame_and_hears_transcripts() {
     let opening = tokio::spawn(async move {
         router
             .transcriber(types::SttOptions {
-                target: Some("deepgram/nova-3".into()),
+                eager_end_of_turn: Some(true),
                 ..Default::default()
             })
             .await
@@ -29,8 +27,8 @@ async fn a_transcriber_opens_with_a_start_frame_and_hears_transcripts() {
     assert_eq!(socket.path, "/v1/stt/stream");
     assert_eq!(
         socket.next().await.unwrap(),
-        json!({"type": "start", "config_id": "fast", "target": "deepgram/nova-3", "tags": {"env": "test"}, "sample_rate": 16000,
-               "stt": {"target": "deepgram/nova-3"}})
+        json!({"type": "start", "config_id": "fast", "tags": {"env": "test"}, "sample_rate": 16000,
+               "stt": {"eager_end_of_turn": true}})
     );
     transcriber.send_audio(&[1, 2, 3, 4]).await.unwrap();
     assert_eq!(socket.next_binary().await, [1, 2, 3, 4]);
@@ -42,6 +40,28 @@ async fn a_transcriber_opens_with_a_start_frame_and_hears_transcripts() {
     assert_eq!(transcript.kind(), "transcript");
     assert_eq!(transcript.text("text"), "hello");
     assert!(transcript.flag("final"));
+}
+
+#[tokio::test]
+async fn a_router_without_a_config_names_its_target_at_the_top_of_the_start_frame() {
+    let server = Server::start().await;
+    let router = server.client().router("");
+    let opening = tokio::spawn(async move {
+        router
+            .transcriber(types::SttOptions {
+                target: Some("deepgram/nova-3".into()),
+                ..Default::default()
+            })
+            .await
+    });
+    let mut socket = server.accept().await;
+    opening.await.unwrap().unwrap();
+
+    assert_eq!(
+        socket.next().await.unwrap(),
+        json!({"type": "start", "target": "deepgram/nova-3", "sample_rate": 16000,
+               "stt": {"target": "deepgram/nova-3"}})
+    );
 }
 
 #[tokio::test]

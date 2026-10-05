@@ -26,42 +26,42 @@ class ClassifyAnswer:
         Attributes:
             type_ (ClassifyQuestionType): noul is yes or no, answered as the probability of yes. choice picks one of named
                 options. score places the state along ordered levels.
-            yes (float | Unset): The probability a noul is true, from 0 to 1.
             chosen (str | Unset): The likeliest option of a choice.
-            level (float | Unset): Where a score landed, which may be between two of its levels.
+            confidence (float | Unset): How peaked the distribution is, not whether acting on it is safe.
             legend (ClassifyAnswerLegend | Unset): A score's levels by index, as decimal strings.
+            level (float | Unset): Where a score landed, which may be between two of its levels.
             probabilities (ClassifyAnswerProbabilities | Unset): The distribution the answer came from: options for a
                 choice, level indices for a score. They sum to one.
-            confidence (float | Unset): How peaked the distribution is, not whether acting on it is safe.
+            yes (float | Unset): The probability a noul is true, from 0 to 1.
     """
 
     type_: ClassifyQuestionType
-    yes: float | Unset = UNSET
     chosen: str | Unset = UNSET
-    level: float | Unset = UNSET
-    legend: ClassifyAnswerLegend | Unset = UNSET
-    probabilities: ClassifyAnswerProbabilities | Unset = UNSET
     confidence: float | Unset = UNSET
+    legend: ClassifyAnswerLegend | Unset = UNSET
+    level: float | Unset = UNSET
+    probabilities: ClassifyAnswerProbabilities | Unset = UNSET
+    yes: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         type_ = self.type_.value
 
-        yes = self.yes
-
         chosen = self.chosen
 
-        level = self.level
+        confidence = self.confidence
 
         legend: dict[str, Any] | Unset = UNSET
         if not isinstance(self.legend, Unset):
             legend = self.legend.to_dict()
 
+        level = self.level
+
         probabilities: dict[str, Any] | Unset = UNSET
         if not isinstance(self.probabilities, Unset):
             probabilities = self.probabilities.to_dict()
 
-        confidence = self.confidence
+        yes = self.yes
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -70,18 +70,18 @@ class ClassifyAnswer:
                 "type": type_,
             }
         )
-        if yes is not UNSET:
-            field_dict["yes"] = yes
         if chosen is not UNSET:
             field_dict["chosen"] = chosen
-        if level is not UNSET:
-            field_dict["level"] = level
-        if legend is not UNSET:
-            field_dict["legend"] = legend
-        if probabilities is not UNSET:
-            field_dict["probabilities"] = probabilities
         if confidence is not UNSET:
             field_dict["confidence"] = confidence
+        if legend is not UNSET:
+            field_dict["legend"] = legend
+        if level is not UNSET:
+            field_dict["level"] = level
+        if probabilities is not UNSET:
+            field_dict["probabilities"] = probabilities
+        if yes is not UNSET:
+            field_dict["yes"] = yes
 
         return field_dict
 
@@ -97,11 +97,9 @@ class ClassifyAnswer:
         d = dict(src_dict)
         type_ = ClassifyQuestionType(d.pop("type"))
 
-        yes = d.pop("yes", UNSET)
-
         chosen = d.pop("chosen", UNSET)
 
-        level = d.pop("level", UNSET)
+        confidence = d.pop("confidence", UNSET)
 
         _legend = d.pop("legend", UNSET)
         legend: ClassifyAnswerLegend | Unset
@@ -110,6 +108,8 @@ class ClassifyAnswer:
         else:
             legend = ClassifyAnswerLegend.from_dict(_legend)
 
+        level = d.pop("level", UNSET)
+
         _probabilities = d.pop("probabilities", UNSET)
         probabilities: ClassifyAnswerProbabilities | Unset
         if isinstance(_probabilities, Unset):
@@ -117,16 +117,16 @@ class ClassifyAnswer:
         else:
             probabilities = ClassifyAnswerProbabilities.from_dict(_probabilities)
 
-        confidence = d.pop("confidence", UNSET)
+        yes = d.pop("yes", UNSET)
 
         classify_answer = cls(
             type_=type_,
-            yes=yes,
             chosen=chosen,
-            level=level,
-            legend=legend,
-            probabilities=probabilities,
             confidence=confidence,
+            legend=legend,
+            level=level,
+            probabilities=probabilities,
+            yes=yes,
         )
 
         classify_answer.additional_properties = d

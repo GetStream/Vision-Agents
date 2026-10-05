@@ -17,32 +17,32 @@ T = TypeVar("T", bound="VoiceSample")
 class VoiceSample:
     """
     Attributes:
-        id (str):
         created_at (datetime.datetime):
-        filename (str | Unset):
-        content_type (str | Unset):
+        id (str):
         bytes_ (int | Unset):
+        content_type (str | Unset):
+        filename (str | Unset):
         transcript (str | Unset):
     """
 
-    id: str
     created_at: datetime.datetime
-    filename: str | Unset = UNSET
-    content_type: str | Unset = UNSET
+    id: str
     bytes_: int | Unset = UNSET
+    content_type: str | Unset = UNSET
+    filename: str | Unset = UNSET
     transcript: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
-
         created_at = self.created_at.isoformat()
 
-        filename = self.filename
+        id = self.id
+
+        bytes_ = self.bytes_
 
         content_type = self.content_type
 
-        bytes_ = self.bytes_
+        filename = self.filename
 
         transcript = self.transcript
 
@@ -50,16 +50,16 @@ class VoiceSample:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "id": id,
                 "created_at": created_at,
+                "id": id,
             }
         )
-        if filename is not UNSET:
-            field_dict["filename"] = filename
-        if content_type is not UNSET:
-            field_dict["content_type"] = content_type
         if bytes_ is not UNSET:
             field_dict["bytes"] = bytes_
+        if content_type is not UNSET:
+            field_dict["content_type"] = content_type
+        if filename is not UNSET:
+            field_dict["filename"] = filename
         if transcript is not UNSET:
             field_dict["transcript"] = transcript
 
@@ -68,24 +68,24 @@ class VoiceSample:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        id = d.pop("id")
-
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
-        filename = d.pop("filename", UNSET)
+        id = d.pop("id")
+
+        bytes_ = d.pop("bytes", UNSET)
 
         content_type = d.pop("content_type", UNSET)
 
-        bytes_ = d.pop("bytes", UNSET)
+        filename = d.pop("filename", UNSET)
 
         transcript = d.pop("transcript", UNSET)
 
         voice_sample = cls(
-            id=id,
             created_at=created_at,
-            filename=filename,
-            content_type=content_type,
+            id=id,
             bytes_=bytes_,
+            content_type=content_type,
+            filename=filename,
             transcript=transcript,
         )
 

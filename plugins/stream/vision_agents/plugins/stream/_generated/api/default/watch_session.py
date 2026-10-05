@@ -87,9 +87,11 @@ def sync_detailed(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
+    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
+    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
+    and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -123,6 +125,9 @@ def sync_detailed(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -173,9 +178,11 @@ def sync(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
+    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
+    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
+    and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -209,6 +216,9 @@ def sync(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -254,9 +264,11 @@ async def asyncio_detailed(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
+    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
+    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
+    and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -290,6 +302,9 @@ async def asyncio_detailed(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -338,9 +353,11 @@ async def asyncio(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
+    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
+    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
+    and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -374,6 +391,9 @@ async def asyncio(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.

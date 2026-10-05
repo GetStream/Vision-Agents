@@ -18,38 +18,38 @@ T = TypeVar("T", bound="Route")
 class Route:
     """
     Attributes:
+        candidates (list[Candidate]): The models the shortcut resolves to right now, best first.
+        description (str):
         id (str): The shortcut, which is what a config or request names as its target. Example: llm-fast.
         title (str):  Example: Fast conversational.
-        description (str):
-        candidates (list[Candidate]): The models the shortcut resolves to right now, best first.
     """
 
+    candidates: list[Candidate]
+    description: str
     id: str
     title: str
-    description: str
-    candidates: list[Candidate]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
-
-        title = self.title
-
-        description = self.description
-
         candidates = []
         for candidates_item_data in self.candidates:
             candidates_item = candidates_item_data.to_dict()
             candidates.append(candidates_item)
 
+        description = self.description
+
+        id = self.id
+
+        title = self.title
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "candidates": candidates,
+                "description": description,
                 "id": id,
                 "title": title,
-                "description": description,
-                "candidates": candidates,
             }
         )
 
@@ -60,12 +60,6 @@ class Route:
         from ..models.candidate import Candidate
 
         d = dict(src_dict)
-        id = d.pop("id")
-
-        title = d.pop("title")
-
-        description = d.pop("description")
-
         candidates = []
         _candidates = d.pop("candidates")
         for candidates_item_data in _candidates:
@@ -73,11 +67,17 @@ class Route:
 
             candidates.append(candidates_item)
 
+        description = d.pop("description")
+
+        id = d.pop("id")
+
+        title = d.pop("title")
+
         route = cls(
+            candidates=candidates,
+            description=description,
             id=id,
             title=title,
-            description=description,
-            candidates=candidates,
         )
 
         route.additional_properties = d

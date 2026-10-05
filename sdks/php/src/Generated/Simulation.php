@@ -11,20 +11,20 @@ use GetStream\VisionAgents\Json;
 final readonly class Simulation
 {
     public function __construct(
-        public string $id,
-        public string $name,
-        public string $mode,
-        public string $configId,
-        public string $scenario,
         public string $assertion,
-        public int $variations,
-        public int $maxTurns,
+        public string $configId,
         public \DateTimeImmutable $createdAt,
-        public ?string $judgeTarget = null,
+        public string $id,
+        public int $maxTurns,
+        public string $mode,
+        public string $name,
+        public string $scenario,
+        public int $variations,
+        public ?string $callerStt = null,
         public ?string $callerTarget = null,
         public ?string $callerTts = null,
-        public ?string $callerStt = null,
         public ?string $callerVoice = null,
+        public ?string $judgeTarget = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
         public ?\DateTimeImmutable $updatedAt = null,
@@ -37,20 +37,20 @@ final readonly class Simulation
     public static function fromArray(array $data): self
     {
         return new self(
-            id: Json::string($data, 'id'),
-            name: Json::string($data, 'name'),
-            mode: Json::string($data, 'mode'),
-            configId: Json::string($data, 'config_id'),
-            scenario: Json::string($data, 'scenario'),
             assertion: Json::string($data, 'assertion'),
-            variations: Json::int($data, 'variations'),
-            maxTurns: Json::int($data, 'max_turns'),
+            configId: Json::string($data, 'config_id'),
             createdAt: Json::date($data, 'created_at'),
-            judgeTarget: array_key_exists('judge_target', $data) && $data['judge_target'] !== null ? Json::string($data, 'judge_target') : null,
+            id: Json::string($data, 'id'),
+            maxTurns: Json::int($data, 'max_turns'),
+            mode: Json::string($data, 'mode'),
+            name: Json::string($data, 'name'),
+            scenario: Json::string($data, 'scenario'),
+            variations: Json::int($data, 'variations'),
+            callerStt: array_key_exists('caller_stt', $data) && $data['caller_stt'] !== null ? Json::string($data, 'caller_stt') : null,
             callerTarget: array_key_exists('caller_target', $data) && $data['caller_target'] !== null ? Json::string($data, 'caller_target') : null,
             callerTts: array_key_exists('caller_tts', $data) && $data['caller_tts'] !== null ? Json::string($data, 'caller_tts') : null,
-            callerStt: array_key_exists('caller_stt', $data) && $data['caller_stt'] !== null ? Json::string($data, 'caller_stt') : null,
             callerVoice: array_key_exists('caller_voice', $data) && $data['caller_voice'] !== null ? Json::string($data, 'caller_voice') : null,
+            judgeTarget: array_key_exists('judge_target', $data) && $data['judge_target'] !== null ? Json::string($data, 'judge_target') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
             updatedAt: array_key_exists('updated_at', $data) && $data['updated_at'] !== null ? Json::date($data, 'updated_at') : null,
         );
@@ -64,17 +64,17 @@ final readonly class Simulation
     public function toArray(): array
     {
         $out = [];
-        $out['id'] = $this->id;
-        $out['name'] = $this->name;
-        $out['mode'] = $this->mode;
-        $out['config_id'] = $this->configId;
-        $out['scenario'] = $this->scenario;
         $out['assertion'] = $this->assertion;
-        $out['variations'] = $this->variations;
-        $out['max_turns'] = $this->maxTurns;
+        $out['config_id'] = $this->configId;
         $out['created_at'] = Json::dateValue($this->createdAt);
-        if ($this->judgeTarget !== null) {
-            $out['judge_target'] = $this->judgeTarget;
+        $out['id'] = $this->id;
+        $out['max_turns'] = $this->maxTurns;
+        $out['mode'] = $this->mode;
+        $out['name'] = $this->name;
+        $out['scenario'] = $this->scenario;
+        $out['variations'] = $this->variations;
+        if ($this->callerStt !== null) {
+            $out['caller_stt'] = $this->callerStt;
         }
         if ($this->callerTarget !== null) {
             $out['caller_target'] = $this->callerTarget;
@@ -82,11 +82,11 @@ final readonly class Simulation
         if ($this->callerTts !== null) {
             $out['caller_tts'] = $this->callerTts;
         }
-        if ($this->callerStt !== null) {
-            $out['caller_stt'] = $this->callerStt;
-        }
         if ($this->callerVoice !== null) {
             $out['caller_voice'] = $this->callerVoice;
+        }
+        if ($this->judgeTarget !== null) {
+            $out['judge_target'] = $this->judgeTarget;
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;

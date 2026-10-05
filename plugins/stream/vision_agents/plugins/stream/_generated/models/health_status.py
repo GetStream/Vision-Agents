@@ -20,26 +20,26 @@ T = TypeVar("T", bound="HealthStatus")
 class HealthStatus:
     """
     Attributes:
-        status (HealthStatusStatus):
         dependencies (HealthStatusDependencies): Dependency name to "ok" or a failure description. Example: {'postgres':
             'ok', 'redis': 'ok'}.
+        status (HealthStatusStatus):
     """
 
-    status: HealthStatusStatus
     dependencies: HealthStatusDependencies
+    status: HealthStatusStatus
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        status = self.status.value
-
         dependencies = self.dependencies.to_dict()
+
+        status = self.status.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "status": status,
                 "dependencies": dependencies,
+                "status": status,
             }
         )
 
@@ -52,13 +52,13 @@ class HealthStatus:
         )
 
         d = dict(src_dict)
-        status = HealthStatusStatus(d.pop("status"))
-
         dependencies = HealthStatusDependencies.from_dict(d.pop("dependencies"))
 
+        status = HealthStatusStatus(d.pop("status"))
+
         health_status = cls(
-            status=status,
             dependencies=dependencies,
+            status=status,
         )
 
         health_status.additional_properties = d

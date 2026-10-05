@@ -18,51 +18,51 @@ T = TypeVar("T", bound="TagKeySummary")
 class TagKeySummary:
     """
     Attributes:
+        cost_micros_total (int):
+        coverage (float): The share of the window's requests that carry this key, from 0 to 1. A key on half the traffic
+            breaks down half the bill, which is worth knowing before it is read as the whole of it.
         key (str):  Example: product.
+        request_count (int):
+        top_values (list[TagValueSummary]): The ten largest values, biggest spend first.
         value_count (int): How many distinct values the key was used with. One means it is context rather than a
             breakdown; hundreds mean it identifies something, such as an end customer, and only its largest values are worth
             a chart.
-        cost_micros_total (int):
-        request_count (int):
-        coverage (float): The share of the window's requests that carry this key, from 0 to 1. A key on half the traffic
-            breaks down half the bill, which is worth knowing before it is read as the whole of it.
-        top_values (list[TagValueSummary]): The ten largest values, biggest spend first.
     """
 
-    key: str
-    value_count: int
     cost_micros_total: int
-    request_count: int
     coverage: float
+    key: str
+    request_count: int
     top_values: list[TagValueSummary]
+    value_count: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        key = self.key
-
-        value_count = self.value_count
-
         cost_micros_total = self.cost_micros_total
 
-        request_count = self.request_count
-
         coverage = self.coverage
+
+        key = self.key
+
+        request_count = self.request_count
 
         top_values = []
         for top_values_item_data in self.top_values:
             top_values_item = top_values_item_data.to_dict()
             top_values.append(top_values_item)
 
+        value_count = self.value_count
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "key": key,
-                "value_count": value_count,
                 "cost_micros_total": cost_micros_total,
-                "request_count": request_count,
                 "coverage": coverage,
+                "key": key,
+                "request_count": request_count,
                 "top_values": top_values,
+                "value_count": value_count,
             }
         )
 
@@ -73,15 +73,13 @@ class TagKeySummary:
         from ..models.tag_value_summary import TagValueSummary
 
         d = dict(src_dict)
-        key = d.pop("key")
-
-        value_count = d.pop("value_count")
-
         cost_micros_total = d.pop("cost_micros_total")
 
-        request_count = d.pop("request_count")
-
         coverage = d.pop("coverage")
+
+        key = d.pop("key")
+
+        request_count = d.pop("request_count")
 
         top_values = []
         _top_values = d.pop("top_values")
@@ -90,13 +88,15 @@ class TagKeySummary:
 
             top_values.append(top_values_item)
 
+        value_count = d.pop("value_count")
+
         tag_key_summary = cls(
-            key=key,
-            value_count=value_count,
             cost_micros_total=cost_micros_total,
-            request_count=request_count,
             coverage=coverage,
+            key=key,
+            request_count=request_count,
             top_values=top_values,
+            value_count=value_count,
         )
 
         tag_key_summary.additional_properties = d

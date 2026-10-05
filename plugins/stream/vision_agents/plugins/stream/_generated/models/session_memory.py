@@ -22,35 +22,35 @@ class SessionMemory:
     with nobody identified on it.
 
         Attributes:
-            user_id (str | Unset): Who the memories belong to. Empty means the customer.
             app_id (str | Unset): Separates two deployments sharing one memory account.
             filter_ (SessionMemoryFilter | Unset): The caller's own labels, which narrow recall further. They cannot widen
                 it: a filter is applied alongside the user id, never instead of it.
+            user_id (str | Unset): Who the memories belong to. Empty means the customer.
     """
 
-    user_id: str | Unset = UNSET
     app_id: str | Unset = UNSET
     filter_: SessionMemoryFilter | Unset = UNSET
+    user_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        user_id = self.user_id
-
         app_id = self.app_id
 
         filter_: dict[str, Any] | Unset = UNSET
         if not isinstance(self.filter_, Unset):
             filter_ = self.filter_.to_dict()
 
+        user_id = self.user_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if user_id is not UNSET:
-            field_dict["user_id"] = user_id
         if app_id is not UNSET:
             field_dict["app_id"] = app_id
         if filter_ is not UNSET:
             field_dict["filter"] = filter_
+        if user_id is not UNSET:
+            field_dict["user_id"] = user_id
 
         return field_dict
 
@@ -59,8 +59,6 @@ class SessionMemory:
         from ..models.session_memory_filter import SessionMemoryFilter
 
         d = dict(src_dict)
-        user_id = d.pop("user_id", UNSET)
-
         app_id = d.pop("app_id", UNSET)
 
         _filter_ = d.pop("filter", UNSET)
@@ -70,10 +68,12 @@ class SessionMemory:
         else:
             filter_ = SessionMemoryFilter.from_dict(_filter_)
 
+        user_id = d.pop("user_id", UNSET)
+
         session_memory = cls(
-            user_id=user_id,
             app_id=app_id,
             filter_=filter_,
+            user_id=user_id,
         )
 
         session_memory.additional_properties = d

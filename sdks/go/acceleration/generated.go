@@ -913,9 +913,10 @@ func (e PhoneOperation) Valid() bool {
 
 // Defines values for PluginConnectionStatus.
 const (
-	PluginConnectionStatusConnected PluginConnectionStatus = "connected"
-	PluginConnectionStatusFailed    PluginConnectionStatus = "failed"
-	PluginConnectionStatusPending   PluginConnectionStatus = "pending"
+	PluginConnectionStatusConnected    PluginConnectionStatus = "connected"
+	PluginConnectionStatusFailed       PluginConnectionStatus = "failed"
+	PluginConnectionStatusNotConnected PluginConnectionStatus = "not_connected"
+	PluginConnectionStatusPending      PluginConnectionStatus = "pending"
 )
 
 // Valid indicates whether the value is a known member of the PluginConnectionStatus enum.
@@ -924,6 +925,8 @@ func (e PluginConnectionStatus) Valid() bool {
 	case PluginConnectionStatusConnected:
 		return true
 	case PluginConnectionStatusFailed:
+		return true
+	case PluginConnectionStatusNotConnected:
 		return true
 	case PluginConnectionStatusPending:
 		return true
@@ -1630,34 +1633,41 @@ type AgentConfig struct {
 	Guardrail *string        `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness  `json:"harness,omitempty"`
-	Id                 string    `json:"id"`
-	Instructions       *string   `json:"instructions,omitempty"`
-	Keyterms           *[]string `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
-	Llm                *string   `json:"llm,omitempty"`
+	Harness            *Harness     `json:"harness,omitempty"`
+	Id                 string       `json:"id"`
+	Instructions       *string      `json:"instructions,omitempty"`
+	Keyterms           *[]string    `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string      `json:"knowledge_namespace,omitempty"`
+	Llm                *string      `json:"llm,omitempty"`
+	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
-	Mode    AgentMode `json:"mode"`
-	Name    string    `json:"name"`
-	Plugins *[]string `json:"plugins,omitempty"`
+	Mode          AgentMode        `json:"mode"`
+	Name          string           `json:"name"`
+	PluginEvents  *[]PluginEvent   `json:"plugin_events,omitempty"`
+	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
+	Plugins       *[]string        `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox  `json:"sandbox,omitempty"`
-	Search  *string   `json:"search,omitempty"`
-	Skills  *[]string `json:"skills,omitempty"`
-	Speed   *float64  `json:"speed,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
+	Search         *string         `json:"search,omitempty"`
+	Skills         *[]string       `json:"skills,omitempty"`
+	Speed          *float64        `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
-	Sts      *string `json:"sts,omitempty"`
-	Stt      *string `json:"stt,omitempty"`
-	Subagent *string `json:"subagent,omitempty"`
+	Sts *string `json:"sts,omitempty"`
+	Stt *string `json:"stt,omitempty"`
 
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
 	SyncHash     *string            `json:"sync_hash,omitempty"`
 	Tags         *map[string]string `json:"tags,omitempty"`
+	ThinkingLlm  *string            `json:"thinking_llm,omitempty"`
 	Tts          *string            `json:"tts,omitempty"`
 	UpdatedAt    time.Time          `json:"updated_at"`
+	UserPlugins  *[]string          `json:"user_plugins,omitempty"`
 	Video        *SessionVideo      `json:"video,omitempty"`
 	VisibleTools *[]string          `json:"visible_tools,omitempty"`
 	Voice        *string            `json:"voice,omitempty"`
@@ -1673,32 +1683,41 @@ type AgentConfigPatch struct {
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness  `json:"harness,omitempty"`
-	Instructions       *string   `json:"instructions,omitempty"`
-	Keyterms           *[]string `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
-	Llm                *string   `json:"llm,omitempty"`
+	Harness            *Harness     `json:"harness,omitempty"`
+	Instructions       *string      `json:"instructions,omitempty"`
+	Keyterms           *[]string    `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string      `json:"knowledge_namespace,omitempty"`
+	Llm                *string      `json:"llm,omitempty"`
+	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
-	Name    *string   `json:"name,omitempty"`
-	Plugins *[]string `json:"plugins,omitempty"`
+	Name          *string          `json:"name,omitempty"`
+	PluginEvents  *[]PluginEvent   `json:"plugin_events,omitempty"`
+	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
+	Plugins       *[]string        `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox  `json:"sandbox,omitempty"`
-	Search  *string   `json:"search,omitempty"`
-	Skills  *[]string `json:"skills,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
+	Search         *string         `json:"search,omitempty"`
+	Skills         *[]string       `json:"skills,omitempty"`
 
 	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
-	Speed    *float64           `json:"speed,omitempty"`
-	Sts      *string            `json:"sts,omitempty"`
-	Stt      *string            `json:"stt,omitempty"`
-	Subagent *string            `json:"subagent,omitempty"`
-	Tags     *map[string]string `json:"tags,omitempty"`
-	Tts      *string            `json:"tts,omitempty"`
-	Video    *SessionVideo      `json:"video,omitempty"`
+	Speed *float64           `json:"speed,omitempty"`
+	Sts   *string            `json:"sts,omitempty"`
+	Stt   *string            `json:"stt,omitempty"`
+	Tags  *map[string]string `json:"tags,omitempty"`
+
+	// ThinkingLlm Only a voice agent names one. Switching an agent to text drops it.
+	ThinkingLlm *string       `json:"thinking_llm,omitempty"`
+	Tts         *string       `json:"tts,omitempty"`
+	UserPlugins *[]string     `json:"user_plugins,omitempty"`
+	Video       *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -1727,17 +1746,29 @@ type AgentConfigRequest struct {
 	// Llm The model holding the conversation.
 	Llm *string `json:"llm,omitempty"`
 
+	// McpServers MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>.
+	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
 	Name string `json:"name"`
 
+	// PluginEvents MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+
+	// PluginOptions How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. A plugin without any is reached as the catalog has it.
+	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
+
 	// Plugins Hosted MCP servers this agent may reach, named from the built-in catalog.
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
 	Search *string `json:"search,omitempty"`
@@ -1746,7 +1777,6 @@ type AgentConfigRequest struct {
 	Skills *[]string `json:"skills,omitempty"`
 
 	// Speed Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
-	//
 	//
 	// Example: 0.9
 	Speed *float64 `json:"speed,omitempty"`
@@ -1757,13 +1787,16 @@ type AgentConfigRequest struct {
 	// Stt A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
 	Stt *string `json:"stt,omitempty"`
 
-	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
-	Subagent *string `json:"subagent,omitempty"`
-
 	// Tags Cost labels, carried onto every request a session using it makes.
-	Tags  *map[string]string `json:"tags,omitempty"`
-	Tts   *string            `json:"tts,omitempty"`
-	Video *SessionVideo      `json:"video,omitempty"`
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// ThinkingLlm The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model.
+	ThinkingLlm *string `json:"thinking_llm,omitempty"`
+	Tts         *string `json:"tts,omitempty"`
+
+	// UserPlugins Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+	UserPlugins *[]string     `json:"user_plugins,omitempty"`
+	Video       *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -1945,7 +1978,6 @@ type BudgetInterval string
 type BuyNumberRequest struct {
 	// Country The country the number was offered from, as the search reported it. Most vendors buy by number alone; the few that buy out of a country's inventory need this, and it cannot be guessed back out of the number.
 	//
-	//
 	// Example: US
 	Country *string `json:"country,omitempty"`
 
@@ -2008,16 +2040,16 @@ type Call struct {
 	// SttUsed The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
 	SttUsed *string `json:"stt_used,omitempty"`
 
-	// Subagent The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered.
-	Subagent *string `json:"subagent,omitempty"`
-
-	// SubagentUsed The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
-	SubagentUsed *string `json:"subagent_used,omitempty"`
-
 	// Summary What a model made of the call, written once it was over.
-	Summary  *string            `json:"summary,omitempty"`
-	Tags     *map[string]string `json:"tags,omitempty"`
-	ToNumber *string            `json:"to_number,omitempty"`
+	Summary *string            `json:"summary,omitempty"`
+	Tags    *map[string]string `json:"tags,omitempty"`
+
+	// ThinkingLlm The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too.
+	ThinkingLlm *string `json:"thinking_llm,omitempty"`
+
+	// ThinkingLlmUsed The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
+	ThinkingLlmUsed *string `json:"thinking_llm_used,omitempty"`
+	ToNumber        *string `json:"to_number,omitempty"`
 
 	// Tts The voice target, on the same terms as stt.
 	Tts *string `json:"tts,omitempty"`
@@ -2243,13 +2275,11 @@ type ClassifyRequest struct {
 
 	// State What the questions are about: a string for plain text, or a JSON object whose parts a question can name, such as `message`.
 	//
-	//
 	// Example: I was charged twice this month and nobody has answered my email.
 	State interface{}        `json:"state"`
 	Tags  *map[string]string `json:"tags,omitempty"`
 
 	// Target A provider/model or a capability shortcut. Empty takes classify-fast.
-	//
 	//
 	// Example: classify-fast
 	Target *string `json:"target,omitempty"`
@@ -2661,7 +2691,6 @@ type DataPolicy struct {
 
 	// Retention The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
 	//
-	//
 	// Example: none
 	Retention *string `json:"retention,omitempty"`
 }
@@ -2854,9 +2883,6 @@ type ImageOptions struct {
 	OutputFormat *ImageOptionsOutputFormat `json:"output_format,omitempty"`
 
 	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
-	//
-	//
-	// Example: ["fal","image-quality"]
 	Providers *[]string `json:"providers,omitempty"`
 
 	// Seed Draws the same picture again from the same prompt, on a model that reads one.
@@ -2916,7 +2942,6 @@ type IngestKnowledgeRequest struct {
 
 	// Namespace The knowledge base to write into, which is what a config's knowledge_namespace names. Knowledge is never shared, so there is no default.
 	//
-	//
 	// Example: docs
 	Namespace string `json:"namespace"`
 }
@@ -2939,7 +2964,6 @@ type InstructionsRequest struct {
 // KnowledgeDocument defines model for KnowledgeDocument.
 type KnowledgeDocument struct {
 	// Source Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so posting the same source again replaces what it wrote before.
-	//
 	//
 	// Example: pricing.md
 	Source string `json:"source"`
@@ -3007,30 +3031,25 @@ type KnowledgeUrlDeclaration struct {
 type KnowledgeUrlRequest struct {
 	// Description What the page is, for a reader of the subscription. Optional, and kept as written: it says why this page is subscribed to, which a crawler cannot know.
 	//
-	//
 	// Example: What each plan includes and where the limits are.
 	Description *string `json:"description,omitempty"`
 
 	// Namespace The knowledge base to fill, which is what a config's knowledge_namespace names.
-	//
 	//
 	// Example: docs
 	Namespace string `json:"namespace"`
 
 	// RefreshHours How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it.
 	//
-	//
 	// Example: 24
 	RefreshHours *int `json:"refresh_hours,omitempty"`
 
 	// Title What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
 	//
-	//
 	// Example: Pricing
 	Title *string `json:"title,omitempty"`
 
 	// Url The page to read. It must be http or https: this is handed to a crawler and then used to key the passages it becomes.
-	//
 	//
 	// Example: https://example.com/pricing
 	Url string `json:"url"`
@@ -3082,9 +3101,6 @@ type LlmOptions struct {
 	PromptCacheKey *string `json:"prompt_cache_key,omitempty"`
 
 	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A response that fails is answered by the next entry that will have it.
-	//
-	//
-	// Example: ["openai/gpt-5-mini","llm-fast"]
 	Providers *[]string `json:"providers,omitempty"`
 
 	// ReasoningEffort How long the model may think before answering, on the models that think.
@@ -3113,6 +3129,18 @@ type LlmOptionsReasoningEffort string
 // LlmOptionsVerbosity defines model for LlmOptions.Verbosity.
 type LlmOptionsVerbosity string
 
+// McpServer An MCP server the plugin catalog does not have. Every session opens it at the start, with no login, and offers its tools to the model; the instructions the server gives are added to the agent's own.
+type McpServer struct {
+	// Name What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
+	Name string `json:"name"`
+
+	// Tools Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
+	Tools *[]string `json:"tools,omitempty"`
+
+	// Url Its Streamable HTTP endpoint, over https.
+	Url string `json:"url"`
+}
+
 // MessageContent defines model for MessageContent.
 type MessageContent struct {
 	union json.RawMessage
@@ -3125,8 +3153,6 @@ type MessageContent0 = string
 type MessageContent1 = []ContentPart
 
 // Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
-//
-// Example: tts
 type Modality string
 
 // ModelCallTiming defines model for ModelCallTiming.
@@ -3283,7 +3309,19 @@ type Plugin struct {
 	Id               string  `json:"id"`
 	InstanceHint     *string `json:"instance_hint,omitempty"`
 	InstanceRequired *bool   `json:"instance_required,omitempty"`
-	Name             string  `json:"name"`
+
+	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential.
+	LogoUrl *string `json:"logo_url,omitempty"`
+	Name    string  `json:"name"`
+
+	// Readonly True when the plugin has a read-only endpoint an agent may pick in plugin_options.
+	Readonly *bool `json:"readonly,omitempty"`
+
+	// ScopesSupported The OAuth scopes an agent may ask for in plugin_options, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
+	ScopesSupported *[]string `json:"scopes_supported,omitempty"`
+
+	// Toolsets The groups of tools an agent may limit the plugin to in plugin_options. Absent when it cannot be limited.
+	Toolsets *[]string `json:"toolsets,omitempty"`
 }
 
 // PluginAuthorization defines model for PluginAuthorization.
@@ -3292,20 +3330,56 @@ type PluginAuthorization struct {
 	AuthorizeUrl string `json:"authorize_url"`
 }
 
-// PluginConnection A catalog plugin as this agent has it, including whether it is logged in.
+// PluginConnection A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish.
 type PluginConnection struct {
-	Category         *string                `json:"category,omitempty"`
-	Description      *string                `json:"description,omitempty"`
-	InstanceHint     *string                `json:"instance_hint,omitempty"`
-	InstanceRequired *bool                  `json:"instance_required,omitempty"`
-	InstanceUrl      *string                `json:"instance_url,omitempty"`
-	Name             string                 `json:"name"`
-	PluginId         string                 `json:"plugin_id"`
-	Status           PluginConnectionStatus `json:"status"`
+	Category         *string `json:"category,omitempty"`
+	Description      *string `json:"description,omitempty"`
+	InstanceHint     *string `json:"instance_hint,omitempty"`
+	InstanceRequired *bool   `json:"instance_required,omitempty"`
+	InstanceUrl      *string `json:"instance_url,omitempty"`
+
+	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential.
+	LogoUrl  *string                `json:"logo_url,omitempty"`
+	Name     string                 `json:"name"`
+	PluginId string                 `json:"plugin_id"`
+	Status   PluginConnectionStatus `json:"status"`
 }
 
 // PluginConnectionStatus defines model for PluginConnection.Status.
 type PluginConnectionStatus string
+
+// PluginEvent One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
+type PluginEvent struct {
+	// Arguments The event's filters, as its inputSchema describes them.
+	Arguments *map[string]interface{} `json:"arguments,omitempty"`
+
+	// Event The event's name, as the server's events/list gives it, such as comment.created.
+	Event string `json:"event"`
+
+	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Plugin A catalog plugin the config names under plugins or user_plugins.
+	Plugin string `json:"plugin"`
+}
+
+// PluginOptions How an agent reaches one catalog plugin it names, and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
+type PluginOptions struct {
+	// Plugin A catalog plugin id. It applies once the config names the plugin under plugins or user_plugins, and to the app's login made from the dashboard.
+	Plugin string `json:"plugin"`
+
+	// Readonly Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
+	Readonly *bool `json:"readonly,omitempty"`
+
+	// Scopes The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
+	Scopes *[]string `json:"scopes,omitempty"`
+
+	// Tools Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
+	Tools *[]string `json:"tools,omitempty"`
+
+	// Toolsets Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
+	Toolsets *[]string `json:"toolsets,omitempty"`
+}
 
 // Policy What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
 type Policy struct {
@@ -3538,6 +3612,27 @@ type RouterConfigRequest struct {
 // Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 type Sandbox string
 
+// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+type SandboxOptions struct {
+	// Cpu CPUs for the sandbox. Zero is the provider's default.
+	Cpu *int64 `json:"cpu,omitempty"`
+
+	// DiskGb Disk for the sandbox, in GiB. Zero is the provider's default.
+	DiskGb *int64 `json:"disk_gb,omitempty"`
+
+	// Image The container image to build on, which must have Python, such as python:3.13-slim-bookworm. Empty with anything else set is a slim Python 3.13 image.
+	Image *string `json:"image,omitempty"`
+
+	// MemoryGb Memory for the sandbox, in GiB. Zero is the provider's default.
+	MemoryGb *int64 `json:"memory_gb,omitempty"`
+
+	// Setup Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
+	Setup *[]string `json:"setup,omitempty"`
+
+	// TimeoutMs How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for.
+	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
+}
+
 // SayRequest defines model for SayRequest.
 type SayRequest struct {
 	Text string `json:"text"`
@@ -3582,9 +3677,6 @@ type SearchOptions struct {
 	OutputSchema *map[string]interface{} `json:"output_schema,omitempty"`
 
 	// Providers A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.
-	//
-	//
-	// Example: ["exa","search-fast"]
 	Providers *[]string `json:"providers,omitempty"`
 
 	// Results How many hits to return.
@@ -3684,12 +3776,12 @@ type Session struct {
 	// Stt The provider and model transcribing, once somebody has been heard.
 	Stt *string `json:"stt,omitempty"`
 
-	// Subagent The provider and model delegated work runs on.
-	Subagent *string `json:"subagent,omitempty"`
-
 	// Text The conversation is held in writing rather than on a call.
-	Text  *bool   `json:"text,omitempty"`
-	Title *string `json:"title,omitempty"`
+	Text *bool `json:"text,omitempty"`
+
+	// ThinkingLlm The provider and model delegated work runs on.
+	ThinkingLlm *string `json:"thinking_llm,omitempty"`
+	Title       *string `json:"title,omitempty"`
 
 	// Tts The provider and model speaking.
 	Tts    *string       `json:"tts,omitempty"`
@@ -3707,6 +3799,13 @@ type SessionFilter struct {
 
 	// AgentId Matches one value exactly: "value" is short for {"$eq": "value"}.
 	AgentId *Equals `json:"agent_id,omitempty"`
+
+	// ConfigId Matches one value exactly: "value" is short for {"$eq": "value"}.
+	ConfigId  *Equals    `json:"config_id,omitempty"`
+	CreatedAt *TimeRange `json:"created_at,omitempty"`
+
+	// Custom The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
+	Custom *map[string]string `json:"custom,omitempty"`
 
 	// Modality Matches one value exactly: "value" is short for {"$eq": "value"}.
 	Modality *Equals `json:"modality,omitempty"`
@@ -4157,7 +4256,6 @@ type SpendBucket struct {
 
 	// Value The modality or label value this row is for. "other" is everything outside the biggest few, and the empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see which part.
 	//
-	//
 	// Example: support
 	Value string `json:"value"`
 }
@@ -4219,7 +4317,6 @@ type StsOptions struct {
 
 	// Overwrites Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"openai": {"eagerness": "high"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
 	//
-	//
 	// Example: {"openai":{"eagerness":"high"}}
 	Overwrites *map[string]interface{} `json:"overwrites,omitempty"`
 
@@ -4227,9 +4324,6 @@ type StsOptions struct {
 	PrefixPaddingMs *int `json:"prefix_padding_ms,omitempty"`
 
 	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
-	//
-	//
-	// Example: ["openai","sts-fast"]
 	Providers *[]string `json:"providers,omitempty"`
 
 	// SilenceMs How long a pause ends the turn, for a silence timer.
@@ -4250,7 +4344,6 @@ type StsOptions struct {
 	TurnDetection *StsOptionsTurnDetection `json:"turn_detection,omitempty"`
 
 	// Voice The vendor's own name for a voice, such as marin at OpenAI or Kore at Google. None of these models takes one of your own voices, so the name is passed on as given rather than looked up.
-	//
 	//
 	// Example: marin
 	Voice *string `json:"voice,omitempty"`
@@ -4295,8 +4388,6 @@ type SttOptions struct {
 	Keyterms *[]string `json:"keyterms,omitempty"`
 
 	// Languages ISO codes candidates must cover. Empty with detect_language lets the provider decide.
-	//
-	// Example: ["en"]
 	Languages *[]string `json:"languages,omitempty"`
 
 	// MaxSpeakers A hard cap on the speakers diarization may find, not a hint. Providers differ in what they allow, so one asked for more than it supports refuses.
@@ -4310,7 +4401,6 @@ type SttOptions struct {
 
 	// Overwrites Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"deepgram": {"eot_threshold": 0.6}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
 	//
-	//
 	// Example: {"deepgram":{"eot_threshold":0.6}}
 	Overwrites *map[string]interface{} `json:"overwrites,omitempty"`
 
@@ -4318,9 +4408,6 @@ type SttOptions struct {
 	ProfanityFilter *bool `json:"profanity_filter,omitempty"`
 
 	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back; unlike a shortcut, this does not reorder on latency, because a caller who wrote an order meant it.
-	//
-	//
-	// Example: ["deepgram","en-low-latency"]
 	Providers *[]string `json:"providers,omitempty"`
 
 	// Redact Remove personally identifying information from the transcript.
@@ -4340,7 +4427,6 @@ type SttOptions struct {
 	Summary *bool `json:"summary,omitempty"`
 
 	// Target A provider/model or a capability shortcut such as en-low-latency for the live path or en-recorded for a recording.
-	//
 	//
 	// Example: en-low-latency
 	Target *string `json:"target,omitempty"`
@@ -4374,16 +4460,28 @@ type SyncAgentRequest struct {
 	KnowledgeUrls *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty"`
 	Llm           *string                    `json:"llm,omitempty"`
 
+	// McpServers MCP servers outside the plugin catalog, opened by their URL with no login.
+	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is also the directory's name.
-	Name    string    `json:"name"`
-	Plugins *[]string `json:"plugins,omitempty"`
+	Name string `json:"name"`
+
+	// PluginEvents MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+
+	// PluginOptions How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for.
+	PluginOptions *[]PluginOptions `json:"plugin_options,omitempty"`
+	Plugins       *[]string        `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
-	Search  *string  `json:"search,omitempty"`
+
+	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
+	Search         *string         `json:"search,omitempty"`
 
 	// Simulations The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone.
 	Simulations *[]SimulationDeclaration `json:"simulations,omitempty"`
@@ -4393,13 +4491,18 @@ type SyncAgentRequest struct {
 	Speed *float64 `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
-	Sts      *string            `json:"sts,omitempty"`
-	Stt      *string            `json:"stt,omitempty"`
-	Subagent *string            `json:"subagent,omitempty"`
-	Tags     *map[string]string `json:"tags,omitempty"`
-	Tts      *string            `json:"tts,omitempty"`
-	Video    *SessionVideo      `json:"video,omitempty"`
-	Voice    *string            `json:"voice,omitempty"`
+	Sts  *string            `json:"sts,omitempty"`
+	Stt  *string            `json:"stt,omitempty"`
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// ThinkingLlm Only a voice agent names one: a text agent runs everything on its llm.
+	ThinkingLlm *string `json:"thinking_llm,omitempty"`
+	Tts         *string `json:"tts,omitempty"`
+
+	// UserPlugins Plugins each end user connects with their own account, from the conversation, the first time the agent needs one.
+	UserPlugins *[]string     `json:"user_plugins,omitempty"`
+	Video       *SessionVideo `json:"video,omitempty"`
+	Voice       *string       `json:"voice,omitempty"`
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -4482,6 +4585,15 @@ type TextMatch struct {
 
 // Tier What the model optimises for.
 type Tier string
+
+// TimeRange defines model for TimeRange.
+type TimeRange struct {
+	// Gte At or after this RFC3339 time.
+	Gte *time.Time `json:"$gte,omitempty"`
+
+	// Lt Strictly before this RFC3339 time.
+	Lt *time.Time `json:"$lt,omitempty"`
+}
 
 // TimelineEntry defines model for TimelineEntry.
 type TimelineEntry struct {
@@ -4687,13 +4799,11 @@ type TtsOptions struct {
 
 	// Format Codec, sample rate and bitrate as one name - pcm_16000, mp3_44100_128, ulaw_8000 for telephony.
 	//
-	//
 	// Example: pcm_16000
 	Format    *string   `json:"format,omitempty"`
 	Languages *[]string `json:"languages,omitempty"`
 
 	// Overwrites Settings for one voice provider that this vocabulary has no word for, keyed by provider name, for example {"elevenlabs": {"voice_id": "21m00Tcm4TlvDq8ikWAM"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped. It is also the only way to steer a live voice per vendor, since a voice id from one library means nothing at another.
-	//
 	//
 	// Example: {"elevenlabs":{"voice_id":"21m00Tcm4TlvDq8ikWAM"}}
 	Overwrites *map[string]interface{} `json:"overwrites,omitempty"`
@@ -4702,16 +4812,12 @@ type TtsOptions struct {
 	Pronunciations *map[string]string `json:"pronunciations,omitempty"`
 
 	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back.
-	//
-	//
-	// Example: ["elevenlabs","en-low-latency"]
 	Providers *[]string `json:"providers,omitempty"`
 
 	// Similarity How closely a cloned voice tracks its reference.
 	Similarity *float32 `json:"similarity,omitempty"`
 
 	// Speed Rate of delivery, 1 being the voice's own. Providers differ in the range they accept, so one asked for a speed outside its own refuses.
-	//
 	//
 	// Example: 1
 	Speed *float32 `json:"speed,omitempty"`
@@ -4728,7 +4834,6 @@ type TtsOptions struct {
 	Target *string `json:"target,omitempty"`
 
 	// Voice A provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused.
-	//
 	//
 	// Example: custom:receptionist
 	Voice *string `json:"voice,omitempty"`
@@ -4761,7 +4866,7 @@ type TurnStatsBucket struct {
 	TurnCount       int64    `json:"turn_count"`
 }
 
-// UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended; everything else needs it running.
+// UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
 type UpdateSessionRequest struct {
 	// Custom Replaces the caller's labels whole. An empty object clears them.
 	Custom      *map[string]interface{} `json:"custom,omitempty"`
@@ -4887,33 +4992,6 @@ type VoiceSampleRequest struct {
 	Transcript *string `json:"transcript,omitempty"`
 }
 
-// CommandID defines model for CommandID.
-type CommandID = string
-
-// ConfigName defines model for ConfigName.
-type ConfigName = string
-
-// Cursor defines model for Cursor.
-type Cursor = string
-
-// ItemLimit defines model for ItemLimit.
-type ItemLimit = int
-
-// PluginID defines model for PluginID.
-type PluginID = string
-
-// ResourceID defines model for ResourceID.
-type ResourceID = string
-
-// ResponseIDFilter defines model for ResponseIDFilter.
-type ResponseIDFilter = string
-
-// SessionID defines model for SessionID.
-type SessionID = string
-
-// SessionLimit defines model for SessionLimit.
-type SessionLimit = int
-
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
 
@@ -4928,21 +5006,21 @@ type Unauthorized = Error
 
 // ListCallsParams defines parameters for ListCalls.
 type ListCallsParams struct {
+	// Running Only calls that have not ended.
+	Running *bool `form:"running,omitempty" json:"running,omitempty"`
+	Limit   *int  `form:"limit,omitempty" json:"limit,omitempty"`
+
 	// AgentId Narrow to one agent.
 	AgentId *string `form:"agent_id,omitempty" json:"agent_id,omitempty"`
 
 	// CampaignId Narrow to the calls one campaign placed.
 	CampaignId *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty"`
 
-	// Running Only calls that have not ended.
-	Running *bool `form:"running,omitempty" json:"running,omitempty"`
-
 	// From Only calls that started at or after this, inclusive.
 	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
 
 	// To Only calls that started before this, exclusive.
-	To    *time.Time `form:"to,omitempty" json:"to,omitempty"`
-	Limit *int       `form:"limit,omitempty" json:"limit,omitempty"`
+	To *time.Time `form:"to,omitempty" json:"to,omitempty"`
 }
 
 // GetCallEventsParams defines parameters for GetCallEvents.
@@ -4954,7 +5032,7 @@ type GetCallEventsParams struct {
 // ListAgentConfigsParams defines parameters for ListAgentConfigs.
 type ListAgentConfigsParams struct {
 	// Name Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
-	Name *ConfigName `form:"name,omitempty" json:"name,omitempty"`
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
 // ListConnectorConnectionsParams defines parameters for ListConnectorConnections.
@@ -5067,22 +5145,22 @@ type PluginOAuthCallbackParams struct {
 // ListResponsesParams defines parameters for ListResponses.
 type ListResponsesParams struct {
 	// Limit Up to 200. Omitted is 25.
-	Limit *SessionLimit `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
-	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListResponseItemsParams defines parameters for ListResponseItems.
 type ListResponseItemsParams struct {
 	// ResponseId Narrow to one turn's items. Omitted is every turn in the session.
-	ResponseId *ResponseIDFilter `form:"response_id,omitempty" json:"response_id,omitempty"`
+	ResponseId *string `form:"response_id,omitempty" json:"response_id,omitempty"`
 
 	// Limit Up to 1000. Omitted is 200.
-	Limit *ItemLimit `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
-	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListSimulationRunsParams defines parameters for ListSimulationRuns.
@@ -5122,6 +5200,8 @@ type ListPhoneNumbersParams struct {
 
 // SearchPhoneNumbersParams defines parameters for SearchPhoneNumbers.
 type SearchPhoneNumbersParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
 	// Vendor One vendor to search. Absent searches every usable vendor.
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
 
@@ -5144,7 +5224,6 @@ type SearchPhoneNumbersParams struct {
 
 	// Features Capabilities every number must have. Repeat the parameter to require several. A vendor that cannot filter on one still reports what its numbers carry, so these are checked on the results either way.
 	Features *[]PhoneCapability `form:"features,omitempty" json:"features,omitempty"`
-	Limit    *int               `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // GetActivityParams defines parameters for GetActivity.
@@ -5161,7 +5240,10 @@ type GetActivityParams struct {
 // GetSpendParams defines parameters for GetSpend.
 type GetSpendParams struct {
 	// GroupBy "modality", or the cost label to group by.
-	GroupBy     *string      `form:"group_by,omitempty" json:"group_by,omitempty"`
+	GroupBy *string `form:"group_by,omitempty" json:"group_by,omitempty"`
+
+	// Limit How many values keep a series of their own.
+	Limit       *int         `form:"limit,omitempty" json:"limit,omitempty"`
 	Granularity *Granularity `form:"granularity,omitempty" json:"granularity,omitempty"`
 
 	// From Start of the window, inclusive.
@@ -5169,9 +5251,6 @@ type GetSpendParams struct {
 
 	// To End of the window, exclusive.
 	To time.Time `form:"to" json:"to"`
-
-	// Limit How many values keep a series of their own.
-	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Tag Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
 	Tag *[]string `form:"tag,omitempty" json:"tag,omitempty"`
@@ -5290,8 +5369,6 @@ type UpdateSessionJSONRequestBody = UpdateSessionRequest
 type ForkSessionJSONRequestBody = ForkSessionRequest
 
 // SetSessionInstructionsJSONRequestBody defines body for SetSessionInstructions for application/json ContentType.
-//
-// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type SetSessionInstructionsJSONRequestBody = InstructionsRequest
 
 // RespondSessionJSONRequestBody defines body for RespondSession for application/json ContentType.
@@ -5307,8 +5384,6 @@ type RewindSessionJSONRequestBody = RewindSessionRequest
 type SaySessionJSONRequestBody = SayRequest
 
 // SetSessionSettingsJSONRequestBody defines body for SetSessionSettings for application/json ContentType.
-//
-// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type SetSessionSettingsJSONRequestBody = SessionSettingsRequest
 
 // CreateSimulationJSONRequestBody defines body for CreateSimulation for application/json ContentType.
@@ -5661,21 +5736,21 @@ type ClientInterface interface {
 	// GetCall One call, with whatever was made of it afterwards
 	//
 	// Corresponds with GET /v1/agents/calls/{id} (the `GetCall` operationId).
-	GetCall(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetCall(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCallEvents What the conversation decided, and why
 	//
 	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
-	GetCallEvents(ctx context.Context, id ResourceID, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetCallEvents(ctx context.Context, id string, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCallTimeline The call as it unfolded, said and measured together
 	//
 	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
-	GetCallTimeline(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetCallTimeline(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateCallTokenWithBody What a browser needs to join this call
 	//
@@ -5684,7 +5759,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
-	CreateCallTokenWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateCallTokenWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateCallToken What a browser needs to join this call
 	//
@@ -5693,14 +5768,14 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
-	CreateCallToken(ctx context.Context, id ResourceID, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateCallToken(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCallTranscript What was said on a call
 	//
 	// Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/transcript (the `GetCallTranscript` operationId).
-	GetCallTranscript(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetCallTranscript(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListCampaigns The campaigns the calling customer has
 	//
@@ -5730,12 +5805,12 @@ type ClientInterface interface {
 	// GetCampaign One campaign
 	//
 	// Corresponds with GET /v1/agents/campaigns/{id} (the `GetCampaign` operationId).
-	GetCampaign(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListCampaignContacts Who a campaign is ringing, and how far it has got
 	//
 	// Corresponds with GET /v1/agents/campaigns/{id}/contacts (the `ListCampaignContacts` operationId).
-	ListCampaignContacts(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListCampaignContacts(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AddCampaignContactsWithBody Add people to ring
 	//
@@ -5745,7 +5820,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
-	AddCampaignContactsWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	AddCampaignContactsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AddCampaignContacts Add people to ring
 	//
@@ -5755,7 +5830,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
-	AddCampaignContacts(ctx context.Context, id ResourceID, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	AddCampaignContacts(ctx context.Context, id string, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PauseCampaign Stop ringing anybody new
 	//
@@ -5763,7 +5838,7 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/pause (the `PauseCampaign` operationId).
-	PauseCampaign(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PauseCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartCampaign Start ringing
 	//
@@ -5771,7 +5846,7 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
-	StartCampaign(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	StartCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateChatTokenWithBody What a browser needs to read an agent's conversation
 	//
@@ -5827,12 +5902,12 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
-	DeleteAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteAgentConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAgentConfig One agent config
 	//
 	// Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
-	GetAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetAgentConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PatchAgentConfigWithBody Change some of an agent config
 	//
@@ -5864,7 +5939,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-	UpdateAgentConfigWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateAgentConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateAgentConfig Replace an agent config
 	//
@@ -5874,19 +5949,21 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-	UpdateAgentConfig(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateAgentConfig(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConfigPlugins The plugin logins this agent holds
 	//
+	// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
+	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-	ListConfigPlugins(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DisconnectPlugin Drop a plugin login
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-	DisconnectPlugin(ctx context.Context, id ResourceID, pluginId PluginID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizePluginWithBody Start a plugin login
 	//
@@ -5896,7 +5973,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	AuthorizePluginWithBody(ctx context.Context, id ResourceID, pluginId PluginID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizePlugin Start a plugin login
 	//
@@ -5906,7 +5983,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	AuthorizePlugin(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectorConnections List connections
 	//
@@ -6003,7 +6080,7 @@ type ClientInterface interface {
 	// A command still running is reported as it stands; the session holding it is where it can be stopped.
 	//
 	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-	GetConversationCommand(ctx context.Context, cid string, commandId CommandID, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetConversationCommand(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConversationMessages Read a persistent text conversation
 	//
@@ -6087,14 +6164,14 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
-	DeleteKnowledgeDocument(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteKnowledgeDocument(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetKnowledgeDocument One document, with the text it was posted as
 	//
 	// What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.
 	//
 	// Corresponds with GET /v1/agents/knowledge/documents/{id} (the `GetKnowledgeDocument` operationId).
-	GetKnowledgeDocument(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetKnowledgeDocument(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListKnowledgeDocumentPassages What a document was cut into, in order
 	//
@@ -6102,7 +6179,7 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
-	ListKnowledgeDocumentPassages(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListKnowledgeDocumentPassages(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListKnowledgeUrls The pages a knowledge base is kept filled from
 	//
@@ -6139,12 +6216,12 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/knowledge/urls/{id} (the `DeleteKnowledgeUrl` operationId).
-	DeleteKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteKnowledgeUrl(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetKnowledgeUrl One page, and when it was last read
 	//
 	// Corresponds with GET /v1/agents/knowledge/urls/{id} (the `GetKnowledgeUrl` operationId).
-	GetKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetKnowledgeUrl(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IndexKnowledgeUrl Read a page again
 	//
@@ -6152,7 +6229,7 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
-	IndexKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	IndexKnowledgeUrl(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListKnowledgeUrlPassages What a page was last read into, in order
 	//
@@ -6160,7 +6237,7 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with GET /v1/agents/knowledge/urls/{id}/passages (the `ListKnowledgeUrlPassages` operationId).
-	ListKnowledgeUrlPassages(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListKnowledgeUrlPassages(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAgentLogs Latest structured agent logs, with backward cursor pagination
 	//
@@ -6193,6 +6270,20 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
 	PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceivePluginEvent Receive a plugin's MCP event
+	//
+	// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+	//
+	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+	ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPluginLogo A plugin's logo
+	//
+	// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+	//
+	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+	GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateSessionWithBody Join a call as a voice agent
 	//
 	// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -6221,7 +6312,7 @@ type ClientInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -6238,7 +6329,7 @@ type ClientInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -6261,36 +6352,44 @@ type ClientInterface interface {
 	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
-	GetSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSessionWithBody Change a session
 	//
 	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	//
+	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
 	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-	UpdateSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSession Change a session
 	//
 	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	//
+	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
 	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-	UpdateSession(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateSession(ctx context.Context, id string, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSessionCommand What is known about one durable command
 	//
 	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-	GetSessionCommand(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InterruptSessionCommand Stop one named command, and nothing else
 	//
@@ -6299,7 +6398,7 @@ type ClientInterface interface {
 	// Interrupting model work claims nothing about a tool whose external side effect already happened.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-	InterruptSessionCommand(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	InterruptSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ForkSessionWithBody Continue a conversation as a new one
 	//
@@ -6309,7 +6408,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
-	ForkSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ForkSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ForkSession Continue a conversation as a new one
 	//
@@ -6319,7 +6418,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
-	ForkSession(ctx context.Context, id SessionID, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ForkSession(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSessionInstructionsWithBody Change what the agent is told to be
 	//
@@ -6328,9 +6427,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetSessionInstructionsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SetSessionInstructionsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSessionInstructions Change what the agent is told to be
 	//
@@ -6339,16 +6436,14 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetSessionInstructions(ctx context.Context, id SessionID, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SetSessionInstructions(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InterruptSession Abandon the reply being spoken
 	//
 	// What a caller outside the call has instead of a voice. A murmur is not interrupted, because it was meant to overlap with whoever is talking.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/interrupt (the `InterruptSession` operationId).
-	InterruptSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	InterruptSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteSessionMemories Delete what one session remembered
 	//
@@ -6364,21 +6459,21 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
-	RespondSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RespondSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RespondSession Answer a piece of text through the model, as though it had been said
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
-	RespondSession(ctx context.Context, id SessionID, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RespondSession(ctx context.Context, id string, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListResponses The turns the agent took in a session
 	//
 	// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses (the `ListResponses` operationId).
-	ListResponses(ctx context.Context, id SessionID, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListResponses(ctx context.Context, id string, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateResponseWithBody Ask the agent something and get a handle on the answer
 	//
@@ -6388,7 +6483,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
-	CreateResponseWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateResponseWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateResponse Ask the agent something and get a handle on the answer
 	//
@@ -6398,7 +6493,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
-	CreateResponse(ctx context.Context, id SessionID, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateResponse(ctx context.Context, id string, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListResponseItems What the agent did, turn by turn, in the order it happened
 	//
@@ -6407,7 +6502,7 @@ type ClientInterface interface {
 	// Nothing is returned for an incognito session, which has no items to return.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
-	ListResponseItems(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListResponseItems(ctx context.Context, id string, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RewindSessionWithBody Go back to a response and carry on from there
 	//
@@ -6417,7 +6512,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
-	RewindSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RewindSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RewindSession Go back to a response and carry on from there
 	//
@@ -6427,7 +6522,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
-	RewindSession(ctx context.Context, id SessionID, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RewindSession(ctx context.Context, id string, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SaySessionWithBody Speak a piece of text without going through the model
 	//
@@ -6436,7 +6531,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
-	SaySessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SaySessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SaySession Speak a piece of text without going through the model
 	//
@@ -6445,7 +6540,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
-	SaySession(ctx context.Context, id SessionID, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SaySession(ctx context.Context, id string, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSessionSettingsWithBody Change the models and voice of one running session
 	//
@@ -6455,9 +6550,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetSessionSettingsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SetSessionSettingsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSessionSettings Change the models and voice of one running session
 	//
@@ -6467,9 +6560,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetSessionSettings(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SetSessionSettings(ctx context.Context, id string, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StopSession Stop a running session
 	//
@@ -6490,7 +6581,7 @@ type ClientInterface interface {
 	// GetSimulationRun One run, with the conversations it had
 	//
 	// Corresponds with GET /v1/agents/simulation-runs/{id} (the `GetSimulationRun` operationId).
-	GetSimulationRun(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetSimulationRun(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CancelSimulationRun Stop a run
 	//
@@ -6498,7 +6589,7 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with POST /v1/agents/simulation-runs/{id}/cancel (the `CancelSimulationRun` operationId).
-	CancelSimulationRun(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CancelSimulationRun(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSimulations The simulations the calling customer has
 	//
@@ -6531,12 +6622,12 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/simulations/{id} (the `DeleteSimulation` operationId).
-	DeleteSimulation(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteSimulation(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSimulation One simulation
 	//
 	// Corresponds with GET /v1/agents/simulations/{id} (the `GetSimulation` operationId).
-	GetSimulation(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetSimulation(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSimulationWithBody Replace a simulation
 	//
@@ -6546,7 +6637,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/agents/simulations/{id} (the `UpdateSimulation` operationId).
-	UpdateSimulationWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateSimulationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSimulation Replace a simulation
 	//
@@ -6556,7 +6647,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/agents/simulations/{id} (the `UpdateSimulation` operationId).
-	UpdateSimulation(ctx context.Context, id ResourceID, body UpdateSimulationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateSimulation(ctx context.Context, id string, body UpdateSimulationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RunSimulation Have the conversations
 	//
@@ -6564,7 +6655,7 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with POST /v1/agents/simulations/{id}/run (the `RunSimulation` operationId).
-	RunSimulation(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RunSimulation(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSkills The skills the calling customer has defined
 	//
@@ -6596,12 +6687,12 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/skills/{id} (the `DeleteSkill` operationId).
-	DeleteSkill(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteSkill(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSkill One skill
 	//
 	// Corresponds with GET /v1/agents/skills/{id} (the `GetSkill` operationId).
-	GetSkill(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetSkill(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSkillWithBody Replace a skill
 	//
@@ -6610,7 +6701,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
-	UpdateSkillWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateSkillWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSkill Replace a skill
 	//
@@ -6619,7 +6710,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
-	UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateSkill(ctx context.Context, id string, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SyncAgentWithBody Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
@@ -6712,12 +6803,12 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/voices/{id} (the `DeleteVoice` operationId).
-	DeleteVoice(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetVoice One voice, with its recordings and what each provider made of them
 	//
 	// Corresponds with GET /v1/agents/voices/{id} (the `GetVoice` operationId).
-	GetVoice(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateVoiceWithBody Rename a voice
 	//
@@ -6727,7 +6818,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
-	UpdateVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateVoice Rename a voice
 	//
@@ -6737,7 +6828,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
-	UpdateVoice(ctx context.Context, id ResourceID, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateVoice(ctx context.Context, id string, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PrepareVoiceWithBody Teach the text-to-speech providers this voice
 	//
@@ -6747,7 +6838,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
-	PrepareVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PrepareVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PrepareVoice Teach the text-to-speech providers this voice
 	//
@@ -6757,7 +6848,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
-	PrepareVoice(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PrepareVoice(ctx context.Context, id string, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PreviewVoiceWithBody Hear a voice through one provider
 	//
@@ -6767,7 +6858,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
-	PreviewVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PreviewVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PreviewVoice Hear a voice through one provider
 	//
@@ -6777,7 +6868,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
-	PreviewVoice(ctx context.Context, id ResourceID, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PreviewVoice(ctx context.Context, id string, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AddVoiceSampleWithBody Add a recording to a voice
 	//
@@ -6787,7 +6878,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
-	AddVoiceSampleWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	AddVoiceSampleWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AddVoiceSample Add a recording to a voice
 	//
@@ -6797,7 +6888,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
-	AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	AddVoiceSample(ctx context.Context, id string, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClassifyWithBody Ask a classifier typed questions about a piece of text
 	//
@@ -7069,12 +7160,12 @@ type ClientInterface interface {
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/router/configs/{id} (the `DeleteRouterConfig` operationId).
-	DeleteRouterConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteRouterConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetRouterConfig One router config
 	//
 	// Corresponds with GET /v1/router/configs/{id} (the `GetRouterConfig` operationId).
-	GetRouterConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetRouterConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateRouterConfigWithBody Replace a router config
 	//
@@ -7084,7 +7175,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/router/configs/{id} (the `UpdateRouterConfig` operationId).
-	UpdateRouterConfigWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateRouterConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateRouterConfig Replace a router config
 	//
@@ -7094,7 +7185,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/router/configs/{id} (the `UpdateRouterConfig` operationId).
-	UpdateRouterConfig(ctx context.Context, id ResourceID, body UpdateRouterConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateRouterConfig(ctx context.Context, id string, body UpdateRouterConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SearchWithBody Answer a question out of what is true now
 	//
@@ -7180,7 +7271,7 @@ type ClientInterface interface {
 	// GetTranscription One transcription job, and its transcript once it has one
 	//
 	// Corresponds with GET /v1/stt/recordings/{id} (the `GetTranscription` operationId).
-	GetTranscription(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetTranscription(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RecordSpeechWithBody Speak a whole text into one audio file, off the live path
 	//
@@ -7203,7 +7294,7 @@ type ClientInterface interface {
 	// GetSpeech One speech job, and its audio once it has some
 	//
 	// Corresponds with GET /v1/tts/recordings/{id} (the `GetSpeech` operationId).
-	GetSpeech(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetSpeech(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetTurnStats Conversational latency for the calling customer
 	//
@@ -7277,7 +7368,7 @@ func (c *Client) ListCalls(ctx context.Context, params *ListCallsParams, reqEdit
 // GetCall One call, with whatever was made of it afterwards
 //
 // Corresponds with GET /v1/agents/calls/{id} (the `GetCall` operationId).
-func (c *Client) GetCall(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetCall(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCallRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7294,7 +7385,7 @@ func (c *Client) GetCall(ctx context.Context, id ResourceID, reqEditors ...Reque
 // A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
 //
 // Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
-func (c *Client) GetCallEvents(ctx context.Context, id ResourceID, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetCallEvents(ctx context.Context, id string, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCallEventsRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
@@ -7311,7 +7402,7 @@ func (c *Client) GetCallEvents(ctx context.Context, id ResourceID, params *GetCa
 // Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
 //
 // Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
-func (c *Client) GetCallTimeline(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetCallTimeline(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCallTimelineRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7330,7 +7421,7 @@ func (c *Client) GetCallTimeline(ctx context.Context, id ResourceID, reqEditors 
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
-func (c *Client) CreateCallTokenWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) CreateCallTokenWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateCallTokenRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -7349,7 +7440,7 @@ func (c *Client) CreateCallTokenWithBody(ctx context.Context, id ResourceID, con
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
-func (c *Client) CreateCallToken(ctx context.Context, id ResourceID, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) CreateCallToken(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateCallTokenRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -7366,7 +7457,7 @@ func (c *Client) CreateCallToken(ctx context.Context, id ResourceID, body Create
 // Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
 //
 // Corresponds with GET /v1/agents/calls/{id}/transcript (the `GetCallTranscript` operationId).
-func (c *Client) GetCallTranscript(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetCallTranscript(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCallTranscriptRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7436,7 +7527,7 @@ func (c *Client) CreateCampaign(ctx context.Context, body CreateCampaignJSONRequ
 // GetCampaign One campaign
 //
 // Corresponds with GET /v1/agents/campaigns/{id} (the `GetCampaign` operationId).
-func (c *Client) GetCampaign(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCampaignRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7451,7 +7542,7 @@ func (c *Client) GetCampaign(ctx context.Context, id ResourceID, reqEditors ...R
 // ListCampaignContacts Who a campaign is ringing, and how far it has got
 //
 // Corresponds with GET /v1/agents/campaigns/{id}/contacts (the `ListCampaignContacts` operationId).
-func (c *Client) ListCampaignContacts(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) ListCampaignContacts(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListCampaignContactsRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7471,7 +7562,7 @@ func (c *Client) ListCampaignContacts(ctx context.Context, id ResourceID, reqEdi
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
-func (c *Client) AddCampaignContactsWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) AddCampaignContactsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddCampaignContactsRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -7491,7 +7582,7 @@ func (c *Client) AddCampaignContactsWithBody(ctx context.Context, id ResourceID,
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
-func (c *Client) AddCampaignContacts(ctx context.Context, id ResourceID, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) AddCampaignContacts(ctx context.Context, id string, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddCampaignContactsRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -7509,7 +7600,7 @@ func (c *Client) AddCampaignContacts(ctx context.Context, id ResourceID, body Ad
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/pause (the `PauseCampaign` operationId).
-func (c *Client) PauseCampaign(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) PauseCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPauseCampaignRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7527,7 +7618,7 @@ func (c *Client) PauseCampaign(ctx context.Context, id ResourceID, reqEditors ..
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
-func (c *Client) StartCampaign(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) StartCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStartCampaignRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7643,7 +7734,7 @@ func (c *Client) CreateAgentConfig(ctx context.Context, body CreateAgentConfigJS
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
-func (c *Client) DeleteAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeleteAgentConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteAgentConfigRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7658,7 +7749,7 @@ func (c *Client) DeleteAgentConfig(ctx context.Context, id ResourceID, reqEditor
 // GetAgentConfig One agent config
 //
 // Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
-func (c *Client) GetAgentConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetAgentConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentConfigRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7720,7 +7811,7 @@ func (c *Client) PatchAgentConfig(ctx context.Context, id string, body PatchAgen
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-func (c *Client) UpdateAgentConfigWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateAgentConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateAgentConfigRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -7740,7 +7831,7 @@ func (c *Client) UpdateAgentConfigWithBody(ctx context.Context, id ResourceID, c
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-func (c *Client) UpdateAgentConfig(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateAgentConfig(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateAgentConfigRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -7754,8 +7845,10 @@ func (c *Client) UpdateAgentConfig(ctx context.Context, id ResourceID, body Upda
 
 // ListConfigPlugins The plugin logins this agent holds
 //
+// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
+//
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-func (c *Client) ListConfigPlugins(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListConfigPluginsRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -7772,7 +7865,7 @@ func (c *Client) ListConfigPlugins(ctx context.Context, id ResourceID, reqEditor
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-func (c *Client) DisconnectPlugin(ctx context.Context, id ResourceID, pluginId PluginID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDisconnectPluginRequest(c.Server, id, pluginId)
 	if err != nil {
 		return nil, err
@@ -7792,7 +7885,7 @@ func (c *Client) DisconnectPlugin(ctx context.Context, id ResourceID, pluginId P
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-func (c *Client) AuthorizePluginWithBody(ctx context.Context, id ResourceID, pluginId PluginID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequestWithBody(c.Server, id, pluginId, contentType, body)
 	if err != nil {
 		return nil, err
@@ -7812,7 +7905,7 @@ func (c *Client) AuthorizePluginWithBody(ctx context.Context, id ResourceID, plu
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-func (c *Client) AuthorizePlugin(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequest(c.Server, id, pluginId, body)
 	if err != nil {
 		return nil, err
@@ -8009,7 +8102,7 @@ func (c *Client) GetConnector(ctx context.Context, id string, reqEditors ...Requ
 // A command still running is reported as it stands; the session holding it is where it can be stopped.
 //
 // Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-func (c *Client) GetConversationCommand(ctx context.Context, cid string, commandId CommandID, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetConversationCommand(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConversationCommandRequest(c.Server, cid, commandId, params)
 	if err != nil {
 		return nil, err
@@ -8183,7 +8276,7 @@ func (c *Client) ListKnowledgeDocuments(ctx context.Context, params *ListKnowled
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
-func (c *Client) DeleteKnowledgeDocument(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeleteKnowledgeDocument(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteKnowledgeDocumentRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -8200,7 +8293,7 @@ func (c *Client) DeleteKnowledgeDocument(ctx context.Context, id ResourceID, req
 // What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.
 //
 // Corresponds with GET /v1/agents/knowledge/documents/{id} (the `GetKnowledgeDocument` operationId).
-func (c *Client) GetKnowledgeDocument(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetKnowledgeDocument(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetKnowledgeDocumentRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -8218,7 +8311,7 @@ func (c *Client) GetKnowledgeDocument(ctx context.Context, id ResourceID, reqEdi
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
-func (c *Client) ListKnowledgeDocumentPassages(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) ListKnowledgeDocumentPassages(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListKnowledgeDocumentPassagesRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -8295,7 +8388,7 @@ func (c *Client) AddKnowledgeUrl(ctx context.Context, body AddKnowledgeUrlJSONRe
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/knowledge/urls/{id} (the `DeleteKnowledgeUrl` operationId).
-func (c *Client) DeleteKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeleteKnowledgeUrl(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteKnowledgeUrlRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -8310,7 +8403,7 @@ func (c *Client) DeleteKnowledgeUrl(ctx context.Context, id ResourceID, reqEdito
 // GetKnowledgeUrl One page, and when it was last read
 //
 // Corresponds with GET /v1/agents/knowledge/urls/{id} (the `GetKnowledgeUrl` operationId).
-func (c *Client) GetKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetKnowledgeUrl(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetKnowledgeUrlRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -8328,7 +8421,7 @@ func (c *Client) GetKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors 
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
-func (c *Client) IndexKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) IndexKnowledgeUrl(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIndexKnowledgeUrlRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -8346,7 +8439,7 @@ func (c *Client) IndexKnowledgeUrl(ctx context.Context, id ResourceID, reqEditor
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with GET /v1/agents/knowledge/urls/{id}/passages (the `ListKnowledgeUrlPassages` operationId).
-func (c *Client) ListKnowledgeUrlPassages(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) ListKnowledgeUrlPassages(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListKnowledgeUrlPassagesRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -8439,6 +8532,40 @@ func (c *Client) PluginOAuthCallback(ctx context.Context, params *PluginOAuthCal
 	return c.Client.Do(req)
 }
 
+// ReceivePluginEvent Receive a plugin's MCP event
+//
+// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+//
+// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceivePluginEventRequest(c.Server, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPluginLogo A plugin's logo
+//
+// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+//
+// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPluginLogoRequest(c.Server, pluginId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreateSessionWithBody Join a call as a voice agent
 //
 // The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -8487,7 +8614,7 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -8514,7 +8641,7 @@ func (c *Client) QuerySessionsWithBody(ctx context.Context, contentType string, 
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -8557,7 +8684,7 @@ func (c *Client) DeleteSession(ctx context.Context, id string, reqEditors ...Req
 // Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
 //
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
-func (c *Client) GetSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSessionRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -8572,13 +8699,17 @@ func (c *Client) GetSession(ctx context.Context, id SessionID, reqEditors ...Req
 // UpdateSessionWithBody Change a session
 //
 // Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+//
+// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
 // Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-func (c *Client) UpdateSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSessionRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -8593,13 +8724,17 @@ func (c *Client) UpdateSessionWithBody(ctx context.Context, id SessionID, conten
 // UpdateSession Change a session
 //
 // Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+//
+// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
 // Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-func (c *Client) UpdateSession(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateSession(ctx context.Context, id string, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSessionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -8616,7 +8751,7 @@ func (c *Client) UpdateSession(ctx context.Context, id SessionID, body UpdateSes
 // Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
 //
 // Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-func (c *Client) GetSessionCommand(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSessionCommandRequest(c.Server, id, commandId)
 	if err != nil {
 		return nil, err
@@ -8635,7 +8770,7 @@ func (c *Client) GetSessionCommand(ctx context.Context, id SessionID, commandId 
 // Interrupting model work claims nothing about a tool whose external side effect already happened.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-func (c *Client) InterruptSessionCommand(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) InterruptSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInterruptSessionCommandRequest(c.Server, id, commandId)
 	if err != nil {
 		return nil, err
@@ -8655,7 +8790,7 @@ func (c *Client) InterruptSessionCommand(ctx context.Context, id SessionID, comm
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
-func (c *Client) ForkSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) ForkSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewForkSessionRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -8675,7 +8810,7 @@ func (c *Client) ForkSessionWithBody(ctx context.Context, id SessionID, contentT
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
-func (c *Client) ForkSession(ctx context.Context, id SessionID, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) ForkSession(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewForkSessionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -8694,8 +8829,7 @@ func (c *Client) ForkSession(ctx context.Context, id SessionID, body ForkSession
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) SetSessionInstructionsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) SetSessionInstructionsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSessionInstructionsRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -8714,8 +8848,7 @@ func (c *Client) SetSessionInstructionsWithBody(ctx context.Context, id SessionI
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) SetSessionInstructions(ctx context.Context, id SessionID, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) SetSessionInstructions(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSessionInstructionsRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -8732,7 +8865,7 @@ func (c *Client) SetSessionInstructions(ctx context.Context, id SessionID, body 
 // What a caller outside the call has instead of a voice. A murmur is not interrupted, because it was meant to overlap with whoever is talking.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/interrupt (the `InterruptSession` operationId).
-func (c *Client) InterruptSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) InterruptSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInterruptSessionRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -8768,7 +8901,7 @@ func (c *Client) DeleteSessionMemories(ctx context.Context, id string, reqEditor
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
-func (c *Client) RespondSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) RespondSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRespondSessionRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -8785,7 +8918,7 @@ func (c *Client) RespondSessionWithBody(ctx context.Context, id SessionID, conte
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
-func (c *Client) RespondSession(ctx context.Context, id SessionID, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) RespondSession(ctx context.Context, id string, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRespondSessionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -8802,7 +8935,7 @@ func (c *Client) RespondSession(ctx context.Context, id SessionID, body RespondS
 // Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
 //
 // Corresponds with GET /v1/agents/sessions/{id}/responses (the `ListResponses` operationId).
-func (c *Client) ListResponses(ctx context.Context, id SessionID, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) ListResponses(ctx context.Context, id string, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListResponsesRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
@@ -8822,7 +8955,7 @@ func (c *Client) ListResponses(ctx context.Context, id SessionID, params *ListRe
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
-func (c *Client) CreateResponseWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) CreateResponseWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateResponseRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -8842,7 +8975,7 @@ func (c *Client) CreateResponseWithBody(ctx context.Context, id SessionID, conte
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
-func (c *Client) CreateResponse(ctx context.Context, id SessionID, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) CreateResponse(ctx context.Context, id string, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateResponseRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -8861,7 +8994,7 @@ func (c *Client) CreateResponse(ctx context.Context, id SessionID, body CreateRe
 // Nothing is returned for an incognito session, which has no items to return.
 //
 // Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
-func (c *Client) ListResponseItems(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) ListResponseItems(ctx context.Context, id string, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListResponseItemsRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
@@ -8881,7 +9014,7 @@ func (c *Client) ListResponseItems(ctx context.Context, id SessionID, params *Li
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
-func (c *Client) RewindSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) RewindSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRewindSessionRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -8901,7 +9034,7 @@ func (c *Client) RewindSessionWithBody(ctx context.Context, id SessionID, conten
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
-func (c *Client) RewindSession(ctx context.Context, id SessionID, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) RewindSession(ctx context.Context, id string, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRewindSessionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -8920,7 +9053,7 @@ func (c *Client) RewindSession(ctx context.Context, id SessionID, body RewindSes
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
-func (c *Client) SaySessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) SaySessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSaySessionRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -8939,7 +9072,7 @@ func (c *Client) SaySessionWithBody(ctx context.Context, id SessionID, contentTy
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
-func (c *Client) SaySession(ctx context.Context, id SessionID, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) SaySession(ctx context.Context, id string, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSaySessionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -8959,8 +9092,7 @@ func (c *Client) SaySession(ctx context.Context, id SessionID, body SaySessionJS
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) SetSessionSettingsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) SetSessionSettingsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSessionSettingsRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -8980,8 +9112,7 @@ func (c *Client) SetSessionSettingsWithBody(ctx context.Context, id SessionID, c
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) SetSessionSettings(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) SetSessionSettings(ctx context.Context, id string, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSessionSettingsRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -9032,7 +9163,7 @@ func (c *Client) ListSimulationRuns(ctx context.Context, params *ListSimulationR
 // GetSimulationRun One run, with the conversations it had
 //
 // Corresponds with GET /v1/agents/simulation-runs/{id} (the `GetSimulationRun` operationId).
-func (c *Client) GetSimulationRun(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetSimulationRun(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSimulationRunRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -9050,7 +9181,7 @@ func (c *Client) GetSimulationRun(ctx context.Context, id ResourceID, reqEditors
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with POST /v1/agents/simulation-runs/{id}/cancel (the `CancelSimulationRun` operationId).
-func (c *Client) CancelSimulationRun(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) CancelSimulationRun(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCancelSimulationRunRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -9123,7 +9254,7 @@ func (c *Client) CreateSimulation(ctx context.Context, body CreateSimulationJSON
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/simulations/{id} (the `DeleteSimulation` operationId).
-func (c *Client) DeleteSimulation(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeleteSimulation(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteSimulationRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -9138,7 +9269,7 @@ func (c *Client) DeleteSimulation(ctx context.Context, id ResourceID, reqEditors
 // GetSimulation One simulation
 //
 // Corresponds with GET /v1/agents/simulations/{id} (the `GetSimulation` operationId).
-func (c *Client) GetSimulation(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetSimulation(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSimulationRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -9158,7 +9289,7 @@ func (c *Client) GetSimulation(ctx context.Context, id ResourceID, reqEditors ..
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/agents/simulations/{id} (the `UpdateSimulation` operationId).
-func (c *Client) UpdateSimulationWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateSimulationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSimulationRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -9178,7 +9309,7 @@ func (c *Client) UpdateSimulationWithBody(ctx context.Context, id ResourceID, co
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/agents/simulations/{id} (the `UpdateSimulation` operationId).
-func (c *Client) UpdateSimulation(ctx context.Context, id ResourceID, body UpdateSimulationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateSimulation(ctx context.Context, id string, body UpdateSimulationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSimulationRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -9196,7 +9327,7 @@ func (c *Client) UpdateSimulation(ctx context.Context, id ResourceID, body Updat
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with POST /v1/agents/simulations/{id}/run (the `RunSimulation` operationId).
-func (c *Client) RunSimulation(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) RunSimulation(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRunSimulationRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -9268,7 +9399,7 @@ func (c *Client) CreateSkill(ctx context.Context, body CreateSkillJSONRequestBod
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/skills/{id} (the `DeleteSkill` operationId).
-func (c *Client) DeleteSkill(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeleteSkill(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteSkillRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -9283,7 +9414,7 @@ func (c *Client) DeleteSkill(ctx context.Context, id ResourceID, reqEditors ...R
 // GetSkill One skill
 //
 // Corresponds with GET /v1/agents/skills/{id} (the `GetSkill` operationId).
-func (c *Client) GetSkill(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetSkill(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSkillRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -9302,7 +9433,7 @@ func (c *Client) GetSkill(ctx context.Context, id ResourceID, reqEditors ...Requ
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
-func (c *Client) UpdateSkillWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateSkillWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSkillRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -9321,7 +9452,7 @@ func (c *Client) UpdateSkillWithBody(ctx context.Context, id ResourceID, content
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
-func (c *Client) UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateSkill(ctx context.Context, id string, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSkillRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -9514,7 +9645,7 @@ func (c *Client) ListVoiceProviders(ctx context.Context, reqEditors ...RequestEd
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/voices/{id} (the `DeleteVoice` operationId).
-func (c *Client) DeleteVoice(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeleteVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteVoiceRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -9529,7 +9660,7 @@ func (c *Client) DeleteVoice(ctx context.Context, id ResourceID, reqEditors ...R
 // GetVoice One voice, with its recordings and what each provider made of them
 //
 // Corresponds with GET /v1/agents/voices/{id} (the `GetVoice` operationId).
-func (c *Client) GetVoice(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetVoiceRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -9549,7 +9680,7 @@ func (c *Client) GetVoice(ctx context.Context, id ResourceID, reqEditors ...Requ
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
-func (c *Client) UpdateVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateVoiceRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -9569,7 +9700,7 @@ func (c *Client) UpdateVoiceWithBody(ctx context.Context, id ResourceID, content
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
-func (c *Client) UpdateVoice(ctx context.Context, id ResourceID, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateVoice(ctx context.Context, id string, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateVoiceRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -9589,7 +9720,7 @@ func (c *Client) UpdateVoice(ctx context.Context, id ResourceID, body UpdateVoic
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
-func (c *Client) PrepareVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) PrepareVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareVoiceRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -9609,7 +9740,7 @@ func (c *Client) PrepareVoiceWithBody(ctx context.Context, id ResourceID, conten
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
-func (c *Client) PrepareVoice(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) PrepareVoice(ctx context.Context, id string, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareVoiceRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -9629,7 +9760,7 @@ func (c *Client) PrepareVoice(ctx context.Context, id ResourceID, body PrepareVo
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
-func (c *Client) PreviewVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) PreviewVoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPreviewVoiceRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -9649,7 +9780,7 @@ func (c *Client) PreviewVoiceWithBody(ctx context.Context, id ResourceID, conten
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
-func (c *Client) PreviewVoice(ctx context.Context, id ResourceID, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) PreviewVoice(ctx context.Context, id string, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPreviewVoiceRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -9669,7 +9800,7 @@ func (c *Client) PreviewVoice(ctx context.Context, id ResourceID, body PreviewVo
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
-func (c *Client) AddVoiceSampleWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) AddVoiceSampleWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddVoiceSampleRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -9689,7 +9820,7 @@ func (c *Client) AddVoiceSampleWithBody(ctx context.Context, id ResourceID, cont
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
-func (c *Client) AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) AddVoiceSample(ctx context.Context, id string, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddVoiceSampleRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -10271,7 +10402,7 @@ func (c *Client) CreateRouterConfig(ctx context.Context, body CreateRouterConfig
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/router/configs/{id} (the `DeleteRouterConfig` operationId).
-func (c *Client) DeleteRouterConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeleteRouterConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteRouterConfigRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -10286,7 +10417,7 @@ func (c *Client) DeleteRouterConfig(ctx context.Context, id ResourceID, reqEdito
 // GetRouterConfig One router config
 //
 // Corresponds with GET /v1/router/configs/{id} (the `GetRouterConfig` operationId).
-func (c *Client) GetRouterConfig(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetRouterConfig(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetRouterConfigRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -10306,7 +10437,7 @@ func (c *Client) GetRouterConfig(ctx context.Context, id ResourceID, reqEditors 
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/router/configs/{id} (the `UpdateRouterConfig` operationId).
-func (c *Client) UpdateRouterConfigWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateRouterConfigWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateRouterConfigRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
 		return nil, err
@@ -10326,7 +10457,7 @@ func (c *Client) UpdateRouterConfigWithBody(ctx context.Context, id ResourceID, 
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/router/configs/{id} (the `UpdateRouterConfig` operationId).
-func (c *Client) UpdateRouterConfig(ctx context.Context, id ResourceID, body UpdateRouterConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) UpdateRouterConfig(ctx context.Context, id string, body UpdateRouterConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateRouterConfigRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
@@ -10512,7 +10643,7 @@ func (c *Client) TranscribeRecording(ctx context.Context, body TranscribeRecordi
 // GetTranscription One transcription job, and its transcript once it has one
 //
 // Corresponds with GET /v1/stt/recordings/{id} (the `GetTranscription` operationId).
-func (c *Client) GetTranscription(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetTranscription(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTranscriptionRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -10565,7 +10696,7 @@ func (c *Client) RecordSpeech(ctx context.Context, body RecordSpeechJSONRequestB
 // GetSpeech One speech job, and its audio once it has some
 //
 // Corresponds with GET /v1/tts/recordings/{id} (the `GetSpeech` operationId).
-func (c *Client) GetSpeech(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) GetSpeech(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSpeechRequest(c.Server, id)
 	if err != nil {
 		return nil, err
@@ -10728,30 +10859,6 @@ func NewListCallsRequest(server string, params *ListCallsParams) (*http.Request,
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if params.AgentId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.CampaignId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "campaign_id", *params.CampaignId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
 		if params.Running != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "running", *params.Running, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
@@ -10764,9 +10871,45 @@ func NewListCallsRequest(server string, params *ListCallsParams) (*http.Request,
 
 		}
 
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AgentId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.CampaignId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "campaign_id", *params.CampaignId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if params.From != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -10778,19 +10921,7 @@ func NewListCallsRequest(server string, params *ListCallsParams) (*http.Request,
 
 		if params.To != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -10815,7 +10946,7 @@ func NewListCallsRequest(server string, params *ListCallsParams) (*http.Request,
 }
 
 // NewGetCallRequest constructs an http.Request for the GetCall method
-func NewGetCallRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetCallRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10849,7 +10980,7 @@ func NewGetCallRequest(server string, id ResourceID) (*http.Request, error) {
 }
 
 // NewGetCallEventsRequest constructs an http.Request for the GetCallEvents method
-func NewGetCallEventsRequest(server string, id ResourceID, params *GetCallEventsParams) (*http.Request, error) {
+func NewGetCallEventsRequest(server string, id string, params *GetCallEventsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10910,7 +11041,7 @@ func NewGetCallEventsRequest(server string, id ResourceID, params *GetCallEvents
 }
 
 // NewGetCallTimelineRequest constructs an http.Request for the GetCallTimeline method
-func NewGetCallTimelineRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetCallTimelineRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10944,7 +11075,7 @@ func NewGetCallTimelineRequest(server string, id ResourceID) (*http.Request, err
 }
 
 // NewCreateCallTokenRequest calls the generic CreateCallToken builder with application/json body
-func NewCreateCallTokenRequest(server string, id ResourceID, body CreateCallTokenJSONRequestBody) (*http.Request, error) {
+func NewCreateCallTokenRequest(server string, id string, body CreateCallTokenJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -10955,7 +11086,7 @@ func NewCreateCallTokenRequest(server string, id ResourceID, body CreateCallToke
 }
 
 // NewCreateCallTokenRequestWithBody constructs an http.Request for the CreateCallToken method, with any body, and a specified content type
-func NewCreateCallTokenRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateCallTokenRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10991,7 +11122,7 @@ func NewCreateCallTokenRequestWithBody(server string, id ResourceID, contentType
 }
 
 // NewGetCallTranscriptRequest constructs an http.Request for the GetCallTranscript method
-func NewGetCallTranscriptRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetCallTranscriptRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11092,7 +11223,7 @@ func NewCreateCampaignRequestWithBody(server string, contentType string, body io
 }
 
 // NewGetCampaignRequest constructs an http.Request for the GetCampaign method
-func NewGetCampaignRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetCampaignRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11126,7 +11257,7 @@ func NewGetCampaignRequest(server string, id ResourceID) (*http.Request, error) 
 }
 
 // NewListCampaignContactsRequest constructs an http.Request for the ListCampaignContacts method
-func NewListCampaignContactsRequest(server string, id ResourceID) (*http.Request, error) {
+func NewListCampaignContactsRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11160,7 +11291,7 @@ func NewListCampaignContactsRequest(server string, id ResourceID) (*http.Request
 }
 
 // NewAddCampaignContactsRequest calls the generic AddCampaignContacts builder with application/json body
-func NewAddCampaignContactsRequest(server string, id ResourceID, body AddCampaignContactsJSONRequestBody) (*http.Request, error) {
+func NewAddCampaignContactsRequest(server string, id string, body AddCampaignContactsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -11171,7 +11302,7 @@ func NewAddCampaignContactsRequest(server string, id ResourceID, body AddCampaig
 }
 
 // NewAddCampaignContactsRequestWithBody constructs an http.Request for the AddCampaignContacts method, with any body, and a specified content type
-func NewAddCampaignContactsRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewAddCampaignContactsRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11207,7 +11338,7 @@ func NewAddCampaignContactsRequestWithBody(server string, id ResourceID, content
 }
 
 // NewPauseCampaignRequest constructs an http.Request for the PauseCampaign method
-func NewPauseCampaignRequest(server string, id ResourceID) (*http.Request, error) {
+func NewPauseCampaignRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11241,7 +11372,7 @@ func NewPauseCampaignRequest(server string, id ResourceID) (*http.Request, error
 }
 
 // NewStartCampaignRequest constructs an http.Request for the StartCampaign method
-func NewStartCampaignRequest(server string, id ResourceID) (*http.Request, error) {
+func NewStartCampaignRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11344,7 +11475,7 @@ func NewListAgentConfigsRequest(server string, params *ListAgentConfigsParams) (
 
 		if params.Name != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "name", *params.Name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "name", *params.Name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -11409,7 +11540,7 @@ func NewCreateAgentConfigRequestWithBody(server string, contentType string, body
 }
 
 // NewDeleteAgentConfigRequest constructs an http.Request for the DeleteAgentConfig method
-func NewDeleteAgentConfigRequest(server string, id ResourceID) (*http.Request, error) {
+func NewDeleteAgentConfigRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11443,7 +11574,7 @@ func NewDeleteAgentConfigRequest(server string, id ResourceID) (*http.Request, e
 }
 
 // NewGetAgentConfigRequest constructs an http.Request for the GetAgentConfig method
-func NewGetAgentConfigRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetAgentConfigRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11524,7 +11655,7 @@ func NewPatchAgentConfigRequestWithBody(server string, id string, contentType st
 }
 
 // NewUpdateAgentConfigRequest calls the generic UpdateAgentConfig builder with application/json body
-func NewUpdateAgentConfigRequest(server string, id ResourceID, body UpdateAgentConfigJSONRequestBody) (*http.Request, error) {
+func NewUpdateAgentConfigRequest(server string, id string, body UpdateAgentConfigJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -11535,7 +11666,7 @@ func NewUpdateAgentConfigRequest(server string, id ResourceID, body UpdateAgentC
 }
 
 // NewUpdateAgentConfigRequestWithBody constructs an http.Request for the UpdateAgentConfig method, with any body, and a specified content type
-func NewUpdateAgentConfigRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpdateAgentConfigRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11571,7 +11702,7 @@ func NewUpdateAgentConfigRequestWithBody(server string, id ResourceID, contentTy
 }
 
 // NewListConfigPluginsRequest constructs an http.Request for the ListConfigPlugins method
-func NewListConfigPluginsRequest(server string, id ResourceID) (*http.Request, error) {
+func NewListConfigPluginsRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11605,7 +11736,7 @@ func NewListConfigPluginsRequest(server string, id ResourceID) (*http.Request, e
 }
 
 // NewDisconnectPluginRequest constructs an http.Request for the DisconnectPlugin method
-func NewDisconnectPluginRequest(server string, id ResourceID, pluginId PluginID) (*http.Request, error) {
+func NewDisconnectPluginRequest(server string, id string, pluginId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11646,7 +11777,7 @@ func NewDisconnectPluginRequest(server string, id ResourceID, pluginId PluginID)
 }
 
 // NewAuthorizePluginRequest calls the generic AuthorizePlugin builder with application/json body
-func NewAuthorizePluginRequest(server string, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody) (*http.Request, error) {
+func NewAuthorizePluginRequest(server string, id string, pluginId string, body AuthorizePluginJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -11657,7 +11788,7 @@ func NewAuthorizePluginRequest(server string, id ResourceID, pluginId PluginID, 
 }
 
 // NewAuthorizePluginRequestWithBody constructs an http.Request for the AuthorizePlugin method, with any body, and a specified content type
-func NewAuthorizePluginRequestWithBody(server string, id ResourceID, pluginId PluginID, contentType string, body io.Reader) (*http.Request, error) {
+func NewAuthorizePluginRequestWithBody(server string, id string, pluginId string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12073,7 +12204,7 @@ func NewGetConnectorRequest(server string, id string) (*http.Request, error) {
 }
 
 // NewGetConversationCommandRequest constructs an http.Request for the GetConversationCommand method
-func NewGetConversationCommandRequest(server string, cid string, commandId CommandID, params *GetConversationCommandParams) (*http.Request, error) {
+func NewGetConversationCommandRequest(server string, cid string, commandId string, params *GetConversationCommandParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12114,7 +12245,7 @@ func NewGetConversationCommandRequest(server string, cid string, commandId Comma
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "agent_id", params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -12171,7 +12302,7 @@ func NewGetConversationMessagesRequest(server string, cid string, params *GetCon
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "agent_id", params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -12181,7 +12312,7 @@ func NewGetConversationMessagesRequest(server string, cid string, params *GetCon
 
 		if params.Before != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "before", *params.Before, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "before", *params.Before, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -12355,7 +12486,7 @@ func NewListKnowledgeDocumentsRequest(server string, params *ListKnowledgeDocume
 
 		if params.Namespace != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "namespace", *params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "namespace", *params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -12380,7 +12511,7 @@ func NewListKnowledgeDocumentsRequest(server string, params *ListKnowledgeDocume
 }
 
 // NewDeleteKnowledgeDocumentRequest constructs an http.Request for the DeleteKnowledgeDocument method
-func NewDeleteKnowledgeDocumentRequest(server string, id ResourceID) (*http.Request, error) {
+func NewDeleteKnowledgeDocumentRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12414,7 +12545,7 @@ func NewDeleteKnowledgeDocumentRequest(server string, id ResourceID) (*http.Requ
 }
 
 // NewGetKnowledgeDocumentRequest constructs an http.Request for the GetKnowledgeDocument method
-func NewGetKnowledgeDocumentRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetKnowledgeDocumentRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12448,7 +12579,7 @@ func NewGetKnowledgeDocumentRequest(server string, id ResourceID) (*http.Request
 }
 
 // NewListKnowledgeDocumentPassagesRequest constructs an http.Request for the ListKnowledgeDocumentPassages method
-func NewListKnowledgeDocumentPassagesRequest(server string, id ResourceID) (*http.Request, error) {
+func NewListKnowledgeDocumentPassagesRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12511,7 +12642,7 @@ func NewListKnowledgeUrlsRequest(server string, params *ListKnowledgeUrlsParams)
 
 		if params.Namespace != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "namespace", *params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "namespace", *params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -12576,7 +12707,7 @@ func NewAddKnowledgeUrlRequestWithBody(server string, contentType string, body i
 }
 
 // NewDeleteKnowledgeUrlRequest constructs an http.Request for the DeleteKnowledgeUrl method
-func NewDeleteKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, error) {
+func NewDeleteKnowledgeUrlRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12610,7 +12741,7 @@ func NewDeleteKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, 
 }
 
 // NewGetKnowledgeUrlRequest constructs an http.Request for the GetKnowledgeUrl method
-func NewGetKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetKnowledgeUrlRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12644,7 +12775,7 @@ func NewGetKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, err
 }
 
 // NewIndexKnowledgeUrlRequest constructs an http.Request for the IndexKnowledgeUrl method
-func NewIndexKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, error) {
+func NewIndexKnowledgeUrlRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12678,7 +12809,7 @@ func NewIndexKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, e
 }
 
 // NewListKnowledgeUrlPassagesRequest constructs an http.Request for the ListKnowledgeUrlPassages method
-func NewListKnowledgeUrlPassagesRequest(server string, id ResourceID) (*http.Request, error) {
+func NewListKnowledgeUrlPassagesRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13102,7 +13233,7 @@ func NewListPluginsRequest(server string, params *ListPluginsParams) (*http.Requ
 
 		if params.Q != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -13194,6 +13325,74 @@ func NewPluginOAuthCallbackRequest(server string, params *PluginOAuthCallbackPar
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
 		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReceivePluginEventRequest constructs an http.Request for the ReceivePluginEvent method
+func NewReceivePluginEventRequest(server string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/plugins/events/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetPluginLogoRequest constructs an http.Request for the GetPluginLogo method
+func NewGetPluginLogoRequest(server string, pluginId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "plugin_id", pluginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/plugins/%s/logo", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -13319,7 +13518,7 @@ func NewDeleteSessionRequest(server string, id string) (*http.Request, error) {
 }
 
 // NewGetSessionRequest constructs an http.Request for the GetSession method
-func NewGetSessionRequest(server string, id SessionID) (*http.Request, error) {
+func NewGetSessionRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13353,7 +13552,7 @@ func NewGetSessionRequest(server string, id SessionID) (*http.Request, error) {
 }
 
 // NewUpdateSessionRequest calls the generic UpdateSession builder with application/json body
-func NewUpdateSessionRequest(server string, id SessionID, body UpdateSessionJSONRequestBody) (*http.Request, error) {
+func NewUpdateSessionRequest(server string, id string, body UpdateSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -13364,7 +13563,7 @@ func NewUpdateSessionRequest(server string, id SessionID, body UpdateSessionJSON
 }
 
 // NewUpdateSessionRequestWithBody constructs an http.Request for the UpdateSession method, with any body, and a specified content type
-func NewUpdateSessionRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpdateSessionRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13400,7 +13599,7 @@ func NewUpdateSessionRequestWithBody(server string, id SessionID, contentType st
 }
 
 // NewGetSessionCommandRequest constructs an http.Request for the GetSessionCommand method
-func NewGetSessionCommandRequest(server string, id SessionID, commandId CommandID) (*http.Request, error) {
+func NewGetSessionCommandRequest(server string, id string, commandId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13441,7 +13640,7 @@ func NewGetSessionCommandRequest(server string, id SessionID, commandId CommandI
 }
 
 // NewInterruptSessionCommandRequest constructs an http.Request for the InterruptSessionCommand method
-func NewInterruptSessionCommandRequest(server string, id SessionID, commandId CommandID) (*http.Request, error) {
+func NewInterruptSessionCommandRequest(server string, id string, commandId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13482,7 +13681,7 @@ func NewInterruptSessionCommandRequest(server string, id SessionID, commandId Co
 }
 
 // NewForkSessionRequest calls the generic ForkSession builder with application/json body
-func NewForkSessionRequest(server string, id SessionID, body ForkSessionJSONRequestBody) (*http.Request, error) {
+func NewForkSessionRequest(server string, id string, body ForkSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -13493,7 +13692,7 @@ func NewForkSessionRequest(server string, id SessionID, body ForkSessionJSONRequ
 }
 
 // NewForkSessionRequestWithBody constructs an http.Request for the ForkSession method, with any body, and a specified content type
-func NewForkSessionRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+func NewForkSessionRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13529,7 +13728,7 @@ func NewForkSessionRequestWithBody(server string, id SessionID, contentType stri
 }
 
 // NewSetSessionInstructionsRequest calls the generic SetSessionInstructions builder with application/json body
-func NewSetSessionInstructionsRequest(server string, id SessionID, body SetSessionInstructionsJSONRequestBody) (*http.Request, error) {
+func NewSetSessionInstructionsRequest(server string, id string, body SetSessionInstructionsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -13540,7 +13739,7 @@ func NewSetSessionInstructionsRequest(server string, id SessionID, body SetSessi
 }
 
 // NewSetSessionInstructionsRequestWithBody constructs an http.Request for the SetSessionInstructions method, with any body, and a specified content type
-func NewSetSessionInstructionsRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+func NewSetSessionInstructionsRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13576,7 +13775,7 @@ func NewSetSessionInstructionsRequestWithBody(server string, id SessionID, conte
 }
 
 // NewInterruptSessionRequest constructs an http.Request for the InterruptSession method
-func NewInterruptSessionRequest(server string, id SessionID) (*http.Request, error) {
+func NewInterruptSessionRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13644,7 +13843,7 @@ func NewDeleteSessionMemoriesRequest(server string, id string) (*http.Request, e
 }
 
 // NewRespondSessionRequest calls the generic RespondSession builder with application/json body
-func NewRespondSessionRequest(server string, id SessionID, body RespondSessionJSONRequestBody) (*http.Request, error) {
+func NewRespondSessionRequest(server string, id string, body RespondSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -13655,7 +13854,7 @@ func NewRespondSessionRequest(server string, id SessionID, body RespondSessionJS
 }
 
 // NewRespondSessionRequestWithBody constructs an http.Request for the RespondSession method, with any body, and a specified content type
-func NewRespondSessionRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+func NewRespondSessionRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13691,7 +13890,7 @@ func NewRespondSessionRequestWithBody(server string, id SessionID, contentType s
 }
 
 // NewListResponsesRequest constructs an http.Request for the ListResponses method
-func NewListResponsesRequest(server string, id SessionID, params *ListResponsesParams) (*http.Request, error) {
+func NewListResponsesRequest(server string, id string, params *ListResponsesParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13727,7 +13926,7 @@ func NewListResponsesRequest(server string, id SessionID, params *ListResponsesP
 
 		if params.Limit != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -13739,7 +13938,7 @@ func NewListResponsesRequest(server string, id SessionID, params *ListResponsesP
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -13764,7 +13963,7 @@ func NewListResponsesRequest(server string, id SessionID, params *ListResponsesP
 }
 
 // NewCreateResponseRequest calls the generic CreateResponse builder with application/json body
-func NewCreateResponseRequest(server string, id SessionID, body CreateResponseJSONRequestBody) (*http.Request, error) {
+func NewCreateResponseRequest(server string, id string, body CreateResponseJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -13775,7 +13974,7 @@ func NewCreateResponseRequest(server string, id SessionID, body CreateResponseJS
 }
 
 // NewCreateResponseRequestWithBody constructs an http.Request for the CreateResponse method, with any body, and a specified content type
-func NewCreateResponseRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateResponseRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13811,7 +14010,7 @@ func NewCreateResponseRequestWithBody(server string, id SessionID, contentType s
 }
 
 // NewListResponseItemsRequest constructs an http.Request for the ListResponseItems method
-func NewListResponseItemsRequest(server string, id SessionID, params *ListResponseItemsParams) (*http.Request, error) {
+func NewListResponseItemsRequest(server string, id string, params *ListResponseItemsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13847,7 +14046,7 @@ func NewListResponseItemsRequest(server string, id SessionID, params *ListRespon
 
 		if params.ResponseId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "response_id", *params.ResponseId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "response_id", *params.ResponseId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -13859,7 +14058,7 @@ func NewListResponseItemsRequest(server string, id SessionID, params *ListRespon
 
 		if params.Limit != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -13871,7 +14070,7 @@ func NewListResponseItemsRequest(server string, id SessionID, params *ListRespon
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -13896,7 +14095,7 @@ func NewListResponseItemsRequest(server string, id SessionID, params *ListRespon
 }
 
 // NewRewindSessionRequest calls the generic RewindSession builder with application/json body
-func NewRewindSessionRequest(server string, id SessionID, body RewindSessionJSONRequestBody) (*http.Request, error) {
+func NewRewindSessionRequest(server string, id string, body RewindSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -13907,7 +14106,7 @@ func NewRewindSessionRequest(server string, id SessionID, body RewindSessionJSON
 }
 
 // NewRewindSessionRequestWithBody constructs an http.Request for the RewindSession method, with any body, and a specified content type
-func NewRewindSessionRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+func NewRewindSessionRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13943,7 +14142,7 @@ func NewRewindSessionRequestWithBody(server string, id SessionID, contentType st
 }
 
 // NewSaySessionRequest calls the generic SaySession builder with application/json body
-func NewSaySessionRequest(server string, id SessionID, body SaySessionJSONRequestBody) (*http.Request, error) {
+func NewSaySessionRequest(server string, id string, body SaySessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -13954,7 +14153,7 @@ func NewSaySessionRequest(server string, id SessionID, body SaySessionJSONReques
 }
 
 // NewSaySessionRequestWithBody constructs an http.Request for the SaySession method, with any body, and a specified content type
-func NewSaySessionRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+func NewSaySessionRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13990,7 +14189,7 @@ func NewSaySessionRequestWithBody(server string, id SessionID, contentType strin
 }
 
 // NewSetSessionSettingsRequest calls the generic SetSessionSettings builder with application/json body
-func NewSetSessionSettingsRequest(server string, id SessionID, body SetSessionSettingsJSONRequestBody) (*http.Request, error) {
+func NewSetSessionSettingsRequest(server string, id string, body SetSessionSettingsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -14001,7 +14200,7 @@ func NewSetSessionSettingsRequest(server string, id SessionID, body SetSessionSe
 }
 
 // NewSetSessionSettingsRequestWithBody constructs an http.Request for the SetSessionSettings method, with any body, and a specified content type
-func NewSetSessionSettingsRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+func NewSetSessionSettingsRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14100,7 +14299,7 @@ func NewListSimulationRunsRequest(server string, params *ListSimulationRunsParam
 
 		if params.SimulationId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "simulation_id", *params.SimulationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "simulation_id", *params.SimulationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -14112,7 +14311,7 @@ func NewListSimulationRunsRequest(server string, params *ListSimulationRunsParam
 
 		if params.State != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -14124,7 +14323,7 @@ func NewListSimulationRunsRequest(server string, params *ListSimulationRunsParam
 
 		if params.Limit != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -14149,7 +14348,7 @@ func NewListSimulationRunsRequest(server string, params *ListSimulationRunsParam
 }
 
 // NewGetSimulationRunRequest constructs an http.Request for the GetSimulationRun method
-func NewGetSimulationRunRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetSimulationRunRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14183,7 +14382,7 @@ func NewGetSimulationRunRequest(server string, id ResourceID) (*http.Request, er
 }
 
 // NewCancelSimulationRunRequest constructs an http.Request for the CancelSimulationRun method
-func NewCancelSimulationRunRequest(server string, id ResourceID) (*http.Request, error) {
+func NewCancelSimulationRunRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14284,7 +14483,7 @@ func NewCreateSimulationRequestWithBody(server string, contentType string, body 
 }
 
 // NewDeleteSimulationRequest constructs an http.Request for the DeleteSimulation method
-func NewDeleteSimulationRequest(server string, id ResourceID) (*http.Request, error) {
+func NewDeleteSimulationRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14318,7 +14517,7 @@ func NewDeleteSimulationRequest(server string, id ResourceID) (*http.Request, er
 }
 
 // NewGetSimulationRequest constructs an http.Request for the GetSimulation method
-func NewGetSimulationRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetSimulationRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14352,7 +14551,7 @@ func NewGetSimulationRequest(server string, id ResourceID) (*http.Request, error
 }
 
 // NewUpdateSimulationRequest calls the generic UpdateSimulation builder with application/json body
-func NewUpdateSimulationRequest(server string, id ResourceID, body UpdateSimulationJSONRequestBody) (*http.Request, error) {
+func NewUpdateSimulationRequest(server string, id string, body UpdateSimulationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -14363,7 +14562,7 @@ func NewUpdateSimulationRequest(server string, id ResourceID, body UpdateSimulat
 }
 
 // NewUpdateSimulationRequestWithBody constructs an http.Request for the UpdateSimulation method, with any body, and a specified content type
-func NewUpdateSimulationRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpdateSimulationRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14399,7 +14598,7 @@ func NewUpdateSimulationRequestWithBody(server string, id ResourceID, contentTyp
 }
 
 // NewRunSimulationRequest constructs an http.Request for the RunSimulation method
-func NewRunSimulationRequest(server string, id ResourceID) (*http.Request, error) {
+func NewRunSimulationRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14462,7 +14661,7 @@ func NewListSkillsRequest(server string, params *ListSkillsParams) (*http.Reques
 
 		if params.ConfigId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "config_id", *params.ConfigId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "config_id", *params.ConfigId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -14527,7 +14726,7 @@ func NewCreateSkillRequestWithBody(server string, contentType string, body io.Re
 }
 
 // NewDeleteSkillRequest constructs an http.Request for the DeleteSkill method
-func NewDeleteSkillRequest(server string, id ResourceID) (*http.Request, error) {
+func NewDeleteSkillRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14561,7 +14760,7 @@ func NewDeleteSkillRequest(server string, id ResourceID) (*http.Request, error) 
 }
 
 // NewGetSkillRequest constructs an http.Request for the GetSkill method
-func NewGetSkillRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetSkillRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14595,7 +14794,7 @@ func NewGetSkillRequest(server string, id ResourceID) (*http.Request, error) {
 }
 
 // NewUpdateSkillRequest calls the generic UpdateSkill builder with application/json body
-func NewUpdateSkillRequest(server string, id ResourceID, body UpdateSkillJSONRequestBody) (*http.Request, error) {
+func NewUpdateSkillRequest(server string, id string, body UpdateSkillJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -14606,7 +14805,7 @@ func NewUpdateSkillRequest(server string, id ResourceID, body UpdateSkillJSONReq
 }
 
 // NewUpdateSkillRequestWithBody constructs an http.Request for the UpdateSkill method, with any body, and a specified content type
-func NewUpdateSkillRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpdateSkillRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14812,7 +15011,7 @@ func NewListLibraryVoicesRequest(server string, params *ListLibraryVoicesParams)
 
 		if params.Provider != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "provider", *params.Provider, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "provider", *params.Provider, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -14905,7 +15104,7 @@ func NewListVoiceProvidersRequest(server string) (*http.Request, error) {
 }
 
 // NewDeleteVoiceRequest constructs an http.Request for the DeleteVoice method
-func NewDeleteVoiceRequest(server string, id ResourceID) (*http.Request, error) {
+func NewDeleteVoiceRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14939,7 +15138,7 @@ func NewDeleteVoiceRequest(server string, id ResourceID) (*http.Request, error) 
 }
 
 // NewGetVoiceRequest constructs an http.Request for the GetVoice method
-func NewGetVoiceRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetVoiceRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14973,7 +15172,7 @@ func NewGetVoiceRequest(server string, id ResourceID) (*http.Request, error) {
 }
 
 // NewUpdateVoiceRequest calls the generic UpdateVoice builder with application/json body
-func NewUpdateVoiceRequest(server string, id ResourceID, body UpdateVoiceJSONRequestBody) (*http.Request, error) {
+func NewUpdateVoiceRequest(server string, id string, body UpdateVoiceJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -14984,7 +15183,7 @@ func NewUpdateVoiceRequest(server string, id ResourceID, body UpdateVoiceJSONReq
 }
 
 // NewUpdateVoiceRequestWithBody constructs an http.Request for the UpdateVoice method, with any body, and a specified content type
-func NewUpdateVoiceRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpdateVoiceRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -15020,7 +15219,7 @@ func NewUpdateVoiceRequestWithBody(server string, id ResourceID, contentType str
 }
 
 // NewPrepareVoiceRequest calls the generic PrepareVoice builder with application/json body
-func NewPrepareVoiceRequest(server string, id ResourceID, body PrepareVoiceJSONRequestBody) (*http.Request, error) {
+func NewPrepareVoiceRequest(server string, id string, body PrepareVoiceJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -15031,7 +15230,7 @@ func NewPrepareVoiceRequest(server string, id ResourceID, body PrepareVoiceJSONR
 }
 
 // NewPrepareVoiceRequestWithBody constructs an http.Request for the PrepareVoice method, with any body, and a specified content type
-func NewPrepareVoiceRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewPrepareVoiceRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -15067,7 +15266,7 @@ func NewPrepareVoiceRequestWithBody(server string, id ResourceID, contentType st
 }
 
 // NewPreviewVoiceRequest calls the generic PreviewVoice builder with application/json body
-func NewPreviewVoiceRequest(server string, id ResourceID, body PreviewVoiceJSONRequestBody) (*http.Request, error) {
+func NewPreviewVoiceRequest(server string, id string, body PreviewVoiceJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -15078,7 +15277,7 @@ func NewPreviewVoiceRequest(server string, id ResourceID, body PreviewVoiceJSONR
 }
 
 // NewPreviewVoiceRequestWithBody constructs an http.Request for the PreviewVoice method, with any body, and a specified content type
-func NewPreviewVoiceRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewPreviewVoiceRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -15114,7 +15313,7 @@ func NewPreviewVoiceRequestWithBody(server string, id ResourceID, contentType st
 }
 
 // NewAddVoiceSampleRequest calls the generic AddVoiceSample builder with application/json body
-func NewAddVoiceSampleRequest(server string, id ResourceID, body AddVoiceSampleJSONRequestBody) (*http.Request, error) {
+func NewAddVoiceSampleRequest(server string, id string, body AddVoiceSampleJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -15125,7 +15324,7 @@ func NewAddVoiceSampleRequest(server string, id ResourceID, body AddVoiceSampleJ
 }
 
 // NewAddVoiceSampleRequestWithBody constructs an http.Request for the AddVoiceSample method, with any body, and a specified content type
-func NewAddVoiceSampleRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewAddVoiceSampleRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -15611,9 +15810,9 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if params.Vendor != nil {
+		if params.Limit != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -15623,7 +15822,19 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "country", params.Country, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+		if params.Vendor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "country", params.Country, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -15633,7 +15844,7 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 
 		if params.AreaCode != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "area_code", *params.AreaCode, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "area_code", *params.AreaCode, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -15645,7 +15856,7 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 
 		if params.Contains != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "contains", *params.Contains, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "contains", *params.Contains, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -15657,7 +15868,7 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 
 		if params.Prefix != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", *params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "prefix", *params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -15669,7 +15880,7 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 
 		if params.Locality != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "locality", *params.Locality, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "locality", *params.Locality, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -15681,7 +15892,7 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 
 		if params.AdministrativeArea != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "administrative_area", *params.AdministrativeArea, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "administrative_area", *params.AdministrativeArea, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -15693,7 +15904,7 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 
 		if params.NumberType != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "number_type", *params.NumberType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "number_type", *params.NumberType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -15706,18 +15917,6 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 		if params.Features != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "features", *params.Features, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -16051,7 +16250,7 @@ func NewCreateRouterConfigRequestWithBody(server string, contentType string, bod
 }
 
 // NewDeleteRouterConfigRequest constructs an http.Request for the DeleteRouterConfig method
-func NewDeleteRouterConfigRequest(server string, id ResourceID) (*http.Request, error) {
+func NewDeleteRouterConfigRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -16085,7 +16284,7 @@ func NewDeleteRouterConfigRequest(server string, id ResourceID) (*http.Request, 
 }
 
 // NewGetRouterConfigRequest constructs an http.Request for the GetRouterConfig method
-func NewGetRouterConfigRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetRouterConfigRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -16119,7 +16318,7 @@ func NewGetRouterConfigRequest(server string, id ResourceID) (*http.Request, err
 }
 
 // NewUpdateRouterConfigRequest calls the generic UpdateRouterConfig builder with application/json body
-func NewUpdateRouterConfigRequest(server string, id ResourceID, body UpdateRouterConfigJSONRequestBody) (*http.Request, error) {
+func NewUpdateRouterConfigRequest(server string, id string, body UpdateRouterConfigJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -16130,7 +16329,7 @@ func NewUpdateRouterConfigRequest(server string, id ResourceID, body UpdateRoute
 }
 
 // NewUpdateRouterConfigRequestWithBody constructs an http.Request for the UpdateRouterConfig method, with any body, and a specified content type
-func NewUpdateRouterConfigRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+func NewUpdateRouterConfigRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -16235,7 +16434,7 @@ func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Requ
 
 		if params.Granularity != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -16245,7 +16444,7 @@ func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Requ
 
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -16253,7 +16452,7 @@ func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Requ
 			}
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -16355,34 +16554,6 @@ func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, e
 
 		}
 
-		if params.Granularity != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
 		if params.Limit != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
@@ -16393,6 +16564,34 @@ func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, e
 				}
 			}
 
+		}
+
+		if params.Granularity != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
 		}
 
 		if params.Tag != nil {
@@ -16449,7 +16648,7 @@ func NewGetTagKeysRequest(server string, params *GetTagKeysParams) (*http.Reques
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -16457,7 +16656,7 @@ func NewGetTagKeysRequest(server string, params *GetTagKeysParams) (*http.Reques
 			}
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -16532,7 +16731,7 @@ func NewTranscribeRecordingRequestWithBody(server string, contentType string, bo
 }
 
 // NewGetTranscriptionRequest constructs an http.Request for the GetTranscription method
-func NewGetTranscriptionRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetTranscriptionRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -16606,7 +16805,7 @@ func NewRecordSpeechRequestWithBody(server string, contentType string, body io.R
 }
 
 // NewGetSpeechRequest constructs an http.Request for the GetSpeech method
-func NewGetSpeechRequest(server string, id ResourceID) (*http.Request, error) {
+func NewGetSpeechRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -16669,7 +16868,7 @@ func NewGetTurnStatsRequest(server string, params *GetTurnStatsParams) (*http.Re
 
 		if params.AgentId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -16681,7 +16880,7 @@ func NewGetTurnStatsRequest(server string, params *GetTurnStatsParams) (*http.Re
 
 		if params.Granularity != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -16691,7 +16890,7 @@ func NewGetTurnStatsRequest(server string, params *GetTurnStatsParams) (*http.Re
 
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -16699,7 +16898,7 @@ func NewGetTurnStatsRequest(server string, params *GetTurnStatsParams) (*http.Re
 			}
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -16894,7 +17093,7 @@ func NewGetStatsRequest(server string, modality Modality, params *GetStatsParams
 
 		if params.Granularity != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -16904,7 +17103,7 @@ func NewGetStatsRequest(server string, modality Modality, params *GetStatsParams
 
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -16912,7 +17111,7 @@ func NewGetStatsRequest(server string, modality Modality, params *GetStatsParams
 			}
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -16981,7 +17180,7 @@ func NewGetTagStatsRequest(server string, modality Modality, params *GetTagStats
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "key", params.Key, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "key", params.Key, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -16991,7 +17190,7 @@ func NewGetTagStatsRequest(server string, modality Modality, params *GetTagStats
 
 		if params.Granularity != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "granularity", *params.Granularity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -17001,7 +17200,7 @@ func NewGetTagStatsRequest(server string, modality Modality, params *GetTagStats
 
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -17009,7 +17208,7 @@ func NewGetTagStatsRequest(server string, modality Modality, params *GetTagStats
 			}
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -17096,7 +17295,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/calls/{id} (the `GetCall` operationId).
-	GetCallWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCallResponse, error)
+	GetCallWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallResponse, error)
 
 	// GetCallEventsWithResponse What the conversation decided, and why
 	//
@@ -17105,7 +17304,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
-	GetCallEventsWithResponse(ctx context.Context, id ResourceID, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*GetCallEventsResponse, error)
+	GetCallEventsWithResponse(ctx context.Context, id string, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*GetCallEventsResponse, error)
 
 	// GetCallTimelineWithResponse The call as it unfolded, said and measured together
 	//
@@ -17114,7 +17313,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
-	GetCallTimelineWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCallTimelineResponse, error)
+	GetCallTimelineWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTimelineResponse, error)
 
 	// CreateCallTokenWithBodyWithResponse What a browser needs to join this call
 	//
@@ -17123,7 +17322,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
-	CreateCallTokenWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error)
+	CreateCallTokenWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error)
 
 	// CreateCallTokenWithResponse What a browser needs to join this call
 	//
@@ -17132,7 +17331,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
-	CreateCallTokenWithResponse(ctx context.Context, id ResourceID, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error)
+	CreateCallTokenWithResponse(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error)
 
 	// GetCallTranscriptWithResponse What was said on a call
 	//
@@ -17141,7 +17340,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/transcript (the `GetCallTranscript` operationId).
-	GetCallTranscriptWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCallTranscriptResponse, error)
+	GetCallTranscriptWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTranscriptResponse, error)
 
 	// ListCampaignsWithResponse The campaigns the calling customer has
 	//
@@ -17175,14 +17374,14 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/campaigns/{id} (the `GetCampaign` operationId).
-	GetCampaignWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCampaignResponse, error)
+	GetCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCampaignResponse, error)
 
 	// ListCampaignContactsWithResponse Who a campaign is ringing, and how far it has got
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/campaigns/{id}/contacts (the `ListCampaignContacts` operationId).
-	ListCampaignContactsWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListCampaignContactsResponse, error)
+	ListCampaignContactsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListCampaignContactsResponse, error)
 
 	// AddCampaignContactsWithBodyWithResponse Add people to ring
 	//
@@ -17192,7 +17391,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
-	AddCampaignContactsWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddCampaignContactsResponse, error)
+	AddCampaignContactsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddCampaignContactsResponse, error)
 
 	// AddCampaignContactsWithResponse Add people to ring
 	//
@@ -17202,7 +17401,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
-	AddCampaignContactsWithResponse(ctx context.Context, id ResourceID, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddCampaignContactsResponse, error)
+	AddCampaignContactsWithResponse(ctx context.Context, id string, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddCampaignContactsResponse, error)
 
 	// PauseCampaignWithResponse Stop ringing anybody new
 	//
@@ -17212,7 +17411,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/pause (the `PauseCampaign` operationId).
-	PauseCampaignWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*PauseCampaignResponse, error)
+	PauseCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*PauseCampaignResponse, error)
 
 	// StartCampaignWithResponse Start ringing
 	//
@@ -17222,7 +17421,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
-	StartCampaignWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*StartCampaignResponse, error)
+	StartCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartCampaignResponse, error)
 
 	// CreateChatTokenWithBodyWithResponse What a browser needs to read an agent's conversation
 	//
@@ -17282,14 +17481,14 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
-	DeleteAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteAgentConfigResponse, error)
+	DeleteAgentConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteAgentConfigResponse, error)
 
 	// GetAgentConfigWithResponse One agent config
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
-	GetAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error)
+	GetAgentConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error)
 
 	// PatchAgentConfigWithBodyWithResponse Change some of an agent config
 	//
@@ -17321,7 +17520,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-	UpdateAgentConfigWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
+	UpdateAgentConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
 
 	// UpdateAgentConfigWithResponse Replace an agent config
 	//
@@ -17331,14 +17530,16 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-	UpdateAgentConfigWithResponse(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
+	UpdateAgentConfigWithResponse(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
 
 	// ListConfigPluginsWithResponse The plugin logins this agent holds
+	//
+	// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-	ListConfigPluginsWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error)
+	ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error)
 
 	// DisconnectPluginWithResponse Drop a plugin login
 	//
@@ -17347,7 +17548,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-	DisconnectPluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error)
+	DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error)
 
 	// AuthorizePluginWithBodyWithResponse Start a plugin login
 	//
@@ -17357,7 +17558,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	AuthorizePluginWithBodyWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
+	AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
 	// AuthorizePluginWithResponse Start a plugin login
 	//
@@ -17367,7 +17568,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	AuthorizePluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
+	AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
 	// ListConnectorConnectionsWithResponse List connections
 	//
@@ -17476,7 +17677,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-	GetConversationCommandWithResponse(ctx context.Context, cid string, commandId CommandID, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error)
+	GetConversationCommandWithResponse(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error)
 
 	// GetConversationMessagesWithResponse Read a persistent text conversation
 	//
@@ -17566,7 +17767,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
-	DeleteKnowledgeDocumentWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteKnowledgeDocumentResponse, error)
+	DeleteKnowledgeDocumentWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteKnowledgeDocumentResponse, error)
 
 	// GetKnowledgeDocumentWithResponse One document, with the text it was posted as
 	//
@@ -17575,7 +17776,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/knowledge/documents/{id} (the `GetKnowledgeDocument` operationId).
-	GetKnowledgeDocumentWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetKnowledgeDocumentResponse, error)
+	GetKnowledgeDocumentWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetKnowledgeDocumentResponse, error)
 
 	// ListKnowledgeDocumentPassagesWithResponse What a document was cut into, in order
 	//
@@ -17585,7 +17786,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
-	ListKnowledgeDocumentPassagesWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListKnowledgeDocumentPassagesResponse, error)
+	ListKnowledgeDocumentPassagesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListKnowledgeDocumentPassagesResponse, error)
 
 	// ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
 	//
@@ -17626,14 +17827,14 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/knowledge/urls/{id} (the `DeleteKnowledgeUrl` operationId).
-	DeleteKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteKnowledgeUrlResponse, error)
+	DeleteKnowledgeUrlWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteKnowledgeUrlResponse, error)
 
 	// GetKnowledgeUrlWithResponse One page, and when it was last read
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/knowledge/urls/{id} (the `GetKnowledgeUrl` operationId).
-	GetKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetKnowledgeUrlResponse, error)
+	GetKnowledgeUrlWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetKnowledgeUrlResponse, error)
 
 	// IndexKnowledgeUrlWithResponse Read a page again
 	//
@@ -17643,7 +17844,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
-	IndexKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*IndexKnowledgeUrlResponse, error)
+	IndexKnowledgeUrlWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*IndexKnowledgeUrlResponse, error)
 
 	// ListKnowledgeUrlPassagesWithResponse What a page was last read into, in order
 	//
@@ -17653,7 +17854,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/knowledge/urls/{id}/passages (the `ListKnowledgeUrlPassages` operationId).
-	ListKnowledgeUrlPassagesWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListKnowledgeUrlPassagesResponse, error)
+	ListKnowledgeUrlPassagesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListKnowledgeUrlPassagesResponse, error)
 
 	// ListAgentLogsWithResponse Latest structured agent logs, with backward cursor pagination
 	//
@@ -17696,6 +17897,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
 	PluginOAuthCallbackWithResponse(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*PluginOAuthCallbackResponse, error)
 
+	// ReceivePluginEventWithResponse Receive a plugin's MCP event
+	//
+	// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+	ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error)
+
+	// GetPluginLogoWithResponse A plugin's logo
+	//
+	// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+	GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error)
+
 	// CreateSessionWithBodyWithResponse Join a call as a voice agent
 	//
 	// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -17724,7 +17943,7 @@ type ClientWithResponsesInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -17741,7 +17960,7 @@ type ClientWithResponsesInterface interface {
 	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 	//
-	// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 	//
 	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 	//
@@ -17768,29 +17987,37 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
-	GetSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*GetSessionResponse, error)
+	GetSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSessionResponse, error)
 
 	// UpdateSessionWithBodyWithResponse Change a session
 	//
 	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	//
+	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
 	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-	UpdateSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
+	UpdateSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
 
 	// UpdateSessionWithResponse Change a session
 	//
 	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-	// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	//
+	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	//
 	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-	UpdateSessionWithResponse(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
+	UpdateSessionWithResponse(ctx context.Context, id string, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error)
 
 	// GetSessionCommandWithResponse What is known about one durable command
 	//
@@ -17799,7 +18026,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-	GetSessionCommandWithResponse(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error)
+	GetSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error)
 
 	// InterruptSessionCommandWithResponse Stop one named command, and nothing else
 	//
@@ -17810,7 +18037,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-	InterruptSessionCommandWithResponse(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error)
+	InterruptSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error)
 
 	// ForkSessionWithBodyWithResponse Continue a conversation as a new one
 	//
@@ -17820,7 +18047,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
-	ForkSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error)
+	ForkSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error)
 
 	// ForkSessionWithResponse Continue a conversation as a new one
 	//
@@ -17830,7 +18057,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
-	ForkSessionWithResponse(ctx context.Context, id SessionID, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error)
+	ForkSessionWithResponse(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error)
 
 	// SetSessionInstructionsWithBodyWithResponse Change what the agent is told to be
 	//
@@ -17839,9 +18066,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
+	SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
 
 	// SetSessionInstructionsWithResponse Change what the agent is told to be
 	//
@@ -17850,9 +18075,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetSessionInstructionsWithResponse(ctx context.Context, id SessionID, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
+	SetSessionInstructionsWithResponse(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
 
 	// InterruptSessionWithResponse Abandon the reply being spoken
 	//
@@ -17861,7 +18084,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/interrupt (the `InterruptSession` operationId).
-	InterruptSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*InterruptSessionResponse, error)
+	InterruptSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InterruptSessionResponse, error)
 
 	// DeleteSessionMemoriesWithResponse Delete what one session remembered
 	//
@@ -17879,14 +18102,14 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
-	RespondSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error)
+	RespondSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error)
 
 	// RespondSessionWithResponse Answer a piece of text through the model, as though it had been said
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
-	RespondSessionWithResponse(ctx context.Context, id SessionID, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error)
+	RespondSessionWithResponse(ctx context.Context, id string, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error)
 
 	// ListResponsesWithResponse The turns the agent took in a session
 	//
@@ -17895,7 +18118,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses (the `ListResponses` operationId).
-	ListResponsesWithResponse(ctx context.Context, id SessionID, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*ListResponsesResponse, error)
+	ListResponsesWithResponse(ctx context.Context, id string, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*ListResponsesResponse, error)
 
 	// CreateResponseWithBodyWithResponse Ask the agent something and get a handle on the answer
 	//
@@ -17905,7 +18128,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
-	CreateResponseWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error)
+	CreateResponseWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error)
 
 	// CreateResponseWithResponse Ask the agent something and get a handle on the answer
 	//
@@ -17915,7 +18138,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
-	CreateResponseWithResponse(ctx context.Context, id SessionID, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error)
+	CreateResponseWithResponse(ctx context.Context, id string, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error)
 
 	// ListResponseItemsWithResponse What the agent did, turn by turn, in the order it happened
 	//
@@ -17926,7 +18149,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
-	ListResponseItemsWithResponse(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*ListResponseItemsResponse, error)
+	ListResponseItemsWithResponse(ctx context.Context, id string, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*ListResponseItemsResponse, error)
 
 	// RewindSessionWithBodyWithResponse Go back to a response and carry on from there
 	//
@@ -17936,7 +18159,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
-	RewindSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error)
+	RewindSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error)
 
 	// RewindSessionWithResponse Go back to a response and carry on from there
 	//
@@ -17946,7 +18169,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
-	RewindSessionWithResponse(ctx context.Context, id SessionID, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error)
+	RewindSessionWithResponse(ctx context.Context, id string, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error)
 
 	// SaySessionWithBodyWithResponse Speak a piece of text without going through the model
 	//
@@ -17955,7 +18178,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
-	SaySessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaySessionResponse, error)
+	SaySessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaySessionResponse, error)
 
 	// SaySessionWithResponse Speak a piece of text without going through the model
 	//
@@ -17964,7 +18187,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
-	SaySessionWithResponse(ctx context.Context, id SessionID, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*SaySessionResponse, error)
+	SaySessionWithResponse(ctx context.Context, id string, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*SaySessionResponse, error)
 
 	// SetSessionSettingsWithBodyWithResponse Change the models and voice of one running session
 	//
@@ -17974,9 +18197,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetSessionSettingsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error)
+	SetSessionSettingsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error)
 
 	// SetSessionSettingsWithResponse Change the models and voice of one running session
 	//
@@ -17986,9 +18207,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetSessionSettingsWithResponse(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error)
+	SetSessionSettingsWithResponse(ctx context.Context, id string, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error)
 
 	// StopSessionWithResponse Stop a running session
 	//
@@ -18015,7 +18234,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/simulation-runs/{id} (the `GetSimulationRun` operationId).
-	GetSimulationRunWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetSimulationRunResponse, error)
+	GetSimulationRunWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSimulationRunResponse, error)
 
 	// CancelSimulationRunWithResponse Stop a run
 	//
@@ -18025,7 +18244,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/simulation-runs/{id}/cancel (the `CancelSimulationRun` operationId).
-	CancelSimulationRunWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*CancelSimulationRunResponse, error)
+	CancelSimulationRunWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*CancelSimulationRunResponse, error)
 
 	// ListSimulationsWithResponse The simulations the calling customer has
 	//
@@ -18062,14 +18281,14 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/simulations/{id} (the `DeleteSimulation` operationId).
-	DeleteSimulationWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteSimulationResponse, error)
+	DeleteSimulationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSimulationResponse, error)
 
 	// GetSimulationWithResponse One simulation
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/simulations/{id} (the `GetSimulation` operationId).
-	GetSimulationWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetSimulationResponse, error)
+	GetSimulationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSimulationResponse, error)
 
 	// UpdateSimulationWithBodyWithResponse Replace a simulation
 	//
@@ -18079,7 +18298,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/simulations/{id} (the `UpdateSimulation` operationId).
-	UpdateSimulationWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSimulationResponse, error)
+	UpdateSimulationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSimulationResponse, error)
 
 	// UpdateSimulationWithResponse Replace a simulation
 	//
@@ -18089,7 +18308,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/simulations/{id} (the `UpdateSimulation` operationId).
-	UpdateSimulationWithResponse(ctx context.Context, id ResourceID, body UpdateSimulationJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSimulationResponse, error)
+	UpdateSimulationWithResponse(ctx context.Context, id string, body UpdateSimulationJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSimulationResponse, error)
 
 	// RunSimulationWithResponse Have the conversations
 	//
@@ -18099,7 +18318,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/simulations/{id}/run (the `RunSimulation` operationId).
-	RunSimulationWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*RunSimulationResponse, error)
+	RunSimulationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RunSimulationResponse, error)
 
 	// ListSkillsWithResponse The skills the calling customer has defined
 	//
@@ -18135,14 +18354,14 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/skills/{id} (the `DeleteSkill` operationId).
-	DeleteSkillWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteSkillResponse, error)
+	DeleteSkillWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSkillResponse, error)
 
 	// GetSkillWithResponse One skill
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/skills/{id} (the `GetSkill` operationId).
-	GetSkillWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetSkillResponse, error)
+	GetSkillWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSkillResponse, error)
 
 	// UpdateSkillWithBodyWithResponse Replace a skill
 	//
@@ -18151,7 +18370,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
-	UpdateSkillWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error)
+	UpdateSkillWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error)
 
 	// UpdateSkillWithResponse Replace a skill
 	//
@@ -18160,7 +18379,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
-	UpdateSkillWithResponse(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error)
+	UpdateSkillWithResponse(ctx context.Context, id string, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error)
 
 	// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills, knowledge, simulations and settings
 	//
@@ -18265,14 +18484,14 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/voices/{id} (the `DeleteVoice` operationId).
-	DeleteVoiceWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteVoiceResponse, error)
+	DeleteVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteVoiceResponse, error)
 
 	// GetVoiceWithResponse One voice, with its recordings and what each provider made of them
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/voices/{id} (the `GetVoice` operationId).
-	GetVoiceWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetVoiceResponse, error)
+	GetVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetVoiceResponse, error)
 
 	// UpdateVoiceWithBodyWithResponse Rename a voice
 	//
@@ -18282,7 +18501,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
-	UpdateVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error)
+	UpdateVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error)
 
 	// UpdateVoiceWithResponse Rename a voice
 	//
@@ -18292,7 +18511,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
-	UpdateVoiceWithResponse(ctx context.Context, id ResourceID, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error)
+	UpdateVoiceWithResponse(ctx context.Context, id string, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error)
 
 	// PrepareVoiceWithBodyWithResponse Teach the text-to-speech providers this voice
 	//
@@ -18302,7 +18521,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
-	PrepareVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error)
+	PrepareVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error)
 
 	// PrepareVoiceWithResponse Teach the text-to-speech providers this voice
 	//
@@ -18312,7 +18531,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
-	PrepareVoiceWithResponse(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error)
+	PrepareVoiceWithResponse(ctx context.Context, id string, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error)
 
 	// PreviewVoiceWithBodyWithResponse Hear a voice through one provider
 	//
@@ -18322,7 +18541,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
-	PreviewVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error)
+	PreviewVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error)
 
 	// PreviewVoiceWithResponse Hear a voice through one provider
 	//
@@ -18332,7 +18551,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
-	PreviewVoiceWithResponse(ctx context.Context, id ResourceID, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error)
+	PreviewVoiceWithResponse(ctx context.Context, id string, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error)
 
 	// AddVoiceSampleWithBodyWithResponse Add a recording to a voice
 	//
@@ -18342,7 +18561,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
-	AddVoiceSampleWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
+	AddVoiceSampleWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
 
 	// AddVoiceSampleWithResponse Add a recording to a voice
 	//
@@ -18352,7 +18571,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
-	AddVoiceSampleWithResponse(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
+	AddVoiceSampleWithResponse(ctx context.Context, id string, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
 
 	// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 	//
@@ -18644,14 +18863,14 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/router/configs/{id} (the `DeleteRouterConfig` operationId).
-	DeleteRouterConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteRouterConfigResponse, error)
+	DeleteRouterConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteRouterConfigResponse, error)
 
 	// GetRouterConfigWithResponse One router config
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/router/configs/{id} (the `GetRouterConfig` operationId).
-	GetRouterConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetRouterConfigResponse, error)
+	GetRouterConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetRouterConfigResponse, error)
 
 	// UpdateRouterConfigWithBodyWithResponse Replace a router config
 	//
@@ -18661,7 +18880,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/router/configs/{id} (the `UpdateRouterConfig` operationId).
-	UpdateRouterConfigWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRouterConfigResponse, error)
+	UpdateRouterConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRouterConfigResponse, error)
 
 	// UpdateRouterConfigWithResponse Replace a router config
 	//
@@ -18671,7 +18890,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/router/configs/{id} (the `UpdateRouterConfig` operationId).
-	UpdateRouterConfigWithResponse(ctx context.Context, id ResourceID, body UpdateRouterConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRouterConfigResponse, error)
+	UpdateRouterConfigWithResponse(ctx context.Context, id string, body UpdateRouterConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRouterConfigResponse, error)
 
 	// SearchWithBodyWithResponse Answer a question out of what is true now
 	//
@@ -18765,7 +18984,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/stt/recordings/{id} (the `GetTranscription` operationId).
-	GetTranscriptionWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetTranscriptionResponse, error)
+	GetTranscriptionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetTranscriptionResponse, error)
 
 	// RecordSpeechWithBodyWithResponse Speak a whole text into one audio file, off the live path
 	//
@@ -18790,7 +19009,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/tts/recordings/{id} (the `GetSpeech` operationId).
-	GetSpeechWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetSpeechResponse, error)
+	GetSpeechWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSpeechResponse, error)
 
 	// GetTurnStatsWithResponse Conversational latency for the calling customer
 	//
@@ -18900,6 +19119,8 @@ type ListCallsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -18920,6 +19141,11 @@ func (r ListCallsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListCallsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListCallsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18964,6 +19190,8 @@ type GetCallResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -18989,6 +19217,11 @@ func (r GetCallResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetCallResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCallResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19033,6 +19266,8 @@ type GetCallEventsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19058,6 +19293,11 @@ func (r GetCallEventsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetCallEventsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCallEventsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19102,6 +19342,8 @@ type GetCallTimelineResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19127,6 +19369,11 @@ func (r GetCallTimelineResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetCallTimelineResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCallTimelineResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19171,6 +19418,8 @@ type CreateCallTokenResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19196,6 +19445,11 @@ func (r CreateCallTokenResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r CreateCallTokenResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateCallTokenResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19240,6 +19494,8 @@ type GetCallTranscriptResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19265,6 +19521,11 @@ func (r GetCallTranscriptResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetCallTranscriptResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCallTranscriptResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19307,6 +19568,8 @@ type ListCampaignsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19327,6 +19590,11 @@ func (r ListCampaignsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListCampaignsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListCampaignsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19369,6 +19637,8 @@ type CreateCampaignResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -19389,6 +19659,11 @@ func (r CreateCampaignResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r CreateCampaignResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateCampaignResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19433,6 +19708,8 @@ type GetCampaignResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19458,6 +19735,11 @@ func (r GetCampaignResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetCampaignResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCampaignResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19502,6 +19784,8 @@ type ListCampaignContactsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19527,6 +19811,11 @@ func (r ListCampaignContactsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ListCampaignContactsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListCampaignContactsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19571,6 +19860,8 @@ type AddCampaignContactsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -19596,6 +19887,11 @@ func (r AddCampaignContactsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r AddCampaignContactsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AddCampaignContactsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19640,6 +19936,8 @@ type PauseCampaignResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19665,6 +19963,11 @@ func (r PauseCampaignResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PauseCampaignResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PauseCampaignResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19709,6 +20012,8 @@ type StartCampaignResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -19734,6 +20039,11 @@ func (r StartCampaignResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r StartCampaignResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StartCampaignResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19776,6 +20086,8 @@ type CreateChatTokenResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19796,6 +20108,11 @@ func (r CreateChatTokenResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r CreateChatTokenResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateChatTokenResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19838,6 +20155,8 @@ type ListAgentConfigsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19858,6 +20177,11 @@ func (r ListAgentConfigsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListAgentConfigsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListAgentConfigsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19900,6 +20224,8 @@ type CreateAgentConfigResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -19920,6 +20246,11 @@ func (r CreateAgentConfigResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r CreateAgentConfigResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -19962,6 +20293,8 @@ type DeleteAgentConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -19982,6 +20315,11 @@ func (r DeleteAgentConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteAgentConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20026,6 +20364,8 @@ type GetAgentConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -20051,6 +20391,11 @@ func (r GetAgentConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetAgentConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20171,6 +20516,8 @@ type UpdateAgentConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -20196,6 +20543,11 @@ func (r UpdateAgentConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdateAgentConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateAgentConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20240,6 +20592,8 @@ type ListConfigPluginsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -20265,6 +20619,11 @@ func (r ListConfigPluginsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ListConfigPluginsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListConfigPluginsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20307,6 +20666,8 @@ type DisconnectPluginResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -20327,6 +20688,11 @@ func (r DisconnectPluginResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DisconnectPluginResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DisconnectPluginResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20371,6 +20737,8 @@ type AuthorizePluginResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -20396,6 +20764,11 @@ func (r AuthorizePluginResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r AuthorizePluginResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AuthorizePluginResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20936,15 +21309,24 @@ type GetConversationCommandResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *CommandReceipt
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetConversationCommandResponse) GetJSON200() *CommandReceipt {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetConversationCommandResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -20955,6 +21337,11 @@ func (r GetConversationCommandResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetConversationCommandResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetConversationCommandResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20997,6 +21384,8 @@ type GetConversationMessagesResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21017,6 +21406,11 @@ func (r GetConversationMessagesResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r GetConversationMessagesResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetConversationMessagesResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21057,6 +21451,10 @@ type CreateGuestUserResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -21072,6 +21470,16 @@ func (r CreateGuestUserResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateGuestUserResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateGuestUserResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateGuestUserResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21118,6 +21526,8 @@ type ClaimGuestUserResponse struct {
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21148,6 +21558,11 @@ func (r ClaimGuestUserResponse) GetJSON404() *NotFound {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r ClaimGuestUserResponse) GetJSON409() *Error {
 	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ClaimGuestUserResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21190,6 +21605,8 @@ type IngestKnowledgeResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21210,6 +21627,11 @@ func (r IngestKnowledgeResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r IngestKnowledgeResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r IngestKnowledgeResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21252,6 +21674,8 @@ type ListKnowledgeDocumentsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21272,6 +21696,11 @@ func (r ListKnowledgeDocumentsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListKnowledgeDocumentsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListKnowledgeDocumentsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21314,6 +21743,8 @@ type DeleteKnowledgeDocumentResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -21334,6 +21765,11 @@ func (r DeleteKnowledgeDocumentResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteKnowledgeDocumentResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteKnowledgeDocumentResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21378,6 +21814,8 @@ type GetKnowledgeDocumentResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21403,6 +21841,11 @@ func (r GetKnowledgeDocumentResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetKnowledgeDocumentResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetKnowledgeDocumentResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21447,6 +21890,8 @@ type ListKnowledgeDocumentPassagesResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21472,6 +21917,11 @@ func (r ListKnowledgeDocumentPassagesResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ListKnowledgeDocumentPassagesResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListKnowledgeDocumentPassagesResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21514,6 +21964,8 @@ type ListKnowledgeUrlsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21534,6 +21986,11 @@ func (r ListKnowledgeUrlsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListKnowledgeUrlsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListKnowledgeUrlsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21576,6 +22033,8 @@ type AddKnowledgeUrlResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -21596,6 +22055,11 @@ func (r AddKnowledgeUrlResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r AddKnowledgeUrlResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AddKnowledgeUrlResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21638,6 +22102,8 @@ type DeleteKnowledgeUrlResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -21658,6 +22124,11 @@ func (r DeleteKnowledgeUrlResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteKnowledgeUrlResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteKnowledgeUrlResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21702,6 +22173,8 @@ type GetKnowledgeUrlResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21727,6 +22200,11 @@ func (r GetKnowledgeUrlResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetKnowledgeUrlResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetKnowledgeUrlResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21771,6 +22249,8 @@ type IndexKnowledgeUrlResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21796,6 +22276,11 @@ func (r IndexKnowledgeUrlResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r IndexKnowledgeUrlResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r IndexKnowledgeUrlResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -21840,6 +22325,8 @@ type ListKnowledgeUrlPassagesResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21865,6 +22352,11 @@ func (r ListKnowledgeUrlPassagesResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ListKnowledgeUrlPassagesResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListKnowledgeUrlPassagesResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22101,15 +22593,24 @@ type ListPluginsResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *[]Plugin
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListPluginsResponse) GetJSON200() *[]Plugin {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListPluginsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -22120,6 +22621,11 @@ func (r ListPluginsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListPluginsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListPluginsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22185,6 +22691,81 @@ func (r PluginOAuthCallbackResponse) ContentType() string {
 	return ""
 }
 
+type ReceivePluginEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceivePluginEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceivePluginEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceivePluginEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceivePluginEventResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPluginLogoResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetPluginLogoResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPluginLogoResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPluginLogoResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPluginLogoResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPluginLogoResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreateSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22198,6 +22779,8 @@ type CreateSessionResponse struct {
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -22223,6 +22806,11 @@ func (r CreateSessionResponse) GetJSON404() *NotFound {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r CreateSessionResponse) GetJSON409() *Error {
 	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateSessionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22383,17 +22971,26 @@ type GetSessionResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetSessionResponse) GetJSON200() *Session {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetSessionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -22409,6 +23006,11 @@ func (r GetSessionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSessionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22453,6 +23055,8 @@ type UpdateSessionResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -22478,6 +23082,11 @@ func (r UpdateSessionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdateSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateSessionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22514,15 +23123,24 @@ type GetSessionCommandResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *CommandReceipt
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetSessionCommandResponse) GetJSON200() *CommandReceipt {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetSessionCommandResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -22533,6 +23151,11 @@ func (r GetSessionCommandResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetSessionCommandResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSessionCommandResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22569,10 +23192,14 @@ type InterruptSessionCommandResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *CommandReceipt
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *Error
 }
@@ -22580,6 +23207,11 @@ type InterruptSessionCommandResponse struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r InterruptSessionCommandResponse) GetJSON200() *CommandReceipt {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r InterruptSessionCommandResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -22590,6 +23222,11 @@ func (r InterruptSessionCommandResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r InterruptSessionCommandResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r InterruptSessionCommandResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
@@ -22639,6 +23276,8 @@ type ForkSessionResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -22664,6 +23303,11 @@ func (r ForkSessionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ForkSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ForkSessionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22706,6 +23350,8 @@ type SetSessionInstructionsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -22726,6 +23372,11 @@ func (r SetSessionInstructionsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r SetSessionInstructionsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetSessionInstructionsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22760,12 +23411,21 @@ func (r SetSessionInstructionsResponse) ContentType() string {
 type InterruptSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r InterruptSessionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -22781,6 +23441,11 @@ func (r InterruptSessionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r InterruptSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r InterruptSessionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22896,6 +23561,8 @@ type RespondSessionResponse struct {
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -22926,6 +23593,11 @@ func (r RespondSessionResponse) GetJSON404() *NotFound {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r RespondSessionResponse) GetJSON409() *Error {
 	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RespondSessionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -22970,6 +23642,8 @@ type ListResponsesResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -22995,6 +23669,11 @@ func (r ListResponsesResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ListResponsesResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListResponsesResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23041,6 +23720,8 @@ type CreateResponseResponse struct {
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -23071,6 +23752,11 @@ func (r CreateResponseResponse) GetJSON404() *NotFound {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r CreateResponseResponse) GetJSON409() *Error {
 	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateResponseResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23115,6 +23801,8 @@ type ListResponseItemsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23140,6 +23828,11 @@ func (r ListResponseItemsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ListResponseItemsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListResponseItemsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23182,6 +23875,8 @@ type RewindSessionResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -23202,6 +23897,11 @@ func (r RewindSessionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r RewindSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RewindSessionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23244,6 +23944,8 @@ type SaySessionResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -23264,6 +23966,11 @@ func (r SaySessionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r SaySessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SaySessionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23308,6 +24015,8 @@ type SetSessionSettingsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23333,6 +24042,11 @@ func (r SetSessionSettingsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r SetSessionSettingsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetSessionSettingsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23437,6 +24151,8 @@ type ListSimulationRunsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23457,6 +24173,11 @@ func (r ListSimulationRunsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListSimulationRunsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListSimulationRunsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23501,6 +24222,8 @@ type GetSimulationRunResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23526,6 +24249,11 @@ func (r GetSimulationRunResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetSimulationRunResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSimulationRunResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23570,6 +24298,8 @@ type CancelSimulationRunResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23595,6 +24325,11 @@ func (r CancelSimulationRunResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r CancelSimulationRunResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CancelSimulationRunResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23637,6 +24372,8 @@ type ListSimulationsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23657,6 +24394,11 @@ func (r ListSimulationsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListSimulationsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListSimulationsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23699,6 +24441,8 @@ type CreateSimulationResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -23719,6 +24463,11 @@ func (r CreateSimulationResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r CreateSimulationResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateSimulationResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23761,6 +24510,8 @@ type DeleteSimulationResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -23781,6 +24532,11 @@ func (r DeleteSimulationResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteSimulationResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteSimulationResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23825,6 +24581,8 @@ type GetSimulationResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23850,6 +24608,11 @@ func (r GetSimulationResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetSimulationResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSimulationResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23894,6 +24657,8 @@ type UpdateSimulationResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23919,6 +24684,11 @@ func (r UpdateSimulationResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdateSimulationResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateSimulationResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -23963,6 +24733,8 @@ type RunSimulationResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -23988,6 +24760,11 @@ func (r RunSimulationResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r RunSimulationResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RunSimulationResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24030,6 +24807,8 @@ type ListSkillsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24050,6 +24829,11 @@ func (r ListSkillsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListSkillsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListSkillsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24092,6 +24876,8 @@ type CreateSkillResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -24112,6 +24898,11 @@ func (r CreateSkillResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r CreateSkillResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateSkillResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24154,6 +24945,8 @@ type DeleteSkillResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -24174,6 +24967,11 @@ func (r DeleteSkillResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteSkillResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteSkillResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24218,6 +25016,8 @@ type GetSkillResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24243,6 +25043,11 @@ func (r GetSkillResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetSkillResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSkillResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24287,6 +25092,8 @@ type UpdateSkillResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24312,6 +25119,11 @@ func (r UpdateSkillResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdateSkillResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateSkillResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24485,6 +25297,8 @@ type ListVoicesResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24505,6 +25319,11 @@ func (r ListVoicesResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListVoicesResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListVoicesResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24547,6 +25366,8 @@ type CreateVoiceResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -24567,6 +25388,11 @@ func (r CreateVoiceResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r CreateVoiceResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateVoiceResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24609,6 +25435,8 @@ type ListLibraryVoicesResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24629,6 +25457,11 @@ func (r ListLibraryVoicesResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListLibraryVoicesResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListLibraryVoicesResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24673,6 +25506,8 @@ type PreviewLibraryVoiceResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24698,6 +25533,11 @@ func (r PreviewLibraryVoiceResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PreviewLibraryVoiceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PreviewLibraryVoiceResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24740,6 +25580,8 @@ type ListVoiceProvidersResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24760,6 +25602,11 @@ func (r ListVoiceProvidersResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListVoiceProvidersResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListVoiceProvidersResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24802,6 +25649,8 @@ type DeleteVoiceResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -24822,6 +25671,11 @@ func (r DeleteVoiceResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteVoiceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteVoiceResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24866,6 +25720,8 @@ type GetVoiceResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24891,6 +25747,11 @@ func (r GetVoiceResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetVoiceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetVoiceResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -24935,6 +25796,8 @@ type UpdateVoiceResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24960,6 +25823,11 @@ func (r UpdateVoiceResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdateVoiceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateVoiceResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25004,6 +25872,8 @@ type PrepareVoiceResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -25029,6 +25899,11 @@ func (r PrepareVoiceResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PrepareVoiceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PrepareVoiceResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25073,6 +25948,8 @@ type PreviewVoiceResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -25098,6 +25975,11 @@ func (r PreviewVoiceResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PreviewVoiceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PreviewVoiceResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25142,6 +26024,8 @@ type AddVoiceSampleResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -25167,6 +26051,11 @@ func (r AddVoiceSampleResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r AddVoiceSampleResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AddVoiceSampleResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25211,6 +26100,8 @@ type ClassifyResponse struct {
 	JSON404 *NotFound
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *Error
 }
@@ -25238,6 +26129,11 @@ func (r ClassifyResponse) GetJSON404() *NotFound {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r ClassifyResponse) GetJSON429() *Error {
 	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ClassifyResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
@@ -25494,6 +26390,8 @@ type GenerateImageResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -25519,6 +26417,11 @@ func (r GenerateImageResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GenerateImageResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GenerateImageResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25563,6 +26466,8 @@ type PlacePhoneCallResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -25588,6 +26493,11 @@ func (r PlacePhoneCallResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PlacePhoneCallResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PlacePhoneCallResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25632,6 +26542,8 @@ type TransferPhoneCallResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -25657,6 +26569,11 @@ func (r TransferPhoneCallResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r TransferPhoneCallResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r TransferPhoneCallResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25699,6 +26616,8 @@ type PressPhoneDigitsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -25719,6 +26638,11 @@ func (r PressPhoneDigitsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PressPhoneDigitsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PressPhoneDigitsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25761,6 +26685,8 @@ type ListPhoneNumbersResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -25781,6 +26707,11 @@ func (r ListPhoneNumbersResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListPhoneNumbersResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListPhoneNumbersResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25825,6 +26756,8 @@ type BuyPhoneNumberResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -25850,6 +26783,11 @@ func (r BuyPhoneNumberResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r BuyPhoneNumberResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r BuyPhoneNumberResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25894,6 +26832,8 @@ type SearchPhoneNumbersResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -25919,6 +26859,11 @@ func (r SearchPhoneNumbersResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r SearchPhoneNumbersResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SearchPhoneNumbersResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -25961,6 +26906,8 @@ type ReleasePhoneNumberResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -25981,6 +26928,11 @@ func (r ReleasePhoneNumberResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ReleasePhoneNumberResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReleasePhoneNumberResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26025,6 +26977,8 @@ type AttachPhoneNumberResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26050,6 +27004,11 @@ func (r AttachPhoneNumberResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r AttachPhoneNumberResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AttachPhoneNumberResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26090,6 +27049,8 @@ type ListPhoneVendorsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26105,6 +27066,11 @@ func (r ListPhoneVendorsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListPhoneVendorsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListPhoneVendorsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26423,6 +27389,8 @@ type ListRouterConfigsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26443,6 +27411,11 @@ func (r ListRouterConfigsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListRouterConfigsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListRouterConfigsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26485,6 +27458,8 @@ type CreateRouterConfigResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -26505,6 +27480,11 @@ func (r CreateRouterConfigResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r CreateRouterConfigResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateRouterConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26547,6 +27527,8 @@ type DeleteRouterConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -26567,6 +27549,11 @@ func (r DeleteRouterConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteRouterConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteRouterConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26611,6 +27598,8 @@ type GetRouterConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26636,6 +27625,11 @@ func (r GetRouterConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetRouterConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetRouterConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26680,6 +27674,8 @@ type UpdateRouterConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26705,6 +27701,11 @@ func (r UpdateRouterConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdateRouterConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateRouterConfigResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26747,6 +27748,8 @@ type SearchResponse struct {
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26767,6 +27770,11 @@ func (r SearchResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r SearchResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SearchResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26809,6 +27817,8 @@ type GetActivityResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26829,6 +27839,11 @@ func (r GetActivityResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r GetActivityResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetActivityResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26871,6 +27886,8 @@ type RunRollupResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26891,6 +27908,11 @@ func (r RunRollupResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r RunRollupResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RunRollupResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26933,6 +27955,8 @@ type GetSpendResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26953,6 +27977,11 @@ func (r GetSpendResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r GetSpendResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSpendResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -26995,6 +28024,8 @@ type GetTagKeysResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27015,6 +28046,11 @@ func (r GetTagKeysResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r GetTagKeysResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetTagKeysResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27059,6 +28095,8 @@ type TranscribeRecordingResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -27084,6 +28122,11 @@ func (r TranscribeRecordingResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r TranscribeRecordingResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r TranscribeRecordingResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27128,6 +28171,8 @@ type GetTranscriptionResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27153,6 +28198,11 @@ func (r GetTranscriptionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetTranscriptionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetTranscriptionResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27197,6 +28247,8 @@ type RecordSpeechResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -27222,6 +28274,11 @@ func (r RecordSpeechResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r RecordSpeechResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RecordSpeechResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27266,6 +28323,8 @@ type GetSpeechResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27291,6 +28350,11 @@ func (r GetSpeechResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetSpeechResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSpeechResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27333,6 +28397,8 @@ type GetTurnStatsResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27353,6 +28419,11 @@ func (r GetTurnStatsResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r GetTurnStatsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetTurnStatsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27389,17 +28460,26 @@ type ListProvidersResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *[]Provider
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListProvidersResponse) GetJSON200() *[]Provider {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListProvidersResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -27415,6 +28495,11 @@ func (r ListProvidersResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ListProvidersResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListProvidersResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27451,17 +28536,26 @@ type ListRoutesResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *[]Route
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListRoutesResponse) GetJSON200() *[]Route {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListRoutesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -27477,6 +28571,11 @@ func (r ListRoutesResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ListRoutesResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListRoutesResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27513,17 +28612,26 @@ type ResolveTargetResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *[]Candidate
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ResolveTargetResponse) GetJSON200() *[]Candidate {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ResolveTargetResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -27539,6 +28647,11 @@ func (r ResolveTargetResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ResolveTargetResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ResolveTargetResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27583,6 +28696,8 @@ type GetStatsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27608,6 +28723,11 @@ func (r GetStatsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetStatsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetStatsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27652,6 +28772,8 @@ type GetTagStatsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27677,6 +28799,11 @@ func (r GetTagStatsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetTagStatsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetTagStatsResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -27741,7 +28868,7 @@ func (c *ClientWithResponses) ListCallsWithResponse(ctx context.Context, params 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/calls/{id} (the `GetCall` operationId).
-func (c *ClientWithResponses) GetCallWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCallResponse, error) {
+func (c *ClientWithResponses) GetCallWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallResponse, error) {
 	rsp, err := c.GetCall(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27756,7 +28883,7 @@ func (c *ClientWithResponses) GetCallWithResponse(ctx context.Context, id Resour
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
-func (c *ClientWithResponses) GetCallEventsWithResponse(ctx context.Context, id ResourceID, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*GetCallEventsResponse, error) {
+func (c *ClientWithResponses) GetCallEventsWithResponse(ctx context.Context, id string, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*GetCallEventsResponse, error) {
 	rsp, err := c.GetCallEvents(ctx, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27771,7 +28898,7 @@ func (c *ClientWithResponses) GetCallEventsWithResponse(ctx context.Context, id 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
-func (c *ClientWithResponses) GetCallTimelineWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCallTimelineResponse, error) {
+func (c *ClientWithResponses) GetCallTimelineWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTimelineResponse, error) {
 	rsp, err := c.GetCallTimeline(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27786,7 +28913,7 @@ func (c *ClientWithResponses) GetCallTimelineWithResponse(ctx context.Context, i
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
-func (c *ClientWithResponses) CreateCallTokenWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error) {
+func (c *ClientWithResponses) CreateCallTokenWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error) {
 	rsp, err := c.CreateCallTokenWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27801,7 +28928,7 @@ func (c *ClientWithResponses) CreateCallTokenWithBodyWithResponse(ctx context.Co
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
-func (c *ClientWithResponses) CreateCallTokenWithResponse(ctx context.Context, id ResourceID, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error) {
+func (c *ClientWithResponses) CreateCallTokenWithResponse(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error) {
 	rsp, err := c.CreateCallToken(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27816,7 +28943,7 @@ func (c *ClientWithResponses) CreateCallTokenWithResponse(ctx context.Context, i
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/calls/{id}/transcript (the `GetCallTranscript` operationId).
-func (c *ClientWithResponses) GetCallTranscriptWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCallTranscriptResponse, error) {
+func (c *ClientWithResponses) GetCallTranscriptWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTranscriptResponse, error) {
 	rsp, err := c.GetCallTranscript(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27874,7 +29001,7 @@ func (c *ClientWithResponses) CreateCampaignWithResponse(ctx context.Context, bo
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/campaigns/{id} (the `GetCampaign` operationId).
-func (c *ClientWithResponses) GetCampaignWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCampaignResponse, error) {
+func (c *ClientWithResponses) GetCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCampaignResponse, error) {
 	rsp, err := c.GetCampaign(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27887,7 +29014,7 @@ func (c *ClientWithResponses) GetCampaignWithResponse(ctx context.Context, id Re
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/campaigns/{id}/contacts (the `ListCampaignContacts` operationId).
-func (c *ClientWithResponses) ListCampaignContactsWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListCampaignContactsResponse, error) {
+func (c *ClientWithResponses) ListCampaignContactsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListCampaignContactsResponse, error) {
 	rsp, err := c.ListCampaignContacts(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27903,7 +29030,7 @@ func (c *ClientWithResponses) ListCampaignContactsWithResponse(ctx context.Conte
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
-func (c *ClientWithResponses) AddCampaignContactsWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddCampaignContactsResponse, error) {
+func (c *ClientWithResponses) AddCampaignContactsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddCampaignContactsResponse, error) {
 	rsp, err := c.AddCampaignContactsWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27919,7 +29046,7 @@ func (c *ClientWithResponses) AddCampaignContactsWithBodyWithResponse(ctx contex
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
-func (c *ClientWithResponses) AddCampaignContactsWithResponse(ctx context.Context, id ResourceID, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddCampaignContactsResponse, error) {
+func (c *ClientWithResponses) AddCampaignContactsWithResponse(ctx context.Context, id string, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddCampaignContactsResponse, error) {
 	rsp, err := c.AddCampaignContacts(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27935,7 +29062,7 @@ func (c *ClientWithResponses) AddCampaignContactsWithResponse(ctx context.Contex
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/pause (the `PauseCampaign` operationId).
-func (c *ClientWithResponses) PauseCampaignWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*PauseCampaignResponse, error) {
+func (c *ClientWithResponses) PauseCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*PauseCampaignResponse, error) {
 	rsp, err := c.PauseCampaign(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -27951,7 +29078,7 @@ func (c *ClientWithResponses) PauseCampaignWithResponse(ctx context.Context, id 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
-func (c *ClientWithResponses) StartCampaignWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*StartCampaignResponse, error) {
+func (c *ClientWithResponses) StartCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartCampaignResponse, error) {
 	rsp, err := c.StartCampaign(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28047,7 +29174,7 @@ func (c *ClientWithResponses) CreateAgentConfigWithResponse(ctx context.Context,
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
-func (c *ClientWithResponses) DeleteAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteAgentConfigResponse, error) {
+func (c *ClientWithResponses) DeleteAgentConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteAgentConfigResponse, error) {
 	rsp, err := c.DeleteAgentConfig(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28060,7 +29187,7 @@ func (c *ClientWithResponses) DeleteAgentConfigWithResponse(ctx context.Context,
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/configs/{id} (the `GetAgentConfig` operationId).
-func (c *ClientWithResponses) GetAgentConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error) {
+func (c *ClientWithResponses) GetAgentConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentConfigResponse, error) {
 	rsp, err := c.GetAgentConfig(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28110,7 +29237,7 @@ func (c *ClientWithResponses) PatchAgentConfigWithResponse(ctx context.Context, 
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-func (c *ClientWithResponses) UpdateAgentConfigWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error) {
+func (c *ClientWithResponses) UpdateAgentConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error) {
 	rsp, err := c.UpdateAgentConfigWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28126,7 +29253,7 @@ func (c *ClientWithResponses) UpdateAgentConfigWithBodyWithResponse(ctx context.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
-func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context, id ResourceID, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error) {
+func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error) {
 	rsp, err := c.UpdateAgentConfig(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28136,10 +29263,12 @@ func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context,
 
 // ListConfigPluginsWithResponse The plugin logins this agent holds
 //
+// The app's own logins, then every plugin the config names that has none yet, as not_connected. An end user's logins, made for user_plugins, are never listed.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error) {
+func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error) {
 	rsp, err := c.ListConfigPlugins(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28154,7 +29283,7 @@ func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context,
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error) {
+func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error) {
 	rsp, err := c.DisconnectPlugin(ctx, id, pluginId, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28170,7 +29299,7 @@ func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, 
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
+func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
 	rsp, err := c.AuthorizePluginWithBody(ctx, id, pluginId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28186,7 +29315,7 @@ func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Co
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
+func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
 	rsp, err := c.AuthorizePlugin(ctx, id, pluginId, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28355,7 +29484,7 @@ func (c *ClientWithResponses) GetConnectorWithResponse(ctx context.Context, id s
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-func (c *ClientWithResponses) GetConversationCommandWithResponse(ctx context.Context, cid string, commandId CommandID, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error) {
+func (c *ClientWithResponses) GetConversationCommandWithResponse(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error) {
 	rsp, err := c.GetConversationCommand(ctx, cid, commandId, params, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28499,7 +29628,7 @@ func (c *ClientWithResponses) ListKnowledgeDocumentsWithResponse(ctx context.Con
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
-func (c *ClientWithResponses) DeleteKnowledgeDocumentWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteKnowledgeDocumentResponse, error) {
+func (c *ClientWithResponses) DeleteKnowledgeDocumentWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteKnowledgeDocumentResponse, error) {
 	rsp, err := c.DeleteKnowledgeDocument(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28514,7 +29643,7 @@ func (c *ClientWithResponses) DeleteKnowledgeDocumentWithResponse(ctx context.Co
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/knowledge/documents/{id} (the `GetKnowledgeDocument` operationId).
-func (c *ClientWithResponses) GetKnowledgeDocumentWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetKnowledgeDocumentResponse, error) {
+func (c *ClientWithResponses) GetKnowledgeDocumentWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetKnowledgeDocumentResponse, error) {
 	rsp, err := c.GetKnowledgeDocument(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28530,7 +29659,7 @@ func (c *ClientWithResponses) GetKnowledgeDocumentWithResponse(ctx context.Conte
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
-func (c *ClientWithResponses) ListKnowledgeDocumentPassagesWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListKnowledgeDocumentPassagesResponse, error) {
+func (c *ClientWithResponses) ListKnowledgeDocumentPassagesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListKnowledgeDocumentPassagesResponse, error) {
 	rsp, err := c.ListKnowledgeDocumentPassages(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28595,7 +29724,7 @@ func (c *ClientWithResponses) AddKnowledgeUrlWithResponse(ctx context.Context, b
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/knowledge/urls/{id} (the `DeleteKnowledgeUrl` operationId).
-func (c *ClientWithResponses) DeleteKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteKnowledgeUrlResponse, error) {
+func (c *ClientWithResponses) DeleteKnowledgeUrlWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteKnowledgeUrlResponse, error) {
 	rsp, err := c.DeleteKnowledgeUrl(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28608,7 +29737,7 @@ func (c *ClientWithResponses) DeleteKnowledgeUrlWithResponse(ctx context.Context
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/knowledge/urls/{id} (the `GetKnowledgeUrl` operationId).
-func (c *ClientWithResponses) GetKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetKnowledgeUrlResponse, error) {
+func (c *ClientWithResponses) GetKnowledgeUrlWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetKnowledgeUrlResponse, error) {
 	rsp, err := c.GetKnowledgeUrl(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28624,7 +29753,7 @@ func (c *ClientWithResponses) GetKnowledgeUrlWithResponse(ctx context.Context, i
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
-func (c *ClientWithResponses) IndexKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*IndexKnowledgeUrlResponse, error) {
+func (c *ClientWithResponses) IndexKnowledgeUrlWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*IndexKnowledgeUrlResponse, error) {
 	rsp, err := c.IndexKnowledgeUrl(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28640,7 +29769,7 @@ func (c *ClientWithResponses) IndexKnowledgeUrlWithResponse(ctx context.Context,
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/knowledge/urls/{id}/passages (the `ListKnowledgeUrlPassages` operationId).
-func (c *ClientWithResponses) ListKnowledgeUrlPassagesWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*ListKnowledgeUrlPassagesResponse, error) {
+func (c *ClientWithResponses) ListKnowledgeUrlPassagesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListKnowledgeUrlPassagesResponse, error) {
 	rsp, err := c.ListKnowledgeUrlPassages(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28719,6 +29848,36 @@ func (c *ClientWithResponses) PluginOAuthCallbackWithResponse(ctx context.Contex
 	return ParsePluginOAuthCallbackResponse(rsp)
 }
 
+// ReceivePluginEventWithResponse Receive a plugin's MCP event
+//
+// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+func (c *ClientWithResponses) ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error) {
+	rsp, err := c.ReceivePluginEvent(ctx, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceivePluginEventResponse(rsp)
+}
+
+// GetPluginLogoWithResponse A plugin's logo
+//
+// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error) {
+	rsp, err := c.GetPluginLogo(ctx, pluginId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPluginLogoResponse(rsp)
+}
+
 // CreateSessionWithBodyWithResponse Join a call as a voice agent
 //
 // The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -28759,7 +29918,7 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -28782,7 +29941,7 @@ func (c *ClientWithResponses) QuerySessionsWithBodyWithResponse(ctx context.Cont
 // - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
 // - one project's, `{"project_id": "health"}`, sorted by `updated_at`
 //
-// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
 //
 // The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
 //
@@ -28821,7 +29980,7 @@ func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, id 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
-func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*GetSessionResponse, error) {
+func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSessionResponse, error) {
 	rsp, err := c.GetSession(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28832,13 +29991,17 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id Ses
 // UpdateSessionWithBodyWithResponse Change a session
 //
 // Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+//
+// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
 // Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
+func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
 	rsp, err := c.UpdateSessionWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28849,13 +30012,17 @@ func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Cont
 // UpdateSessionWithResponse Change a session
 //
 // Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
-// A session that ended can still be renamed and relabelled, since that is when a person tidies up their conversations. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+//
+// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+//
 // Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/agents/sessions/{id} (the `UpdateSession` operationId).
-func (c *ClientWithResponses) UpdateSessionWithResponse(ctx context.Context, id SessionID, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
+func (c *ClientWithResponses) UpdateSessionWithResponse(ctx context.Context, id string, body UpdateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSessionResponse, error) {
 	rsp, err := c.UpdateSession(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28870,7 +30037,7 @@ func (c *ClientWithResponses) UpdateSessionWithResponse(ctx context.Context, id 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error) {
+func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error) {
 	rsp, err := c.GetSessionCommand(ctx, id, commandId, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28887,7 +30054,7 @@ func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context,
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-func (c *ClientWithResponses) InterruptSessionCommandWithResponse(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error) {
+func (c *ClientWithResponses) InterruptSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error) {
 	rsp, err := c.InterruptSessionCommand(ctx, id, commandId, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28903,7 +30070,7 @@ func (c *ClientWithResponses) InterruptSessionCommandWithResponse(ctx context.Co
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
-func (c *ClientWithResponses) ForkSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error) {
+func (c *ClientWithResponses) ForkSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error) {
 	rsp, err := c.ForkSessionWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28919,7 +30086,7 @@ func (c *ClientWithResponses) ForkSessionWithBodyWithResponse(ctx context.Contex
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
-func (c *ClientWithResponses) ForkSessionWithResponse(ctx context.Context, id SessionID, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error) {
+func (c *ClientWithResponses) ForkSessionWithResponse(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error) {
 	rsp, err := c.ForkSession(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28934,9 +30101,7 @@ func (c *ClientWithResponses) ForkSessionWithResponse(ctx context.Context, id Se
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
+func (c *ClientWithResponses) SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
 	rsp, err := c.SetSessionInstructionsWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28951,8 +30116,7 @@ func (c *ClientWithResponses) SetSessionInstructionsWithBodyWithResponse(ctx con
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) SetSessionInstructionsWithResponse(ctx context.Context, id SessionID, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
+func (c *ClientWithResponses) SetSessionInstructionsWithResponse(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
 	rsp, err := c.SetSessionInstructions(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28967,7 +30131,7 @@ func (c *ClientWithResponses) SetSessionInstructionsWithResponse(ctx context.Con
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/interrupt (the `InterruptSession` operationId).
-func (c *ClientWithResponses) InterruptSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*InterruptSessionResponse, error) {
+func (c *ClientWithResponses) InterruptSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InterruptSessionResponse, error) {
 	rsp, err := c.InterruptSession(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -28997,7 +30161,7 @@ func (c *ClientWithResponses) DeleteSessionMemoriesWithResponse(ctx context.Cont
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
-func (c *ClientWithResponses) RespondSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error) {
+func (c *ClientWithResponses) RespondSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error) {
 	rsp, err := c.RespondSessionWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29010,7 +30174,7 @@ func (c *ClientWithResponses) RespondSessionWithBodyWithResponse(ctx context.Con
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
-func (c *ClientWithResponses) RespondSessionWithResponse(ctx context.Context, id SessionID, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error) {
+func (c *ClientWithResponses) RespondSessionWithResponse(ctx context.Context, id string, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error) {
 	rsp, err := c.RespondSession(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29025,7 +30189,7 @@ func (c *ClientWithResponses) RespondSessionWithResponse(ctx context.Context, id
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/sessions/{id}/responses (the `ListResponses` operationId).
-func (c *ClientWithResponses) ListResponsesWithResponse(ctx context.Context, id SessionID, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*ListResponsesResponse, error) {
+func (c *ClientWithResponses) ListResponsesWithResponse(ctx context.Context, id string, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*ListResponsesResponse, error) {
 	rsp, err := c.ListResponses(ctx, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29041,7 +30205,7 @@ func (c *ClientWithResponses) ListResponsesWithResponse(ctx context.Context, id 
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
-func (c *ClientWithResponses) CreateResponseWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error) {
+func (c *ClientWithResponses) CreateResponseWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error) {
 	rsp, err := c.CreateResponseWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29057,7 +30221,7 @@ func (c *ClientWithResponses) CreateResponseWithBodyWithResponse(ctx context.Con
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
-func (c *ClientWithResponses) CreateResponseWithResponse(ctx context.Context, id SessionID, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error) {
+func (c *ClientWithResponses) CreateResponseWithResponse(ctx context.Context, id string, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error) {
 	rsp, err := c.CreateResponse(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29074,7 +30238,7 @@ func (c *ClientWithResponses) CreateResponseWithResponse(ctx context.Context, id
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
-func (c *ClientWithResponses) ListResponseItemsWithResponse(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*ListResponseItemsResponse, error) {
+func (c *ClientWithResponses) ListResponseItemsWithResponse(ctx context.Context, id string, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*ListResponseItemsResponse, error) {
 	rsp, err := c.ListResponseItems(ctx, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29090,7 +30254,7 @@ func (c *ClientWithResponses) ListResponseItemsWithResponse(ctx context.Context,
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
-func (c *ClientWithResponses) RewindSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error) {
+func (c *ClientWithResponses) RewindSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error) {
 	rsp, err := c.RewindSessionWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29106,7 +30270,7 @@ func (c *ClientWithResponses) RewindSessionWithBodyWithResponse(ctx context.Cont
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/rewind (the `RewindSession` operationId).
-func (c *ClientWithResponses) RewindSessionWithResponse(ctx context.Context, id SessionID, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error) {
+func (c *ClientWithResponses) RewindSessionWithResponse(ctx context.Context, id string, body RewindSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RewindSessionResponse, error) {
 	rsp, err := c.RewindSession(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29121,7 +30285,7 @@ func (c *ClientWithResponses) RewindSessionWithResponse(ctx context.Context, id 
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
-func (c *ClientWithResponses) SaySessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaySessionResponse, error) {
+func (c *ClientWithResponses) SaySessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaySessionResponse, error) {
 	rsp, err := c.SaySessionWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29136,7 +30300,7 @@ func (c *ClientWithResponses) SaySessionWithBodyWithResponse(ctx context.Context
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
-func (c *ClientWithResponses) SaySessionWithResponse(ctx context.Context, id SessionID, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*SaySessionResponse, error) {
+func (c *ClientWithResponses) SaySessionWithResponse(ctx context.Context, id string, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*SaySessionResponse, error) {
 	rsp, err := c.SaySession(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29152,9 +30316,7 @@ func (c *ClientWithResponses) SaySessionWithResponse(ctx context.Context, id Ses
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) SetSessionSettingsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error) {
+func (c *ClientWithResponses) SetSessionSettingsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error) {
 	rsp, err := c.SetSessionSettingsWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29170,8 +30332,7 @@ func (c *ClientWithResponses) SetSessionSettingsWithBodyWithResponse(ctx context
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) SetSessionSettingsWithResponse(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error) {
+func (c *ClientWithResponses) SetSessionSettingsWithResponse(ctx context.Context, id string, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error) {
 	rsp, err := c.SetSessionSettings(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29216,7 +30377,7 @@ func (c *ClientWithResponses) ListSimulationRunsWithResponse(ctx context.Context
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/simulation-runs/{id} (the `GetSimulationRun` operationId).
-func (c *ClientWithResponses) GetSimulationRunWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetSimulationRunResponse, error) {
+func (c *ClientWithResponses) GetSimulationRunWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSimulationRunResponse, error) {
 	rsp, err := c.GetSimulationRun(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29232,7 +30393,7 @@ func (c *ClientWithResponses) GetSimulationRunWithResponse(ctx context.Context, 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/simulation-runs/{id}/cancel (the `CancelSimulationRun` operationId).
-func (c *ClientWithResponses) CancelSimulationRunWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*CancelSimulationRunResponse, error) {
+func (c *ClientWithResponses) CancelSimulationRunWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*CancelSimulationRunResponse, error) {
 	rsp, err := c.CancelSimulationRun(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29293,7 +30454,7 @@ func (c *ClientWithResponses) CreateSimulationWithResponse(ctx context.Context, 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/simulations/{id} (the `DeleteSimulation` operationId).
-func (c *ClientWithResponses) DeleteSimulationWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteSimulationResponse, error) {
+func (c *ClientWithResponses) DeleteSimulationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSimulationResponse, error) {
 	rsp, err := c.DeleteSimulation(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29306,7 +30467,7 @@ func (c *ClientWithResponses) DeleteSimulationWithResponse(ctx context.Context, 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/simulations/{id} (the `GetSimulation` operationId).
-func (c *ClientWithResponses) GetSimulationWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetSimulationResponse, error) {
+func (c *ClientWithResponses) GetSimulationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSimulationResponse, error) {
 	rsp, err := c.GetSimulation(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29322,7 +30483,7 @@ func (c *ClientWithResponses) GetSimulationWithResponse(ctx context.Context, id 
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/simulations/{id} (the `UpdateSimulation` operationId).
-func (c *ClientWithResponses) UpdateSimulationWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSimulationResponse, error) {
+func (c *ClientWithResponses) UpdateSimulationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSimulationResponse, error) {
 	rsp, err := c.UpdateSimulationWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29338,7 +30499,7 @@ func (c *ClientWithResponses) UpdateSimulationWithBodyWithResponse(ctx context.C
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/simulations/{id} (the `UpdateSimulation` operationId).
-func (c *ClientWithResponses) UpdateSimulationWithResponse(ctx context.Context, id ResourceID, body UpdateSimulationJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSimulationResponse, error) {
+func (c *ClientWithResponses) UpdateSimulationWithResponse(ctx context.Context, id string, body UpdateSimulationJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSimulationResponse, error) {
 	rsp, err := c.UpdateSimulation(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29354,7 +30515,7 @@ func (c *ClientWithResponses) UpdateSimulationWithResponse(ctx context.Context, 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/simulations/{id}/run (the `RunSimulation` operationId).
-func (c *ClientWithResponses) RunSimulationWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*RunSimulationResponse, error) {
+func (c *ClientWithResponses) RunSimulationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RunSimulationResponse, error) {
 	rsp, err := c.RunSimulation(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29414,7 +30575,7 @@ func (c *ClientWithResponses) CreateSkillWithResponse(ctx context.Context, body 
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/skills/{id} (the `DeleteSkill` operationId).
-func (c *ClientWithResponses) DeleteSkillWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteSkillResponse, error) {
+func (c *ClientWithResponses) DeleteSkillWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSkillResponse, error) {
 	rsp, err := c.DeleteSkill(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29427,7 +30588,7 @@ func (c *ClientWithResponses) DeleteSkillWithResponse(ctx context.Context, id Re
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/skills/{id} (the `GetSkill` operationId).
-func (c *ClientWithResponses) GetSkillWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetSkillResponse, error) {
+func (c *ClientWithResponses) GetSkillWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSkillResponse, error) {
 	rsp, err := c.GetSkill(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29442,7 +30603,7 @@ func (c *ClientWithResponses) GetSkillWithResponse(ctx context.Context, id Resou
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
-func (c *ClientWithResponses) UpdateSkillWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error) {
+func (c *ClientWithResponses) UpdateSkillWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error) {
 	rsp, err := c.UpdateSkillWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29457,7 +30618,7 @@ func (c *ClientWithResponses) UpdateSkillWithBodyWithResponse(ctx context.Contex
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
-func (c *ClientWithResponses) UpdateSkillWithResponse(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error) {
+func (c *ClientWithResponses) UpdateSkillWithResponse(ctx context.Context, id string, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error) {
 	rsp, err := c.UpdateSkill(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29622,7 +30783,7 @@ func (c *ClientWithResponses) ListVoiceProvidersWithResponse(ctx context.Context
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/voices/{id} (the `DeleteVoice` operationId).
-func (c *ClientWithResponses) DeleteVoiceWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteVoiceResponse, error) {
+func (c *ClientWithResponses) DeleteVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteVoiceResponse, error) {
 	rsp, err := c.DeleteVoice(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29635,7 +30796,7 @@ func (c *ClientWithResponses) DeleteVoiceWithResponse(ctx context.Context, id Re
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/voices/{id} (the `GetVoice` operationId).
-func (c *ClientWithResponses) GetVoiceWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetVoiceResponse, error) {
+func (c *ClientWithResponses) GetVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetVoiceResponse, error) {
 	rsp, err := c.GetVoice(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29651,7 +30812,7 @@ func (c *ClientWithResponses) GetVoiceWithResponse(ctx context.Context, id Resou
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
-func (c *ClientWithResponses) UpdateVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error) {
+func (c *ClientWithResponses) UpdateVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error) {
 	rsp, err := c.UpdateVoiceWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29667,7 +30828,7 @@ func (c *ClientWithResponses) UpdateVoiceWithBodyWithResponse(ctx context.Contex
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
-func (c *ClientWithResponses) UpdateVoiceWithResponse(ctx context.Context, id ResourceID, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error) {
+func (c *ClientWithResponses) UpdateVoiceWithResponse(ctx context.Context, id string, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error) {
 	rsp, err := c.UpdateVoice(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29683,7 +30844,7 @@ func (c *ClientWithResponses) UpdateVoiceWithResponse(ctx context.Context, id Re
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
-func (c *ClientWithResponses) PrepareVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error) {
+func (c *ClientWithResponses) PrepareVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error) {
 	rsp, err := c.PrepareVoiceWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29699,7 +30860,7 @@ func (c *ClientWithResponses) PrepareVoiceWithBodyWithResponse(ctx context.Conte
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
-func (c *ClientWithResponses) PrepareVoiceWithResponse(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error) {
+func (c *ClientWithResponses) PrepareVoiceWithResponse(ctx context.Context, id string, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error) {
 	rsp, err := c.PrepareVoice(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29715,7 +30876,7 @@ func (c *ClientWithResponses) PrepareVoiceWithResponse(ctx context.Context, id R
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
-func (c *ClientWithResponses) PreviewVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error) {
+func (c *ClientWithResponses) PreviewVoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error) {
 	rsp, err := c.PreviewVoiceWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29731,7 +30892,7 @@ func (c *ClientWithResponses) PreviewVoiceWithBodyWithResponse(ctx context.Conte
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
-func (c *ClientWithResponses) PreviewVoiceWithResponse(ctx context.Context, id ResourceID, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error) {
+func (c *ClientWithResponses) PreviewVoiceWithResponse(ctx context.Context, id string, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error) {
 	rsp, err := c.PreviewVoice(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29747,7 +30908,7 @@ func (c *ClientWithResponses) PreviewVoiceWithResponse(ctx context.Context, id R
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
-func (c *ClientWithResponses) AddVoiceSampleWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error) {
+func (c *ClientWithResponses) AddVoiceSampleWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error) {
 	rsp, err := c.AddVoiceSampleWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -29763,7 +30924,7 @@ func (c *ClientWithResponses) AddVoiceSampleWithBodyWithResponse(ctx context.Con
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
-func (c *ClientWithResponses) AddVoiceSampleWithResponse(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error) {
+func (c *ClientWithResponses) AddVoiceSampleWithResponse(ctx context.Context, id string, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error) {
 	rsp, err := c.AddVoiceSample(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -30241,7 +31402,7 @@ func (c *ClientWithResponses) CreateRouterConfigWithResponse(ctx context.Context
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/router/configs/{id} (the `DeleteRouterConfig` operationId).
-func (c *ClientWithResponses) DeleteRouterConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteRouterConfigResponse, error) {
+func (c *ClientWithResponses) DeleteRouterConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteRouterConfigResponse, error) {
 	rsp, err := c.DeleteRouterConfig(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -30254,7 +31415,7 @@ func (c *ClientWithResponses) DeleteRouterConfigWithResponse(ctx context.Context
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/router/configs/{id} (the `GetRouterConfig` operationId).
-func (c *ClientWithResponses) GetRouterConfigWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetRouterConfigResponse, error) {
+func (c *ClientWithResponses) GetRouterConfigWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetRouterConfigResponse, error) {
 	rsp, err := c.GetRouterConfig(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -30270,7 +31431,7 @@ func (c *ClientWithResponses) GetRouterConfigWithResponse(ctx context.Context, i
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/router/configs/{id} (the `UpdateRouterConfig` operationId).
-func (c *ClientWithResponses) UpdateRouterConfigWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRouterConfigResponse, error) {
+func (c *ClientWithResponses) UpdateRouterConfigWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRouterConfigResponse, error) {
 	rsp, err := c.UpdateRouterConfigWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -30286,7 +31447,7 @@ func (c *ClientWithResponses) UpdateRouterConfigWithBodyWithResponse(ctx context
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/router/configs/{id} (the `UpdateRouterConfig` operationId).
-func (c *ClientWithResponses) UpdateRouterConfigWithResponse(ctx context.Context, id ResourceID, body UpdateRouterConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRouterConfigResponse, error) {
+func (c *ClientWithResponses) UpdateRouterConfigWithResponse(ctx context.Context, id string, body UpdateRouterConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRouterConfigResponse, error) {
 	rsp, err := c.UpdateRouterConfig(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -30440,7 +31601,7 @@ func (c *ClientWithResponses) TranscribeRecordingWithResponse(ctx context.Contex
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/stt/recordings/{id} (the `GetTranscription` operationId).
-func (c *ClientWithResponses) GetTranscriptionWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetTranscriptionResponse, error) {
+func (c *ClientWithResponses) GetTranscriptionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetTranscriptionResponse, error) {
 	rsp, err := c.GetTranscription(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -30483,7 +31644,7 @@ func (c *ClientWithResponses) RecordSpeechWithResponse(ctx context.Context, body
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/tts/recordings/{id} (the `GetSpeech` operationId).
-func (c *ClientWithResponses) GetSpeechWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetSpeechResponse, error) {
+func (c *ClientWithResponses) GetSpeechWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSpeechResponse, error) {
 	rsp, err := c.GetSpeech(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -30650,6 +31811,13 @@ func ParseListCallsResponse(rsp *http.Response) (*ListCallsResponse, error) {
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -30703,6 +31871,13 @@ func ParseGetCallResponse(rsp *http.Response) (*GetCallResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -30758,6 +31933,13 @@ func ParseGetCallEventsResponse(rsp *http.Response) (*GetCallEventsResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -30811,6 +31993,13 @@ func ParseGetCallTimelineResponse(rsp *http.Response) (*GetCallTimelineResponse,
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -30866,6 +32055,13 @@ func ParseCreateCallTokenResponse(rsp *http.Response) (*CreateCallTokenResponse,
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -30920,6 +32116,13 @@ func ParseGetCallTranscriptResponse(rsp *http.Response) (*GetCallTranscriptRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -30967,6 +32170,13 @@ func ParseListCampaignsResponse(rsp *http.Response) (*ListCampaignsResponse, err
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -31013,6 +32223,13 @@ func ParseCreateCampaignResponse(rsp *http.Response) (*CreateCampaignResponse, e
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -31068,6 +32285,13 @@ func ParseGetCampaignResponse(rsp *http.Response) (*GetCampaignResponse, error) 
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -31121,6 +32345,13 @@ func ParseListCampaignContactsResponse(rsp *http.Response) (*ListCampaignContact
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -31176,6 +32407,13 @@ func ParseAddCampaignContactsResponse(rsp *http.Response) (*AddCampaignContactsR
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -31229,6 +32467,13 @@ func ParsePauseCampaignResponse(rsp *http.Response) (*PauseCampaignResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -31284,6 +32529,13 @@ func ParseStartCampaignResponse(rsp *http.Response) (*StartCampaignResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -31330,6 +32582,13 @@ func ParseCreateChatTokenResponse(rsp *http.Response) (*CreateChatTokenResponse,
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -31378,6 +32637,13 @@ func ParseListAgentConfigsResponse(rsp *http.Response) (*ListAgentConfigsRespons
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -31424,6 +32690,13 @@ func ParseCreateAgentConfigResponse(rsp *http.Response) (*CreateAgentConfigRespo
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -31474,6 +32747,13 @@ func ParseDeleteAgentConfigResponse(rsp *http.Response) (*DeleteAgentConfigRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -31528,6 +32808,13 @@ func ParseGetAgentConfigResponse(rsp *http.Response) (*GetAgentConfigResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -31644,6 +32931,13 @@ func ParseUpdateAgentConfigResponse(rsp *http.Response) (*UpdateAgentConfigRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -31698,6 +32992,13 @@ func ParseListConfigPluginsResponse(rsp *http.Response) (*ListConfigPluginsRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -31747,6 +33048,13 @@ func ParseDisconnectPluginResponse(rsp *http.Response) (*DisconnectPluginRespons
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -31801,6 +33109,13 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -32230,6 +33545,13 @@ func ParseGetConversationCommandResponse(rsp *http.Response) (*GetConversationCo
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -32243,6 +33565,13 @@ func ParseGetConversationCommandResponse(rsp *http.Response) (*GetConversationCo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -32291,6 +33620,13 @@ func ParseGetConversationMessagesResponse(rsp *http.Response) (*GetConversationM
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32331,8 +33667,19 @@ func ParseCreateGuestUserResponse(rsp *http.Response) (*CreateGuestUserResponse,
 		}
 		response.JSON401 = &dest
 
-	case rsp.StatusCode == 403:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -32395,6 +33742,13 @@ func ParseClaimGuestUserResponse(rsp *http.Response) (*ClaimGuestUserResponse, e
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32442,6 +33796,13 @@ func ParseIngestKnowledgeResponse(rsp *http.Response) (*IngestKnowledgeResponse,
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32488,6 +33849,13 @@ func ParseListKnowledgeDocumentsResponse(rsp *http.Response) (*ListKnowledgeDocu
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -32538,6 +33906,13 @@ func ParseDeleteKnowledgeDocumentResponse(rsp *http.Response) (*DeleteKnowledgeD
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -32593,6 +33968,13 @@ func ParseGetKnowledgeDocumentResponse(rsp *http.Response) (*GetKnowledgeDocumen
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32647,6 +34029,13 @@ func ParseListKnowledgeDocumentPassagesResponse(rsp *http.Response) (*ListKnowle
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32694,6 +34083,13 @@ func ParseListKnowledgeUrlsResponse(rsp *http.Response) (*ListKnowledgeUrlsRespo
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32740,6 +34136,13 @@ func ParseAddKnowledgeUrlResponse(rsp *http.Response) (*AddKnowledgeUrlResponse,
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -32790,6 +34193,13 @@ func ParseDeleteKnowledgeUrlResponse(rsp *http.Response) (*DeleteKnowledgeUrlRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -32845,6 +34255,13 @@ func ParseGetKnowledgeUrlResponse(rsp *http.Response) (*GetKnowledgeUrlResponse,
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32899,6 +34316,13 @@ func ParseIndexKnowledgeUrlResponse(rsp *http.Response) (*IndexKnowledgeUrlRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -32952,6 +34376,13 @@ func ParseListKnowledgeUrlPassagesResponse(rsp *http.Response) (*ListKnowledgeUr
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -33134,6 +34565,13 @@ func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) 
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -33147,6 +34585,13 @@ func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) 
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -33164,6 +34609,48 @@ func ParsePluginOAuthCallbackResponse(rsp *http.Response) (*PluginOAuthCallbackR
 	response := &PluginOAuthCallbackResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseReceivePluginEventResponse parses an HTTP response from a ReceivePluginEventWithResponse call
+func ParseReceivePluginEventResponse(rsp *http.Response) (*ReceivePluginEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceivePluginEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetPluginLogoResponse parses an HTTP response from a GetPluginLogoWithResponse call
+func ParseGetPluginLogoResponse(rsp *http.Response) (*GetPluginLogoResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPluginLogoResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	}
 
 	return response, nil
@@ -33217,6 +34704,13 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -33341,6 +34835,13 @@ func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -33361,6 +34862,13 @@ func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -33416,6 +34924,13 @@ func ParseUpdateSessionResponse(rsp *http.Response) (*UpdateSessionResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -33442,6 +34957,13 @@ func ParseGetSessionCommandResponse(rsp *http.Response) (*GetSessionCommandRespo
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -33455,6 +34977,13 @@ func ParseGetSessionCommandResponse(rsp *http.Response) (*GetSessionCommandRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -33482,6 +35011,13 @@ func ParseInterruptSessionCommandResponse(rsp *http.Response) (*InterruptSession
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -33495,6 +35031,13 @@ func ParseInterruptSessionCommandResponse(rsp *http.Response) (*InterruptSession
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Error
@@ -33557,6 +35100,13 @@ func ParseForkSessionResponse(rsp *http.Response) (*ForkSessionResponse, error) 
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -33607,6 +35157,13 @@ func ParseSetSessionInstructionsResponse(rsp *http.Response) (*SetSessionInstruc
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -33629,6 +35186,13 @@ func ParseInterruptSessionResponse(rsp *http.Response) (*InterruptSessionRespons
 	case rsp.StatusCode == 204:
 		break // No content-type
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -33649,6 +35213,13 @@ func ParseInterruptSessionResponse(rsp *http.Response) (*InterruptSessionRespons
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -33771,6 +35342,13 @@ func ParseRespondSessionResponse(rsp *http.Response) (*RespondSessionResponse, e
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -33824,6 +35402,13 @@ func ParseListResponsesResponse(rsp *http.Response) (*ListResponsesResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -33886,6 +35471,13 @@ func ParseCreateResponseResponse(rsp *http.Response) (*CreateResponseResponse, e
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -33940,6 +35532,13 @@ func ParseListResponseItemsResponse(rsp *http.Response) (*ListResponseItemsRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -33990,6 +35589,13 @@ func ParseRewindSessionResponse(rsp *http.Response) (*RewindSessionResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -34039,6 +35645,13 @@ func ParseSaySessionResponse(rsp *http.Response) (*SaySessionResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -34093,6 +35706,13 @@ func ParseSetSessionSettingsResponse(rsp *http.Response) (*SetSessionSettingsRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -34191,6 +35811,13 @@ func ParseListSimulationRunsResponse(rsp *http.Response) (*ListSimulationRunsRes
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -34244,6 +35871,13 @@ func ParseGetSimulationRunResponse(rsp *http.Response) (*GetSimulationRunRespons
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -34299,6 +35933,13 @@ func ParseCancelSimulationRunResponse(rsp *http.Response) (*CancelSimulationRunR
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -34346,6 +35987,13 @@ func ParseListSimulationsResponse(rsp *http.Response) (*ListSimulationsResponse,
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -34392,6 +36040,13 @@ func ParseCreateSimulationResponse(rsp *http.Response) (*CreateSimulationRespons
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -34442,6 +36097,13 @@ func ParseDeleteSimulationResponse(rsp *http.Response) (*DeleteSimulationRespons
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -34497,6 +36159,13 @@ func ParseGetSimulationResponse(rsp *http.Response) (*GetSimulationResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -34550,6 +36219,13 @@ func ParseUpdateSimulationResponse(rsp *http.Response) (*UpdateSimulationRespons
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -34605,6 +36281,13 @@ func ParseRunSimulationResponse(rsp *http.Response) (*RunSimulationResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -34652,6 +36335,13 @@ func ParseListSkillsResponse(rsp *http.Response) (*ListSkillsResponse, error) {
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -34698,6 +36388,13 @@ func ParseCreateSkillResponse(rsp *http.Response) (*CreateSkillResponse, error) 
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -34748,6 +36445,13 @@ func ParseDeleteSkillResponse(rsp *http.Response) (*DeleteSkillResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -34803,6 +36507,13 @@ func ParseGetSkillResponse(rsp *http.Response) (*GetSkillResponse, error) {
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -34856,6 +36567,13 @@ func ParseUpdateSkillResponse(rsp *http.Response) (*UpdateSkillResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -35008,6 +36726,13 @@ func ParseListVoicesResponse(rsp *http.Response) (*ListVoicesResponse, error) {
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -35055,6 +36780,13 @@ func ParseCreateVoiceResponse(rsp *http.Response) (*CreateVoiceResponse, error) 
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -35101,6 +36833,13 @@ func ParseListLibraryVoicesResponse(rsp *http.Response) (*ListLibraryVoicesRespo
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -35156,6 +36895,13 @@ func ParsePreviewLibraryVoiceResponse(rsp *http.Response) (*PreviewLibraryVoiceR
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -35202,6 +36948,13 @@ func ParseListVoiceProvidersResponse(rsp *http.Response) (*ListVoiceProvidersRes
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -35252,6 +37005,13 @@ func ParseDeleteVoiceResponse(rsp *http.Response) (*DeleteVoiceResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -35307,6 +37067,13 @@ func ParseGetVoiceResponse(rsp *http.Response) (*GetVoiceResponse, error) {
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -35360,6 +37127,13 @@ func ParseUpdateVoiceResponse(rsp *http.Response) (*UpdateVoiceResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -35415,6 +37189,13 @@ func ParsePrepareVoiceResponse(rsp *http.Response) (*PrepareVoiceResponse, error
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -35468,6 +37249,13 @@ func ParsePreviewVoiceResponse(rsp *http.Response) (*PreviewVoiceResponse, error
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -35523,6 +37311,13 @@ func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, e
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -35576,6 +37371,13 @@ func ParseClassifyResponse(rsp *http.Response) (*ClassifyResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Error
@@ -35800,6 +37602,13 @@ func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -35853,6 +37662,13 @@ func ParsePlacePhoneCallResponse(rsp *http.Response) (*PlacePhoneCallResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -35908,6 +37724,13 @@ func ParseTransferPhoneCallResponse(rsp *http.Response) (*TransferPhoneCallRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -35958,6 +37781,13 @@ func ParsePressPhoneDigitsResponse(rsp *http.Response) (*PressPhoneDigitsRespons
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -36004,6 +37834,13 @@ func ParseListPhoneNumbersResponse(rsp *http.Response) (*ListPhoneNumbersRespons
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -36059,6 +37896,13 @@ func ParseBuyPhoneNumberResponse(rsp *http.Response) (*BuyPhoneNumberResponse, e
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -36113,6 +37957,13 @@ func ParseSearchPhoneNumbersResponse(rsp *http.Response) (*SearchPhoneNumbersRes
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -36162,6 +38013,13 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -36217,6 +38075,13 @@ func ParseAttachPhoneNumberResponse(rsp *http.Response) (*AttachPhoneNumberRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -36256,6 +38121,13 @@ func ParseListPhoneVendorsResponse(rsp *http.Response) (*ListPhoneVendorsRespons
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -36520,6 +38392,13 @@ func ParseListRouterConfigsResponse(rsp *http.Response) (*ListRouterConfigsRespo
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -36566,6 +38445,13 @@ func ParseCreateRouterConfigResponse(rsp *http.Response) (*CreateRouterConfigRes
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -36616,6 +38502,13 @@ func ParseDeleteRouterConfigResponse(rsp *http.Response) (*DeleteRouterConfigRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -36671,6 +38564,13 @@ func ParseGetRouterConfigResponse(rsp *http.Response) (*GetRouterConfigResponse,
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -36725,6 +38625,13 @@ func ParseUpdateRouterConfigResponse(rsp *http.Response) (*UpdateRouterConfigRes
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -36771,6 +38678,13 @@ func ParseSearchResponse(rsp *http.Response) (*SearchResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -36819,6 +38733,13 @@ func ParseGetActivityResponse(rsp *http.Response) (*GetActivityResponse, error) 
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -36865,6 +38786,13 @@ func ParseRunRollupResponse(rsp *http.Response) (*RunRollupResponse, error) {
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -36913,6 +38841,13 @@ func ParseGetSpendResponse(rsp *http.Response) (*GetSpendResponse, error) {
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -36959,6 +38894,13 @@ func ParseGetTagKeysResponse(rsp *http.Response) (*GetTagKeysResponse, error) {
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -37014,6 +38956,13 @@ func ParseTranscribeRecordingResponse(rsp *http.Response) (*TranscribeRecordingR
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -37067,6 +39016,13 @@ func ParseGetTranscriptionResponse(rsp *http.Response) (*GetTranscriptionRespons
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -37122,6 +39078,13 @@ func ParseRecordSpeechResponse(rsp *http.Response) (*RecordSpeechResponse, error
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -37176,6 +39139,13 @@ func ParseGetSpeechResponse(rsp *http.Response) (*GetSpeechResponse, error) {
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -37223,6 +39193,13 @@ func ParseGetTurnStatsResponse(rsp *http.Response) (*GetTurnStatsResponse, error
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -37249,6 +39226,13 @@ func ParseListProvidersResponse(rsp *http.Response) (*ListProvidersResponse, err
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -37269,6 +39253,13 @@ func ParseListProvidersResponse(rsp *http.Response) (*ListProvidersResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -37296,6 +39287,13 @@ func ParseListRoutesResponse(rsp *http.Response) (*ListRoutesResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -37316,6 +39314,13 @@ func ParseListRoutesResponse(rsp *http.Response) (*ListRoutesResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -37343,6 +39348,13 @@ func ParseResolveTargetResponse(rsp *http.Response) (*ResolveTargetResponse, err
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -37363,6 +39375,13 @@ func ParseResolveTargetResponse(rsp *http.Response) (*ResolveTargetResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -37418,6 +39437,13 @@ func ParseGetStatsResponse(rsp *http.Response) (*GetStatsResponse, error) {
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -37471,6 +39497,13 @@ func ParseGetTagStatsResponse(rsp *http.Response) (*GetTagStatsResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

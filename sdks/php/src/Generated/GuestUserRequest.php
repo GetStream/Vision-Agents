@@ -11,12 +11,12 @@ use GetStream\VisionAgents\Json;
 final readonly class GuestUserRequest
 {
     public function __construct(
+        /** @var array<string, mixed>|null */
+        public ?array $custom = null,
         // A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a...
         public ?string $id = null,
         // What to call them, for a transcript a person reads later.
         public ?string $name = null,
-        /** @var array<string, mixed>|null */
-        public ?array $custom = null,
     ) {
     }
 
@@ -26,9 +26,9 @@ final readonly class GuestUserRequest
     public static function fromArray(array $data): self
     {
         return new self(
+            custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             id: array_key_exists('id', $data) && $data['id'] !== null ? Json::string($data, 'id') : null,
             name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
-            custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
         );
     }
 
@@ -40,14 +40,14 @@ final readonly class GuestUserRequest
     public function toArray(): array
     {
         $out = [];
+        if ($this->custom !== null) {
+            $out['custom'] = Json::objectValue($this->custom);
+        }
         if ($this->id !== null) {
             $out['id'] = $this->id;
         }
         if ($this->name !== null) {
             $out['name'] = $this->name;
-        }
-        if ($this->custom !== null) {
-            $out['custom'] = Json::objectValue($this->custom);
         }
         return $out;
     }

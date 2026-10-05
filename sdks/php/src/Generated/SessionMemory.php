@@ -15,13 +15,13 @@ use GetStream\VisionAgents\Json;
 final readonly class SessionMemory
 {
     public function __construct(
-        // Who the memories belong to. Empty means the customer.
-        public ?string $userId = null,
         // Separates two deployments sharing one memory account.
         public ?string $appId = null,
         // The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside t...
         /** @var array<string, string>|null */
         public ?array $filter = null,
+        // Who the memories belong to. Empty means the customer.
+        public ?string $userId = null,
     ) {
     }
 
@@ -31,9 +31,9 @@ final readonly class SessionMemory
     public static function fromArray(array $data): self
     {
         return new self(
-            userId: array_key_exists('user_id', $data) && $data['user_id'] !== null ? Json::string($data, 'user_id') : null,
             appId: array_key_exists('app_id', $data) && $data['app_id'] !== null ? Json::string($data, 'app_id') : null,
             filter: array_key_exists('filter', $data) && $data['filter'] !== null ? Json::stringMap($data, 'filter') : null,
+            userId: array_key_exists('user_id', $data) && $data['user_id'] !== null ? Json::string($data, 'user_id') : null,
         );
     }
 
@@ -45,14 +45,14 @@ final readonly class SessionMemory
     public function toArray(): array
     {
         $out = [];
-        if ($this->userId !== null) {
-            $out['user_id'] = $this->userId;
-        }
         if ($this->appId !== null) {
             $out['app_id'] = $this->appId;
         }
         if ($this->filter !== null) {
             $out['filter'] = $this->filter;
+        }
+        if ($this->userId !== null) {
+            $out['user_id'] = $this->userId;
         }
         return $out;
     }

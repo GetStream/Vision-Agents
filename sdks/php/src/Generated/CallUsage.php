@@ -16,14 +16,14 @@ use GetStream\VisionAgents\Json;
 final readonly class CallUsage
 {
     public function __construct(
-        // Every prompt the models read, the cached part included.
-        public int $inputTokens,
         // The part of those prompts a provider served from its own cache.
         public int $cachedInputTokens,
-        // Everything the models generated, reasoning included.
-        public int $outputTokens,
         // Millionths of a dollar, priced from the providers' configured rates.
         public int $costMicros,
+        // Every prompt the models read, the cached part included.
+        public int $inputTokens,
+        // Everything the models generated, reasoning included.
+        public int $outputTokens,
         // How many calls to a model it took, transcription and speech included.
         public int $requests,
     ) {
@@ -35,10 +35,10 @@ final readonly class CallUsage
     public static function fromArray(array $data): self
     {
         return new self(
-            inputTokens: Json::int($data, 'input_tokens'),
             cachedInputTokens: Json::int($data, 'cached_input_tokens'),
-            outputTokens: Json::int($data, 'output_tokens'),
             costMicros: Json::int($data, 'cost_micros'),
+            inputTokens: Json::int($data, 'input_tokens'),
+            outputTokens: Json::int($data, 'output_tokens'),
             requests: Json::int($data, 'requests'),
         );
     }
@@ -51,10 +51,10 @@ final readonly class CallUsage
     public function toArray(): array
     {
         $out = [];
-        $out['input_tokens'] = $this->inputTokens;
         $out['cached_input_tokens'] = $this->cachedInputTokens;
-        $out['output_tokens'] = $this->outputTokens;
         $out['cost_micros'] = $this->costMicros;
+        $out['input_tokens'] = $this->inputTokens;
+        $out['output_tokens'] = $this->outputTokens;
         $out['requests'] = $this->requests;
         return $out;
     }

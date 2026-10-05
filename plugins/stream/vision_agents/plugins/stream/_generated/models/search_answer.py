@@ -20,23 +20,23 @@ T = TypeVar("T", bound="SearchAnswer")
 class SearchAnswer:
     """
     Attributes:
-        provider (str):
         model (str):
+        provider (str):
         results (list[SearchResult]): The sources behind it, most relevant first.
         answer (str | Unset): The provider's own summary, where it offers one. It is what a voice agent wants: a
             sentence to say rather than a page to read.
     """
 
-    provider: str
     model: str
+    provider: str
     results: list[SearchResult]
     answer: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        provider = self.provider
-
         model = self.model
+
+        provider = self.provider
 
         results = []
         for results_item_data in self.results:
@@ -49,8 +49,8 @@ class SearchAnswer:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "provider": provider,
                 "model": model,
+                "provider": provider,
                 "results": results,
             }
         )
@@ -64,9 +64,9 @@ class SearchAnswer:
         from ..models.search_result import SearchResult
 
         d = dict(src_dict)
-        provider = d.pop("provider")
-
         model = d.pop("model")
+
+        provider = d.pop("provider")
 
         results = []
         _results = d.pop("results")
@@ -78,8 +78,8 @@ class SearchAnswer:
         answer = d.pop("answer", UNSET)
 
         search_answer = cls(
-            provider=provider,
             model=model,
+            provider=provider,
             results=results,
             answer=answer,
         )

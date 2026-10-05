@@ -11,12 +11,12 @@ use GetStream\VisionAgents\Json;
 final readonly class GeneratedImage
 {
     public function __construct(
+        // The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
+        public string $data,
+        public int $height,
         // What the picture is, read off the picture itself rather than the provider's label.
         public string $mediaType,
         public int $width,
-        public int $height,
-        // The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
-        public string $data,
         // The seed the provider reports, which draws the same picture again. Absent when it reports none.
         public ?int $seed = null,
     ) {
@@ -28,10 +28,10 @@ final readonly class GeneratedImage
     public static function fromArray(array $data): self
     {
         return new self(
+            data: Json::string($data, 'data'),
+            height: Json::int($data, 'height'),
             mediaType: Json::string($data, 'media_type'),
             width: Json::int($data, 'width'),
-            height: Json::int($data, 'height'),
-            data: Json::string($data, 'data'),
             seed: array_key_exists('seed', $data) && $data['seed'] !== null ? Json::int($data, 'seed') : null,
         );
     }
@@ -44,10 +44,10 @@ final readonly class GeneratedImage
     public function toArray(): array
     {
         $out = [];
+        $out['data'] = $this->data;
+        $out['height'] = $this->height;
         $out['media_type'] = $this->mediaType;
         $out['width'] = $this->width;
-        $out['height'] = $this->height;
-        $out['data'] = $this->data;
         if ($this->seed !== null) {
             $out['seed'] = $this->seed;
         }

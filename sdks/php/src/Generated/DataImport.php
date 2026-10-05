@@ -13,11 +13,11 @@ final readonly class DataImport
     public function __construct(
         // How many rows were written.
         public int $rows,
+        // The cursor the export named, to ask the other deployment for changes from.
+        public ?int $cursor = null,
         // How many of them went into each table.
         /** @var array<string, mixed>|null */
         public ?array $tables = null,
-        // The cursor the export named, to ask the other deployment for changes from.
-        public ?int $cursor = null,
     ) {
     }
 
@@ -28,8 +28,8 @@ final readonly class DataImport
     {
         return new self(
             rows: Json::int($data, 'rows'),
-            tables: array_key_exists('tables', $data) && $data['tables'] !== null ? Json::object($data, 'tables') : null,
             cursor: array_key_exists('cursor', $data) && $data['cursor'] !== null ? Json::int($data, 'cursor') : null,
+            tables: array_key_exists('tables', $data) && $data['tables'] !== null ? Json::object($data, 'tables') : null,
         );
     }
 
@@ -42,11 +42,11 @@ final readonly class DataImport
     {
         $out = [];
         $out['rows'] = $this->rows;
-        if ($this->tables !== null) {
-            $out['tables'] = Json::objectValue($this->tables);
-        }
         if ($this->cursor !== null) {
             $out['cursor'] = $this->cursor;
+        }
+        if ($this->tables !== null) {
+            $out['tables'] = Json::objectValue($this->tables);
         }
         return $out;
     }

@@ -51,7 +51,7 @@ class Router:
         app.router.add_post("/v1/agents/sessions", self._create)
         app.router.add_get("/v1/agents/sessions/{id}/events", self._session_events)
         app.router.add_post("/v1/agents/sessions/{id}/responses", self._respond)
-        app.router.add_delete("/v1/agents/sessions/{id}", self._close)
+        app.router.add_post("/v1/agents/sessions/{id}/stop", self._close)
         return app
 
     async def hand_over(self, frame: dict[str, Any]) -> None:
@@ -111,6 +111,7 @@ class Router:
                 "user_id": wanted.get("user_id", ""),
                 "agent_id": wanted.get("agent_id", ""),
                 "text": True,
+                "modality": "text",
                 "state": "live",
                 "created_at": "2026-01-01T00:00:00Z",
             },

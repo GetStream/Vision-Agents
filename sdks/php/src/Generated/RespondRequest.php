@@ -12,6 +12,8 @@ final readonly class RespondRequest
 {
     public function __construct(
         public string $text,
+        // The install the command came from. It is written on the person's message as client_id, and a client tool ca...
+        public ?string $clientId = null,
         // Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicat...
         public ?string $commandId = null,
     ) {
@@ -24,6 +26,7 @@ final readonly class RespondRequest
     {
         return new self(
             text: Json::string($data, 'text'),
+            clientId: array_key_exists('client_id', $data) && $data['client_id'] !== null ? Json::string($data, 'client_id') : null,
             commandId: array_key_exists('command_id', $data) && $data['command_id'] !== null ? Json::string($data, 'command_id') : null,
         );
     }
@@ -37,6 +40,9 @@ final readonly class RespondRequest
     {
         $out = [];
         $out['text'] = $this->text;
+        if ($this->clientId !== null) {
+            $out['client_id'] = $this->clientId;
+        }
         if ($this->commandId !== null) {
             $out['command_id'] = $this->commandId;
         }

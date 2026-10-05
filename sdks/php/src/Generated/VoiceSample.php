@@ -11,11 +11,11 @@ use GetStream\VisionAgents\Json;
 final readonly class VoiceSample
 {
     public function __construct(
-        public string $id,
         public \DateTimeImmutable $createdAt,
-        public ?string $filename = null,
-        public ?string $contentType = null,
+        public string $id,
         public ?int $bytes = null,
+        public ?string $contentType = null,
+        public ?string $filename = null,
         public ?string $transcript = null,
     ) {
     }
@@ -26,11 +26,11 @@ final readonly class VoiceSample
     public static function fromArray(array $data): self
     {
         return new self(
-            id: Json::string($data, 'id'),
             createdAt: Json::date($data, 'created_at'),
-            filename: array_key_exists('filename', $data) && $data['filename'] !== null ? Json::string($data, 'filename') : null,
-            contentType: array_key_exists('content_type', $data) && $data['content_type'] !== null ? Json::string($data, 'content_type') : null,
+            id: Json::string($data, 'id'),
             bytes: array_key_exists('bytes', $data) && $data['bytes'] !== null ? Json::int($data, 'bytes') : null,
+            contentType: array_key_exists('content_type', $data) && $data['content_type'] !== null ? Json::string($data, 'content_type') : null,
+            filename: array_key_exists('filename', $data) && $data['filename'] !== null ? Json::string($data, 'filename') : null,
             transcript: array_key_exists('transcript', $data) && $data['transcript'] !== null ? Json::string($data, 'transcript') : null,
         );
     }
@@ -43,16 +43,16 @@ final readonly class VoiceSample
     public function toArray(): array
     {
         $out = [];
-        $out['id'] = $this->id;
         $out['created_at'] = Json::dateValue($this->createdAt);
-        if ($this->filename !== null) {
-            $out['filename'] = $this->filename;
+        $out['id'] = $this->id;
+        if ($this->bytes !== null) {
+            $out['bytes'] = $this->bytes;
         }
         if ($this->contentType !== null) {
             $out['content_type'] = $this->contentType;
         }
-        if ($this->bytes !== null) {
-            $out['bytes'] = $this->bytes;
+        if ($this->filename !== null) {
+            $out['filename'] = $this->filename;
         }
         if ($this->transcript !== null) {
             $out['transcript'] = $this->transcript;

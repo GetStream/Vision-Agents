@@ -20,26 +20,26 @@ T = TypeVar("T", bound="TransferCallRequest")
 class TransferCallRequest:
     """
     Attributes:
+        call_id (str): The Stream call the caller and the agent are already on.
         from_ (str): The customer's number the human is dialled from, which is what they see.
         to (str): The human being brought onto the call.
-        call_id (str): The Stream call the caller and the agent are already on.
         call_type (str | Unset): The Stream call type. Omit for "agent".
         tags (TransferCallRequestTags | Unset):
     """
 
+    call_id: str
     from_: str
     to: str
-    call_id: str
     call_type: str | Unset = UNSET
     tags: TransferCallRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        call_id = self.call_id
+
         from_ = self.from_
 
         to = self.to
-
-        call_id = self.call_id
 
         call_type = self.call_type
 
@@ -51,9 +51,9 @@ class TransferCallRequest:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "call_id": call_id,
                 "from": from_,
                 "to": to,
-                "call_id": call_id,
             }
         )
         if call_type is not UNSET:
@@ -70,11 +70,11 @@ class TransferCallRequest:
         )
 
         d = dict(src_dict)
+        call_id = d.pop("call_id")
+
         from_ = d.pop("from")
 
         to = d.pop("to")
-
-        call_id = d.pop("call_id")
 
         call_type = d.pop("call_type", UNSET)
 
@@ -86,9 +86,9 @@ class TransferCallRequest:
             tags = TransferCallRequestTags.from_dict(_tags)
 
         transfer_call_request = cls(
+            call_id=call_id,
             from_=from_,
             to=to,
-            call_id=call_id,
             call_type=call_type,
             tags=tags,
         )

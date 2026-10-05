@@ -12,11 +12,11 @@ final readonly class SearchResult
 {
     public function __construct(
         public string $url,
-        public ?string $title = null,
-        // The relevant extract, which is what a model reads.
-        public ?string $text = null,
         // How relevant the provider judged it.
         public ?float $score = null,
+        // The relevant extract, which is what a model reads.
+        public ?string $text = null,
+        public ?string $title = null,
     ) {
     }
 
@@ -27,9 +27,9 @@ final readonly class SearchResult
     {
         return new self(
             url: Json::string($data, 'url'),
-            title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
-            text: array_key_exists('text', $data) && $data['text'] !== null ? Json::string($data, 'text') : null,
             score: array_key_exists('score', $data) && $data['score'] !== null ? Json::float($data, 'score') : null,
+            text: array_key_exists('text', $data) && $data['text'] !== null ? Json::string($data, 'text') : null,
+            title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
         );
     }
 
@@ -42,14 +42,14 @@ final readonly class SearchResult
     {
         $out = [];
         $out['url'] = $this->url;
-        if ($this->title !== null) {
-            $out['title'] = $this->title;
+        if ($this->score !== null) {
+            $out['score'] = $this->score;
         }
         if ($this->text !== null) {
             $out['text'] = $this->text;
         }
-        if ($this->score !== null) {
-            $out['score'] = $this->score;
+        if ($this->title !== null) {
+            $out['title'] = $this->title;
         }
         return $out;
     }

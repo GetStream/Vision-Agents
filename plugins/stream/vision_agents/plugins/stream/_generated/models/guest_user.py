@@ -24,25 +24,23 @@ class GuestUser:
         id (str):
         token (str): A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries
             role guest, so an app that has turned guests off refuses it.
-        name (str | Unset):
         custom (GuestUserCustom | Unset):
         expires_at (datetime.datetime | Unset): When the token stops working. A guest coming back after it asks for
             another.
+        name (str | Unset):
     """
 
     id: str
     token: str
-    name: str | Unset = UNSET
     custom: GuestUserCustom | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
+    name: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
 
         token = self.token
-
-        name = self.name
 
         custom: dict[str, Any] | Unset = UNSET
         if not isinstance(self.custom, Unset):
@@ -52,6 +50,8 @@ class GuestUser:
         if not isinstance(self.expires_at, Unset):
             expires_at = self.expires_at.isoformat()
 
+        name = self.name
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,12 +60,12 @@ class GuestUser:
                 "token": token,
             }
         )
-        if name is not UNSET:
-            field_dict["name"] = name
         if custom is not UNSET:
             field_dict["custom"] = custom
         if expires_at is not UNSET:
             field_dict["expires_at"] = expires_at
+        if name is not UNSET:
+            field_dict["name"] = name
 
         return field_dict
 
@@ -77,8 +77,6 @@ class GuestUser:
         id = d.pop("id")
 
         token = d.pop("token")
-
-        name = d.pop("name", UNSET)
 
         _custom = d.pop("custom", UNSET)
         custom: GuestUserCustom | Unset
@@ -94,12 +92,14 @@ class GuestUser:
         else:
             expires_at = datetime.datetime.fromisoformat(_expires_at)
 
+        name = d.pop("name", UNSET)
+
         guest_user = cls(
             id=id,
             token=token,
-            name=name,
             custom=custom,
             expires_at=expires_at,
+            name=name,
         )
 
         guest_user.additional_properties = d

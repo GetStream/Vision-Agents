@@ -7,6 +7,9 @@ import OpenAPIRuntime
 /// what it does not say, and the router decides what the config does not. Setting a field here
 /// overrides both, for this session only.
 public struct SessionOptions: Sendable {
+    /// The id to hold the session by, so a caller knows it before the session exists. It must
+    /// be a UUID no session has had; nil lets the router choose one.
+    public var id: String?
     /// The agent to talk to, by the name its config was synced under. The router resolves
     /// it, and refuses a name that matches nothing rather than starting an agent with no
     /// config.
@@ -19,7 +22,7 @@ public struct SessionOptions: Sendable {
     public var incognito: Bool?
     public var title: String?
     public var description: String?
-    public var project: String?
+    public var projectID: String?
     /// The system prompt.
     public var instructions: String?
     /// Said on joining without going through the model.
@@ -92,6 +95,12 @@ public struct VisionAgents: Sendable {
         Agent(agents: self, name: name)
     }
 
+    /// Looking something up under a stored router config, which is what decides the model.
+    /// Without one, every call says what it wants for itself.
+    public func router(config: String = "", tags: [String: String] = [:]) -> Router {
+        Router(backend: backend, config: config, tags: tags)
+    }
+
     /// Holds a conversation in writing: no call is joined, nothing is transcribed or spoken.
     ///
     /// The replies still come through the model with the same instructions, skills and
@@ -132,29 +141,32 @@ public struct VisionAgents: Sendable {
     /// Starts a session without following it, for a caller building its own state layer.
     public func createSession(_ options: SessionOptions, callID: String?) async throws -> Session {
         let body = Components.Schemas.CreateSessionRequest(
-            conversationId: options.conversationID,
-            callId: callID,
-            text: callID == nil,
-            configId: options.configID.flatMap { $0.isEmpty ? nil : $0 },
             agent: options.agent.flatMap { $0.isEmpty ? nil : $0 },
-            incognito: options.incognito,
-            title: options.title,
+            callId: callID,
+            configId: options.configID.flatMap { $0.isEmpty ? nil : $0 },
+            conversationId: options.conversationID,
             description: options.description,
-            project: options.project,
-            instructions: options.instructions,
             greeting: options.greeting,
+            id: options.id.flatMap { $0.isEmpty ? nil : $0 },
+            incognito: options.incognito,
+            instructions: options.instructions,
             llm: options.llm,
+            projectId: options.projectID,
             stt: options.stt,
-            tts: options.tts,
-            voice: options.voice,
+            tags: options.tags.isEmpty
+                ? nil : .init(additionalProperties: options.tags),
+            text: callID == nil,
+            title: options.title,
             tools: options.tools.map {
                 Components.Schemas.SessionTool(
-                    name: $0.name,
                     description: $0.description,
+                    displayTitle: $0.displayTitle,
+                    executor: $0.executor.flatMap { .init(rawValue: $0.rawValue) },
+                    name: $0.name,
                     parameters: $0.parameters.map(container(for:)))
             },
-            tags: options.tags.isEmpty
-                ? nil : .init(additionalProperties: options.tags))
+            tts: options.tts,
+            voice: options.voice)
 
         let output = try await call { try await $0.createSession(body: .json(body)) }
         switch output {
@@ -166,24 +178,8 @@ public struct VisionAgents: Sendable {
             throw AgentsError.http(status: 401, message: try response.body.json.error)
         case .notFound(let response):
             throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
-        }
-    }
-
-    /// The sessions this caller has open, newest first.
-    ///
-    /// Only ever this caller's own. The router owns a session by whoever opened it, so a
-    /// device is never told about anybody else's conversation.
-    public func sessions() async throws -> [Session] {
-        let output = try await call { try await $0.listSessions(.init()) }
-        switch output {
-        case .ok(let response):
-            return try response.body.json.map(Session.init)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .conflict(let response):
+            throw AgentsError.http(status: 409, message: try response.body.json.error)
         case .undocumented(let status, _):
             throw AgentsError.http(status: status, message: "unexpected")
         }
@@ -195,48 +191,38 @@ public struct VisionAgents: Sendable {
     /// or on another screen. A session opened by somebody else is not found, because reading
     /// one is reading a conversation.
     public func attach(sessionID: String, tools: [AgentTool] = []) async throws -> AgentSession {
-        guard let session = try await sessions().first(where: { $0.id == sessionID }) else {
-            throw AgentsError.http(status: 404, message: "no such session")
-        }
+        let session = try await sessions.get(sessionID)
         return await AgentSession(backend: backend, session: session, tools: tools)
     }
 
-    /// Ends a session, which is how the agent leaves.
+    /// Stops a session, which is how the agent leaves. What it recorded and remembered is
+    /// kept; `sessions.delete` takes it away.
     public func close(sessionID: String) async throws {
-        let output = try await call { try await $0.closeSession(path: .init(id: sessionID)) }
+        let output = try await call { try await $0.stopSession(path: .init(id: sessionID)) }
         switch output {
         case .noContent:
             return
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
         case .unauthorized(let response):
             throw AgentsError.http(status: 401, message: try response.body.json.error)
         case .notFound(let response):
             throw AgentsError.http(status: 404, message: try response.body.json.error)
+        case .internalServerError(let response):
+            throw AgentsError.http(status: 500, message: try response.body.json.error)
         case .undocumented(let status, _):
             throw AgentsError.http(status: status, message: "unexpected")
         }
     }
 
-    /// A session's turns as the router wrote them down, oldest first.
+    /// One page of a session's turns as the router wrote them down, oldest first.
     ///
     /// A session that records nothing has none, and one rewound has none after the response
     /// it went back to.
-    public func responses(sessionID: String, limit: Int? = nil, offset: Int? = nil) async throws -> [Response] {
-        let output = try await call {
-            try await $0.listResponses(
-                path: .init(id: sessionID), query: .init(limit: limit, offset: offset))
-        }
-        switch output {
-        case .ok(let response):
-            return try response.body.json.map(Response.init)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .forbidden(let response):
-            throw AgentsError.http(status: 403, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
-        }
+    public func responses(
+        sessionID: String, limit: Int? = nil, cursor: String? = nil
+    ) async throws -> Page<Response> {
+        try await Responses(backend: backend, sessionID: sessionID).list(limit: limit, cursor: cursor)
     }
 
     /// Goes back to a response and carries on from there, as though nothing after it was said.
@@ -271,12 +257,13 @@ public struct VisionAgents: Sendable {
     /// Follow the fork the way any session is followed, with `attach(sessionID:)`.
     public func fork(sessionID: String, _ options: ForkOptions = ForkOptions()) async throws -> Session {
         let body = Components.Schemas.ForkSessionRequest(
+            callId: options.callID,
             configId: options.agent.flatMap { $0.isEmpty ? nil : $0 },
-            title: options.title,
             instructions: options.instructions,
             messages: options.withoutHistory ? false : nil,
+            projectId: options.projectID,
             responseId: options.responseID.flatMap { $0.isEmpty ? nil : $0 },
-            callId: options.callID)
+            title: options.title)
 
         let output = try await call {
             try await $0.forkSession(path: .init(id: sessionID), body: .json(body))
@@ -340,39 +327,82 @@ public struct Sessions: Sendable {
         return try await agents.chat(options)
     }
 
-    /// This caller's conversations, newest first, the ones that ended included.
+    /// One page of this caller's conversations, most recently active first, the ones that
+    /// ended included. Pass the page's `nextCursor` as `query.cursor` for the next one.
     ///
-    /// A page shorter than the limit asked for is the last one.
-    public func query(limit: Int? = nil, offset: Int? = nil) async throws -> [Session] {
-        let output = try await agents.backend.call {
-            try await $0.listSessions(query: .init(agent: agent, limit: limit, offset: offset))
-        }
+    /// Only ever this caller's own. The router owns a session by whoever opened it, so a
+    /// device is never told about anybody else's conversation.
+    public func query(_ query: SessionQuery = SessionQuery()) async throws -> Page<Session> {
+        try await sessions(matching: nil, query)
+    }
+
+    /// Finds conversations by their title, description, project and agent name, best match
+    /// first. What was said is not searched. It pages the way `query` does.
+    public func search(_ text: String, _ query: SessionQuery = SessionQuery()) async throws -> Page<Session> {
+        try await sessions(matching: text, query)
+    }
+
+    /// One conversation, whether or not it is still being held.
+    public func get(_ id: String) async throws -> Session {
+        let output = try await agents.backend.call { try await $0.getSession(path: .init(id: id)) }
         switch output {
         case .ok(let response):
-            return try response.body.json.map(Session.init)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
+            return Session(try response.body.json)
         case .unauthorized(let response):
             throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .forbidden(let response):
+            throw AgentsError.http(status: 403, message: try response.body.json.error)
+        case .notFound(let response):
+            throw AgentsError.http(status: 404, message: try response.body.json.error)
         case .undocumented(let status, _):
             throw AgentsError.http(status: status, message: "unexpected")
         }
     }
 
-    /// Finds conversations by their title, description, project and agent name, best match
-    /// first. What was said is not searched.
-    public func search(_ text: String, limit: Int? = nil, offset: Int? = nil) async throws -> [Session] {
+    /// Renames or relabels a conversation, running or ended. Nil leaves a field as it is, and
+    /// `custom` replaces the labels whole.
+    public func update(
+        _ id: String, title: String? = nil, description: String? = nil,
+        custom: [String: JSONValue]? = nil
+    ) async throws -> Session {
+        let body = Components.Schemas.UpdateSessionRequest(
+            custom: custom.map(labels(for:)), description: description, title: title)
         let output = try await agents.backend.call {
-            try await $0.searchSessions(
-                query: .init(q: text, agent: agent, limit: limit, offset: offset))
+            try await $0.updateSession(path: .init(id: id), body: .json(body))
         }
         switch output {
         case .ok(let response):
-            return try response.body.json.map(Session.init)
+            return Session(try response.body.json)
         case .badRequest(let response):
             throw AgentsError.http(status: 400, message: try response.body.json.error)
         case .unauthorized(let response):
             throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .forbidden(let response):
+            throw AgentsError.http(status: 403, message: try response.body.json.error)
+        case .notFound(let response):
+            throw AgentsError.http(status: 404, message: try response.body.json.error)
+        case .internalServerError(let response):
+            throw AgentsError.http(status: 500, message: try response.body.json.error)
+        case .undocumented(let status, _):
+            throw AgentsError.http(status: status, message: "unexpected")
+        }
+    }
+
+    /// Deletes a conversation, running or ended: it is stopped, and its turns and what it
+    /// remembered are deleted with it.
+    public func delete(_ id: String) async throws {
+        let output = try await agents.backend.call { try await $0.deleteSession(path: .init(id: id)) }
+        switch output {
+        case .noContent:
+            return
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
+        case .unauthorized(let response):
+            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .notFound(let response):
+            throw AgentsError.http(status: 404, message: try response.body.json.error)
+        case .internalServerError(let response):
+            throw AgentsError.http(status: 500, message: try response.body.json.error)
         case .undocumented(let status, _):
             throw AgentsError.http(status: status, message: "unexpected")
         }
@@ -382,6 +412,40 @@ public struct Sessions: Sendable {
     public func responses(_ sessionID: String) -> Responses {
         Responses(backend: agents.backend, sessionID: sessionID)
     }
+
+    private func sessions(matching text: String?, _ query: SessionQuery) async throws -> Page<Session> {
+        let body = Components.Schemas.SessionQuery(
+            cursor: query.cursor,
+            filter: .init(
+                agent: equals(agent),
+                agentId: equals(query.agentID),
+                modality: equals(query.modality?.rawValue),
+                projectId: equals(query.projectID),
+                state: equals(query.state?.rawValue),
+                text: text.map { .init(_dollar_q: $0) }),
+            limit: query.limit.map(Int64.init))
+        let output = try await agents.backend.call { try await $0.querySessions(body: .json(body)) }
+        switch output {
+        case .ok(let response):
+            let page = try response.body.json
+            return Page(
+                items: page.items.map(Session.init), hasMore: page.hasMore,
+                nextCursor: page.nextCursor)
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
+        case .unauthorized(let response):
+            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .internalServerError(let response):
+            throw AgentsError.http(status: 500, message: try response.body.json.error)
+        case .undocumented(let status, _):
+            throw AgentsError.http(status: status, message: "unexpected")
+        }
+    }
+}
+
+/// A filter field matching `value` exactly, or nil to leave the field out.
+private func equals(_ value: String?) -> Components.Schemas.Equals? {
+    value.flatMap { $0.isEmpty ? nil : .case1($0) }
 }
 
 extension Backend {
@@ -411,5 +475,14 @@ private func container(for schema: JSONValue) -> Components.Schemas.SessionTool.
         encoded.flatMap {
             try? JSONDecoder().decode(OpenAPIObjectContainer.self, from: $0)
         } ?? OpenAPIObjectContainer()
+    return .init(additionalProperties: decoded)
+}
+
+private func labels(for custom: [String: JSONValue]) -> Components.Schemas.UpdateSessionRequest.CustomPayload {
+    let encoded = try? JSONEncoder().encode(custom)
+    let decoded =
+        encoded.flatMap {
+            try? JSONDecoder().decode([String: OpenAPIValueContainer].self, from: $0)
+        } ?? [:]
     return .init(additionalProperties: decoded)
 }

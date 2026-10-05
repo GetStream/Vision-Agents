@@ -54,7 +54,7 @@ export interface SessionOptions {
    * what the agent is doing word by word. A page on a hosted deployment can watch one too:
    * the socket carries the credential in its query, where the proxy reads it. Off, the
    * conversation is opened and read over HTTP instead — `responses.create()` asks,
-   * `responses.items` reads the turn back — and `say`, `respond`, `interrupt`,
+   * `responses.items` reads the turn back — and `say`, `interrupt`,
    * `setInstructions` and `events` have nothing to send to.
    */
   watch?: boolean;
@@ -235,9 +235,9 @@ export class Session {
       return new Session(client, created, socket, options.tools);
     } catch (cause) {
       // The session is live in the backend even though nothing here can watch it, so it is
-      // closed rather than left holding a call nobody is listening to.
+      // stopped rather than left holding a call nobody is listening to.
       await client
-        .delete("/v1/agents/sessions/{id}", { path: { id: created.id } })
+        .post("/v1/agents/sessions/{id}/stop", { path: { id: created.id } })
         .catch(() => undefined);
       throw cause;
     }
@@ -289,27 +289,6 @@ export class Session {
       this.held().send({ type: "interrupt" });
     }
     this.held().send({ type: "say", text: said });
-  }
-
-  /**
-   * Answers text through the model, as though it had been said on the call.
-   *
-   * A conversation that is kept is only answered for a named command, which is what lets the
-   * backend tell a retried question from a new one, so one is named for it the way
-   * `responses.create` names one. Returns the command, which `interrupt` can be given.
-   */
-  respond(said: string, options: { interrupt?: boolean; commandId?: string } = {}): string {
-    if (options.interrupt) {
-      this.held().send({ type: "interrupt" });
-    }
-    const commandId =
-      options.commandId ?? (this.created.conversation_id ? crypto.randomUUID() : "");
-    this.held().send({
-      type: "respond",
-      text: said,
-      ...(commandId ? { command_id: commandId } : {}),
-    });
-    return commandId;
   }
 
   /** Abandons the reply being spoken, or with `commandId` the one answering that command. */
@@ -436,13 +415,24 @@ export class Session {
     return this.client.delete("/v1/agents/sessions/{id}/memories", { path: { id: this.id } });
   }
 
-  /** Ends the conversation. Safe to call after it has already ended. What it remembered is kept. */
+  /**
+   * Deletes this conversation: it is stopped, and its turns and what it remembered are
+   * deleted with it. See `sessions.delete`.
+   */
+  delete(): Promise<void> {
+    return this.client.delete("/v1/agents/sessions/{id}", { path: { id: this.id } });
+  }
+
+  /**
+   * Stops the conversation. Safe to call after it has already ended. Everything it recorded
+   * and remembered is kept; `delete` is what takes those away.
+   */
   async close(): Promise<void> {
     if (this.socket?.open) {
       this.socket.send({ type: "close" });
     } else if (!this.ended) {
       await this.client
-        .delete("/v1/agents/sessions/{id}", { path: { id: this.id } })
+        .post("/v1/agents/sessions/{id}/stop", { path: { id: this.id } })
         .catch(() => undefined);
     }
     this.socket?.close();

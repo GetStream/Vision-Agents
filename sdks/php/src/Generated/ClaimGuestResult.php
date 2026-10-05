@@ -12,9 +12,9 @@ final readonly class ClaimGuestResult
 {
     public function __construct(
         public string $guestId,
-        public string $userId,
         // How many conversations moved onto the account.
         public int $sessionsMoved,
+        public string $userId,
     ) {
     }
 
@@ -25,8 +25,8 @@ final readonly class ClaimGuestResult
     {
         return new self(
             guestId: Json::string($data, 'guest_id'),
-            userId: Json::string($data, 'user_id'),
             sessionsMoved: Json::int($data, 'sessions_moved'),
+            userId: Json::string($data, 'user_id'),
         );
     }
 
@@ -39,8 +39,8 @@ final readonly class ClaimGuestResult
     {
         $out = [];
         $out['guest_id'] = $this->guestId;
-        $out['user_id'] = $this->userId;
         $out['sessions_moved'] = $this->sessionsMoved;
+        $out['user_id'] = $this->userId;
         return $out;
     }
 }

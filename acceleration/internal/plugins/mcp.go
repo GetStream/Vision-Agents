@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -16,11 +18,21 @@ import (
 // PrefixSeparator keeps a plugin's tools from colliding with lookup, search or transfer.
 const PrefixSeparator = "__"
 
+const sessionHeader = "Mcp-Session-Id"
+
+// ErrUnauthorized is a server refusing the token a connection was opened with: it expired
+// early, was revoked, or the account was disconnected at the provider. The login has to be
+// made again.
+var ErrUnauthorized = errors.New("plugins: the server refused the login")
+
 // Connection is what a session needs to open one MCP server.
 type Connection struct {
 	PluginID    string
 	Endpoint    string
 	AccessToken string
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	// Empty offers every tool.
+	Tools []string
 }
 
 // Runtime is the MCP sessions a conversation opened, and the tools they offered.
@@ -35,6 +47,18 @@ type client struct {
 	token    string
 	http     *http.Client
 	nextID   int
+	// session is the Mcp-Session-Id the server gave at initialize, sent back on every
+	// request after it (MCP 2025-03-26, Streamable HTTP, «Session Management»).
+	session string
+	// version is sent as MCP-Protocol-Version by a client that skips initialize, as an
+	// MCP 2.0 one does.
+	version string
+	// instructions are what the server said at initialize about using its tools.
+	instructions string
+}
+
+type initializeResult struct {
+	Instructions string `json:"instructions"`
 }
 
 type rpcRequest struct {
@@ -52,8 +76,9 @@ type rpcResponse struct {
 }
 
 type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
 }
 
 type toolsListResult struct {
@@ -93,6 +118,9 @@ func Open(ctx context.Context, conns []Connection, transport *http.Client) (*Run
 		}
 		runtime.clients = append(runtime.clients, opened)
 		for _, tool := range listed {
+			if !Offered(conn.Tools, tool.Name) {
+				continue
+			}
 			prefixed := Prefix(conn.PluginID, tool.Name)
 			runtime.owned[prefixed] = opened
 			tools = append(tools, harness.Tool{
@@ -108,6 +136,31 @@ func Open(ctx context.Context, conns []Connection, transport *http.Client) (*Run
 	return runtime, tools, failures
 }
 
+// Offered reports whether a server's tool is in an allowlist of names and path.Match
+// patterns. An empty allowlist offers every tool.
+func Offered(allowed []string, tool string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, pattern := range allowed {
+		if matched, _ := path.Match(pattern, tool); matched {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckToolPatterns refuses an allowlist entry path.Match cannot read, which would
+// otherwise match nothing and hide a tool without saying why.
+func CheckToolPatterns(allowed []string) error {
+	for _, pattern := range allowed {
+		if _, err := path.Match(pattern, ""); err != nil {
+			return fmt.Errorf("plugins: %q is not a tool name or pattern", pattern)
+		}
+	}
+	return nil
+}
+
 func dial(ctx context.Context, conn Connection, transport *http.Client) (*client, []mcpTool, error) {
 	opened := &client{
 		pluginID: conn.PluginID,
@@ -116,7 +169,7 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 		http:     transport,
 		nextID:   1,
 	}
-	_, err := opened.call(ctx, "initialize", map[string]any{
+	raw, err := opened.call(ctx, "initialize", map[string]any{
 		"protocolVersion": "2025-03-26",
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]string{"name": "vision-agents", "version": "0"},
@@ -124,10 +177,14 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 	if err != nil {
 		return nil, nil, err
 	}
+	var initialized initializeResult
+	if json.Unmarshal(raw, &initialized) == nil {
+		opened.instructions = strings.TrimSpace(initialized.Instructions)
+	}
 	if err := opened.notify(ctx, "notifications/initialized", nil); err != nil {
 		return nil, nil, err
 	}
-	raw, err := opened.call(ctx, "tools/list", map[string]any{})
+	raw, err = opened.call(ctx, "tools/list", map[string]any{})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -136,6 +193,20 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 		return nil, nil, fmt.Errorf("plugins: tools/list: %w", err)
 	}
 	return opened, listed.Tools, nil
+}
+
+// Instructions are what the server opened for pluginID said at initialize about using its
+// tools, or "" when it said nothing or is not open.
+func (r *Runtime) Instructions(pluginID string) string {
+	if r == nil {
+		return ""
+	}
+	for _, opened := range r.clients {
+		if opened.pluginID == pluginID {
+			return opened.instructions
+		}
+	}
+	return ""
 }
 
 // Owns reports whether this runtime runs the named tool.
@@ -220,6 +291,9 @@ func (c *client) call(ctx context.Context, method string, params any) (json.RawM
 		return nil, fmt.Errorf("plugins: %s: %w", method, err)
 	}
 	if response.Error != nil {
+		if len(response.Error.Data) > 0 {
+			return nil, fmt.Errorf("plugins: %s: %s %s", method, response.Error.Message, response.Error.Data)
+		}
 		return nil, fmt.Errorf("plugins: %s: %s", method, response.Error.Message)
 	}
 	return response.Result, nil
@@ -244,14 +318,26 @@ func (c *client) roundTrip(ctx context.Context, body []byte) ([]byte, error) {
 	if c.token != "" {
 		request.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	if c.session != "" {
+		request.Header.Set(sessionHeader, c.session)
+	}
+	if c.version != "" {
+		request.Header.Set("MCP-Protocol-Version", c.version)
+	}
 	response, err := c.http.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("plugins: %s: %w", c.pluginID, err)
 	}
 	defer response.Body.Close()
+	if session := response.Header.Get(sessionHeader); session != "" {
+		c.session = session
+	}
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, fmt.Errorf("plugins: %s: %w", c.pluginID, err)
+	}
+	if response.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("%w: %s: %s", ErrUnauthorized, c.pluginID, strings.TrimSpace(string(raw)))
 	}
 	if response.StatusCode >= 300 {
 		return nil, fmt.Errorf("plugins: %s: %s", c.pluginID, strings.TrimSpace(string(raw)))

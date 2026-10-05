@@ -11,20 +11,20 @@ use GetStream\VisionAgents\Json;
 final readonly class ImageGeneration
 {
     public function __construct(
+        // Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed.
+        public int $costMicros,
         // This response's own id, for logs. Nothing is stored under it.
         public string $id,
-        public ImageGenerationStatus|string $status,
         // The pictures, as many as were asked for. Empty when the generation failed.
         /** @var list<GeneratedImage> */
         public array $images,
-        // Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed.
-        public int $costMicros,
-        // Who drew it, or who refused to. Absent when nothing got as far as a provider.
-        public ?string $provider = null,
-        public ?string $model = null,
-        public ImageErrorCode|string|null $errorCode = null,
+        public ImageGenerationStatus|string $status,
         // What went wrong, in words. Absent when the generation completed.
         public ?string $error = null,
+        public ImageErrorCode|string|null $errorCode = null,
+        public ?string $model = null,
+        // Who drew it, or who refused to. Absent when nothing got as far as a provider.
+        public ?string $provider = null,
     ) {
     }
 
@@ -34,14 +34,14 @@ final readonly class ImageGeneration
     public static function fromArray(array $data): self
     {
         return new self(
-            id: Json::string($data, 'id'),
-            status: Json::enum($data, 'status', ImageGenerationStatus::class),
-            images: array_map(GeneratedImage::fromArray(...), Json::objects($data, 'images')),
             costMicros: Json::int($data, 'cost_micros'),
-            provider: array_key_exists('provider', $data) && $data['provider'] !== null ? Json::string($data, 'provider') : null,
-            model: array_key_exists('model', $data) && $data['model'] !== null ? Json::string($data, 'model') : null,
-            errorCode: array_key_exists('error_code', $data) && $data['error_code'] !== null ? Json::enum($data, 'error_code', ImageErrorCode::class) : null,
+            id: Json::string($data, 'id'),
+            images: array_map(GeneratedImage::fromArray(...), Json::objects($data, 'images')),
+            status: Json::enum($data, 'status', ImageGenerationStatus::class),
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
+            errorCode: array_key_exists('error_code', $data) && $data['error_code'] !== null ? Json::enum($data, 'error_code', ImageErrorCode::class) : null,
+            model: array_key_exists('model', $data) && $data['model'] !== null ? Json::string($data, 'model') : null,
+            provider: array_key_exists('provider', $data) && $data['provider'] !== null ? Json::string($data, 'provider') : null,
         );
     }
 
@@ -53,21 +53,21 @@ final readonly class ImageGeneration
     public function toArray(): array
     {
         $out = [];
-        $out['id'] = $this->id;
-        $out['status'] = Json::enumValue($this->status);
-        $out['images'] = array_map(static fn (GeneratedImage $each): array => $each->toArray(), $this->images);
         $out['cost_micros'] = $this->costMicros;
-        if ($this->provider !== null) {
-            $out['provider'] = $this->provider;
-        }
-        if ($this->model !== null) {
-            $out['model'] = $this->model;
+        $out['id'] = $this->id;
+        $out['images'] = array_map(static fn (GeneratedImage $each): array => $each->toArray(), $this->images);
+        $out['status'] = Json::enumValue($this->status);
+        if ($this->error !== null) {
+            $out['error'] = $this->error;
         }
         if ($this->errorCode !== null) {
             $out['error_code'] = Json::enumValue($this->errorCode);
         }
-        if ($this->error !== null) {
-            $out['error'] = $this->error;
+        if ($this->model !== null) {
+            $out['model'] = $this->model;
+        }
+        if ($this->provider !== null) {
+            $out['provider'] = $this->provider;
         }
         return $out;
     }

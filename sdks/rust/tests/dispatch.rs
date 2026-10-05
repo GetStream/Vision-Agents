@@ -258,6 +258,12 @@ async fn a_worker_with_no_handler_is_refused() {
 async fn the_second_message_on_a_channel_goes_to_the_session_that_answered_the_first() {
     let server = Server::start().await;
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/s1/responses",
+        201,
+        response("r1", "s1"),
+    );
     let dispatch = Dispatch::new(server.client());
     let created = Arc::new(AtomicUsize::new(0));
     let (replied, mut replies) = mpsc::unbounded_channel::<String>();
@@ -278,7 +284,7 @@ async fn the_second_message_on_a_channel_goes_to_the_session_that_answered_the_f
                         Ok(Agent::new("support").client(client))
                     })
                     .await?;
-                session.respond(&message.text).await?;
+                session.responses.create(&message.text).await?;
                 replied.send(session.id().to_string()).unwrap();
                 Ok(())
             }
@@ -294,16 +300,20 @@ async fn the_second_message_on_a_channel_goes_to_the_session_that_answered_the_f
         .send(json!({"type": "message", "channel_id": "c1", "agent_id": "support-bot", "text": "hello"}))
         .await;
     let mut conversation = server.accept().await;
-    assert_eq!(conversation.expect("respond").await["text"], "hello");
     assert_eq!(replies.recv().await.unwrap(), "s1");
 
     worker
         .send(json!({"type": "message", "channel_id": "c1", "text": "again"}))
         .await;
-    assert_eq!(conversation.expect("respond").await["text"], "again");
     replies.recv().await.unwrap();
 
     assert_eq!(created.load(Ordering::SeqCst), 1);
+    let asked: Vec<_> = server
+        .requests(Method::POST, "/v1/agents/sessions/s1/responses")
+        .into_iter()
+        .map(|seen| seen.body["text"].clone())
+        .collect();
+    assert_eq!(asked, ["hello", "again"]);
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
     assert_eq!(sent["conversation_id"], "agent:c1");
     assert_eq!(sent["agent_id"], "support-bot");

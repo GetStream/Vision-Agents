@@ -14,30 +14,30 @@ T = TypeVar("T", bound="AttachedNumber")
 class AttachedNumber:
     """
     Attributes:
-        trunk_id (str):
         route_id (str):
         sip_uri (str): Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com.
+        trunk_id (str):
     """
 
-    trunk_id: str
     route_id: str
     sip_uri: str
+    trunk_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        trunk_id = self.trunk_id
-
         route_id = self.route_id
 
         sip_uri = self.sip_uri
+
+        trunk_id = self.trunk_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "trunk_id": trunk_id,
                 "route_id": route_id,
                 "sip_uri": sip_uri,
+                "trunk_id": trunk_id,
             }
         )
 
@@ -46,16 +46,16 @@ class AttachedNumber:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        trunk_id = d.pop("trunk_id")
-
         route_id = d.pop("route_id")
 
         sip_uri = d.pop("sip_uri")
 
+        trunk_id = d.pop("trunk_id")
+
         attached_number = cls(
-            trunk_id=trunk_id,
             route_id=route_id,
             sip_uri=sip_uri,
+            trunk_id=trunk_id,
         )
 
         attached_number.additional_properties = d

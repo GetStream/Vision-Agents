@@ -16,10 +16,10 @@ use GetStream\VisionAgents\Json;
 final readonly class RecordingSource
 {
     public function __construct(
-        // A fetchable audio or video file.
-        public ?string $url = null,
         // The file itself, base64. For clips - a long recording belongs behind a URL.
         public ?string $audio = null,
+        // A fetchable audio or video file.
+        public ?string $url = null,
     ) {
     }
 
@@ -29,8 +29,8 @@ final readonly class RecordingSource
     public static function fromArray(array $data): self
     {
         return new self(
-            url: array_key_exists('url', $data) && $data['url'] !== null ? Json::string($data, 'url') : null,
             audio: array_key_exists('audio', $data) && $data['audio'] !== null ? Json::string($data, 'audio') : null,
+            url: array_key_exists('url', $data) && $data['url'] !== null ? Json::string($data, 'url') : null,
         );
     }
 
@@ -42,11 +42,11 @@ final readonly class RecordingSource
     public function toArray(): array
     {
         $out = [];
-        if ($this->url !== null) {
-            $out['url'] = $this->url;
-        }
         if ($this->audio !== null) {
             $out['audio'] = $this->audio;
+        }
+        if ($this->url !== null) {
+            $out['url'] = $this->url;
         }
         return $out;
     }

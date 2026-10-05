@@ -20,23 +20,23 @@ T = TypeVar("T", bound="LibraryVoices")
 class LibraryVoices:
     """
     Attributes:
-        voices (list[LibraryVoice]):
         providers (list[str]): The providers that publish a library, sorted by name.
+        voices (list[LibraryVoice]):
         unavailable (list[str] | Unset): Providers whose library could not be read just now.
     """
 
-    voices: list[LibraryVoice]
     providers: list[str]
+    voices: list[LibraryVoice]
     unavailable: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        providers = self.providers
+
         voices = []
         for voices_item_data in self.voices:
             voices_item = voices_item_data.to_dict()
             voices.append(voices_item)
-
-        providers = self.providers
 
         unavailable: list[str] | Unset = UNSET
         if not isinstance(self.unavailable, Unset):
@@ -46,8 +46,8 @@ class LibraryVoices:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "voices": voices,
                 "providers": providers,
+                "voices": voices,
             }
         )
         if unavailable is not UNSET:
@@ -60,6 +60,8 @@ class LibraryVoices:
         from ..models.library_voice import LibraryVoice
 
         d = dict(src_dict)
+        providers = cast(list[str], d.pop("providers"))
+
         voices = []
         _voices = d.pop("voices")
         for voices_item_data in _voices:
@@ -67,13 +69,11 @@ class LibraryVoices:
 
             voices.append(voices_item)
 
-        providers = cast(list[str], d.pop("providers"))
-
         unavailable = cast(list[str], d.pop("unavailable", UNSET))
 
         library_voices = cls(
-            voices=voices,
             providers=providers,
+            voices=voices,
             unavailable=unavailable,
         )
 

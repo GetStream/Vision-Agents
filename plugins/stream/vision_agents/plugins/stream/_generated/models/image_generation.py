@@ -22,73 +22,73 @@ T = TypeVar("T", bound="ImageGeneration")
 class ImageGeneration:
     """
     Attributes:
-        id (str): This response's own id, for logs. Nothing is stored under it. Example: img_1b9d6bcd-
-            bbfd-4b2d-9b5d-ab8dfbbd4bed.
-        status (ImageGenerationStatus): Whether the pictures were drawn. A failed generation says why in error_code and
-            error.
-        images (list[GeneratedImage]): The pictures, as many as were asked for. Empty when the generation failed.
         cost_micros (int): Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it
             failed.
-        provider (str | Unset): Who drew it, or who refused to. Absent when nothing got as far as a provider. Example:
-            fal.
-        model (str | Unset):  Example: alibaba/qwen-image-3/text-to-image.
+        id (str): This response's own id, for logs. Nothing is stored under it. Example: img_1b9d6bcd-
+            bbfd-4b2d-9b5d-ab8dfbbd4bed.
+        images (list[GeneratedImage]): The pictures, as many as were asked for. Empty when the generation failed.
+        status (ImageGenerationStatus): Whether the pictures were drawn. A failed generation says why in error_code and
+            error.
+        error (str | Unset): What went wrong, in words. Absent when the generation completed.
         error_code (ImageErrorCode | Unset): Why a generation drew nothing, absent when it completed. content_filtered
             is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate
             could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled
             the caller hanging up.
-        error (str | Unset): What went wrong, in words. Absent when the generation completed.
+        model (str | Unset):  Example: alibaba/qwen-image-3/text-to-image.
+        provider (str | Unset): Who drew it, or who refused to. Absent when nothing got as far as a provider. Example:
+            fal.
     """
 
-    id: str
-    status: ImageGenerationStatus
-    images: list[GeneratedImage]
     cost_micros: int
-    provider: str | Unset = UNSET
-    model: str | Unset = UNSET
-    error_code: ImageErrorCode | Unset = UNSET
+    id: str
+    images: list[GeneratedImage]
+    status: ImageGenerationStatus
     error: str | Unset = UNSET
+    error_code: ImageErrorCode | Unset = UNSET
+    model: str | Unset = UNSET
+    provider: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
+        cost_micros = self.cost_micros
 
-        status = self.status.value
+        id = self.id
 
         images = []
         for images_item_data in self.images:
             images_item = images_item_data.to_dict()
             images.append(images_item)
 
-        cost_micros = self.cost_micros
+        status = self.status.value
 
-        provider = self.provider
-
-        model = self.model
+        error = self.error
 
         error_code: str | Unset = UNSET
         if not isinstance(self.error_code, Unset):
             error_code = self.error_code.value
 
-        error = self.error
+        model = self.model
+
+        provider = self.provider
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "id": id,
-                "status": status,
-                "images": images,
                 "cost_micros": cost_micros,
+                "id": id,
+                "images": images,
+                "status": status,
             }
         )
-        if provider is not UNSET:
-            field_dict["provider"] = provider
-        if model is not UNSET:
-            field_dict["model"] = model
-        if error_code is not UNSET:
-            field_dict["error_code"] = error_code
         if error is not UNSET:
             field_dict["error"] = error
+        if error_code is not UNSET:
+            field_dict["error_code"] = error_code
+        if model is not UNSET:
+            field_dict["model"] = model
+        if provider is not UNSET:
+            field_dict["provider"] = provider
 
         return field_dict
 
@@ -97,9 +97,9 @@ class ImageGeneration:
         from ..models.generated_image import GeneratedImage
 
         d = dict(src_dict)
-        id = d.pop("id")
+        cost_micros = d.pop("cost_micros")
 
-        status = ImageGenerationStatus(d.pop("status"))
+        id = d.pop("id")
 
         images = []
         _images = d.pop("images")
@@ -108,11 +108,9 @@ class ImageGeneration:
 
             images.append(images_item)
 
-        cost_micros = d.pop("cost_micros")
+        status = ImageGenerationStatus(d.pop("status"))
 
-        provider = d.pop("provider", UNSET)
-
-        model = d.pop("model", UNSET)
+        error = d.pop("error", UNSET)
 
         _error_code = d.pop("error_code", UNSET)
         error_code: ImageErrorCode | Unset
@@ -121,17 +119,19 @@ class ImageGeneration:
         else:
             error_code = ImageErrorCode(_error_code)
 
-        error = d.pop("error", UNSET)
+        model = d.pop("model", UNSET)
+
+        provider = d.pop("provider", UNSET)
 
         image_generation = cls(
-            id=id,
-            status=status,
-            images=images,
             cost_micros=cost_micros,
-            provider=provider,
-            model=model,
-            error_code=error_code,
+            id=id,
+            images=images,
+            status=status,
             error=error,
+            error_code=error_code,
+            model=model,
+            provider=provider,
         )
 
         image_generation.additional_properties = d

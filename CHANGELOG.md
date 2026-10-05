@@ -20,13 +20,16 @@ still close with `DELETE` now delete the conversation until they move to `stop`.
 It answers three queries: every session, most recently updated first; a text search
 (`{"text": {"$q": "..."}}`), best match first; and one project's sessions
 (`{"project_id": "..."}`), most recently updated first. `agent` and `user_id` narrow any of
-them. The `config_id`, `state`, `custom`, `created_after` and `created_before` filters are
-gone, and a field or operator outside these is a 400. `project` is now `project_id` on
-session create, fork and the session itself.
+them, as do `config_id`, `state`, and `custom`, which holds the pairs a session must carry.
+`created_after` and `created_before` are now one `created_at` range,
+`{"$gte": "...", "$lt": "..."}`, half open so two windows that meet share no session. A field
+or operator outside these is a 400. `project` is now `project_id` on session create, fork and
+the session itself.
 
-In Go, `Sessions.Query` and `Sessions.Search` call the new endpoint, and `Query` keeps only
-`ProjectID`, `UserID`, `Limit` and `Cursor`. `SessionOptions.Project`, `ForkOptions.Project`
-and `stream.Call.Project` are now `ProjectID`. Other SDKs follow.
+In Go, `Sessions.Query` and `Sessions.Search` call the new endpoint, and `Query` takes
+`ProjectID`, `UserID`, `ConfigID`, `Custom`, `CreatedAfter`, `CreatedBefore`, `Limit` and
+`Cursor`. `SessionOptions.Project`, `ForkOptions.Project` and `stream.Call.Project` are now
+`ProjectID`. Other SDKs follow.
 
 ### Session, response and item lists page by cursor instead of offset
 
@@ -419,6 +422,119 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
 ## New Features
+
+### A plugin can be reached read-only, limited to some tools, and its scopes chosen
+
+`plugin_options` says how an agent reaches a catalog plugin and what its login asks for.
+`readonly: true` reaches the vendor's read-only MCP server, which for Linear is
+`https://mcp.linear.app/mcp/readonly` asking only for `read`; `scopes` replaces the scopes
+asked for at consent; `toolsets` limits the server to some groups of tools, which for
+Cal.com go on its URL as `?toolsets=`. Left out, the plugin is the catalog's. It is on
+`AgentConfig`, `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`, and the Go
+and Python folder readers read it. `readonly` on a plugin without a read-only server, or a
+toolset its catalog entry does not list, is a 400. `Plugin` in the catalog says which a
+plugin accepts, as `readonly`, `toolsets` and `scopes_supported`; a scope outside
+`scopes_supported` is a 400. Google Drive takes `drive.file` beside its default
+`drive.readonly`, for `create_file` and `copy_file`.
+
+`tools`, on `plugin_options` and on `mcp_servers`, offers the model only the tools named or
+matching a pattern such as `get_*`; the router refuses to run any other. Left out, every
+tool is offered.
+
+```yaml
+user_plugins: [linear, calcom]
+plugin_options:
+  - plugin: linear
+    readonly: true
+    tools: [list_issues, get_issue]
+  - plugin: calcom
+    toolsets: [bookings, availability]
+```
+
+### AssemblyAI's Universal-3.6 Pro Realtime as a transcription model
+
+The router now streams to `assemblyai/universal-3-6-pro`, reachable by name or by any
+shortcut whose terms it satisfies. It needs `ASSEMBLYAI_API_KEY`, covers 32 languages with
+code-switching, and declares `keyterms` and `endpointing`; `silence_ms` is its
+`max_turn_silence`. A call runs on the `max_accuracy` preset, because the server's own
+`balanced` one ends a turn at a short pause mid-sentence. `overwrites` takes `mode`
+(`min_latency`, `balanced`, `max_accuracy`), `min_turn_silence` and `max_turn_silence`.
+
+### OpenAI's GPT-6.1 Sol
+
+The router now reaches `openai/gpt-6.1-sol`, and `llm-thinking` prefers it in place of
+GPT-6 Sol, which stays declared for configs that name it. Like Astra, GPT-6.1 Sol rejects a
+reasoning effort of `none`, so a request naming no effort is sent `low` and one naming
+`none` is refused.
+
+### Linear, GitHub, HubSpot, Google Drive and Google Docs plugins, and a logo on every login
+
+The plugin catalog is twelve entries: `slack`, `calendly`, `calcom`, `shopify`, `salesforce`,
+`sentry`, `linear`, `github`, `hubspot`, `google_calendar`, `google_drive` and `google_docs`.
+Linear registers its own client; GitHub, HubSpot, Slack, Salesforce and the three Google
+plugins each need a `<ID>_MCP_CLIENT_ID` and `<ID>_MCP_CLIENT_SECRET` on the router. Drive
+and Docs are separate servers with separate scopes, so they are separate plugins. There is no
+`teams` plugin: as of October 2026 a Teams app hosts its own MCP server at its own URL, and
+Microsoft publishes nothing hosted to point at.
+
+Every plugin now has a logo, served as an SVG needing no credential from the new
+`GET /v1/agents/plugins/{plugin_id}/logo`, and both `Plugin` and `PluginConnection` carry a
+`logo_url` for a dashboard to draw a card with. The logos are our own plain marks rather than
+the vendors' artwork, so a deployment that has licensed the real thing replaces a file.
+
+The `plugin_authorization` attachment has three more fields, so a Chat client with no
+renderer for the type still shows a card with a logo and a working link: `text` (the
+catalog description), `thumb_url` (that logo URL) and `title_link` (the authorize URL). Each
+is derived and checked against the catalog, so an MCP server cannot put an arbitrary image
+into somebody's conversation. In Python, `RemoteEvent.image_url` carries the logo on an
+`authorization_required` event.
+
+### A conversation can move to Slack, Teams or RCS
+
+`omni` has a `teams` provider, reading Bot Framework `message` activities and answering with
+markdown and hero cards, so Teams joins Slack, WhatsApp, RCS, SMS and iMessage as a channel
+a conversation can be carried over to. `examples/text_agents/mcp_plugins` now runs webhooks
+for Slack, Teams and Google RBM beside the ones it had, each with a login button a plugin's
+authorization attachment is drawn into: Block Kit for Slack, a hero card for Teams and an
+`openUrlAction` suggestion for RCS. Note that a plugin and a channel are different things:
+`slack` under `user_plugins` is an account the agent reads, and the Slack channel is a person
+talking to the agent in Slack.
+
+### Sentry and Google Calendar plugins, and plugins each user connects in the chat
+
+The plugin catalog has `sentry` and `google_calendar`. `agent.yaml` names `user_plugins`
+beside `plugins`: a plugin under `plugins` is connected once by the app, and one under
+`user_plugins` by each end user with their own account. The agent gets `<id>__list_tools`
+and `<id>__call_tool` for those, and the first call for somebody who has not connected asks
+them to, as a `plugin_authorization` attachment on the reply (an `authorization_required`
+event in Python). `GET /v1/agents/configs/{id}/plugins` now lists a plugin the config names
+that the app has not connected as `not_connected`, for the dashboard to remind about. Google
+Calendar needs `GOOGLE_CALENDAR_MCP_CLIENT_ID` and `GOOGLE_CALENDAR_MCP_CLIENT_SECRET` on the
+router. See `examples/text_agents/on_call`.
+
+### The sandbox can be built, run for minutes, and hand files back to chat
+
+`sandbox_options` on an agent config, or in `agent.yaml`, says how the subagent's Daytona
+sandbox is built and how long code may run in it (#737):
+
+```yaml
+sandbox: daytona
+sandbox_options:
+  setup: [pip install --no-cache-dir bpy==5.2.2]
+  timeout: 5m      # timeout_ms on the API, at most 30 minutes
+  cpu: 2
+  memory_gb: 4
+```
+
+`image` is the base to build on (a slim Python 3.13 when left out). Daytona keeps the built
+image, so only the first sandbox from a setup waits for it.
+
+`run_code` takes `files`, paths the program wrote. On a persistent text conversation each one
+is uploaded to the channel and attached to the reply that settles the work (an image inline,
+anything else as a file), so it is still there when the conversation is reopened, and history
+returns it as the message's `files`. `task_settled` lists them as `files`, which the Go SDK
+reads into `Event.Files` and Python into `RemoteEvent.files`. `examples/text_agents/blender_artist`
+uses this to render with Blender.
 
 ### A reply starts speaking sooner
 
@@ -1321,6 +1437,14 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- `Agent.ask()` follows a reply until the tools it called have answered. It stopped at
+  the first `agent_speech`, which is the model saying it is about to call a tool, because
+  the Python SDK dropped `pending_work`. `RemoteEvent` now carries it, as the Go SDK's
+  event does. (#737)
+- An agent with an `MCPServerLocal` no longer ends in a `CancelledError` when it closes.
+  The stdio session was entered on the connecting task and exited on the closing one, which
+  anyio's cancel scopes refuse. It is now held on a task of its own, as `MCPServerRemote`
+  already was. (#737)
 - A caller who kept talking after the first part of their turn was queued is no longer
   answered twice. The whole turn was answered, and then the queued part again once the
   agent stopped, in one Voicebench call 17.9 s later.

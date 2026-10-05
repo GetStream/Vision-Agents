@@ -18,48 +18,48 @@ T = TypeVar("T", bound="AgentLogPage")
 class AgentLogPage:
     """
     Attributes:
-        items (list[AgentLog]):
+        coverage (str):
+        dropped_logs (int):
         has_more (bool):
+        items (list[AgentLog]):
         next_cursor (str):
         resume_cursor (str):
-        dropped_logs (int):
-        coverage (str):
     """
 
-    items: list[AgentLog]
+    coverage: str
+    dropped_logs: int
     has_more: bool
+    items: list[AgentLog]
     next_cursor: str
     resume_cursor: str
-    dropped_logs: int
-    coverage: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        coverage = self.coverage
+
+        dropped_logs = self.dropped_logs
+
+        has_more = self.has_more
+
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
-        has_more = self.has_more
-
         next_cursor = self.next_cursor
 
         resume_cursor = self.resume_cursor
-
-        dropped_logs = self.dropped_logs
-
-        coverage = self.coverage
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "items": items,
+                "coverage": coverage,
+                "dropped_logs": dropped_logs,
                 "has_more": has_more,
+                "items": items,
                 "next_cursor": next_cursor,
                 "resume_cursor": resume_cursor,
-                "dropped_logs": dropped_logs,
-                "coverage": coverage,
             }
         )
 
@@ -70,6 +70,12 @@ class AgentLogPage:
         from ..models.agent_log import AgentLog
 
         d = dict(src_dict)
+        coverage = d.pop("coverage")
+
+        dropped_logs = d.pop("dropped_logs")
+
+        has_more = d.pop("has_more")
+
         items = []
         _items = d.pop("items")
         for items_item_data in _items:
@@ -77,23 +83,17 @@ class AgentLogPage:
 
             items.append(items_item)
 
-        has_more = d.pop("has_more")
-
         next_cursor = d.pop("next_cursor")
 
         resume_cursor = d.pop("resume_cursor")
 
-        dropped_logs = d.pop("dropped_logs")
-
-        coverage = d.pop("coverage")
-
         agent_log_page = cls(
-            items=items,
+            coverage=coverage,
+            dropped_logs=dropped_logs,
             has_more=has_more,
+            items=items,
             next_cursor=next_cursor,
             resume_cursor=resume_cursor,
-            dropped_logs=dropped_logs,
-            coverage=coverage,
         )
 
         agent_log_page.additional_properties = d

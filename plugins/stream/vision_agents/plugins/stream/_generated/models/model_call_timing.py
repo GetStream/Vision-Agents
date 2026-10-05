@@ -17,110 +17,110 @@ T = TypeVar("T", bound="ModelCallTiming")
 class ModelCallTiming:
     """
     Attributes:
-        started_at (datetime.datetime):
-        provider (str):
         model (str):
+        provider (str):
+        started_at (datetime.datetime):
         success (bool):
-        operation_id (str | Unset): Response ID for this operation; retries can share an ID.
-        purpose (str | Unset): reply, flow or subagent.
-        ttft_ms (float | Unset): Request to first token.
         duration_ms (float | Unset): Request to completed response or failed create.
         input_tokens (int | Unset):
+        operation_id (str | Unset): Response ID for this operation; retries can share an ID.
         output_tokens (int | Unset):
+        purpose (str | Unset): reply, flow or subagent.
+        ttft_ms (float | Unset): Request to first token.
     """
 
-    started_at: datetime.datetime
-    provider: str
     model: str
+    provider: str
+    started_at: datetime.datetime
     success: bool
-    operation_id: str | Unset = UNSET
-    purpose: str | Unset = UNSET
-    ttft_ms: float | Unset = UNSET
     duration_ms: float | Unset = UNSET
     input_tokens: int | Unset = UNSET
+    operation_id: str | Unset = UNSET
     output_tokens: int | Unset = UNSET
+    purpose: str | Unset = UNSET
+    ttft_ms: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        started_at = self.started_at.isoformat()
+        model = self.model
 
         provider = self.provider
 
-        model = self.model
+        started_at = self.started_at.isoformat()
 
         success = self.success
-
-        operation_id = self.operation_id
-
-        purpose = self.purpose
-
-        ttft_ms = self.ttft_ms
 
         duration_ms = self.duration_ms
 
         input_tokens = self.input_tokens
 
+        operation_id = self.operation_id
+
         output_tokens = self.output_tokens
+
+        purpose = self.purpose
+
+        ttft_ms = self.ttft_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "started_at": started_at,
-                "provider": provider,
                 "model": model,
+                "provider": provider,
+                "started_at": started_at,
                 "success": success,
             }
         )
-        if operation_id is not UNSET:
-            field_dict["operation_id"] = operation_id
-        if purpose is not UNSET:
-            field_dict["purpose"] = purpose
-        if ttft_ms is not UNSET:
-            field_dict["ttft_ms"] = ttft_ms
         if duration_ms is not UNSET:
             field_dict["duration_ms"] = duration_ms
         if input_tokens is not UNSET:
             field_dict["input_tokens"] = input_tokens
+        if operation_id is not UNSET:
+            field_dict["operation_id"] = operation_id
         if output_tokens is not UNSET:
             field_dict["output_tokens"] = output_tokens
+        if purpose is not UNSET:
+            field_dict["purpose"] = purpose
+        if ttft_ms is not UNSET:
+            field_dict["ttft_ms"] = ttft_ms
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
+        model = d.pop("model")
 
         provider = d.pop("provider")
 
-        model = d.pop("model")
+        started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
 
         success = d.pop("success")
-
-        operation_id = d.pop("operation_id", UNSET)
-
-        purpose = d.pop("purpose", UNSET)
-
-        ttft_ms = d.pop("ttft_ms", UNSET)
 
         duration_ms = d.pop("duration_ms", UNSET)
 
         input_tokens = d.pop("input_tokens", UNSET)
 
+        operation_id = d.pop("operation_id", UNSET)
+
         output_tokens = d.pop("output_tokens", UNSET)
 
+        purpose = d.pop("purpose", UNSET)
+
+        ttft_ms = d.pop("ttft_ms", UNSET)
+
         model_call_timing = cls(
-            started_at=started_at,
-            provider=provider,
             model=model,
+            provider=provider,
+            started_at=started_at,
             success=success,
-            operation_id=operation_id,
-            purpose=purpose,
-            ttft_ms=ttft_ms,
             duration_ms=duration_ms,
             input_tokens=input_tokens,
+            operation_id=operation_id,
             output_tokens=output_tokens,
+            purpose=purpose,
+            ttft_ms=ttft_ms,
         )
 
         model_call_timing.additional_properties = d

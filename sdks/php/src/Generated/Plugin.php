@@ -14,12 +14,12 @@ use GetStream\VisionAgents\Json;
 final readonly class Plugin
 {
     public function __construct(
-        public string $id,
-        public string $name,
         public string $category,
         public string $description,
-        public ?bool $instanceRequired = null,
+        public string $id,
+        public string $name,
         public ?string $instanceHint = null,
+        public ?bool $instanceRequired = null,
     ) {
     }
 
@@ -29,12 +29,12 @@ final readonly class Plugin
     public static function fromArray(array $data): self
     {
         return new self(
-            id: Json::string($data, 'id'),
-            name: Json::string($data, 'name'),
             category: Json::string($data, 'category'),
             description: Json::string($data, 'description'),
-            instanceRequired: array_key_exists('instance_required', $data) && $data['instance_required'] !== null ? Json::bool($data, 'instance_required') : null,
+            id: Json::string($data, 'id'),
+            name: Json::string($data, 'name'),
             instanceHint: array_key_exists('instance_hint', $data) && $data['instance_hint'] !== null ? Json::string($data, 'instance_hint') : null,
+            instanceRequired: array_key_exists('instance_required', $data) && $data['instance_required'] !== null ? Json::bool($data, 'instance_required') : null,
         );
     }
 
@@ -46,15 +46,15 @@ final readonly class Plugin
     public function toArray(): array
     {
         $out = [];
-        $out['id'] = $this->id;
-        $out['name'] = $this->name;
         $out['category'] = $this->category;
         $out['description'] = $this->description;
-        if ($this->instanceRequired !== null) {
-            $out['instance_required'] = $this->instanceRequired;
-        }
+        $out['id'] = $this->id;
+        $out['name'] = $this->name;
         if ($this->instanceHint !== null) {
             $out['instance_hint'] = $this->instanceHint;
+        }
+        if ($this->instanceRequired !== null) {
+            $out['instance_required'] = $this->instanceRequired;
         }
         return $out;
     }

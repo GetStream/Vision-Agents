@@ -22,6 +22,7 @@ function session(over: Partial<Schemas["Session"]> = {}): Schemas["Session"] {
     user_id: "jlahey",
     agent_id: "docs",
     state: "live",
+    modality: "text",
     created_at: new Date().toISOString(),
     ...over,
   };
@@ -142,39 +143,71 @@ describe("sessions", () => {
     await held.close();
   });
 
-  it("puts a query on the wire as the parameters the router reads", async () => {
-    router.serve("GET", "/v1/agents/sessions", { body: { items: [session()], has_more: false } });
-    const after = new Date("2026-01-01T00:00:00.000Z");
+  it("puts a query on the wire as the filter the router reads", async () => {
+    router.serve("POST", "/v1/agents/sessions/query", {
+      body: { items: [session()], has_more: false },
+    });
 
     await api.agent("docs").sessions.query({
-      project: "Health",
-      state: "closed",
-      custom: { tab: "docs", seat: 4 },
-      createdAfter: after,
+      projectId: "health",
+      modality: "voice",
+      state: "live",
+      agentId: "support-7",
       limit: 10,
       cursor: "page-2",
     });
 
-    const query = router.last.query;
-    assert.equal(query.get("agent"), "docs", "an agent's sessions are the agent's own");
-    assert.equal(query.get("project"), "Health");
-    assert.equal(query.get("state"), "closed");
-    assert.equal(query.get("custom"), '{"tab":"docs","seat":4}');
-    assert.equal(query.get("created_after"), after.toISOString());
-    assert.equal(query.get("limit"), "10");
-    assert.equal(query.get("cursor"), "page-2");
-    assert.equal(query.get("user_id"), null, "a filter nobody set is not sent empty");
+    assert.deepEqual(
+      router.last.body,
+      {
+        filter: {
+          agent: "docs",
+          project_id: "health",
+          modality: "voice",
+          state: "live",
+          agent_id: "support-7",
+        },
+        limit: 10,
+        cursor: "page-2",
+      },
+      "an agent's sessions are the agent's own, and a filter nobody set is not sent empty",
+    );
   });
 
-  it("searches on the search path, carrying the same filters", async () => {
-    router.serve("GET", "/v1/agents/sessions/search", { body: { items: [session()], has_more: false } });
+  it("searches through the same query, as a text match", async () => {
+    router.serve("POST", "/v1/agents/sessions/query", {
+      body: { items: [session()], has_more: false },
+    });
 
-    await api.agent("docs").sessions.search("sendbird", { project: "Health" });
+    await api.agent("docs").sessions.search("sendbird", { userId: "ana" });
 
-    assert.equal(router.last.path, "/v1/agents/sessions/search");
-    assert.equal(router.last.query.get("q"), "sendbird");
-    assert.equal(router.last.query.get("project"), "Health");
-    assert.equal(router.last.query.get("agent"), "docs");
+    assert.deepEqual(router.last.body, {
+      filter: { agent: "docs", user_id: "ana", text: { $q: "sendbird" } },
+    });
+  });
+
+  it("stops an unwatched session on close rather than deleting it, so what it said is kept", async () => {
+    router.serve("POST", "/v1/agents/sessions", { status: 201, body: session() });
+    router.serve("POST", "/v1/agents/sessions/session-1/stop", { status: 204 });
+    const held = await api.agent("docs").sessions.create({ watch: false });
+
+    await held.close();
+
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions/session-1/stop").length, 1);
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-1").length, 0);
+  });
+
+  it("deletes a conversation, held or not, only when asked", async () => {
+    const { session: held } = await open();
+    router.serve("DELETE", "/v1/agents/sessions/session-1", { status: 204 });
+    router.serve("DELETE", "/v1/agents/sessions/session-9", { status: 204 });
+
+    await held.delete();
+    await api.agent("docs").sessions.delete("session-9");
+
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-1").length, 1);
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-9").length, 1);
+    await held.close();
   });
 
   it("forks into a session of its own and keeps watching it", async () => {

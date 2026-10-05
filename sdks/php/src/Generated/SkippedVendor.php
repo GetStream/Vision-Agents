@@ -11,8 +11,8 @@ use GetStream\VisionAgents\Json;
 final readonly class SkippedVendor
 {
     public function __construct(
-        public string $vendor,
         public string $reason,
+        public string $vendor,
     ) {
     }
 
@@ -22,8 +22,8 @@ final readonly class SkippedVendor
     public static function fromArray(array $data): self
     {
         return new self(
-            vendor: Json::string($data, 'vendor'),
             reason: Json::string($data, 'reason'),
+            vendor: Json::string($data, 'vendor'),
         );
     }
 
@@ -35,8 +35,8 @@ final readonly class SkippedVendor
     public function toArray(): array
     {
         $out = [];
-        $out['vendor'] = $this->vendor;
         $out['reason'] = $this->reason;
+        $out['vendor'] = $this->vendor;
         return $out;
     }
 }

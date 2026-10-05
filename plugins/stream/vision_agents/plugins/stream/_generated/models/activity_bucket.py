@@ -15,53 +15,53 @@ T = TypeVar("T", bound="ActivityBucket")
 class ActivityBucket:
     """
     Attributes:
-        bucket (datetime.datetime):
         active_users (int): Distinct end users who opened a session or asked something of an agent in the bucket. A
             guest who later turned out to be a known user counts as that user.
             A caller that named nobody is not counted, and neither is an anonymous one: an anonymous name is a claim nothing
             verified, so counting it would make guessing a name enough to inflate this.
-        sessions (int):
-        messages (int): Responses the agents produced, which is one per thing asked of them.
+        bucket (datetime.datetime):
         calls (int):
-        voice_minutes (float): How long those calls lasted. One still running counts up to now.
+        messages (int): Responses the agents produced, which is one per thing asked of them.
         phone_minutes (float): The part of voice_minutes that arrived over a phone number.
+        sessions (int):
+        voice_minutes (float): How long those calls lasted. One still running counts up to now.
     """
 
-    bucket: datetime.datetime
     active_users: int
-    sessions: int
-    messages: int
+    bucket: datetime.datetime
     calls: int
-    voice_minutes: float
+    messages: int
     phone_minutes: float
+    sessions: int
+    voice_minutes: float
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        bucket = self.bucket.isoformat()
-
         active_users = self.active_users
 
-        sessions = self.sessions
-
-        messages = self.messages
+        bucket = self.bucket.isoformat()
 
         calls = self.calls
 
-        voice_minutes = self.voice_minutes
+        messages = self.messages
 
         phone_minutes = self.phone_minutes
+
+        sessions = self.sessions
+
+        voice_minutes = self.voice_minutes
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "bucket": bucket,
                 "active_users": active_users,
-                "sessions": sessions,
-                "messages": messages,
+                "bucket": bucket,
                 "calls": calls,
-                "voice_minutes": voice_minutes,
+                "messages": messages,
                 "phone_minutes": phone_minutes,
+                "sessions": sessions,
+                "voice_minutes": voice_minutes,
             }
         )
 
@@ -70,28 +70,28 @@ class ActivityBucket:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        bucket = datetime.datetime.fromisoformat(d.pop("bucket"))
-
         active_users = d.pop("active_users")
 
-        sessions = d.pop("sessions")
-
-        messages = d.pop("messages")
+        bucket = datetime.datetime.fromisoformat(d.pop("bucket"))
 
         calls = d.pop("calls")
 
-        voice_minutes = d.pop("voice_minutes")
+        messages = d.pop("messages")
 
         phone_minutes = d.pop("phone_minutes")
 
+        sessions = d.pop("sessions")
+
+        voice_minutes = d.pop("voice_minutes")
+
         activity_bucket = cls(
-            bucket=bucket,
             active_users=active_users,
-            sessions=sessions,
-            messages=messages,
+            bucket=bucket,
             calls=calls,
-            voice_minutes=voice_minutes,
+            messages=messages,
             phone_minutes=phone_minutes,
+            sessions=sessions,
+            voice_minutes=voice_minutes,
         )
 
         activity_bucket.additional_properties = d

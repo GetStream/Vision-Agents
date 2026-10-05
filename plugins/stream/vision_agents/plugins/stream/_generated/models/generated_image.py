@@ -17,30 +17,30 @@ T = TypeVar("T", bound="GeneratedImage")
 class GeneratedImage:
     """
     Attributes:
+        data (str): The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
+        height (int):
         media_type (GeneratedImageMediaType): What the picture is, read off the picture itself rather than the
             provider's label.
         width (int):
-        height (int):
-        data (str): The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
         seed (int | Unset): The seed the provider reports, which draws the same picture again. Absent when it reports
             none.
     """
 
+    data: str
+    height: int
     media_type: GeneratedImageMediaType
     width: int
-    height: int
-    data: str
     seed: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        media_type = self.media_type.value
-
-        width = self.width
+        data = self.data
 
         height = self.height
 
-        data = self.data
+        media_type = self.media_type.value
+
+        width = self.width
 
         seed = self.seed
 
@@ -48,10 +48,10 @@ class GeneratedImage:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "data": data,
+                "height": height,
                 "media_type": media_type,
                 "width": width,
-                "height": height,
-                "data": data,
             }
         )
         if seed is not UNSET:
@@ -62,21 +62,21 @@ class GeneratedImage:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
+        data = d.pop("data")
+
+        height = d.pop("height")
+
         media_type = GeneratedImageMediaType(d.pop("media_type"))
 
         width = d.pop("width")
 
-        height = d.pop("height")
-
-        data = d.pop("data")
-
         seed = d.pop("seed", UNSET)
 
         generated_image = cls(
+            data=data,
+            height=height,
             media_type=media_type,
             width=width,
-            height=height,
-            data=data,
             seed=seed,
         )
 

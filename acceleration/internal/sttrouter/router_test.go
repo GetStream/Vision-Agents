@@ -88,6 +88,7 @@ func (s *STTRouterSuite) TestTheModelsLeftOutOfTheEnglishShortcutAreStillReachab
 		"cartesia/ink-2",
 		"inworld/inworld-stt-1",
 		"elevenlabs/scribe_v2_realtime",
+		"assemblyai/universal-3-6-pro",
 	} {
 		candidates, err := router.Resolve(s.ctx, name, nil)
 		s.Require().NoErrorf(err, "target %s", name)
@@ -294,6 +295,36 @@ func (s *STTRouterSuite) TestRegistryReadsScribesDetectorFromOverwrites() {
 	s.InDelta(0.4, settings.VadSilenceThresholdSecs, 0.001)
 	s.Equal(200, settings.MinSilenceDurationMs)
 	s.Zero(settings.MinSpeechDurationMs, "what was not named keeps Scribe's own default")
+}
+
+// TestAssemblyAITakesItsPresetFromOverwritesAndRefusesOneItHasNot is the latency preset,
+// which the server would otherwise answer by opening a session on a preset nobody asked
+// for.
+func (s *STTRouterSuite) TestAssemblyAITakesItsPresetFromOverwritesAndRefusesOneItHasNot() {
+	var settings assemblyaiSettings
+	s.Require().NoError(routing.Spec{
+		Overwrites: json.RawMessage(`{"mode":"min_latency","min_turn_silence":160,"max_turn_silence":1200}`),
+	}.Settings(&settings))
+	s.Equal("min_latency", settings.Mode)
+	s.Equal(160, settings.MinTurnSilenceMs)
+	s.Equal(1200, settings.MaxTurnSilenceMs)
+
+	registry := DefaultRegistry()
+	s.T().Setenv("ASSEMBLYAI_API_KEY", "test-key")
+
+	built, err := registry.Build("assemblyai", routing.Spec{
+		Model:      "universal-3-6-pro",
+		Overwrites: json.RawMessage(`{"mode":"min_latency"}`),
+	})
+	s.Require().NoError(err)
+	s.Equal("assemblyai", built.Provider())
+	s.Equal("universal-3-6-pro", built.Model())
+
+	_, err = registry.Build("assemblyai", routing.Spec{
+		Model:      "universal-3-6-pro",
+		Overwrites: json.RawMessage(`{"mode":"fastest"}`),
+	})
+	s.ErrorContains(err, "fastest", "a preset this model does not have has to be reported rather than sent")
 }
 
 func (s *STTRouterSuite) TestRegistryReadsTheFluxTurnThresholdsFromOverwrites() {

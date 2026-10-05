@@ -11,18 +11,18 @@ use GetStream\VisionAgents\Json;
 final readonly class ClassifyQuestion
 {
     public function __construct(
-        public ClassifyQuestionType|string $type,
         public string $instructions,
-        // A choice's options, each with a description of what it covers or an empty string where the name says it. In...
-        /** @var array<string, string>|null */
-        public ?array $options = null,
+        public ClassifyQuestionType|string $type,
         // A score's levels, in order, each describing a concrete situation.
         /** @var list<string>|null */
         public ?array $levels = null,
-        // What yes means for a noul, where the instructions do not say it.
-        public ?string $yes = null,
         // What no means for a noul, where the instructions do not say it.
         public ?string $no = null,
+        // A choice's options, each with a description of what it covers or an empty string where the name says it. In...
+        /** @var array<string, string>|null */
+        public ?array $options = null,
+        // What yes means for a noul, where the instructions do not say it.
+        public ?string $yes = null,
     ) {
     }
 
@@ -32,12 +32,12 @@ final readonly class ClassifyQuestion
     public static function fromArray(array $data): self
     {
         return new self(
-            type: Json::enum($data, 'type', ClassifyQuestionType::class),
             instructions: Json::string($data, 'instructions'),
-            options: array_key_exists('options', $data) && $data['options'] !== null ? Json::stringMap($data, 'options') : null,
+            type: Json::enum($data, 'type', ClassifyQuestionType::class),
             levels: array_key_exists('levels', $data) && $data['levels'] !== null ? Json::strings($data, 'levels') : null,
-            yes: array_key_exists('yes', $data) && $data['yes'] !== null ? Json::string($data, 'yes') : null,
             no: array_key_exists('no', $data) && $data['no'] !== null ? Json::string($data, 'no') : null,
+            options: array_key_exists('options', $data) && $data['options'] !== null ? Json::stringMap($data, 'options') : null,
+            yes: array_key_exists('yes', $data) && $data['yes'] !== null ? Json::string($data, 'yes') : null,
         );
     }
 
@@ -49,19 +49,19 @@ final readonly class ClassifyQuestion
     public function toArray(): array
     {
         $out = [];
-        $out['type'] = Json::enumValue($this->type);
         $out['instructions'] = $this->instructions;
-        if ($this->options !== null) {
-            $out['options'] = $this->options;
-        }
+        $out['type'] = Json::enumValue($this->type);
         if ($this->levels !== null) {
             $out['levels'] = $this->levels;
         }
-        if ($this->yes !== null) {
-            $out['yes'] = $this->yes;
-        }
         if ($this->no !== null) {
             $out['no'] = $this->no;
+        }
+        if ($this->options !== null) {
+            $out['options'] = $this->options;
+        }
+        if ($this->yes !== null) {
+            $out['yes'] = $this->yes;
         }
         return $out;
     }
