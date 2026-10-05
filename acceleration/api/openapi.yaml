@@ -73,6 +73,11 @@ components:
       type: string
     AgentConfig:
       properties:
+        connectors:
+          description: The bindings exactly as they were written. Absent when there are none.
+          items:
+            $ref: '#/components/schemas/AgentConnectorBinding'
+          type: array
         created_at:
           format: date-time
           type: string
@@ -171,6 +176,12 @@ components:
       additionalProperties: false
       description: What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
       properties:
+        connectors:
+          description: The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
+          items:
+            $ref: '#/components/schemas/AgentConnectorBinding'
+          maxItems: 64
+          type: array
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         greeting:
@@ -260,6 +271,12 @@ components:
       type: object
     AgentConfigRequest:
       properties:
+        connectors:
+          description: The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
+          items:
+            $ref: '#/components/schemas/AgentConnectorBinding'
+          maxItems: 64
+          type: array
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         greeting:
@@ -364,6 +381,57 @@ components:
       required:
         - name
       type: object
+    AgentConnectorBinding:
+      description: 'A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against.'
+      properties:
+        connection:
+          $ref: '#/components/schemas/AgentConnectorSelection'
+        connector_id:
+          description: 'A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_.'
+          type: string
+        name:
+          description: 'The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.'
+          pattern: ^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$
+          type: string
+        required:
+          default: false
+          description: Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
+          type: boolean
+        timeout_ms:
+          description: How long one tool call may take, in milliseconds. Omitted, the session's default applies.
+          format: int64
+          maximum: 30000
+          minimum: 1
+          type: integer
+        tools:
+          description: The exact tools allowed, each named once. There is no wildcard, and an empty list grants none.
+          items:
+            $ref: '#/components/schemas/ConnectorToolGrant'
+          maxItems: 128
+          type: array
+      required:
+        - name
+        - connector_id
+        - connection
+        - tools
+      type: object
+    AgentConnectorSelection:
+      description: Which connection a binding's tools are called through.
+      properties:
+        connection_id:
+          description: Required for fixed, and refused for session.
+          type: string
+        type:
+          $ref: '#/components/schemas/AgentConnectorSelectionType'
+      required:
+        - type
+      type: object
+    AgentConnectorSelectionType:
+      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+      enum:
+        - fixed
+        - session
+      type: string
     AgentDispatch:
       description: What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
       properties:
@@ -1432,6 +1500,21 @@ components:
           type: string
       required:
         - name
+      type: object
+    ConnectorToolGrant:
+      description: One tool a binding allows.
+      properties:
+        name:
+          description: The tool as the connector names it.
+          minLength: 1
+          type: string
+        schema_digest:
+          description: The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered.
+          pattern: ^[a-f0-9]{64}$
+          type: string
+      required:
+        - name
+        - schema_digest
       type: object
     Contact:
       properties:
@@ -4299,6 +4382,12 @@ components:
     SyncAgentRequest:
       description: An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
       properties:
+        connectors:
+          description: The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone.
+          items:
+            $ref: '#/components/schemas/AgentConnectorBinding'
+          maxItems: 64
+          type: array
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         greeting:

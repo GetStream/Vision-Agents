@@ -275,6 +275,22 @@ func (s *DataMoveSuite) TestADeleteIsReplayedToo() {
 	s.Empty(s.exportFrom(s.destination, "acme").of("agent_configs"))
 }
 
+// The columns a move copies are read from the catalog, so the bindings come with the
+// config without being named anywhere.
+func (s *DataMoveSuite) TestAConfigsBindingsMoveWithIt() {
+	config := &AgentConfig{CustomerID: "acme", Name: "bound", Connectors: []ConnectorBinding{{
+		Name: "crm", ConnectorID: "slack", Connection: ConnectionBinding{Type: "fixed", ConnectionID: "connection-1"},
+		Tools: []ToolGrant{{Name: "search", SchemaDigest: strings.Repeat("a", 64)}}, Required: true,
+	}}}
+	s.Require().NoError(s.source.CreateAgentConfig(s.ctx, config))
+
+	s.move("acme", "moved")
+
+	moved, err := s.destination.AgentConfig(s.ctx, "moved", config.ID)
+	s.Require().NoError(err)
+	s.Equal(config.Connectors, moved.Connectors)
+}
+
 func (s *DataMoveSuite) TestAnImportCannotOverwriteAnotherCustomersRow() {
 	id := s.seedAgentConfig(s.source, "acme", "mine")
 	// The destination already holds a row with that id, belonging to somebody else.
