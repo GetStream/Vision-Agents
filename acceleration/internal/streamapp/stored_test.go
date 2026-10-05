@@ -358,6 +358,22 @@ func (s *StoredSuite) TestAKeyStreamRefusesIsRejectedAndTheNextOneUsed() {
 	s.Equal("secondary", identity.APIKey)
 }
 
+func (s *StoredSuite) TestAnAppWhoseEveryKeyIsRefusedIsBlocked() {
+	// The first check rejects the app's one key. The next finds nothing left to act with,
+	// and ends what was pinned to the app rather than leaving it to wait forever.
+	s.register("own-key")
+	s.stream.SetApp(chattest.App{ID: s.app, Refuses: true})
+	source := s.source(false)
+	s.Require().Empty(s.checked(source))
+
+	s.Equal([]int64{s.app}, s.checked(source))
+
+	held, err := s.store.StreamApp(s.ctx, s.customer)
+	s.Require().NoError(err)
+	s.Equal(store.StreamAppBlocked, held.State)
+	s.Equal("Stream refused every key the app holds", held.StateReason)
+}
+
 func (s *StoredSuite) TestAHealthyAppStaysConnectedWithWhatItsCheckFound() {
 	s.register("own-key")
 	s.stream.SetApp(chattest.App{ID: s.app, CallTypes: []string{AgentCallType}})

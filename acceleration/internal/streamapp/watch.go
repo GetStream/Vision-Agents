@@ -36,7 +36,7 @@ func (s *Stored) Watch(ctx context.Context, clients *Clients, every time.Duratio
 // CheckApps asks Stream about each connected app once. One Stream suspended, one that stopped
 // checking the tokens it is sent, and one whose key turns out to be another app's is
 // blocked, and what was pinned to it ends. A key Stream refuses is marked rejected, so the
-// app's next key is used from then on.
+// app's next key is used from then on, and an app with no key left is blocked too.
 func (s *Stored) CheckApps(ctx context.Context, clients *Clients, ended Ended) {
 	apps, err := s.store.StreamApps(ctx, true)
 	if err != nil {
@@ -53,6 +53,12 @@ func (s *Stored) CheckApps(ctx context.Context, clients *Clients, ended Ended) {
 
 func (s *Stored) check(ctx context.Context, clients *Clients, app store.StreamApp, ended Ended) {
 	identity, err := s.registered(ctx, app)
+	if errors.Is(err, ErrStreamAppDisconnected) {
+		// The app is connected and Stream refused every key it holds, so the router can no
+		// longer act in it, and whatever was pinned to it would otherwise wait forever.
+		s.block(ctx, clients, app, "Stream refused every key the app holds", ended)
+		return
+	}
 	if err != nil {
 		s.logger.Warn("stream: could not act in an app to check it", "customer_id", app.CustomerID, "error", err)
 		return
@@ -94,6 +100,12 @@ func (s *Stored) check(ctx context.Context, clients *Clients, app store.StreamAp
 	if reason == "" {
 		return
 	}
+	s.block(ctx, clients, app, reason, ended)
+}
+
+// block stops the router acting in an app for a reason, and ends what was pinned to it when
+// the app was connected until now.
+func (s *Stored) block(ctx context.Context, clients *Clients, app store.StreamApp, reason string, ended Ended) {
 	blocked, err := s.store.BlockStreamApp(ctx, app.CustomerID, reason)
 	if err != nil {
 		s.logger.Warn("stream: could not block an app", "customer_id", app.CustomerID, "error", err)
