@@ -10,7 +10,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.equals_type_1 import EqualsType1
+    from ..models.session_filter_custom import SessionFilterCustom
     from ..models.text_match import TextMatch
+    from ..models.time_range import TimeRange
 
 
 T = TypeVar("T", bound="SessionFilter")
@@ -23,6 +25,10 @@ class SessionFilter:
     Attributes:
         agent (EqualsType1 | str | Unset): Matches one value exactly: "value" is short for {"$eq": "value"}.
         agent_id (EqualsType1 | str | Unset): Matches one value exactly: "value" is short for {"$eq": "value"}.
+        config_id (EqualsType1 | str | Unset): Matches one value exactly: "value" is short for {"$eq": "value"}.
+        created_at (TimeRange | Unset):
+        custom (SessionFilterCustom | Unset): The session's custom object holds every one of these pairs, which is how a
+            caller finds again what it labelled.
         modality (EqualsType1 | str | Unset): Matches one value exactly: "value" is short for {"$eq": "value"}.
         project_id (EqualsType1 | str | Unset): Matches one value exactly: "value" is short for {"$eq": "value"}.
         state (EqualsType1 | str | Unset): Matches one value exactly: "value" is short for {"$eq": "value"}.
@@ -32,6 +38,9 @@ class SessionFilter:
 
     agent: EqualsType1 | str | Unset = UNSET
     agent_id: EqualsType1 | str | Unset = UNSET
+    config_id: EqualsType1 | str | Unset = UNSET
+    created_at: TimeRange | Unset = UNSET
+    custom: SessionFilterCustom | Unset = UNSET
     modality: EqualsType1 | str | Unset = UNSET
     project_id: EqualsType1 | str | Unset = UNSET
     state: EqualsType1 | str | Unset = UNSET
@@ -56,6 +65,22 @@ class SessionFilter:
             agent_id = self.agent_id.to_dict()
         else:
             agent_id = self.agent_id
+
+        config_id: dict[str, Any] | str | Unset
+        if isinstance(self.config_id, Unset):
+            config_id = UNSET
+        elif isinstance(self.config_id, EqualsType1):
+            config_id = self.config_id.to_dict()
+        else:
+            config_id = self.config_id
+
+        created_at: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.created_at, Unset):
+            created_at = self.created_at.to_dict()
+
+        custom: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.custom, Unset):
+            custom = self.custom.to_dict()
 
         modality: dict[str, Any] | str | Unset
         if isinstance(self.modality, Unset):
@@ -100,6 +125,12 @@ class SessionFilter:
             field_dict["agent"] = agent
         if agent_id is not UNSET:
             field_dict["agent_id"] = agent_id
+        if config_id is not UNSET:
+            field_dict["config_id"] = config_id
+        if created_at is not UNSET:
+            field_dict["created_at"] = created_at
+        if custom is not UNSET:
+            field_dict["custom"] = custom
         if modality is not UNSET:
             field_dict["modality"] = modality
         if project_id is not UNSET:
@@ -116,7 +147,9 @@ class SessionFilter:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.equals_type_1 import EqualsType1
+        from ..models.session_filter_custom import SessionFilterCustom
         from ..models.text_match import TextMatch
+        from ..models.time_range import TimeRange
 
         d = dict(src_dict)
 
@@ -149,6 +182,35 @@ class SessionFilter:
             return cast(EqualsType1 | str | Unset, data)
 
         agent_id = _parse_agent_id(d.pop("agent_id", UNSET))
+
+        def _parse_config_id(data: object) -> EqualsType1 | str | Unset:
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                componentsschemas_equals_type_1 = EqualsType1.from_dict(data)
+
+                return componentsschemas_equals_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(EqualsType1 | str | Unset, data)
+
+        config_id = _parse_config_id(d.pop("config_id", UNSET))
+
+        _created_at = d.pop("created_at", UNSET)
+        created_at: TimeRange | Unset
+        if isinstance(_created_at, Unset):
+            created_at = UNSET
+        else:
+            created_at = TimeRange.from_dict(_created_at)
+
+        _custom = d.pop("custom", UNSET)
+        custom: SessionFilterCustom | Unset
+        if isinstance(_custom, Unset):
+            custom = UNSET
+        else:
+            custom = SessionFilterCustom.from_dict(_custom)
 
         def _parse_modality(data: object) -> EqualsType1 | str | Unset:
             if isinstance(data, Unset):
@@ -220,6 +282,9 @@ class SessionFilter:
         session_filter = cls(
             agent=agent,
             agent_id=agent_id,
+            config_id=config_id,
+            created_at=created_at,
+            custom=custom,
             modality=modality,
             project_id=project_id,
             state=state,

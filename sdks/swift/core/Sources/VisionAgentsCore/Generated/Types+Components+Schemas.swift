@@ -1463,6 +1463,34 @@ extension Components {
             internal var agent: Components.Schemas.Equals?
             /// - Remark: Generated from `#/components/schemas/SessionFilter/agent_id`.
             internal var agentId: Components.Schemas.Equals?
+            /// - Remark: Generated from `#/components/schemas/SessionFilter/config_id`.
+            internal var configId: Components.Schemas.Equals?
+            /// - Remark: Generated from `#/components/schemas/SessionFilter/created_at`.
+            internal var createdAt: Components.Schemas.TimeRange?
+            /// The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionFilter/custom`.
+            internal struct CustomPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `CustomPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionFilter/custom`.
+            internal var custom: Components.Schemas.SessionFilter.CustomPayload?
             /// - Remark: Generated from `#/components/schemas/SessionFilter/modality`.
             internal var modality: Components.Schemas.Equals?
             /// - Remark: Generated from `#/components/schemas/SessionFilter/project_id`.
@@ -1478,6 +1506,9 @@ extension Components {
             /// - Parameters:
             ///   - agent:
             ///   - agentId:
+            ///   - configId:
+            ///   - createdAt:
+            ///   - custom: The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
             ///   - modality:
             ///   - projectId:
             ///   - state:
@@ -1486,6 +1517,9 @@ extension Components {
             internal init(
                 agent: Components.Schemas.Equals? = nil,
                 agentId: Components.Schemas.Equals? = nil,
+                configId: Components.Schemas.Equals? = nil,
+                createdAt: Components.Schemas.TimeRange? = nil,
+                custom: Components.Schemas.SessionFilter.CustomPayload? = nil,
                 modality: Components.Schemas.Equals? = nil,
                 projectId: Components.Schemas.Equals? = nil,
                 state: Components.Schemas.Equals? = nil,
@@ -1494,6 +1528,9 @@ extension Components {
             ) {
                 self.agent = agent
                 self.agentId = agentId
+                self.configId = configId
+                self.createdAt = createdAt
+                self.custom = custom
                 self.modality = modality
                 self.projectId = projectId
                 self.state = state
@@ -1503,6 +1540,9 @@ extension Components {
             internal enum CodingKeys: String, CodingKey {
                 case agent
                 case agentId = "agent_id"
+                case configId = "config_id"
+                case createdAt = "created_at"
+                case custom
                 case modality
                 case projectId = "project_id"
                 case state
@@ -1518,6 +1558,18 @@ extension Components {
                 self.agentId = try container.decodeIfPresent(
                     Components.Schemas.Equals.self,
                     forKey: .agentId
+                )
+                self.configId = try container.decodeIfPresent(
+                    Components.Schemas.Equals.self,
+                    forKey: .configId
+                )
+                self.createdAt = try container.decodeIfPresent(
+                    Components.Schemas.TimeRange.self,
+                    forKey: .createdAt
+                )
+                self.custom = try container.decodeIfPresent(
+                    Components.Schemas.SessionFilter.CustomPayload.self,
+                    forKey: .custom
                 )
                 self.modality = try container.decodeIfPresent(
                     Components.Schemas.Equals.self,
@@ -1542,6 +1594,9 @@ extension Components {
                 try decoder.ensureNoAdditionalProperties(knownKeys: [
                     "agent",
                     "agent_id",
+                    "config_id",
+                    "created_at",
+                    "custom",
                     "modality",
                     "project_id",
                     "state",
@@ -2005,6 +2060,48 @@ extension Components {
                 )
                 try decoder.ensureNoAdditionalProperties(knownKeys: [
                     "$q"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/TimeRange`.
+        internal struct TimeRange: Codable, Hashable, Sendable {
+            /// At or after this RFC3339 time.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TimeRange/$gte`.
+            internal var _dollar_gte: Foundation.Date?
+            /// Strictly before this RFC3339 time.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TimeRange/$lt`.
+            internal var _dollar_lt: Foundation.Date?
+            /// Creates a new `TimeRange`.
+            ///
+            /// - Parameters:
+            ///   - _dollar_gte: At or after this RFC3339 time.
+            ///   - _dollar_lt: Strictly before this RFC3339 time.
+            internal init(
+                _dollar_gte: Foundation.Date? = nil,
+                _dollar_lt: Foundation.Date? = nil
+            ) {
+                self._dollar_gte = _dollar_gte
+                self._dollar_lt = _dollar_lt
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case _dollar_gte = "$gte"
+                case _dollar_lt = "$lt"
+            }
+            internal init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self._dollar_gte = try container.decodeIfPresent(
+                    Foundation.Date.self,
+                    forKey: ._dollar_gte
+                )
+                self._dollar_lt = try container.decodeIfPresent(
+                    Foundation.Date.self,
+                    forKey: ._dollar_lt
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "$gte",
+                    "$lt"
                 ])
             }
         }

@@ -1301,13 +1301,21 @@ type ItemPosition struct {
 // filter at all.
 type SessionFilter struct {
 	UserID    string
+	ConfigID  string
 	AgentName string
 	AgentID   string
 	Project   string
 	Modality  string
 	// State is SessionRunning or SessionClosed.
 	State string
-	Limit int
+	// Custom matches sessions whose custom object contains every one of these pairs, which
+	// is what makes custom worth writing: a caller that labelled a session can find it
+	// again by the label.
+	Custom map[string]string
+	// After and Before bound when the session started, After inclusive and Before not.
+	After  time.Time
+	Before time.Time
+	Limit  int
 	// Cursor starts the page after this session. Nil is the first page.
 	Cursor *SessionPosition
 }

@@ -292,6 +292,9 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
 	}
+	if filter.ConfigID != "" {
+		query = query.Where("config_id = ?", filter.ConfigID)
+	}
 	if filter.AgentName != "" {
 		query = query.Where("agent_name = ?", filter.AgentName)
 	}
@@ -306,6 +309,17 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	}
 	if filter.State != "" {
 		query = query.Where("state = ?", filter.State)
+	}
+	if len(filter.Custom) > 0 {
+		// Containment rather than a key at a time, so the GIN index on custom is usable
+		// and a caller asking for two labels gets the sessions carrying both.
+		query = query.Where("custom @> ?::jsonb", jsonbOf(filter.Custom))
+	}
+	if !filter.After.IsZero() {
+		query = query.Where("created_at >= ?", filter.After)
+	}
+	if !filter.Before.IsZero() {
+		query = query.Where("created_at < ?", filter.Before)
 	}
 	return query
 }

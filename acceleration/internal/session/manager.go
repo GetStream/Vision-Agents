@@ -893,6 +893,8 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 	switch {
 	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
 		return false
+	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
+		return false
 	case filter.AgentName != "" && spec.AgentName != filter.AgentName:
 		return false
 	case filter.Project != "" && spec.Project != filter.Project:
@@ -904,8 +906,25 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 	case filter.State == store.SessionRunning && live.State() != Live,
 		filter.State == store.SessionClosed && live.State() != Ended:
 		return false
+	case !filter.After.IsZero() && live.CreatedAt().Before(filter.After):
+		return false
+	case !filter.Before.IsZero() && !live.CreatedAt().Before(filter.Before):
+		return false
+	case !contains(spec.Custom, filter.Custom):
+		return false
 	case filter.Cursor != nil && !before(live.CreatedAt(), live.ID(), *filter.Cursor):
 		return false
+	}
+	return true
+}
+
+// contains is the store's custom @> ?::jsonb, for a session that has no row to ask.
+func contains(custom map[string]any, wanted map[string]string) bool {
+	for key, value := range wanted {
+		held, ok := custom[key]
+		if !ok || fmt.Sprint(held) != value {
+			return false
+		}
 	}
 	return true
 }

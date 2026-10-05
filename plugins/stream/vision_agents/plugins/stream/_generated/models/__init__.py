@@ -189,6 +189,7 @@ from .search_result import SearchResult
 from .session import Session
 from .session_custom import SessionCustom
 from .session_filter import SessionFilter
+from .session_filter_custom import SessionFilterCustom
 from .session_memory import SessionMemory
 from .session_memory_filter import SessionMemoryFilter
 from .session_modality import SessionModality
@@ -249,6 +250,7 @@ from .text_content_part import TextContentPart
 from .text_content_part_type import TextContentPartType
 from .text_match import TextMatch
 from .tier import Tier
+from .time_range import TimeRange
 from .timeline_entry import TimelineEntry
 from .tool_approval_command import ToolApprovalCommand
 from .tool_approval_command_type import ToolApprovalCommandType
@@ -473,6 +475,7 @@ __all__ = (
     "Session",
     "SessionCustom",
     "SessionFilter",
+    "SessionFilterCustom",
     "SessionMemory",
     "SessionMemoryFilter",
     "SessionModality",
@@ -533,6 +536,7 @@ __all__ = (
     "TextContentPartType",
     "TextMatch",
     "Tier",
+    "TimeRange",
     "TimelineEntry",
     "ToolApprovalCommand",
     "ToolApprovalCommandType",

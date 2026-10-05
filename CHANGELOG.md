@@ -20,13 +20,16 @@ still close with `DELETE` now delete the conversation until they move to `stop`.
 It answers three queries: every session, most recently updated first; a text search
 (`{"text": {"$q": "..."}}`), best match first; and one project's sessions
 (`{"project_id": "..."}`), most recently updated first. `agent` and `user_id` narrow any of
-them. The `config_id`, `state`, `custom`, `created_after` and `created_before` filters are
-gone, and a field or operator outside these is a 400. `project` is now `project_id` on
-session create, fork and the session itself.
+them, as do `config_id`, `state`, and `custom`, which holds the pairs a session must carry.
+`created_after` and `created_before` are now one `created_at` range,
+`{"$gte": "...", "$lt": "..."}`, half open so two windows that meet share no session. A field
+or operator outside these is a 400. `project` is now `project_id` on session create, fork and
+the session itself.
 
-In Go, `Sessions.Query` and `Sessions.Search` call the new endpoint, and `Query` keeps only
-`ProjectID`, `UserID`, `Limit` and `Cursor`. `SessionOptions.Project`, `ForkOptions.Project`
-and `stream.Call.Project` are now `ProjectID`. Other SDKs follow.
+In Go, `Sessions.Query` and `Sessions.Search` call the new endpoint, and `Query` takes
+`ProjectID`, `UserID`, `ConfigID`, `Custom`, `CreatedAfter`, `CreatedBefore`, `Limit` and
+`Cursor`. `SessionOptions.Project`, `ForkOptions.Project` and `stream.Call.Project` are now
+`ProjectID`. Other SDKs follow.
 
 ### Session, response and item lists page by cursor instead of offset
 

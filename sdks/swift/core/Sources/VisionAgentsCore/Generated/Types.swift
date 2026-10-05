@@ -105,7 +105,7 @@ internal protocol APIProtocol: Sendable {
     /// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
     /// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
     ///
-    /// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+    /// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
     ///
     /// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
     ///
@@ -309,7 +309,7 @@ extension APIProtocol {
     /// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
     /// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
     ///
-    /// `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+    /// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
     ///
     /// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
     ///

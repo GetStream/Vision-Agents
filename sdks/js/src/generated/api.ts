@@ -1322,7 +1322,7 @@ export type paths = {
          *     - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
          *     - one project's, `{"project_id": "health"}`, sorted by `updated_at`
          *
-         *     `agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+         *     `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
          *
          *     The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
          */
@@ -4173,6 +4173,14 @@ export type components = {
             readonly agent?: components["schemas"]["Equals"];
             /** @description The agent id the session was created with, which names its transcript channel. */
             readonly agent_id?: components["schemas"]["Equals"];
+            /** @description The agent config the session ran under. Empty for a session that spelled itself out. */
+            readonly config_id?: components["schemas"]["Equals"];
+            /** @description When the session started. */
+            readonly created_at?: components["schemas"]["TimeRange"];
+            /** @description The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled. */
+            readonly custom?: {
+                readonly [key: string]: string;
+            };
             /** @description text, voice or video: how the user took part. */
             readonly modality?: components["schemas"]["Equals"];
             readonly project_id?: components["schemas"]["Equals"];
@@ -4945,6 +4953,18 @@ export type components = {
              */
             readonly tts_ttfb_ms?: number | null;
             readonly turn_id: string;
+        };
+        readonly TimeRange: {
+            /**
+             * Format: date-time
+             * @description At or after this RFC3339 time.
+             */
+            readonly $gte?: string;
+            /**
+             * Format: date-time
+             * @description Strictly before this RFC3339 time.
+             */
+            readonly $lt?: string;
         };
         /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. */
         readonly ToolApprovalCommand: {
