@@ -29,7 +29,7 @@ type OAuth2CodeSuite struct {
 	suite.Suite
 	ctx context.Context
 	ref core.ConnectionRef
-	// now is the clock the minting tests give the scheme; each read moves it by step.
+	// now is the clock the access credential tests give the scheme; each read moves it by step.
 	now  time.Time
 	step time.Duration
 }
@@ -54,14 +54,14 @@ func (s *OAuth2CodeSuite) SetupTest() {
 // (oauth.go:119) under the PublicURL the prototype's Slack test used
 // (oauth_test.go:356). The manifest now says with separator "," what the branch said.
 func (s *OAuth2CodeSuite) TestTheSlackManifestBuildsThePrototypesAuthorizeURL() {
-	profile := s.profile("../../providers/slack.yaml", nil)
+	resolved := s.resolve("../../providers/slack.yaml", nil)
 	// Nothing is fetched for a manifest that pins its endpoints, so the client has nowhere
 	// to go.
-	scheme := s.scheme(&http.Client{}, oauth2code.Config{Clients: func(context.Context, core.ConnectionRef, core.Profile, core.ClientOwner) (oauth2code.Client, bool, error) {
+	scheme := s.scheme(&http.Client{}, oauth2code.Config{Clients: func(context.Context, core.ConnectionRef, core.ResolvedManifest, core.ClientOwner) (oauth2code.Client, bool, error) {
 		return oauth2code.Client{ID: "operator-client", Secret: "operator-secret"}, true, nil
 	}})
 	out, err := scheme.Begin(s.ctx, core.BeginInput{
-		Ref: s.ref, Profile: profile, RedirectURI: "https://router.example/v1/agents/connectors/oauth/callback",
+		Ref: s.ref, Manifest: resolved, RedirectURI: "https://router.example/v1/agents/connectors/oauth/callback",
 	})
 	s.Require().NoError(err)
 	s.False(out.Done)
@@ -88,37 +88,37 @@ func (s *OAuth2CodeSuite) TestTheSlackManifestBuildsThePrototypesAuthorizeURL() 
 
 func (s *OAuth2CodeSuite) TestAPreregisteredConfidentialClientConnectsWithPKCE() {
 	srv := fakeprovider.New(s.T())
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/slack.yaml", nil))
-	profile.Capture, profile.Identity = nil, nil
-	profile.Client.AuthMethod = ""
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
+	resolved.Capture, resolved.Identity = nil, nil
+	resolved.Client.AuthMethod = ""
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
 
-	material, captured, err := s.connect(srv, scheme, profile)
+	stored, account, err := s.connect(srv, scheme, resolved)
 	s.Require().NoError(err)
-	s.Equal(oauth2code.Name, material.Scheme)
-	s.Equal(http.StatusOK, s.call(srv, s.accessToken(material)), "the token the exchange returned works")
-	s.Equal([]string{"channels:history", "chat:write", "users:read"}, captured.Scopes)
+	s.Equal(oauth2code.Name, stored.Scheme)
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)), "the token the exchange returned works")
+	s.Equal([]string{"channels:history", "chat:write", "users:read"}, account.Scopes)
 }
 
 func (s *OAuth2CodeSuite) TestTheManifestAuthMethodIsHowAPreregisteredClientAuthenticates() {
 	srv := fakeprovider.New(s.T())
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/slack.yaml", nil))
-	profile.Capture, profile.Identity = nil, nil
-	s.Require().Equal(core.AuthClientSecretPost, profile.Client.AuthMethod)
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
+	resolved.Capture, resolved.Identity = nil, nil
+	s.Require().Equal(core.AuthClientSecretPost, resolved.Client.AuthMethod)
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
 
-	material, _, err := s.connect(srv, scheme, profile)
+	stored, _, err := s.connect(srv, scheme, resolved)
 	s.Require().NoError(err)
-	s.Equal(http.StatusOK, s.call(srv, s.accessToken(material)))
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
 }
 
 func (s *OAuth2CodeSuite) TestTheLinearManifestDiscoversTheServerAndRegistersAPublicClient() {
 	srv := fakeprovider.New(s.T())
-	profile := s.profile("../../providers/linear.yaml", nil)
-	profile.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
+	resolved := s.resolve("../../providers/linear.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{})
 
-	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: profile, RedirectURI: fakeprovider.RedirectURI})
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
 	s.Require().NoError(err)
 	s.Equal(1, srv.Hits(fakeprovider.PathRegister))
 	query := s.query(out.AuthorizeURL)
@@ -126,9 +126,9 @@ func (s *OAuth2CodeSuite) TestTheLinearManifestDiscoversTheServerAndRegistersAPu
 	s.Equal(srv.URL+fakeprovider.PathMCP, query.Get("resource"), "the resource from RFC 9728 metadata")
 	s.Equal("read write", query.Get("scope"))
 
-	material, _, err := s.complete(srv, scheme, profile, out)
+	stored, _, err := s.complete(srv, scheme, resolved, out)
 	s.Require().NoError(err)
-	s.Equal(http.StatusOK, s.call(srv, s.accessToken(material)))
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
 }
 
 func (s *OAuth2CodeSuite) TestAClientMetadataDocumentIsUsedBeforeDynamicRegistration() {
@@ -142,28 +142,28 @@ func (s *OAuth2CodeSuite) TestAClientMetadataDocumentIsUsedBeforeDynamicRegistra
 	clientID = document.URL + "/oauth/client-metadata.json"
 	srv.FetchClientMetadataWith(document.Client())
 
-	profile := s.profile("../../providers/linear.yaml", nil)
-	profile.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
-	profile.Client.Policy = []core.ClientOwner{core.ClientDCR, core.ClientCIMD}
+	resolved := s.resolve("../../providers/linear.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
+	resolved.Client.Policy = []core.ClientOwner{core.ClientDCR, core.ClientCIMD}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{ClientMetadataURL: clientID})
 
-	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: profile, RedirectURI: fakeprovider.RedirectURI})
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
 	s.Require().NoError(err)
 	s.Equal(clientID, s.query(out.AuthorizeURL).Get("client_id"))
-	material, _, err := s.complete(srv, scheme, profile, out)
+	stored, _, err := s.complete(srv, scheme, resolved, out)
 	s.Require().NoError(err)
 	s.Equal(0, srv.Hits(fakeprovider.PathRegister), "CIMD first, so nothing was registered")
-	s.Equal(http.StatusOK, s.call(srv, s.accessToken(material)))
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
 }
 
 func (s *OAuth2CodeSuite) TestWithoutCIMDSupportTheSchemeFallsBackToRegistration() {
 	srv := fakeprovider.New(s.T())
-	profile := s.profile("../../providers/linear.yaml", nil)
-	profile.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
-	profile.Client.Policy = []core.ClientOwner{core.ClientCIMD, core.ClientDCR}
+	resolved := s.resolve("../../providers/linear.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
+	resolved.Client.Policy = []core.ClientOwner{core.ClientCIMD, core.ClientDCR}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{ClientMetadataURL: "https://router.example/oauth/client-metadata.json"})
 
-	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: profile, RedirectURI: fakeprovider.RedirectURI})
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
 	s.Require().NoError(err)
 	s.Equal(1, srv.Hits(fakeprovider.PathRegister))
 	s.NotEqual("https://router.example/oauth/client-metadata.json", s.query(out.AuthorizeURL).Get("client_id"))
@@ -179,10 +179,10 @@ func (s *OAuth2CodeSuite) TestARegisteredClientSecretPostClientAuthenticatesInTh
 
 func (s *OAuth2CodeSuite) TestADeniedConsentIsAnAccessDeniedError() {
 	srv := fakeprovider.New(s.T(), fakeprovider.ConsentDenied)
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/slack.yaml", nil))
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
 
-	_, _, err := s.connect(srv, scheme, profile)
+	_, _, err := s.connect(srv, scheme, resolved)
 	var refused *oauth2code.AuthorizationError
 	s.Require().ErrorAs(err, &refused)
 	s.Equal("access_denied", refused.Code)
@@ -191,14 +191,14 @@ func (s *OAuth2CodeSuite) TestADeniedConsentIsAnAccessDeniedError() {
 
 func (s *OAuth2CodeSuite) TestAReplayedCallbackIsRefusedBeforeItReachesTheProvider() {
 	srv := fakeprovider.New(s.T())
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/slack.yaml", nil))
-	profile.Capture, profile.Identity = nil, nil
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
+	resolved.Capture, resolved.Identity = nil, nil
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
-	out, callback := s.consent(srv, scheme, profile)
-	first, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: profile, State: out.State, Query: callback})
+	out, callback := s.consent(srv, scheme, resolved)
+	first, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: callback})
 	s.Require().NoError(err)
 
-	_, _, err = scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: profile, State: out.State, Query: callback})
+	_, _, err = scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: callback})
 	s.ErrorIs(err, oauth2code.ErrReplayedState)
 	s.Equal(1, srv.Hits(fakeprovider.PathToken), "the replay never reached the token endpoint")
 	s.Equal(http.StatusOK, s.call(srv, s.accessToken(first)), "so the server did not revoke the grant")
@@ -206,78 +206,78 @@ func (s *OAuth2CodeSuite) TestAReplayedCallbackIsRefusedBeforeItReachesTheProvid
 
 func (s *OAuth2CodeSuite) TestACallbackWithAnotherStateIsRefused() {
 	srv := fakeprovider.New(s.T())
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/slack.yaml", nil))
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
-	out, callback := s.consent(srv, scheme, profile)
-	other, _ := s.consent(srv, scheme, profile)
+	out, callback := s.consent(srv, scheme, resolved)
+	other, _ := s.consent(srv, scheme, resolved)
 
-	_, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: profile, State: other.State, Query: callback})
+	_, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: other.State, Query: callback})
 	s.ErrorIs(err, oauth2code.ErrUnknownState)
 	callback.Del("state")
-	_, _, err = scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: profile, State: out.State, Query: callback})
+	_, _, err = scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: callback})
 	s.ErrorIs(err, oauth2code.ErrUnknownState)
 	s.Equal(0, srv.Hits(fakeprovider.PathToken))
 }
 
 func (s *OAuth2CodeSuite) TestAnAttemptOlderThanTenMinutesIsRefused() {
 	srv := fakeprovider.New(s.T())
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/slack.yaml", nil))
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
 	now := time.Now()
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv), Now: func() time.Time { return now }})
-	out, callback := s.consent(srv, scheme, profile)
+	out, callback := s.consent(srv, scheme, resolved)
 
 	now = now.Add(10 * time.Minute)
-	_, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: profile, State: out.State, Query: callback})
+	_, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: callback})
 	s.ErrorIs(err, oauth2code.ErrExpiredState)
 }
 
 func (s *OAuth2CodeSuite) TestACallbackFromAnotherIssuerIsRefused() {
 	srv := fakeprovider.New(s.T(), fakeprovider.ForeignIssuer)
-	profile := s.profile("../../providers/linear.yaml", nil)
-	profile.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
+	resolved := s.resolve("../../providers/linear.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{})
 
-	_, _, err := s.connect(srv, scheme, profile)
+	_, _, err := s.connect(srv, scheme, resolved)
 	s.ErrorIs(err, oauth2code.ErrIssuerMismatch)
 	s.Equal(0, srv.Hits(fakeprovider.PathToken), "the code never left for the token endpoint")
 }
 
 func (s *OAuth2CodeSuite) TestACallbackWithoutIssFromAServerThatSendsItIsRefused() {
 	srv := fakeprovider.New(s.T())
-	profile := s.profile("../../providers/linear.yaml", nil)
-	profile.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
+	resolved := s.resolve("../../providers/linear.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{})
-	out, callback := s.consent(srv, scheme, profile)
+	out, callback := s.consent(srv, scheme, resolved)
 	callback.Del("iss")
 
-	_, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: profile, State: out.State, Query: callback})
+	_, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: callback})
 	s.ErrorIs(err, oauth2code.ErrIssuerMissing)
 }
 
 func (s *OAuth2CodeSuite) TestCommaScopesGoOutAndComeBackWithCommas() {
 	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/slack.yaml", nil))
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
-	out, callback := s.consent(srv, scheme, profile)
+	out, callback := s.consent(srv, scheme, resolved)
 	s.Equal("channels:history,chat:write,users:read", s.query(out.AuthorizeURL).Get("scope"))
 	s.Require().Empty(callback.Get("error"), "the fake refuses a space-separated list with invalid_scope")
 
-	_, captured, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: profile, State: out.State, Query: callback})
+	_, account, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: callback})
 	s.Require().NoError(err)
-	s.Equal([]string{"channels:history", "chat:write", "users:read"}, captured.Scopes)
-	s.Equal(srv.TeamID, captured.Metadata["team_id"])
-	s.Equal(srv.UserID, captured.Metadata["user_id"])
-	s.Equal(srv.TeamID+":"+srv.UserID, captured.AccountID)
+	s.Equal([]string{"channels:history", "chat:write", "users:read"}, account.Scopes)
+	s.Equal(srv.TeamID, account.Metadata["team_id"])
+	s.Equal(srv.UserID, account.Metadata["user_id"])
+	s.Equal(srv.TeamID+":"+srv.UserID, account.AccountID)
 }
 
 func (s *OAuth2CodeSuite) TestATokenErrorAnsweredWith200IsAnError() {
 	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/slack.yaml", nil))
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
-	out, callback := s.consent(srv, scheme, profile)
+	out, callback := s.consent(srv, scheme, resolved)
 	callback.Set("code", "a-code-nobody-issued")
 
-	_, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: profile, State: out.State, Query: callback})
+	_, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: callback})
 	var refused *oauth2code.TokenError
 	s.Require().ErrorAs(err, &refused)
 	s.Equal(http.StatusOK, refused.Status)
@@ -286,49 +286,49 @@ func (s *OAuth2CodeSuite) TestATokenErrorAnsweredWith200IsAnError() {
 
 func (s *OAuth2CodeSuite) TestARealmIDInTheCallbackIsCapturedAsTheUnverifiedAccount() {
 	srv := fakeprovider.New(s.T(), fakeprovider.CallbackRealmID)
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/quickbooks.yaml", nil))
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/quickbooks.yaml", nil))
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
 
-	_, captured, err := s.connect(srv, scheme, profile)
+	_, account, err := s.connect(srv, scheme, resolved)
 	s.Require().NoError(err)
-	s.Equal(srv.RealmID, captured.Metadata["realm_id"])
-	s.Equal(srv.RealmID, captured.AccountID)
-	s.Equal([]string{"realm_id"}, captured.Unverified)
-	s.Equal("8726400", captured.Metadata["refresh_token_expires_in"])
+	s.Equal(srv.RealmID, account.Metadata["realm_id"])
+	s.Equal(srv.RealmID, account.AccountID)
+	s.Equal([]string{"realm_id"}, account.Unverified)
+	s.Equal("8726400", account.Metadata["refresh_token_expires_in"])
 }
 
 func (s *OAuth2CodeSuite) TestASignedCallbackCompletesAndKeepsItsShopUnverified() {
 	srv := fakeprovider.New(s.T(), fakeprovider.SignedCallback)
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/shopify.yaml", map[string]string{"shop": srv.Shop}))
-	profile.Client.Policy = []core.ClientOwner{core.ClientOperator}
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/shopify.yaml", map[string]string{"shop": srv.Shop}))
+	resolved.Client.Policy = []core.ClientOwner{core.ClientOperator}
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: s.operator(srv)})
 
-	_, captured, err := s.connect(srv, scheme, profile)
+	_, account, err := s.connect(srv, scheme, resolved)
 	s.Require().NoError(err)
-	s.Equal(srv.Shop, captured.Metadata["callback_shop"])
-	s.Equal([]string{"callback_shop"}, captured.Unverified)
-	s.Equal(srv.Shop, captured.AccountID, "the account is the input, not the callback")
+	s.Equal(srv.Shop, account.Metadata["callback_shop"])
+	s.Equal([]string{"callback_shop"}, account.Unverified)
+	s.Equal(srv.Shop, account.AccountID, "the account is the input, not the callback")
 }
 
 func (s *OAuth2CodeSuite) TestAPolicyWithNoAvailableClientIsRefused() {
 	srv := fakeprovider.New(s.T())
-	profile := s.static(srv, s.profile("../../core/testdata/manifests/slack.yaml", nil))
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
 	scheme := s.scheme(srv.Client(), oauth2code.Config{})
 
-	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: profile, RedirectURI: fakeprovider.RedirectURI})
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
 	s.ErrorIs(err, oauth2code.ErrNoClient)
 }
 
 func (s *OAuth2CodeSuite) TestEnvClientsFindsTheOperatorClientByTheManifestPrefix() {
-	profile := s.profile("../../providers/slack.yaml", nil)
+	resolved := s.resolve("../../providers/slack.yaml", nil)
 	env := map[string]string{"SLACK_MCP_CLIENT_ID": "id-from-env", "SLACK_MCP_CLIENT_SECRET": "secret-from-env"}
 	lookup := oauth2code.EnvClients(func(key string) string { return env[key] })
 
-	found, ok, err := lookup(s.ctx, s.ref, profile, core.ClientOperator)
+	found, ok, err := lookup(s.ctx, s.ref, resolved, core.ClientOperator)
 	s.Require().NoError(err)
 	s.True(ok)
 	s.Equal(oauth2code.Client{ID: "id-from-env", Secret: "secret-from-env"}, found)
-	_, ok, err = lookup(s.ctx, s.ref, profile, core.ClientCustomer)
+	_, ok, err = lookup(s.ctx, s.ref, resolved, core.ClientCustomer)
 	s.Require().NoError(err)
 	s.False(ok, "the environment holds the operator's client only")
 }
@@ -358,15 +358,15 @@ func (s *OAuth2CodeSuite) TestAClientMetadataURLThatIsNotACIMDIdentifierIsRefuse
 // fake then holds to that one method, and connects with it.
 func (s *OAuth2CodeSuite) connectsAsRegistered(method core.ClientAuthMethod) {
 	srv := fakeprovider.New(s.T())
-	profile := s.profile("../../providers/linear.yaml", nil)
-	profile.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
-	profile.Client.AuthMethod = method
+	resolved := s.resolve("../../providers/linear.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
+	resolved.Client.AuthMethod = method
 	scheme := s.scheme(srv.Client(), oauth2code.Config{})
 
-	material, _, err := s.connect(srv, scheme, profile)
+	stored, _, err := s.connect(srv, scheme, resolved)
 	s.Require().NoError(err)
 	s.Equal(1, srv.Hits(fakeprovider.PathRegister))
-	s.Equal(http.StatusOK, s.call(srv, s.accessToken(material)))
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
 }
 
 func (s *OAuth2CodeSuite) TestADiscoveredEndpointThatIsNotPublicIsRefused() {
@@ -383,7 +383,7 @@ func (s *OAuth2CodeSuite) TestADiscoveredEndpointThatIsNotPublicIsRefused() {
 		})
 		scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
 
-		_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"issuer": srv.URL}), RedirectURI: fakeprovider.RedirectURI})
+		_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.discovering(map[string]string{"issuer": srv.URL}), RedirectURI: fakeprovider.RedirectURI})
 		s.Require().Error(err, name)
 		s.Contains(err.Error(), "endpoint", name)
 	}
@@ -395,7 +395,7 @@ func (s *OAuth2CodeSuite) TestADiscoveredAuthorizeEndpointKeepsItsQuery() {
 	})
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
 
-	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"issuer": srv.URL}), RedirectURI: fakeprovider.RedirectURI})
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.discovering(map[string]string{"issuer": srv.URL}), RedirectURI: fakeprovider.RedirectURI})
 	s.Require().NoError(err)
 	query := s.query(out.AuthorizeURL)
 	s.Equal("acme", query.Get("tenant"), "RFC 6749 section 3.1: the endpoint's query is retained")
@@ -404,12 +404,12 @@ func (s *OAuth2CodeSuite) TestADiscoveredAuthorizeEndpointKeepsItsQuery() {
 
 func (s *OAuth2CodeSuite) TestByDefaultEndpointsAreHeldToTheEgressPolicy() {
 	srv := fakeprovider.New(s.T())
-	profile := s.static(srv, s.profile("../../providers/linear.yaml", nil))
-	profile.Client.Policy = []core.ClientOwner{core.ClientOperator}
+	resolved := s.static(srv, s.resolve("../../providers/linear.yaml", nil))
+	resolved.Client.Policy = []core.ClientOwner{core.ClientOperator}
 	scheme, err := oauth2code.New(oauth2code.Config{HTTP: srv.Client(), Clients: s.operator(srv)})
 	s.Require().NoError(err)
 
-	_, err = scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: profile, RedirectURI: fakeprovider.RedirectURI})
+	_, err = scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
 	s.Require().ErrorContains(err, "egress:", "the fake listens on loopback, which egress refuses")
 }
 
@@ -423,7 +423,7 @@ func (s *OAuth2CodeSuite) TestAMismatchedPathDocumentFallsBackToTheRootDocument(
 	})
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
 
-	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"mcp": srv.URL + "/mcp"}), RedirectURI: fakeprovider.RedirectURI})
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.discovering(map[string]string{"mcp": srv.URL + "/mcp"}), RedirectURI: fakeprovider.RedirectURI})
 	s.Require().NoError(err)
 	s.Equal(srv.URL, s.query(out.AuthorizeURL).Get("resource"), "the root document, after the mismatched one")
 }
@@ -443,7 +443,7 @@ func (s *OAuth2CodeSuite) TestARefusedRedirectFallsBackToTheRootDocument() {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }
 	scheme := s.scheme(client, oauth2code.Config{Clients: operatorClient})
 
-	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"mcp": srv.URL + "/mcp"}), RedirectURI: fakeprovider.RedirectURI})
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.discovering(map[string]string{"mcp": srv.URL + "/mcp"}), RedirectURI: fakeprovider.RedirectURI})
 	s.Require().NoError(err)
 	s.Equal(srv.URL, s.query(out.AuthorizeURL).Get("resource"))
 }
@@ -458,7 +458,7 @@ func (s *OAuth2CodeSuite) TestAMismatchedIssuerDocumentFallsBackToTheNextURL() {
 	})
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
 
-	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"issuer": srv.URL + "/tenant"}), RedirectURI: fakeprovider.RedirectURI})
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.discovering(map[string]string{"issuer": srv.URL + "/tenant"}), RedirectURI: fakeprovider.RedirectURI})
 	s.Require().NoError(err)
 	s.True(strings.HasPrefix(out.AuthorizeURL, srv.URL+"/oidc/authorize?"), "the third URL's document, after a mismatch and a 404: %s", out.AuthorizeURL)
 }
@@ -472,33 +472,33 @@ func (s *OAuth2CodeSuite) TestDiscoveryWithNoUsableDocumentNamesEachFailure() {
 	})
 	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
 
-	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: s.discovering(map[string]string{"mcp": srv.URL + "/mcp"}), RedirectURI: fakeprovider.RedirectURI})
+	_, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.discovering(map[string]string{"mcp": srv.URL + "/mcp"}), RedirectURI: fakeprovider.RedirectURI})
 	s.Require().Error(err)
 	s.Contains(err.Error(), "elsewhere.example")
 	s.Contains(err.Error(), "HTTP 500")
 }
 
-// profile is a manifest file resolved for oauth2_code.
-func (s *OAuth2CodeSuite) profile(path string, inputs map[string]string) core.Profile {
+// resolve is a manifest file resolved for oauth2_code.
+func (s *OAuth2CodeSuite) resolve(path string, inputs map[string]string) core.ResolvedManifest {
 	raw, err := os.ReadFile(path)
 	s.Require().NoError(err)
 	manifest, err := core.ParseManifest(raw)
 	s.Require().NoError(err)
-	profile, err := manifest.Resolve(oauth2code.Name, inputs, nil)
+	resolved, err := manifest.Resolve(oauth2code.Name, inputs, nil)
 	s.Require().NoError(err)
-	return profile
+	return resolved
 }
 
-// static points a profile's pinned endpoints at the fake, as a manifest that names a
+// static points a resolved manifest's pinned endpoints at the fake, as a manifest that names a
 // provider's authorize and token URLs does.
-func (s *OAuth2CodeSuite) static(srv *fakeprovider.Server, p core.Profile) core.Profile {
-	p.Endpoints = map[string]string{"authorize": srv.URL + fakeprovider.PathAuthorize, "token": srv.URL + fakeprovider.PathToken}
-	return p
+func (s *OAuth2CodeSuite) static(srv *fakeprovider.Server, m core.ResolvedManifest) core.ResolvedManifest {
+	m.Endpoints = map[string]string{"authorize": srv.URL + fakeprovider.PathAuthorize, "token": srv.URL + fakeprovider.PathToken}
+	return m
 }
 
 // operator answers the fake's preregistered client as the operator's.
 func (s *OAuth2CodeSuite) operator(srv *fakeprovider.Server) oauth2code.ClientLookup {
-	return func(_ context.Context, _ core.ConnectionRef, _ core.Profile, owner core.ClientOwner) (oauth2code.Client, bool, error) {
+	return func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, owner core.ClientOwner) (oauth2code.Client, bool, error) {
 		if owner != core.ClientOperator {
 			return oauth2code.Client{}, false, nil
 		}
@@ -517,33 +517,33 @@ func (s *OAuth2CodeSuite) scheme(client *http.Client, cfg oauth2code.Config) *oa
 }
 
 // consent runs Begin and the fake's browser, and returns the attempt and the callback query.
-func (s *OAuth2CodeSuite) consent(srv *fakeprovider.Server, scheme *oauth2code.Scheme, p core.Profile) (core.BeginOutput, url.Values) {
-	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Profile: p, RedirectURI: fakeprovider.RedirectURI})
+func (s *OAuth2CodeSuite) consent(srv *fakeprovider.Server, scheme *oauth2code.Scheme, m core.ResolvedManifest) (core.BeginOutput, url.Values) {
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: m, RedirectURI: fakeprovider.RedirectURI})
 	s.Require().NoError(err)
 	callback, err := srv.Consent(out.AuthorizeURL)
 	s.Require().NoError(err)
 	return out, callback.Query()
 }
 
-func (s *OAuth2CodeSuite) complete(srv *fakeprovider.Server, scheme *oauth2code.Scheme, p core.Profile, out core.BeginOutput) (core.Material, core.Captured, error) {
+func (s *OAuth2CodeSuite) complete(srv *fakeprovider.Server, scheme *oauth2code.Scheme, m core.ResolvedManifest, out core.BeginOutput) (core.StoredCredentials, core.AccountInfo, error) {
 	callback, err := srv.Consent(out.AuthorizeURL)
 	s.Require().NoError(err)
-	return scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: p, State: out.State, Query: callback.Query()})
+	return scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: m, State: out.State, Query: callback.Query()})
 }
 
 // connect is a whole consent: Begin, the browser, Complete.
-func (s *OAuth2CodeSuite) connect(srv *fakeprovider.Server, scheme *oauth2code.Scheme, p core.Profile) (core.Material, core.Captured, error) {
-	out, callback := s.consent(srv, scheme, p)
-	return scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Profile: p, State: out.State, Query: callback})
+func (s *OAuth2CodeSuite) connect(srv *fakeprovider.Server, scheme *oauth2code.Scheme, m core.ResolvedManifest) (core.StoredCredentials, core.AccountInfo, error) {
+	out, callback := s.consent(srv, scheme, m)
+	return scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: m, State: out.State, Query: callback})
 }
 
-// accessToken reads the access token out of the material, so a test can call the fake with
-// it directly or tell one minted token from another.
-func (s *OAuth2CodeSuite) accessToken(m core.Material) string {
+// accessToken reads the access token out of the stored credentials, so a test can call the fake with
+// it directly or tell one issued token from another.
+func (s *OAuth2CodeSuite) accessToken(stored core.StoredCredentials) string {
 	var payload struct {
 		AccessToken string `json:"access_token"`
 	}
-	s.Require().NoError(json.Unmarshal(m.Payload, &payload))
+	s.Require().NoError(json.Unmarshal(stored.Payload, &payload))
 	s.Require().NotEmpty(payload.AccessToken)
 	return payload.AccessToken
 }
@@ -602,8 +602,8 @@ func (s *OAuth2CodeSuite) metadataServer(documents func(base string) map[string]
 }
 
 // operatorClient answers any lookup for the operator with a fixed public client, for
-// profiles whose servers are metadata servers rather than the fake.
-func operatorClient(_ context.Context, _ core.ConnectionRef, _ core.Profile, owner core.ClientOwner) (oauth2code.Client, bool, error) {
+// resolved manifests whose servers are metadata servers rather than the fake.
+func operatorClient(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, owner core.ClientOwner) (oauth2code.Client, bool, error) {
 	return oauth2code.Client{ID: "operator-client"}, owner == core.ClientOperator, nil
 }
 
@@ -618,9 +618,9 @@ func asMetadata(issuer, authorize string) map[string]any {
 }
 
 // discovering is the Linear manifest pointed at endpoints, with the operator's client.
-func (s *OAuth2CodeSuite) discovering(endpoints map[string]string) core.Profile {
-	profile := s.profile("../../providers/linear.yaml", nil)
-	profile.Endpoints = endpoints
-	profile.Client.Policy = []core.ClientOwner{core.ClientOperator}
-	return profile
+func (s *OAuth2CodeSuite) discovering(endpoints map[string]string) core.ResolvedManifest {
+	resolved := s.resolve("../../providers/linear.yaml", nil)
+	resolved.Endpoints = endpoints
+	resolved.Client.Policy = []core.ClientOwner{core.ClientOperator}
+	return resolved
 }

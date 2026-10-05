@@ -1,4 +1,4 @@
-# internal/connectors/backends/pgsealed
+# internal/connectors/credentialstores/pgsealed
 
 The `core.Backend` that keeps a grant in Postgres: the `connector_connections` row, with `core.Material` sealed by `auth.Sealer` (AES-GCM, KEK keyring) into `material_sealed`. The SQL is the store's (`internal/store/grants.go`: `WithLockedConnectorConnection`, `SaveConnectorConnectionAtRevision`); this package turns the row into a `core.Grant` and back, and owns sealing, the revision and the rewrap. Registering it in `core.Registry.Backends` is T12's (the resolver), not this package's.
 
@@ -44,16 +44,16 @@ The second key is 32 bits because the two-integer form is what buys that separat
 
 ## Rules
 
-- **The backend owns the revision.** New Material (any byte of `Scheme`, `Version`, `Payload` differs) is sealed for revision + 1; anything else keeps the revision. fn changing `Grant.Revision` gets `errRevisionIsTheBackends`. Check: `go test -tags integration -run 'TestPGSealedSuite/(TestNewMaterial|TestTheRevisionIsNot|TestAStatusChange)' ./internal/connectors/backends/pgsealed`.
+- **The backend owns the revision.** New Material (any byte of `Scheme`, `Version`, `Payload` differs) is sealed for revision + 1; anything else keeps the revision. fn changing `Grant.Revision` gets `errRevisionIsTheBackends`. Check: `go test -tags integration -run 'TestPGSealedSuite/(TestNewMaterial|TestTheRevisionIsNot|TestAStatusChange)' ./internal/connectors/credentialstores/pgsealed`.
 - **Every write is a compare-and-swap on the revision last committed.** A stale write, or one onto a deleted row, is `store.ErrConnectorConnectionChanged`. Check: `go test -tags integration -run 'TestStoreSuite/(TestASaveAtAStale|TestASaveOntoADeleted|TestAWriteThatSkipped|TestALockedCallbackCannotMove)' ./internal/store`.
 - **`SaveConnectorConnectionAtRevision` is new material at the next revision, nothing else.** A checkpoint can commit a status without moving the revision, so a same-revision save from an older snapshot would put back the grant the checkpoint retired. Check: `go test -tags integration -run 'TestStoreSuite/(TestASaveIsNewMaterial|TestASaveCannotPutBack)' ./internal/store`.
 - **A commit lands even after the caller's deadline**, within 2s of its own. Check: `go test -tags integration -run TestStoreSuite/TestACommitAfter ./internal/store`.
-- **One locked callback per connection at a time, across routers.** Check: `go test -tags integration -run TestStoreSuite/TestLockedCallbacks ./internal/store` and `go test -tags integration -run TestPGSealedSuite/TestConcurrent ./internal/connectors/backends/pgsealed`.
-- **Checkpoint before a side effect that cannot be taken back.** A refresh whose outcome is never learned leaves `needs_reauthorization` and the refresh token is never sent again. Check: `go test -tags integration -run TestPGSealedSuite/TestRefreshOutcomeSurvives ./internal/connectors/backends/pgsealed`.
+- **One locked callback per connection at a time, across routers.** Check: `go test -tags integration -run TestStoreSuite/TestLockedCallbacks ./internal/store` and `go test -tags integration -run TestPGSealedSuite/TestConcurrent ./internal/connectors/credentialstores/pgsealed`.
+- **Checkpoint before a side effect that cannot be taken back.** A refresh whose outcome is never learned leaves `needs_reauthorization` and the refresh token is never sent again. Check: `go test -tags integration -run TestPGSealedSuite/TestRefreshOutcomeSurvives ./internal/connectors/credentialstores/pgsealed`.
 - **A waiter waits as long as its ctx allows, and one that gives up leaves no lock, no queued wait and no borrowed connection.** `TestAWaiterOutlastsTheDriversReadTimeout` takes 12s by design. Check: `go test -tags integration -run TestStoreSuite/TestAWaiter ./internal/store`.
-- **Material is sealed for one tenant, connection and revision.** The AAD is `accelerate:connector-material:v1:<len>:<customer>:<len>:<id>:<revision>`; a blob from another row, customer or revision does not open and the grant becomes `needs_reauthorization`, with the blob left for a reconnect to replace. Check: `go test -tags integration -run 'TestPGSealedSuite/TestABlobFrom' ./internal/connectors/backends/pgsealed` and `go test -run TestSealSuite ./internal/connectors/backends/pgsealed`.
-- **A key version the keyring lacks is the keyring's fault, not the grant's.** `WithLocked` returns `auth.ErrKeyVersionUnavailable`, runs no fn and writes nothing, so putting the key back restores the connection. Check: `go test -tags integration -run TestPGSealedSuite/TestAKeyVersionMissing ./internal/connectors/backends/pgsealed`.
-- **Material under an older key is rewrapped on the next use that returns no error**, at the same revision, and a use that returned changed false has its rewrap written from what was stored, never from fn's edits. Check: `go test -tags integration -run 'TestPGSealedSuite/(TestMaterialSealedUnder|TestAFailedUse|TestARewrapKeeps)' ./internal/connectors/backends/pgsealed`.
+- **Material is sealed for one tenant, connection and revision.** The AAD is `accelerate:connector-material:v1:<len>:<customer>:<len>:<id>:<revision>`; a blob from another row, customer or revision does not open and the grant becomes `needs_reauthorization`, with the blob left for a reconnect to replace. Check: `go test -tags integration -run 'TestPGSealedSuite/TestABlobFrom' ./internal/connectors/credentialstores/pgsealed` and `go test -run TestSealSuite ./internal/connectors/credentialstores/pgsealed`.
+- **A key version the keyring lacks is the keyring's fault, not the grant's.** `WithLocked` returns `auth.ErrKeyVersionUnavailable`, runs no fn and writes nothing, so putting the key back restores the connection. Check: `go test -tags integration -run TestPGSealedSuite/TestAKeyVersionMissing ./internal/connectors/credentialstores/pgsealed`.
+- **Material under an older key is rewrapped on the next use that returns no error**, at the same revision, and a use that returned changed false has its rewrap written from what was stored, never from fn's edits. Check: `go test -tags integration -run 'TestPGSealedSuite/(TestMaterialSealedUnder|TestAFailedUse|TestARewrapKeeps)' ./internal/connectors/credentialstores/pgsealed`.
 - **fn does not lock the same connection again** (`WithLocked`, `SaveConnectorConnectionAtRevision`): that is a second pool connection waiting on the first.
 - **Secrets never print.** Material goes into an error or a log only as `core.Material`, whose `String`, `GoString` and `LogValue` redact the payload; tests compare blobs with `bytes.Equal`, not `Equal`, so a failure prints no ciphertext.
 - **Every hardcoded value says where it comes from**, beside it.
@@ -63,8 +63,8 @@ The second key is 32 bits because the two-integer form is what buys that separat
 From `acceleration/`, with Postgres on `:55432`:
 
 ```bash
-go test ./internal/connectors/backends/...                                   # unit: seal, open, AAD
-go test -tags integration -count=1 -race ./internal/store ./internal/connectors/backends/...
+go test ./internal/connectors/credentialstores/...                                   # unit: seal, open, AAD
+go test -tags integration -count=1 -race ./internal/store ./internal/connectors/credentialstores/...
 ```
 
 `PGSealedSuite` drops and migrates a database of its own (`testenv.Database(dsn, "pgsealed")`), as `StoreSuite` does. A concurrent caller is a router with a pool of its own (`router()`), or the race never reaches Postgres. The token endpoint and the resolver in the tests are written there, not taken from `fakeprovider` or a scheme: the backend is under test, not refresh.

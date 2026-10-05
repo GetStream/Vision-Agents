@@ -1,8 +1,8 @@
 package core
 
-// Profile is the manifest, resolved for one connection's inputs and captured values. It is
+// ResolvedManifest is the manifest, resolved for one connection's inputs and captured values. It is
 // what a scheme reads instead of switching on a connector id. Manifest.Resolve builds one.
-type Profile struct {
+type ResolvedManifest struct {
 	ConnectorID string
 	// Revision is the definition revision the connection pinned, so a manifest change
 	// reaches a connection only through a reconnect.

@@ -6,7 +6,7 @@ import "net/http"
 // that fails verification changes nothing, so the inbound endpoint needs no API auth.
 type Verifier interface {
 	Name() string
-	Verify(r *http.Request, body []byte, p Profile) ([]Signal, error)
+	Verify(r *http.Request, body []byte, m ResolvedManifest) ([]Signal, error)
 }
 
 // SignalKind is what an inbound event says happened to a grant.

@@ -20,8 +20,8 @@ const (
 
 // HookContext is what a hook sees at its point. Only the field for that point is set.
 type HookContext struct {
-	Point   string
-	Profile Profile
+	Point    string
+	Manifest ResolvedManifest
 	// AuthorizeURL is, before authorize, the URL about to be sent; a hook may add to it.
 	AuthorizeURL *url.URL
 	// Query is, before complete, the full callback query, such as for a signed callback.

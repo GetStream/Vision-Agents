@@ -51,23 +51,27 @@ func (registered) Begin(context.Context, core.BeginInput) (core.BeginOutput, err
 	return core.BeginOutput{Done: true}, nil
 }
 
-func (registered) Complete(context.Context, core.CompleteInput) (core.Material, core.Captured, error) {
-	return core.Material{}, core.Captured{}, nil
+func (registered) Complete(context.Context, core.CompleteInput) (core.StoredCredentials, core.AccountInfo, error) {
+	return core.StoredCredentials{}, core.AccountInfo{}, nil
 }
 
-func (registered) Mint(_ context.Context, m core.Material, _ core.Profile) (core.Credential, core.Material, error) {
-	return core.Credential{}, m, nil
+func (registered) AccessCredential(_ context.Context, stored core.StoredCredentials, _ core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+	return core.AccessCredential{}, stored, nil
 }
 
-func (registered) Wrap(base http.RoundTripper, _ core.Credential) http.RoundTripper { return base }
+func (registered) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return base
+}
 
 func (registered) Classify(*http.Response, []byte, error) core.Outcome { return core.Outcome{} }
 
-func (registered) Revoke(context.Context, core.Material, core.Profile) error { return nil }
+func (registered) Revoke(context.Context, core.StoredCredentials, core.ResolvedManifest) error {
+	return nil
+}
 
 var schemes = core.Registry{Schemes: map[string]core.Scheme{"test_rotating": registered("test_rotating")}}
 
-// tokens is the test scheme's Material payload.
+// tokens is the test scheme's StoredCredentials payload.
 type tokens struct {
 	Access  string `json:"access_token"`
 	Refresh string `json:"refresh_token"`
@@ -133,22 +137,22 @@ func (s *PGSealedSuite) SetupTest() {
 	s.Require().NoError(err)
 }
 
-// backend is a backend over the suite's store sealing with sealer.
-func (s *PGSealedSuite) backend(sealer *auth.Sealer) *Backend {
-	backend, err := New(s.db, sealer)
+// credentialStore is a CredentialStore over the suite's database, sealing with sealer.
+func (s *PGSealedSuite) credentialStore(sealer *auth.Sealer) *CredentialStore {
+	credentialStore, err := New(s.db, sealer)
 	s.Require().NoError(err)
-	return backend
+	return credentialStore
 }
 
-// router is another router's backend: a pool of its own, connected before the test starts.
-func (s *PGSealedSuite) router(sealer *auth.Sealer) *Backend {
+// router is another router's credential store: a pool of its own, connected before the test starts.
+func (s *PGSealedSuite) router(sealer *auth.Sealer) *CredentialStore {
 	db, err := store.Open(s.dsn)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { db.Close() })
 	s.Require().NoError(db.Ping(s.ctx))
-	backend, err := New(db, sealer)
+	credentialStore, err := New(db, sealer)
 	s.Require().NoError(err)
-	return backend
+	return credentialStore
 }
 
 // connected is a new connection that a consent left holding held, expiring at expires.
@@ -159,10 +163,10 @@ func (s *PGSealedSuite) connected(customerID string, held tokens, expires time.T
 	}
 	s.Require().NoError(s.db.CreateConnectorConnection(s.ctx, schemes, connection))
 	ref := core.ConnectionRef{CustomerID: customerID, ConnectionID: connection.ID}
-	s.Require().NoError(s.backend(s.v1).WithLocked(s.ctx, ref, func(g *core.Grant, _ func() error) (bool, error) {
-		g.Material = material(held)
-		g.Status = store.ConnectionConnected
-		g.ExpiresAt = expires
+	s.Require().NoError(s.credentialStore(s.v1).Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.Credentials = credentials(held)
+		state.Status = store.ConnectionConnected
+		state.ExpiresAt = expires
 		return true, nil
 	}))
 	return ref
@@ -174,27 +178,27 @@ func (s *PGSealedSuite) stored(ref core.ConnectionRef) store.ConnectorConnection
 	return connection
 }
 
-// held is the grant the backend opens for ref, read without changing it.
-func (s *PGSealedSuite) held(backend *Backend, ref core.ConnectionRef) core.Grant {
-	var seen core.Grant
-	s.Require().NoError(backend.WithLocked(s.ctx, ref, func(g *core.Grant, _ func() error) (bool, error) {
-		seen = *g
+// held is the credential state the credential store opens for ref, read without changing it.
+func (s *PGSealedSuite) held(credentialStore *CredentialStore, ref core.ConnectionRef) core.CredentialState {
+	var seen core.CredentialState
+	s.Require().NoError(credentialStore.Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		seen = *state
 		return false, nil
 	}))
 	return seen
 }
 
-func material(held tokens) core.Material {
+func credentials(held tokens) core.StoredCredentials {
 	payload, err := json.Marshal(held)
 	if err != nil {
 		panic(err)
 	}
-	return core.Material{Scheme: "test_rotating", Version: 1, Payload: payload}
+	return core.StoredCredentials{Scheme: "test_rotating", Version: 1, Payload: payload}
 }
 
-func opened(m core.Material) tokens {
+func opened(c core.StoredCredentials) tokens {
 	var held tokens
-	if err := json.Unmarshal(m.Payload, &held); err != nil {
+	if err := json.Unmarshal(c.Payload, &held); err != nil {
 		panic(err)
 	}
 	return held
@@ -252,24 +256,24 @@ func answer(w http.ResponseWriter, _ *http.Request, next tokens) {
 	_ = json.NewEncoder(w).Encode(next)
 }
 
-// resolve is what a resolver does with the backend, in the shape the prototype's
-// ResolveCredentials did (internal/connectors/runtime.go:26-153 at cf62af0d): use the grant
+// resolve is what a resolver does with the credential store, in the shape the prototype's
+// ResolveCredentials did (internal/connectors/runtime.go:26-153 at cf62af0d): use the access token
 // while it is fresh, and otherwise checkpoint needs_reauthorization before spending the
 // refresh token, so an outcome it never learns leaves the connection to be reconnected
 // rather than the spent token to be sent again.
-func resolve(ctx context.Context, backend *Backend, ref core.ConnectionRef, endpoint *rotation) (tokens, error) {
+func resolve(ctx context.Context, credentialStore *CredentialStore, ref core.ConnectionRef, endpoint *rotation) (tokens, error) {
 	var resolved tokens
-	err := backend.WithLocked(ctx, ref, func(g *core.Grant, checkpoint func() error) (bool, error) {
-		if g.Status != store.ConnectionConnected {
+	err := credentialStore.Update(ctx, ref, func(state *core.CredentialState, checkpoint func() error) (bool, error) {
+		if state.Status != store.ConnectionConnected {
 			return false, errReauthorize
 		}
-		held := opened(g.Material)
-		if time.Until(g.ExpiresAt) > time.Minute {
+		held := opened(state.Credentials)
+		if time.Until(state.ExpiresAt) > time.Minute {
 			resolved = held
 			return false, nil
 		}
-		g.Status = store.ConnectionNeedsReauthorization
-		g.LastError = lostRefresh
+		state.Status = store.ConnectionNeedsReauthorization
+		state.LastError = lostRefresh
 		if err := checkpoint(); err != nil {
 			return false, err
 		}
@@ -277,10 +281,10 @@ func resolve(ctx context.Context, backend *Backend, ref core.ConnectionRef, endp
 		if err != nil {
 			return false, err
 		}
-		g.Material = material(next)
-		g.Status = store.ConnectionConnected
-		g.LastError = ""
-		g.ExpiresAt = time.Now().Add(time.Hour)
+		state.Credentials = credentials(next)
+		state.Status = store.ConnectionConnected
+		state.LastError = ""
+		state.ExpiresAt = time.Now().Add(time.Hour)
 		resolved = next
 		return true, nil
 	})
@@ -315,7 +319,7 @@ func (s *PGSealedSuite) TestConcurrentCredentialResolutionCommitsOneRotatedRefre
 	before := s.stored(ref).Revision
 
 	const callers = 8
-	routers := make([]*Backend, callers)
+	routers := make([]*CredentialStore, callers)
 	for i := range routers {
 		routers[i] = s.router(s.v1)
 	}
@@ -343,7 +347,7 @@ func (s *PGSealedSuite) TestConcurrentCredentialResolutionCommitsOneRotatedRefre
 	s.Equal(before+1, stored.Revision, "one rotation is one revision")
 	s.Equal(store.ConnectionConnected, stored.Status)
 	s.NotContains(string(stored.MaterialSealed), "refresh-1", "the material is stored sealed")
-	s.Equal(tokens{Access: "access-1", Refresh: "refresh-1"}, opened(s.held(s.backend(s.v1), ref).Material))
+	s.Equal(tokens{Access: "access-1", Refresh: "refresh-1"}, opened(s.held(s.credentialStore(s.v1), ref).Credentials))
 }
 
 func (s *PGSealedSuite) TestRefreshOutcomeSurvivesLostResponsesAndCanceledWorkers() {
@@ -384,7 +388,7 @@ func (s *PGSealedSuite) TestRefreshOutcomeSurvivesLostResponsesAndCanceledWorker
 		stored := s.stored(ref)
 		s.Equal(store.ConnectionNeedsReauthorization, stored.Status, name)
 		s.Equal(lostRefresh, stored.LastError, name)
-		s.Equal(before.Revision, stored.Revision, "%s: no material was saved", name)
+		s.Equal(before.Revision, stored.Revision, "%s: no credentials were saved", name)
 		s.True(bytes.Equal(before.MaterialSealed, stored.MaterialSealed), "%s: the blob is the one before the refresh", name)
 
 		_, err = resolve(s.ctx, s.router(s.v1), ref, endpoint)
@@ -394,28 +398,28 @@ func (s *PGSealedSuite) TestRefreshOutcomeSurvivesLostResponsesAndCanceledWorker
 	}
 }
 
-func (s *PGSealedSuite) TestNewMaterialIsSealedForTheNextRevision() {
+func (s *PGSealedSuite) TestNewCredentialsAreSealedForTheNextRevision() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
-	s.Equal(2, s.stored(ref).Revision, "the consent's material is revision 2 of a connection created at 1")
+	s.Equal(2, s.stored(ref).Revision, "the consent's credentials are revision 2 of a connection created at 1")
 
-	s.Require().NoError(s.backend(s.v1).WithLocked(s.ctx, ref, func(g *core.Grant, _ func() error) (bool, error) {
-		s.Equal(2, g.Revision)
-		g.Material = material(tokens{Access: "b", Refresh: "r"})
+	s.Require().NoError(s.credentialStore(s.v1).Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		s.Equal(2, state.Revision)
+		state.Credentials = credentials(tokens{Access: "b", Refresh: "r"})
 		return true, nil
 	}))
 
 	stored := s.stored(ref)
 	s.Equal(3, stored.Revision)
-	s.Equal(tokens{Access: "b", Refresh: "r"}, opened(s.held(s.backend(s.v1), ref).Material))
+	s.Equal(tokens{Access: "b", Refresh: "r"}, opened(s.held(s.credentialStore(s.v1), ref).Credentials))
 }
 
 func (s *PGSealedSuite) TestAStatusChangeKeepsTheRevisionAndTheBlob() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
 	before := s.stored(ref)
 
-	s.Require().NoError(s.backend(s.v1).WithLocked(s.ctx, ref, func(g *core.Grant, _ func() error) (bool, error) {
-		g.Status = store.ConnectionNeedsReauthorization
-		g.LastError = "Reconnect the account"
+	s.Require().NoError(s.credentialStore(s.v1).Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.Status = store.ConnectionNeedsReauthorization
+		state.LastError = "Reconnect the account"
 		return true, nil
 	}))
 
@@ -429,32 +433,32 @@ func (s *PGSealedSuite) TestAStatusChangeKeepsTheRevisionAndTheBlob() {
 func (s *PGSealedSuite) TestTheRevisionIsNotTheCallbacksToMove() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
 
-	err := s.backend(s.v1).WithLocked(s.ctx, ref, func(g *core.Grant, _ func() error) (bool, error) {
-		g.Revision = 7
+	err := s.credentialStore(s.v1).Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.Revision = 7
 		return true, nil
 	})
-	s.ErrorIs(err, errRevisionIsTheBackends)
+	s.ErrorIs(err, errRevisionIsTheStores)
 	s.Equal(2, s.stored(ref).Revision)
 }
 
-func (s *PGSealedSuite) TestMaterialSealedUnderAnOlderKeyIsRewrappedOnNextUse() {
+func (s *PGSealedSuite) TestCredentialsSealedUnderAnOlderKeyAreRewrappedOnNextUse() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
 	before := s.stored(ref)
 	s.Equal(1, before.MaterialKEKVersion)
 
 	rotated, err := auth.NewSealerWithKeyring(2, map[int]string{1: "test key one", 2: "test key two"})
 	s.Require().NoError(err)
-	used := s.held(s.backend(rotated), ref)
-	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(used.Material), "the old key still opens it")
+	used := s.held(s.credentialStore(rotated), ref)
+	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(used.Credentials), "the old key still opens it")
 
 	stored := s.stored(ref)
 	s.Equal(2, stored.MaterialKEKVersion, "a use that changed nothing still rewraps")
-	s.Equal(before.Revision, stored.Revision, "a rewrap is the same material at the same revision")
+	s.Equal(before.Revision, stored.Revision, "a rewrap is the same credentials at the same revision")
 	s.False(bytes.Equal(before.MaterialSealed, stored.MaterialSealed), "the blob is sealed again")
 
 	retired, err := auth.NewSealerWithKeyring(2, map[int]string{2: "test key two"})
 	s.Require().NoError(err)
-	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(s.held(s.backend(retired), ref).Material),
+	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(s.held(s.credentialStore(retired), ref).Credentials),
 		"once rewrapped, the old key can be retired")
 }
 
@@ -464,7 +468,7 @@ func (s *PGSealedSuite) TestAFailedUseDoesNotRewrap() {
 	s.Require().NoError(err)
 
 	failed := errors.New("the use failed")
-	err = s.backend(rotated).WithLocked(s.ctx, ref, func(*core.Grant, func() error) (bool, error) { return false, failed })
+	err = s.credentialStore(rotated).Update(s.ctx, ref, func(*core.CredentialState, func() error) (bool, error) { return false, failed })
 	s.ErrorIs(err, failed)
 	s.Equal(1, s.stored(ref).MaterialKEKVersion)
 }
@@ -472,11 +476,11 @@ func (s *PGSealedSuite) TestAFailedUseDoesNotRewrap() {
 func (s *PGSealedSuite) TestABlobFromAnEarlierRevisionDoesNotOpen() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "spent"}, time.Time{})
 	earlier := s.stored(ref).MaterialSealed
-	s.Require().NoError(s.backend(s.v1).WithLocked(s.ctx, ref, func(g *core.Grant, _ func() error) (bool, error) {
-		g.Material = material(tokens{Access: "b", Refresh: "live"})
+	s.Require().NoError(s.credentialStore(s.v1).Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.Credentials = credentials(tokens{Access: "b", Refresh: "live"})
 		return true, nil
 	}))
-	// Somebody with write access to the table puts the earlier grant back.
+	// Somebody with write access to the table puts the earlier credentials back.
 	_, err := s.db.DB().ExecContext(s.ctx, "UPDATE connector_connections SET material_sealed = ? WHERE id = ?", earlier, ref.ConnectionID)
 	s.Require().NoError(err)
 
@@ -504,28 +508,28 @@ func (s *PGSealedSuite) TestABlobFromAnotherCustomerDoesNotOpen() {
 	s.assertUnreadable(core.ConnectionRef{CustomerID: "acme-app", ConnectionID: theirs.ConnectionID})
 }
 
-func (s *PGSealedSuite) TestAKeyVersionMissingFromTheKeyringWritesNothingAndItsReturnRestoresTheGrant() {
+func (s *PGSealedSuite) TestAKeyVersionMissingFromTheKeyringWritesNothingAndItsReturnRestoresTheConnection() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
 	before := s.stored(ref)
 	// A deploy that dropped key version 1 before every row was rewrapped.
 	misconfigured, err := auth.NewSealerWithKeyring(2, map[int]string{2: "test key two"})
 	s.Require().NoError(err)
 
-	err = s.backend(misconfigured).WithLocked(s.ctx, ref, func(*core.Grant, func() error) (bool, error) {
-		s.Fail("fn does not run on material no key here can open")
+	err = s.credentialStore(misconfigured).Update(s.ctx, ref, func(*core.CredentialState, func() error) (bool, error) {
+		s.Fail("fn does not run on credentials no key here can open")
 		return false, nil
 	})
 	s.ErrorIs(err, auth.ErrKeyVersionUnavailable)
 	stored := s.stored(ref)
-	s.Equal(store.ConnectionConnected, stored.Status, "a keyring fault is not the grant's")
+	s.Equal(store.ConnectionConnected, stored.Status, "a keyring fault is not the connection's")
 	s.Empty(stored.LastError)
 	s.Equal(before.Revision, stored.Revision)
 
 	restored, err := auth.NewSealerWithKeyring(2, map[int]string{1: "test key one", 2: "test key two"})
 	s.Require().NoError(err)
-	grant := s.held(s.backend(restored), ref)
-	s.Equal(store.ConnectionConnected, grant.Status, "putting the key back restores the connection")
-	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(grant.Material))
+	state := s.held(s.credentialStore(restored), ref)
+	s.Equal(store.ConnectionConnected, state.Status, "putting the key back restores the connection")
+	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(state.Credentials))
 }
 
 func (s *PGSealedSuite) TestARewrapKeepsWhatAnUnchangedUseEditedButDidNotCommit() {
@@ -534,43 +538,43 @@ func (s *PGSealedSuite) TestARewrapKeepsWhatAnUnchangedUseEditedButDidNotCommit(
 	rotated, err := auth.NewSealerWithKeyring(2, map[int]string{1: "test key one", 2: "test key two"})
 	s.Require().NoError(err)
 
-	err = s.backend(rotated).WithLocked(s.ctx, ref, func(g *core.Grant, _ func() error) (bool, error) {
-		g.Status = store.ConnectionDisconnected
-		g.LastError = "an edit fn did not ask to keep"
-		g.Material = material(tokens{Access: "edited", Refresh: "edited"})
+	err = s.credentialStore(rotated).Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.Status = store.ConnectionDisconnected
+		state.LastError = "an edit fn did not ask to keep"
+		state.Credentials = credentials(tokens{Access: "edited", Refresh: "edited"})
 		return false, nil
 	})
 	s.Require().NoError(err)
 
 	stored := s.stored(ref)
 	s.Equal(2, stored.MaterialKEKVersion, "the rewrap still happens")
-	s.Equal(before.Revision, stored.Revision, "fn's Material was not committed")
+	s.Equal(before.Revision, stored.Revision, "fn's StoredCredentials were not committed")
 	s.Equal(store.ConnectionConnected, stored.Status)
 	s.Empty(stored.LastError)
-	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(s.held(s.backend(rotated), ref).Material))
+	s.Equal(tokens{Access: "a", Refresh: "r"}, opened(s.held(s.credentialStore(rotated), ref).Credentials))
 }
 
 // assertUnreadable checks that a connection whose blob does not open is handed over empty and
 // needing reauthorization, durably, and that a reconnect then replaces the blob.
 func (s *PGSealedSuite) assertUnreadable(ref core.ConnectionRef) {
 	before := s.stored(ref)
-	grant := s.held(s.backend(s.v1), ref)
-	s.Equal(store.ConnectionNeedsReauthorization, grant.Status)
-	s.Equal(core.Material{}, grant.Material)
+	state := s.held(s.credentialStore(s.v1), ref)
+	s.Equal(store.ConnectionNeedsReauthorization, state.Status)
+	s.Equal(core.StoredCredentials{}, state.Credentials)
 
 	stored := s.stored(ref)
 	s.Equal(store.ConnectionNeedsReauthorization, stored.Status, "committed before the callback ran")
 	s.Equal(unreadableError, stored.LastError)
 	s.True(bytes.Equal(before.MaterialSealed, stored.MaterialSealed), "the blob is left as it was")
 
-	s.Require().NoError(s.backend(s.v1).WithLocked(s.ctx, ref, func(g *core.Grant, _ func() error) (bool, error) {
-		g.Material = material(tokens{Access: "reconnected", Refresh: "reconnected"})
-		g.Status = store.ConnectionConnected
-		g.LastError = ""
+	s.Require().NoError(s.credentialStore(s.v1).Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.Credentials = credentials(tokens{Access: "reconnected", Refresh: "reconnected"})
+		state.Status = store.ConnectionConnected
+		state.LastError = ""
 		return true, nil
 	}))
-	reconnected := s.held(s.backend(s.v1), ref)
+	reconnected := s.held(s.credentialStore(s.v1), ref)
 	s.Equal(store.ConnectionConnected, reconnected.Status)
 	s.Equal(before.Revision+1, reconnected.Revision)
-	s.Equal(tokens{Access: "reconnected", Refresh: "reconnected"}, opened(reconnected.Material))
+	s.Equal(tokens{Access: "reconnected", Refresh: "reconnected"}, opened(reconnected.Credentials))
 }

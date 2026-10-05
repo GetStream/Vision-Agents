@@ -54,17 +54,17 @@ type server struct {
 //     metadata (RFC 9728), as MCP 2025-11-25 «Authorization Server Discovery» does.
 //   - Without either, nothing is fetched: the endpoints are static, as for a provider
 //     whose manifest pins them.
-func (s *Scheme) discover(ctx context.Context, p core.Profile) (server, error) {
+func (s *Scheme) discover(ctx context.Context, m core.ResolvedManifest) (server, error) {
 	d := server{
-		Issuer:     p.Endpoints["issuer"],
-		Authorize:  p.Endpoints["authorize"],
-		Token:      p.Endpoints["token"],
-		Revocation: p.Endpoints["revoke"],
-		Resource:   p.Endpoints["resource"],
+		Issuer:     m.Endpoints["issuer"],
+		Authorize:  m.Endpoints["authorize"],
+		Token:      m.Endpoints["token"],
+		Revocation: m.Endpoints["revoke"],
+		Resource:   m.Endpoints["resource"],
 	}
-	registers := slices.Contains(p.Client.Policy, core.ClientCIMD) || slices.Contains(p.Client.Policy, core.ClientDCR)
+	registers := slices.Contains(m.Client.Policy, core.ClientCIMD) || slices.Contains(m.Client.Policy, core.ClientDCR)
 	if d.Issuer == "" && (d.Authorize == "" || d.Token == "" || registers) {
-		mcp := p.Endpoints["mcp"]
+		mcp := m.Endpoints["mcp"]
 		if mcp == "" {
 			return server{}, errors.New("oauth2code: the manifest has no authorize and token endpoints, and no issuer or mcp endpoint to discover them from")
 		}
