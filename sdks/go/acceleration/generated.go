@@ -2822,6 +2822,51 @@ type ConnectChannelRequest struct {
 	Token *string `json:"token,omitempty"`
 }
 
+// Connection One account at one connector, owned by the app or by one of its users. Credentials are never shown.
+type Connection struct {
+	// AccountId The provider account, known once it is connected.
+	AccountId *string `json:"account_id,omitempty"`
+
+	// AuthScheme How the connection authenticates, one of its connector's schemes.
+	AuthScheme  string     `json:"auth_scheme"`
+	ConnectorId string     `json:"connector_id"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+
+	// DefinitionRevision The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+	DefinitionRevision *int64 `json:"definition_revision,omitempty"`
+
+	// ExpiresAt When the current credential expires. Absent when there is none or it does not.
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	GrantedScopes *[]string  `json:"granted_scopes,omitempty"`
+	Id            *string    `json:"id,omitempty"`
+
+	// Inputs What the connection was created with, the connector's defaults filled in.
+	Inputs map[string]string `json:"inputs"`
+	Label  *string           `json:"label,omitempty"`
+
+	// Metadata What the provider said about the account when it was connected, such as a workspace id. Empty until then.
+	Metadata *map[string]string `json:"metadata,omitempty"`
+
+	// Owner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
+	Owner ConnectorConnectionOwner `json:"owner"`
+
+	// Revision Advances with every new credential, starting at 1.
+	Revision *int64 `json:"revision,omitempty"`
+
+	// Status pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
+	Status    ConnectorConnectionStatus `json:"status"`
+	UpdatedAt *time.Time                `json:"updated_at,omitempty"`
+}
+
+// ConnectionPage defines model for ConnectionPage.
+type ConnectionPage struct {
+	HasMore bool          `json:"has_more"`
+	Items   *[]Connection `json:"items"`
+
+	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
 type Connector struct {
 	Category *string `json:"category,omitempty"`
@@ -2874,42 +2919,6 @@ type ConnectorClientAuthMethod string
 // ConnectorClientSource operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 type ConnectorClientSource string
 
-// ConnectorConnection One account at one connector, owned by the app or by one of its users. Credentials are never shown.
-type ConnectorConnection struct {
-	// AccountId The provider account, known once it is connected.
-	AccountId *string `json:"account_id,omitempty"`
-
-	// AuthScheme How the connection authenticates, one of its connector's schemes.
-	AuthScheme  string     `json:"auth_scheme"`
-	ConnectorId string     `json:"connector_id"`
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
-
-	// DefinitionRevision The connector's revision when the connection was made, which it keeps reading until it is reconnected.
-	DefinitionRevision *int64 `json:"definition_revision,omitempty"`
-
-	// ExpiresAt When the current credential expires. Absent when there is none or it does not.
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-	GrantedScopes *[]string  `json:"granted_scopes,omitempty"`
-	Id            *string    `json:"id,omitempty"`
-
-	// Inputs What the connection was created with, the connector's defaults filled in.
-	Inputs map[string]string `json:"inputs"`
-	Label  *string           `json:"label,omitempty"`
-
-	// Metadata What the provider said about the account when it was connected, such as a workspace id. Empty until then.
-	Metadata *map[string]string `json:"metadata,omitempty"`
-
-	// Owner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
-	Owner ConnectorConnectionOwner `json:"owner"`
-
-	// Revision Advances with every new credential, starting at 1.
-	Revision *int64 `json:"revision,omitempty"`
-
-	// Status pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
-	Status    ConnectorConnectionStatus `json:"status"`
-	UpdatedAt *time.Time                `json:"updated_at,omitempty"`
-}
-
 // ConnectorConnectionOwner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
 type ConnectorConnectionOwner struct {
 	// Type app is the app's own account, user one user's.
@@ -2921,15 +2930,6 @@ type ConnectorConnectionOwner struct {
 
 // ConnectorConnectionOwnerType app is the app's own account, user one user's.
 type ConnectorConnectionOwnerType string
-
-// ConnectorConnectionPage defines model for ConnectorConnectionPage.
-type ConnectorConnectionPage struct {
-	HasMore bool                   `json:"has_more"`
-	Items   *[]ConnectorConnection `json:"items"`
-
-	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
-	NextCursor *string `json:"next_cursor,omitempty"`
-}
 
 // ConnectorConnectionRequest A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
 type ConnectorConnectionRequest struct {
@@ -24592,7 +24592,7 @@ type ListConnectorConnectionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorConnectionPage
+	JSON200 *ConnectionPage
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -24604,7 +24604,7 @@ type ListConnectorConnectionsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListConnectorConnectionsResponse) GetJSON200() *ConnectorConnectionPage {
+func (r ListConnectorConnectionsResponse) GetJSON200() *ConnectionPage {
 	return r.JSON200
 }
 
@@ -24661,7 +24661,7 @@ type CreateConnectorConnectionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ConnectorConnection
+	JSON201 *Connection
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -24673,7 +24673,7 @@ type CreateConnectorConnectionResponse struct {
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateConnectorConnectionResponse) GetJSON201() *ConnectorConnection {
+func (r CreateConnectorConnectionResponse) GetJSON201() *Connection {
 	return r.JSON201
 }
 
@@ -24806,7 +24806,7 @@ type GetConnectorConnectionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorConnection
+	JSON200 *Connection
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -24820,7 +24820,7 @@ type GetConnectorConnectionResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetConnectorConnectionResponse) GetJSON200() *ConnectorConnection {
+func (r GetConnectorConnectionResponse) GetJSON200() *Connection {
 	return r.JSON200
 }
 
@@ -39007,7 +39007,7 @@ func ParseListConnectorConnectionsResponse(rsp *http.Response) (*ListConnectorCo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorConnectionPage
+		var dest ConnectionPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -39061,7 +39061,7 @@ func ParseCreateConnectorConnectionResponse(rsp *http.Response) (*CreateConnecto
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ConnectorConnection
+		var dest Connection
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -39179,7 +39179,7 @@ func ParseGetConnectorConnectionResponse(rsp *http.Response) (*GetConnectorConne
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorConnection
+		var dest Connection
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

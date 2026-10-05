@@ -1514,6 +1514,97 @@ components:
         - kind
         - number
       type: object
+    Connection:
+      description: One account at one connector, owned by the app or by one of its users. Credentials are never shown.
+      properties:
+        account_id:
+          description: The provider account, known once it is connected.
+          readOnly: true
+          type: string
+        auth_scheme:
+          description: How the connection authenticates, one of its connector's schemes.
+          type: string
+        connector_id:
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        definition_revision:
+          description: The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+          format: int64
+          readOnly: true
+          type: integer
+        expires_at:
+          description: When the current credential expires. Absent when there is none or it does not.
+          format: date-time
+          readOnly: true
+          type: string
+        granted_scopes:
+          items:
+            type: string
+          nullable: true
+          readOnly: true
+          type: array
+        id:
+          readOnly: true
+          type: string
+        inputs:
+          additionalProperties:
+            type: string
+          description: What the connection was created with, the connector's defaults filled in.
+          type: object
+        label:
+          type: string
+        metadata:
+          additionalProperties:
+            type: string
+          description: What the provider said about the account when it was connected, such as a workspace id. Empty until then.
+          readOnly: true
+          type: object
+        owner:
+          $ref: '#/components/schemas/ConnectorConnectionOwner'
+        revision:
+          description: Advances with every new credential, starting at 1.
+          format: int64
+          readOnly: true
+          type: integer
+        status:
+          $ref: '#/components/schemas/ConnectorConnectionStatus'
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+        - id
+        - connector_id
+        - definition_revision
+        - owner
+        - auth_scheme
+        - inputs
+        - metadata
+        - status
+        - granted_scopes
+        - revision
+        - created_at
+        - updated_at
+      type: object
+    ConnectionPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/Connection'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
     Connector:
       description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
       properties:
@@ -1608,81 +1699,6 @@ components:
         - dcr
         - cimd
       type: string
-    ConnectorConnection:
-      description: One account at one connector, owned by the app or by one of its users. Credentials are never shown.
-      properties:
-        account_id:
-          description: The provider account, known once it is connected.
-          readOnly: true
-          type: string
-        auth_scheme:
-          description: How the connection authenticates, one of its connector's schemes.
-          type: string
-        connector_id:
-          type: string
-        created_at:
-          format: date-time
-          readOnly: true
-          type: string
-        definition_revision:
-          description: The connector's revision when the connection was made, which it keeps reading until it is reconnected.
-          format: int64
-          readOnly: true
-          type: integer
-        expires_at:
-          description: When the current credential expires. Absent when there is none or it does not.
-          format: date-time
-          readOnly: true
-          type: string
-        granted_scopes:
-          items:
-            type: string
-          nullable: true
-          readOnly: true
-          type: array
-        id:
-          readOnly: true
-          type: string
-        inputs:
-          additionalProperties:
-            type: string
-          description: What the connection was created with, the connector's defaults filled in.
-          type: object
-        label:
-          type: string
-        metadata:
-          additionalProperties:
-            type: string
-          description: What the provider said about the account when it was connected, such as a workspace id. Empty until then.
-          readOnly: true
-          type: object
-        owner:
-          $ref: '#/components/schemas/ConnectorConnectionOwner'
-        revision:
-          description: Advances with every new credential, starting at 1.
-          format: int64
-          readOnly: true
-          type: integer
-        status:
-          $ref: '#/components/schemas/ConnectorConnectionStatus'
-        updated_at:
-          format: date-time
-          readOnly: true
-          type: string
-      required:
-        - id
-        - connector_id
-        - definition_revision
-        - owner
-        - auth_scheme
-        - inputs
-        - metadata
-        - status
-        - granted_scopes
-        - revision
-        - created_at
-        - updated_at
-      type: object
     ConnectorConnectionOwner:
       additionalProperties: false
       description: 'Whose a connection is: the app''s, which any of its agents may be bound to, or one user''s.'
@@ -1704,22 +1720,6 @@ components:
       x-enum-varnames:
         - ConnectorConnectionOwnerTypeApp
         - ConnectorConnectionOwnerTypeUser
-    ConnectorConnectionPage:
-      properties:
-        has_more:
-          type: boolean
-        items:
-          items:
-            $ref: '#/components/schemas/ConnectorConnection'
-          nullable: true
-          type: array
-        next_cursor:
-          description: Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
-          type: string
-      required:
-        - items
-        - has_more
-      type: object
     ConnectorConnectionRequest:
       additionalProperties: false
       description: A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
@@ -7696,7 +7696,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorConnectionPage'
+                $ref: '#/components/schemas/ConnectionPage'
           description: A page of connections
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -7728,7 +7728,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorConnection'
+                $ref: '#/components/schemas/Connection'
           description: The pending connection
         "400":
           $ref: '#/components/responses/BadRequest'
@@ -7808,7 +7808,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConnectorConnection'
+                $ref: '#/components/schemas/Connection'
           description: The connection
         "400":
           $ref: '#/components/responses/BadRequest'

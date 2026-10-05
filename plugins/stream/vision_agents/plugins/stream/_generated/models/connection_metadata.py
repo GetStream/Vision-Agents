@@ -7,12 +7,12 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-T = TypeVar("T", bound="ConnectorConnectionInputs")
+T = TypeVar("T", bound="ConnectionMetadata")
 
 
 @_attrs_define
-class ConnectorConnectionInputs:
-    """What the connection was created with, the connector's defaults filled in."""
+class ConnectionMetadata:
+    """What the provider said about the account when it was connected, such as a workspace id. Empty until then."""
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 
@@ -26,10 +26,10 @@ class ConnectorConnectionInputs:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        connector_connection_inputs = cls()
+        connection_metadata = cls()
 
-        connector_connection_inputs.additional_properties = d
-        return connector_connection_inputs
+        connection_metadata.additional_properties = d
+        return connection_metadata
 
     @property
     def additional_keys(self) -> list[str]:

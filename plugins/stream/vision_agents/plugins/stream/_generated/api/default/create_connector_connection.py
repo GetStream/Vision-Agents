@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.connector_connection import ConnectorConnection
+from ...models.connection import Connection
 from ...models.connector_connection_request import ConnectorConnectionRequest
 from ...models.error import Error
 from ...types import Response
@@ -32,9 +32,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ConnectorConnection | Error | None:
+) -> Connection | Error | None:
     if response.status_code == 201:
-        response_201 = ConnectorConnection.from_dict(response.json())
+        response_201 = Connection.from_dict(response.json())
 
         return response_201
 
@@ -66,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ConnectorConnection | Error]:
+) -> Response[Connection | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +79,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ConnectorConnectionRequest,
-) -> Response[ConnectorConnection | Error]:
+) -> Response[Connection | Error]:
     """Create a connection
 
      A pending connection to one account at a connector, made from the connector's newest revision. An
@@ -98,7 +98,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorConnection | Error]
+        Response[Connection | Error]
     """
 
     kwargs = _get_kwargs(
@@ -116,7 +116,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ConnectorConnectionRequest,
-) -> ConnectorConnection | Error | None:
+) -> Connection | Error | None:
     """Create a connection
 
      A pending connection to one account at a connector, made from the connector's newest revision. An
@@ -135,7 +135,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorConnection | Error
+        Connection | Error
     """
 
     return sync_detailed(
@@ -148,7 +148,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ConnectorConnectionRequest,
-) -> Response[ConnectorConnection | Error]:
+) -> Response[Connection | Error]:
     """Create a connection
 
      A pending connection to one account at a connector, made from the connector's newest revision. An
@@ -167,7 +167,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorConnection | Error]
+        Response[Connection | Error]
     """
 
     kwargs = _get_kwargs(
@@ -183,7 +183,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ConnectorConnectionRequest,
-) -> ConnectorConnection | Error | None:
+) -> Connection | Error | None:
     """Create a connection
 
      A pending connection to one account at a connector, made from the connector's newest revision. An
@@ -202,7 +202,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorConnection | Error
+        Connection | Error
     """
 
     return (

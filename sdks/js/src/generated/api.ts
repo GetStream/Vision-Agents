@@ -3590,6 +3590,52 @@ export type components = {
             /** @description What authenticates a send: a Meta access token, a Telnyx API key, a Linq API key. */
             readonly token?: string;
         };
+        /** @description One account at one connector, owned by the app or by one of its users. Credentials are never shown. */
+        readonly Connection: {
+            /** @description The provider account, known once it is connected. */
+            readonly account_id?: string;
+            /** @description How the connection authenticates, one of its connector's schemes. */
+            readonly auth_scheme: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /**
+             * Format: int64
+             * @description The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+             */
+            readonly definition_revision: number;
+            /**
+             * Format: date-time
+             * @description When the current credential expires. Absent when there is none or it does not.
+             */
+            readonly expires_at?: string;
+            readonly granted_scopes: readonly string[] | null;
+            readonly id: string;
+            /** @description What the connection was created with, the connector's defaults filled in. */
+            readonly inputs: {
+                readonly [key: string]: string;
+            };
+            readonly label?: string;
+            /** @description What the provider said about the account when it was connected, such as a workspace id. Empty until then. */
+            readonly metadata: {
+                readonly [key: string]: string;
+            };
+            readonly owner: components["schemas"]["ConnectorConnectionOwner"];
+            /**
+             * Format: int64
+             * @description Advances with every new credential, starting at 1.
+             */
+            readonly revision: number;
+            readonly status: components["schemas"]["ConnectorConnectionStatus"];
+            /** Format: date-time */
+            readonly updated_at: string;
+        };
+        readonly ConnectionPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Connection"][] | null;
+            /** @description Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
         /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
         readonly Connector: {
             readonly category?: string;
@@ -3638,46 +3684,6 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectorClientSource: "operator" | "customer" | "dcr" | "cimd";
-        /** @description One account at one connector, owned by the app or by one of its users. Credentials are never shown. */
-        readonly ConnectorConnection: {
-            /** @description The provider account, known once it is connected. */
-            readonly account_id?: string;
-            /** @description How the connection authenticates, one of its connector's schemes. */
-            readonly auth_scheme: string;
-            readonly connector_id: string;
-            /** Format: date-time */
-            readonly created_at: string;
-            /**
-             * Format: int64
-             * @description The connector's revision when the connection was made, which it keeps reading until it is reconnected.
-             */
-            readonly definition_revision: number;
-            /**
-             * Format: date-time
-             * @description When the current credential expires. Absent when there is none or it does not.
-             */
-            readonly expires_at?: string;
-            readonly granted_scopes: readonly string[] | null;
-            readonly id: string;
-            /** @description What the connection was created with, the connector's defaults filled in. */
-            readonly inputs: {
-                readonly [key: string]: string;
-            };
-            readonly label?: string;
-            /** @description What the provider said about the account when it was connected, such as a workspace id. Empty until then. */
-            readonly metadata: {
-                readonly [key: string]: string;
-            };
-            readonly owner: components["schemas"]["ConnectorConnectionOwner"];
-            /**
-             * Format: int64
-             * @description Advances with every new credential, starting at 1.
-             */
-            readonly revision: number;
-            readonly status: components["schemas"]["ConnectorConnectionStatus"];
-            /** Format: date-time */
-            readonly updated_at: string;
-        };
         /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
         readonly ConnectorConnectionOwner: {
             readonly type: components["schemas"]["ConnectorConnectionOwnerType"];
@@ -3689,12 +3695,6 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectorConnectionOwnerType: "app" | "user";
-        readonly ConnectorConnectionPage: {
-            readonly has_more: boolean;
-            readonly items: readonly components["schemas"]["ConnectorConnection"][] | null;
-            /** @description Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one. */
-            readonly next_cursor?: string;
-        };
         /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
         readonly ConnectorConnectionRequest: {
             /** @description One of the connector's schemes. Omitted is its only one; a connector with several needs it named. */
@@ -7775,7 +7775,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorConnectionPage"];
+                    readonly "application/json": components["schemas"]["ConnectionPage"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -7811,7 +7811,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorConnection"];
+                    readonly "application/json": components["schemas"]["Connection"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -7846,7 +7846,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectorConnection"];
+                    readonly "application/json": components["schemas"]["Connection"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

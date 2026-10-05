@@ -28,9 +28,9 @@ const connectorsOff = "connections cannot be created: connectors are not enabled
 // not-found»).
 const noSuchConnection = "no such connection"
 
-// ConnectorConnection is one account at one connector, as a caller is shown it. Credential
-// material is never part of it.
-type ConnectorConnection struct {
+// Connection is one account at one connector, as a caller is shown it. Its stored
+// credentials are never part of it.
+type Connection struct {
 	ID                 string                    `json:"id" readOnly:"true"`
 	ConnectorID        string                    `json:"connector_id"`
 	DefinitionRevision int                       `json:"definition_revision" readOnly:"true" doc:"The connector's revision when the connection was made, which it keeps reading until it is reconnected."`
@@ -48,7 +48,7 @@ type ConnectorConnection struct {
 	UpdatedAt          time.Time                 `json:"updated_at" readOnly:"true"`
 }
 
-func (*ConnectorConnection) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+func (*Connection) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "One account at one connector, owned by the app or by one of its " +
 		"users. Credentials are never shown."
 	return schema
@@ -115,11 +115,11 @@ func (*ConnectorConnectionRequest) TransformSchema(_ huma.Registry, schema *huma
 	return schema
 }
 
-// ConnectorConnectionPage is a page of connections.
-type ConnectorConnectionPage struct {
-	Items      []ConnectorConnection `json:"items"`
-	HasMore    bool                  `json:"has_more"`
-	NextCursor *string               `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one."`
+// ConnectionPage is a page of connections.
+type ConnectionPage struct {
+	Items      []Connection `json:"items"`
+	HasMore    bool         `json:"has_more"`
+	NextCursor *string      `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one."`
 }
 
 type listConnectorConnectionsRequest struct {
@@ -131,7 +131,7 @@ type listConnectorConnectionsRequest struct {
 }
 
 type listConnectorConnectionsResponse struct {
-	Body ConnectorConnectionPage
+	Body ConnectionPage
 }
 
 type connectorConnectionRequest struct {
@@ -148,7 +148,7 @@ type createConnectorConnectionRequest struct {
 }
 
 type connectorConnectionResponse struct {
-	Body ConnectorConnection
+	Body Connection
 }
 
 // registerConnections declares the connection operations. All four are server-side only:
@@ -276,7 +276,7 @@ func (s *Server) createConnectorConnection(ctx context.Context, request *createC
 	if err != nil {
 		return nil, err
 	}
-	return &connectorConnectionResponse{Body: connectorConnectionOf(connection)}, nil
+	return &connectorConnectionResponse{Body: connectionOf(connection)}, nil
 }
 
 // listConnectorConnections lists one owner's connections, a page at a time.
@@ -311,9 +311,9 @@ func (s *Server) listConnectorConnections(ctx context.Context, request *listConn
 	}
 
 	kept, more := page(found, store.ConnectionLimit(request.Limit))
-	listed := ConnectorConnectionPage{Items: make([]ConnectorConnection, 0, len(kept)), HasMore: more}
+	listed := ConnectionPage{Items: make([]Connection, 0, len(kept)), HasMore: more}
 	for _, connection := range kept {
-		listed.Items = append(listed.Items, connectorConnectionOf(connection))
+		listed.Items = append(listed.Items, connectionOf(connection))
 	}
 	if more {
 		last := kept[len(kept)-1]
@@ -328,7 +328,7 @@ func (s *Server) getConnectorConnection(ctx context.Context, request *connectorC
 	if err != nil {
 		return nil, err
 	}
-	return &connectorConnectionResponse{Body: connectorConnectionOf(connection)}, nil
+	return &connectorConnectionResponse{Body: connectionOf(connection)}, nil
 }
 
 // deleteConnectorConnection soft deletes one connection the caller may have, unless an
@@ -431,12 +431,12 @@ func actingUser(ctx context.Context) string {
 	return CallerFrom(ctx).UserID
 }
 
-// connectorConnectionOf is the part of a stored connection a caller is shown. Each field is
+// connectionOf is the part of a stored connection a caller is shown. Each field is
 // copied by name, so a column added to the row stays hidden until it is added here. Sealed
-// material, cached tools and last_error are left out: the first is never shown, and the
+// credentials, cached tools and last_error are left out: the first is never shown, and the
 // other two are for the operations that write them (T18, T12).
-func connectorConnectionOf(connection store.ConnectorConnection) ConnectorConnection {
-	return ConnectorConnection{
+func connectionOf(connection store.ConnectorConnection) Connection {
+	return Connection{
 		ID:                 connection.ID,
 		ConnectorID:        connection.ConnectorID,
 		DefinitionRevision: connection.DefinitionRevision,

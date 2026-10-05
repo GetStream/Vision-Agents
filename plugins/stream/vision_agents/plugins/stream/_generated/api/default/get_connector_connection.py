@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.connector_connection import ConnectorConnection
+from ...models.connection import Connection
 from ...models.error import Error
 from ...types import Response
 
@@ -27,9 +27,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ConnectorConnection | Error | None:
+) -> Connection | Error | None:
     if response.status_code == 200:
-        response_200 = ConnectorConnection.from_dict(response.json())
+        response_200 = Connection.from_dict(response.json())
 
         return response_200
 
@@ -66,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ConnectorConnection | Error]:
+) -> Response[Connection | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +79,7 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ConnectorConnection | Error]:
+) -> Response[Connection | Error]:
     """Read a connection
 
      An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not
@@ -95,7 +95,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorConnection | Error]
+        Response[Connection | Error]
     """
 
     kwargs = _get_kwargs(
@@ -113,7 +113,7 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ConnectorConnection | Error | None:
+) -> Connection | Error | None:
     """Read a connection
 
      An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not
@@ -129,7 +129,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorConnection | Error
+        Connection | Error
     """
 
     return sync_detailed(
@@ -142,7 +142,7 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ConnectorConnection | Error]:
+) -> Response[Connection | Error]:
     """Read a connection
 
      An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not
@@ -158,7 +158,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ConnectorConnection | Error]
+        Response[Connection | Error]
     """
 
     kwargs = _get_kwargs(
@@ -174,7 +174,7 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ConnectorConnection | Error | None:
+) -> Connection | Error | None:
     """Read a connection
 
      An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not
@@ -190,7 +190,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ConnectorConnection | Error
+        Connection | Error
     """
 
     return (

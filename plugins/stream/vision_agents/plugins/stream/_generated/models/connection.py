@@ -12,16 +12,16 @@ from ..models.connector_connection_status import ConnectorConnectionStatus
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.connector_connection_inputs import ConnectorConnectionInputs
-    from ..models.connector_connection_metadata import ConnectorConnectionMetadata
+    from ..models.connection_inputs import ConnectionInputs
+    from ..models.connection_metadata import ConnectionMetadata
     from ..models.connector_connection_owner import ConnectorConnectionOwner
 
 
-T = TypeVar("T", bound="ConnectorConnection")
+T = TypeVar("T", bound="Connection")
 
 
 @_attrs_define
-class ConnectorConnection:
+class Connection:
     """One account at one connector, owned by the app or by one of its users. Credentials are never shown.
 
     Attributes:
@@ -32,9 +32,9 @@ class ConnectorConnection:
             it is reconnected.
         granted_scopes (list[str] | None):
         id (str):
-        inputs (ConnectorConnectionInputs): What the connection was created with, the connector's defaults filled in.
-        metadata (ConnectorConnectionMetadata): What the provider said about the account when it was connected, such as
-            a workspace id. Empty until then.
+        inputs (ConnectionInputs): What the connection was created with, the connector's defaults filled in.
+        metadata (ConnectionMetadata): What the provider said about the account when it was connected, such as a
+            workspace id. Empty until then.
         owner (ConnectorConnectionOwner): Whose a connection is: the app's, which any of its agents may be bound to, or
             one user's.
         revision (int): Advances with every new credential, starting at 1.
@@ -53,8 +53,8 @@ class ConnectorConnection:
     definition_revision: int
     granted_scopes: list[str] | None
     id: str
-    inputs: ConnectorConnectionInputs
-    metadata: ConnectorConnectionMetadata
+    inputs: ConnectionInputs
+    metadata: ConnectionMetadata
     owner: ConnectorConnectionOwner
     revision: int
     status: ConnectorConnectionStatus
@@ -131,12 +131,8 @@ class ConnectorConnection:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.connector_connection_inputs import (
-            ConnectorConnectionInputs,
-        )
-        from ..models.connector_connection_metadata import (
-            ConnectorConnectionMetadata,
-        )
+        from ..models.connection_inputs import ConnectionInputs
+        from ..models.connection_metadata import ConnectionMetadata
         from ..models.connector_connection_owner import (
             ConnectorConnectionOwner,
         )
@@ -167,9 +163,9 @@ class ConnectorConnection:
 
         id = d.pop("id")
 
-        inputs = ConnectorConnectionInputs.from_dict(d.pop("inputs"))
+        inputs = ConnectionInputs.from_dict(d.pop("inputs"))
 
-        metadata = ConnectorConnectionMetadata.from_dict(d.pop("metadata"))
+        metadata = ConnectionMetadata.from_dict(d.pop("metadata"))
 
         owner = ConnectorConnectionOwner.from_dict(d.pop("owner"))
 
@@ -190,7 +186,7 @@ class ConnectorConnection:
 
         label = d.pop("label", UNSET)
 
-        connector_connection = cls(
+        connection = cls(
             auth_scheme=auth_scheme,
             connector_id=connector_id,
             created_at=created_at,
@@ -208,8 +204,8 @@ class ConnectorConnection:
             label=label,
         )
 
-        connector_connection.additional_properties = d
-        return connector_connection
+        connection.additional_properties = d
+        return connection
 
     @property
     def additional_keys(self) -> list[str]:
