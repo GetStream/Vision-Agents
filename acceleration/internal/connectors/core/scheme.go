@@ -23,7 +23,9 @@ type Scheme interface {
 	// values the manifest asked to capture.
 	Complete(ctx context.Context, in CompleteInput) (Material, Captured, error)
 	// Mint produces a short-lived Credential from Material. It may rotate Material; the
-	// resolver persists what comes back under the lock.
+	// resolver persists what comes back under the lock. A failed renewal returns an
+	// *OutcomeError and no Material, and, while the old credential has not expired yet,
+	// that credential beside the error, so the call can still go out.
 	Mint(ctx context.Context, m Material, p Profile) (Credential, Material, error)
 	// Wrap applies the credential to every outbound request: a header, a signature or a TLS
 	// client certificate. base is the egress transport (egress.NewClient passes it), so
@@ -167,4 +169,20 @@ type Outcome struct {
 	// Claims is, for ScopeRequired, a claims challenge to pass back on consent.
 	Claims     string
 	RetryAfter time.Duration
+}
+
+// OutcomeError is a failed Mint or Revoke with the outcome it was classified as, so the
+// resolver acts on Outcome (errors.As) without knowing the scheme. Err says what happened
+// and, like every error a scheme returns, carries no secret.
+type OutcomeError struct {
+	Outcome Outcome
+	Err     error
+}
+
+func (e *OutcomeError) Error() string {
+	return string(e.Outcome.Kind) + ": " + e.Err.Error()
+}
+
+func (e *OutcomeError) Unwrap() error {
+	return e.Err
 }
