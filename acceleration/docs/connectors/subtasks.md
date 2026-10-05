@@ -365,7 +365,7 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T37. Verifier result carries a message · [AI-868](https://linear.app/stream/issue/AI-868)
 
-- **Required, do first.** Description. Change `core.Verifier.Verify` to return grant signals and messages: a result with `[]Signal` and an optional inbound message (provider unit id, thread key, author, text, raw body). Today `Verify` returns `[]core.Signal` only ([`core/signal.go:5-27`](https://github.com/GetStream/Vision-Agents/blob/99b39e1efed159d29d2b5c9e6c5b71fcd3c115c1/acceleration/internal/connectors/core/signal.go#L5-L27)). No implementation exists yet, so the change costs least now.
+- **Required, do first.** Description. Change `core.Verifier.Verify` to return grant signals and messages: a result with `[]Signal` and an optional inbound message (provider unit id, thread key, author, text, raw body). Today `Verify` returns `[]core.Signal` only ([`core/signal.go:5-27`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/signal.go#L5-L27)). No implementation exists yet, so the change costs least now.
 - Scope. `core/signal.go`, doc comments, `core/AGENTS.md`, a contract test.
 - Out of scope. The endpoint (T26); any verifier; the manifest `channel` block (T34).
 - Dependencies. T3 (merged).
@@ -392,7 +392,7 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T39. Routing index for shared webhooks · [AI-870](https://linear.app/stream/issue/AI-870)
 
-- **Required for WhatsApp.** Description. When the provider fixes one app for all customers (Meta Tech Provider), the Router finds the customer by a routing key from the event. Add an index on `(connector_id, account_id)` and a lookup by the `channel` block's routing key path, for example `phone_number_id`. Today the only index is `connector_connections_owner_idx` ([`migrations/20261002193000_connector_connections.sql:68-70`](https://github.com/GetStream/Vision-Agents/blob/99b39e1efed159d29d2b5c9e6c5b71fcd3c115c1/acceleration/migrations/20261002193000_connector_connections.sql#L68-L70)).
+- **Required for WhatsApp.** Description. When the provider fixes one app for all customers (Meta Tech Provider), the Router finds the customer by a routing key from the event. Add an index on `(connector_id, account_id)` and a lookup by the `channel` block's routing key path, for example `phone_number_id`. Today the only index is `connector_connections_owner_idx` ([`migrations/20261002193000_connector_connections.sql:68-70`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/migrations/20261002193000_connector_connections.sql#L68-L70)).
 - Scope. Migration, store query, tests.
 - Dependencies. T7 (merged), T34.
 - Unblocks. T51.
@@ -427,7 +427,7 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T45. Token export · [AI-874](https://linear.app/stream/issue/AI-874)
 
-- **Proposal, opt-in.** Description. An optional `Export` on `core.Scheme`, for bearer schemes only: `core.Credential` keeps its secret private today ([`core/scheme.go:115-130`](https://github.com/GetStream/Vision-Agents/blob/99b39e1efed159d29d2b5c9e6c5b71fcd3c115c1/acceleration/internal/connectors/core/scheme.go#L115-L130)). `POST /v1/agents/connections/{id}/token`, server-side only. Only the customer's own provider unit exports; export is off by default for each connector and refused when the app restricts tokens to the Router IP ranges. A bot token for `Binding.Selection: fixed`; a user token only in that user's own session. One audit row for each export.
+- **Proposal, opt-in.** Description. An optional `Export` on `core.Scheme`, for bearer schemes only: `core.Credential` keeps its secret private today ([`core/scheme.go:115-130`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/scheme.go#L115-L130)). `POST /v1/agents/connections/{id}/token`, server-side only. Only the customer's own provider unit exports; export is off by default for each connector and refused when the app restricts tokens to the Router IP ranges. A bot token for `Binding.Selection: fixed`; a user token only in that user's own session. One audit row for each export.
 - Scope. Scheme extension, `oauth2code` and `apikey` export, handler, OpenAPI and Go SDK regen.
 - Dependencies. T12, T40, T47.
 - Acceptance. A Stream-owned app refuses export; each export writes one audit row; no response ever contains a refresh token.
@@ -503,7 +503,7 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 
 ### T43. Contact map · [AI-882](https://linear.app/stream/issue/AI-882)
 
-- **Required for phone-number channels.** Description. Table (customer, agent, E.164 number) → omni-channel cid. Channel ids hold no raw number. SMS, WhatsApp, iMessage and calls look it up and set `ConversationID`; the session API accepts `conversation_id` ([`api/sessions.go:513`](https://github.com/GetStream/Vision-Agents/blob/99b39e1efed159d29d2b5c9e6c5b71fcd3c115c1/acceleration/internal/api/sessions.go#L513)). Slack and Telegram need account linking (later).
+- **Required for phone-number channels.** Description. Table (customer, agent, E.164 number) → omni-channel cid. Channel ids hold no raw number. SMS, WhatsApp, iMessage and calls look it up and set `ConversationID`; the session API accepts `conversation_id` ([`api/sessions.go:513`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/sessions.go#L513)). Slack and Telegram need account linking (later).
 - Scope. Migration, store, E.164 normalization, lookups in the bridge and the call path.
 - Dependencies. T7 (merged).
 - Unblocks. T41, T51, T53.
@@ -511,7 +511,7 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 
 ### T41. Thread channel and episode card · [AI-883](https://linear.app/stream/issue/AI-883)
 
-- **Required for channels.** Description. On the first message of an episode the bridge creates one episode card in the person's omni-channel: `source` (`sms`, `whatsapp`, `slack`, `imessage`), `status: in_progress`, `started_at`, `thread_channel`. A call writes a card with `source: call` and `call_id` when its session starts, linked to the call channel `agent:<call id>`. The card stays one message, so an episode takes one place in the 200-message history window ([`chatlog/reader.go:13-16`](https://github.com/GetStream/Vision-Agents/blob/99b39e1efed159d29d2b5c9e6c5b71fcd3c115c1/acceleration/internal/chatlog/reader.go#L13-L16)).
+- **Required for channels.** Description. On the first message of an episode the bridge creates one episode card in the person's omni-channel: `source` (`sms`, `whatsapp`, `slack`, `imessage`), `status: in_progress`, `started_at`, `thread_channel`. A call writes a card with `source: call` and `call_id` when its session starts, linked to the call channel `agent:<call id>`. The card stays one message, so an episode takes one place in the 200-message history window ([`chatlog/reader.go:13-16`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/chatlog/reader.go#L13-L16)).
 - Scope. Card writes from the bridge and the call path, the episode store, tests.
 - Out of scope. Closing and summarizing (T55); reading cards (T56); the contact map (T43).
 - Dependencies. T57, T43.
@@ -520,7 +520,7 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 
 ### T55. Episode close, summary and memory · [AI-884](https://linear.app/stream/issue/AI-884)
 
-- **Required for channels.** Description. A text episode closes after an idle period, a setting (shorter than 24 hours for WhatsApp); a call episode closes on `call.session_ended`. The Router sets `status: ended` with `UpdateMessagePartial`, which sends no webhook ([`chatlog.go:551-556`](https://github.com/GetStream/Vision-Agents/blob/99b39e1efed159d29d2b5c9e6c5b71fcd3c115c1/acceleration/internal/chatlog/chatlog.go#L551-L556) uses the same call). The LLM writes the summary into the card (`status: summarized`, or `summary_failed`), and the facts go to memory, scoped by the person from the contact map.
+- **Required for channels.** Description. A text episode closes after an idle period, a setting (shorter than 24 hours for WhatsApp); a call episode closes on `call.session_ended`. The Router sets `status: ended` with `UpdateMessagePartial`, which sends no webhook ([`chatlog.go:551-556`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/chatlog/chatlog.go#L551-L556) uses the same call). The LLM writes the summary into the card (`status: summarized`, or `summary_failed`), and the facts go to memory, scoped by the person from the contact map.
 - Scope. Idle timer, close trigger, summary job, memory write, tests.
 - Dependencies. T41.
 - Acceptance. After the idle period the card holds a summary; a failed summary leaves `summary_failed` and the raw thread intact; a card update triggers no message hook.
@@ -535,7 +535,7 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 
 ### T42. Voice session reads the history · [AI-886](https://linear.app/stream/issue/AI-886)
 
-- **Required for calls in the omni-channel.** Description. Today only a persistent text conversation loads history; voice is refused with «persistent conversations require text mode» ([`session/manager.go:229-231`](https://github.com/GetStream/Vision-Agents/blob/99b39e1efed159d29d2b5c9e6c5b71fcd3c115c1/acceleration/internal/session/manager.go#L229-L231)). A voice session reads the person's episode cards as T56 does.
+- **Required for calls in the omni-channel.** Description. Today only a persistent text conversation loads history; voice is refused with «persistent conversations require text mode» ([`session/manager.go:229-231`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/session/manager.go#L229-L231)). A voice session reads the person's episode cards as T56 does.
 - Scope. Session manager, context build, tests.
 - Dependencies. T56.
 - Acceptance. A call after an SMS thread starts with the SMS card in its context.
@@ -549,7 +549,7 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 
 ### T49. Session API: history from the caller · [AI-888](https://linear.app/stream/issue/AI-888)
 
-- **Proposal, integration mode C.** Description. A field to pass the caller's own history when a thread outlives a session. Neither `CreateSessionRequest` nor `CreateResponseRequest` has one today ([`api/generated.go:2027,2040`](https://github.com/GetStream/Vision-Agents/blob/99b39e1efed159d29d2b5c9e6c5b71fcd3c115c1/acceleration/internal/api/generated.go#L2027)). Until then mode C uses a text session with `incognito: true`.
+- **Proposal, integration mode C.** Description. A field to pass the caller's own history when a thread outlives a session. Neither `CreateSessionRequest` nor `CreateResponseRequest` has one today ([`api/generated.go:2027,2040`](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/generated.go#L2027)). Until then mode C uses a text session with `incognito: true`.
 - Dependencies. None.
 
 ## Sources
