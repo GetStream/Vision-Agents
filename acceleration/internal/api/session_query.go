@@ -82,7 +82,7 @@ func (t *TimeRange) window() (after, before time.Time, err error) {
 		before = *t.Lt
 	}
 	if !after.IsZero() && !before.IsZero() && !after.Before(before) {
-		return time.Time{}, time.Time{}, errors.New("created_at $gte is before $lt")
+		return time.Time{}, time.Time{}, errors.New("created_at $gte must be before $lt, or the window holds nothing")
 	}
 	return after, before, nil
 }

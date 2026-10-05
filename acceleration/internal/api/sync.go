@@ -36,11 +36,11 @@ type SyncAgentRequest struct {
 	ThinkingLlm   *string                    `json:"thinking_llm,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
 	Search        *string                    `json:"search,omitempty"`
 	Greeting      *string                    `json:"greeting,omitempty"`
-	Plugins       *[]string                  `json:"plugins,omitempty"`
-	UserPlugins   *[]string                  `json:"user_plugins,omitempty" doc:"Plugins each end user connects with their own account, from the conversation, the first time the agent needs one."`
+	AgentPlugins  *[]PluginEntry             `json:"agent_plugins,omitempty" doc:"Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached."`
+	UserPlugins   *[]PluginEntry             `json:"user_plugins,omitempty" doc:"Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins."`
 	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
-	PluginOptions *[]PluginOptions           `json:"plugin_options,omitempty" maxItems:"32" doc:"How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for."`
 	McpServers    *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
+	Channels      *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Harness       *Harness                   `json:"harness,omitempty"`
@@ -179,10 +179,18 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := pluginEventsComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
-	if message, ok := pluginOptionsComplaint(config); !ok {
+	if message, ok := pluginEntriesComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, existing.MCPServers)
+	if !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	config.MCPServers = servers
+	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 
@@ -399,20 +407,20 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Greeting != nil {
 		config.Greeting = *body.Greeting
 	}
-	if body.Plugins != nil {
-		config.Plugins = *body.Plugins
+	if body.AgentPlugins != nil {
+		config.AgentPlugins = pluginEntriesOf(*body.AgentPlugins)
 	}
 	if body.UserPlugins != nil {
-		config.UserPlugins = *body.UserPlugins
+		config.UserPlugins = pluginEntriesOf(*body.UserPlugins)
 	}
 	if body.PluginEvents != nil {
 		config.PluginEvents = pluginEventsOf(body.PluginEvents)
 	}
-	if body.PluginOptions != nil {
-		config.PluginOptions = pluginOptionsOf(body.PluginOptions)
-	}
 	if body.McpServers != nil {
 		config.MCPServers = mcpServersOf(body.McpServers)
+	}
+	if body.Channels != nil {
+		config.Channels = channelsOf(body.Channels)
 	}
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)

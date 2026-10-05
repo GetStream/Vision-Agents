@@ -24,11 +24,11 @@ type AgentConfigPatch struct {
 	Greeting           *string            `json:"greeting,omitempty"`
 	Guardrail          *string            `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
 	Skills             *[]string          `json:"skills,omitempty"`
-	Plugins            *[]string          `json:"plugins,omitempty"`
-	UserPlugins        *[]string          `json:"user_plugins,omitempty"`
+	AgentPlugins       *[]PluginEntry     `json:"agent_plugins,omitempty"`
+	UserPlugins        *[]PluginEntry     `json:"user_plugins,omitempty"`
 	PluginEvents       *[]PluginEvent     `json:"plugin_events,omitempty" maxItems:"32"`
-	PluginOptions      *[]PluginOptions   `json:"plugin_options,omitempty" maxItems:"32"`
 	McpServers         *[]McpServer       `json:"mcp_servers,omitempty" maxItems:"16"`
+	Channels           *AgentChannels     `json:"channels,omitempty"`
 	Keyterms           *[]string          `json:"keyterms,omitempty"`
 	VisibleTools       *[]string          `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
 	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
@@ -112,6 +112,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if err != nil {
 		return nil, huma.Error404NotFound(unknownConfig)
 	}
+	before := config.MCPServers
 
 	patch := request.Body
 	if message, ok := configComplaint(AgentConfigRequest{
@@ -145,16 +146,20 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Greeting = override(config.Greeting, patch.Greeting)
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
 	config.Skills = override(config.Skills, patch.Skills)
-	config.Plugins = override(config.Plugins, patch.Plugins)
-	config.UserPlugins = override(config.UserPlugins, patch.UserPlugins)
+	if patch.AgentPlugins != nil {
+		config.AgentPlugins = pluginEntriesOf(*patch.AgentPlugins)
+	}
+	if patch.UserPlugins != nil {
+		config.UserPlugins = pluginEntriesOf(*patch.UserPlugins)
+	}
 	if patch.PluginEvents != nil {
 		config.PluginEvents = pluginEventsOf(patch.PluginEvents)
 	}
-	if patch.PluginOptions != nil {
-		config.PluginOptions = pluginOptionsOf(patch.PluginOptions)
-	}
 	if patch.McpServers != nil {
 		config.MCPServers = mcpServersOf(patch.McpServers)
+	}
+	if patch.Channels != nil {
+		config.Channels = channelsOf(patch.Channels)
 	}
 	if patch.Keyterms != nil {
 		config.Keyterms = keytermsOf(patch.Keyterms)
@@ -182,10 +187,18 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if message, ok := pluginEventsComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
-	if message, ok := pluginOptionsComplaint(config); !ok {
+	if message, ok := pluginEntriesComplaint(config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, before)
+	if !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	config.MCPServers = servers
+	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, huma.Error400BadRequest(message)
 	}
 	// The config no longer matches the directory last synced onto it, so the next sync of

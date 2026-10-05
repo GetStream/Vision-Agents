@@ -130,6 +130,9 @@ type ledger struct {
 	// VisibleTools are the agent config's visible_tools, kept so a write retried after a
 	// restart shows end users what the agent shows them.
 	VisibleTools []string `json:",omitempty"`
+	// Logins are the servers the session reaches that log in, the only ones whose tool
+	// results may ask for a login.
+	Logins []string `json:",omitempty"`
 }
 type operation struct {
 	Message Message
@@ -790,6 +793,13 @@ func (c *Conversation) ShowTools(patterns []string) {
 	c.data.VisibleTools = append([]string(nil), patterns...)
 }
 
+// AcceptLogins sets the servers whose tool results may ask somebody to log in.
+func (c *Conversation) AcceptLogins(servers []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data.Logins = append([]string(nil), servers...)
+}
+
 func (c *Conversation) Agent() string             { return c.data.Agent }
 func (c *Conversation) Attach(emit func(Updated)) { c.mu.Lock(); defer c.mu.Unlock(); c.emit = emit }
 func (c *Conversation) Release() {
@@ -1062,7 +1072,7 @@ func (c *Conversation) Observe(event agent.Event) {
 			}
 			// Asked of whoever is in the conversation, whether or not the tool's steps are
 			// shown: a login nobody sees is one nobody can finish.
-			if found, ok := plugins.RequestedAuthorization(t.Name, e.Result); ok && e.Err == nil {
+			if found, ok := plugins.RequestedAuthorization(t.Name, e.Result, c.data.Logins); ok && e.Err == nil {
 				m.Authorizations = mergeAuthorizations(m.Authorizations, found)
 			}
 			failure := ""
