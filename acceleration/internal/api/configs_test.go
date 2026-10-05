@@ -933,6 +933,26 @@ func (s *ConfigsSuite) TestABindingCalledWhatAPluginOfTheConfigIsIsRefused() {
 	s.Contains(failure, "plugin")
 }
 
+func (s *ConfigsSuite) TestABindingCalledWhatAUserPluginOfTheConfigIsIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "support", "user_plugins": []string{"slack"}, "connectors": []map[string]any{sessionSlack("slack")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `plugin "slack"`)
+}
+
+func (s *ConfigsSuite) TestABindingCalledWhatAnMCPServerOfTheConfigIsIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":        "support",
+		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://crm.example.com/mcp"}},
+		"connectors":  []map[string]any{sessionSlack("crm")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `MCP server "crm"`)
+}
+
 func (s *ConfigsSuite) TestABindingWithANullToolsListIsRefused() {
 	binding := sessionSlack("inbox")
 	binding["tools"] = nil

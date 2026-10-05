@@ -453,18 +453,26 @@ func (s *Server) unboundConnectors(ctx context.Context, customerID string, bindi
 	return "", true, nil
 }
 
-// pluginAliasComplaint reports a binding called what a plugin of the same config is. A
-// plugin's tools are offered as <plugin>__<tool> (plugins.Prefix, internal/plugins/mcp.go)
-// and a binding's as <alias>__<tool>, and the built-in connectors share ids with the plugin
-// catalog (slack is in both internal/plugins/plugins.yaml and
+// pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same
+// config is. A plugin's tools are offered as <plugin>__<tool> (plugins.Prefix,
+// internal/plugins/mcp.go), a user plugin's as <plugin>__ and a suffix
+// (internal/plugins/user.go), an MCP server's as <name>__<tool> (McpServer.Name), and a
+// binding's as <alias>__<tool>. The built-in connectors share ids with the plugin catalog
+// (slack is in both internal/plugins/plugins.yaml and
 // internal/connectors/providers/slack.yaml), so the two would offer the same names. It reads
 // the config as it is about to be stored, so a patch or a sync adding either side is checked
 // against what the other already is.
 func pluginAliasComplaint(config store.AgentConfig) (string, bool) {
 	for _, binding := range config.Connectors {
-		if slices.Contains(config.Plugins, binding.Name) {
+		if slices.Contains(config.Plugins, binding.Name) || slices.Contains(config.UserPlugins, binding.Name) {
 			return fmt.Sprintf("connector binding %q is called what the config's plugin %q is, and both "+
 				"would offer their tools as %s%stool", binding.Name, binding.Name, binding.Name, aliasSeparator), false
+		}
+		for _, server := range config.MCPServers {
+			if server.Name == binding.Name {
+				return fmt.Sprintf("connector binding %q is called what the config's MCP server %q is, and both "+
+					"would offer their tools as %s%stool", binding.Name, binding.Name, binding.Name, aliasSeparator), false
+			}
 		}
 	}
 	return "", true
@@ -1296,7 +1304,7 @@ type AgentConfigRequest struct {
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
 	PluginOptions      *[]PluginOptions         `json:"plugin_options,omitempty" maxItems:"32" doc:"How the agent reaches plugins it names, such as linear's read-only endpoint, and the scopes their logins ask for. A plugin without any is reached as the catalog has it."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
-	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
+	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
 	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
 	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
 	Search             *string                  `json:"search,omitempty" doc:"What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way."`
