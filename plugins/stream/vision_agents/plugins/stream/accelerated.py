@@ -682,6 +682,7 @@ def _authorization_of(result: object) -> Optional[RemoteEvent]:
         type="authorization_required",
         text=str(attachment.get("title", "")),
         url=str(attachment["authorize_url"]),
+        image_url=str(attachment.get("thumb_url", "")),
     )
 
 

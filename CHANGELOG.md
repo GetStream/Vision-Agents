@@ -436,6 +436,39 @@ GPT-6 Sol, which stays declared for configs that name it. Like Astra, GPT-6.1 So
 reasoning effort of `none`, so a request naming no effort is sent `low` and one naming
 `none` is refused.
 
+### Linear, GitHub, HubSpot, Google Drive and Google Docs plugins, and a logo on every login
+
+The plugin catalog is twelve entries: `slack`, `calendly`, `calcom`, `shopify`, `salesforce`,
+`sentry`, `linear`, `github`, `hubspot`, `google_calendar`, `google_drive` and `google_docs`.
+Linear registers its own client; GitHub, HubSpot, Slack, Salesforce and the three Google
+plugins each need a `<ID>_MCP_CLIENT_ID` and `<ID>_MCP_CLIENT_SECRET` on the router. Drive
+and Docs are separate servers with separate scopes, so they are separate plugins. There is no
+`teams` plugin: as of October 2026 a Teams app hosts its own MCP server at its own URL, and
+Microsoft publishes nothing hosted to point at.
+
+Every plugin now has a logo, served as an SVG needing no credential from the new
+`GET /v1/agents/plugins/{plugin_id}/logo`, and both `Plugin` and `PluginConnection` carry a
+`logo_url` for a dashboard to draw a card with. The logos are our own plain marks rather than
+the vendors' artwork, so a deployment that has licensed the real thing replaces a file.
+
+The `plugin_authorization` attachment has three more fields, so a Chat client with no
+renderer for the type still shows a card with a logo and a working link: `text` (the
+catalog description), `thumb_url` (that logo URL) and `title_link` (the authorize URL). Each
+is derived and checked against the catalog, so an MCP server cannot put an arbitrary image
+into somebody's conversation. In Python, `RemoteEvent.image_url` carries the logo on an
+`authorization_required` event.
+
+### A conversation can move to Slack, Teams or RCS
+
+`omni` has a `teams` provider, reading Bot Framework `message` activities and answering with
+markdown and hero cards, so Teams joins Slack, WhatsApp, RCS, SMS and iMessage as a channel
+a conversation can be carried over to. `examples/text_agents/mcp_plugins` now runs webhooks
+for Slack, Teams and Google RBM beside the ones it had, each with a login button a plugin's
+authorization attachment is drawn into: Block Kit for Slack, a hero card for Teams and an
+`openUrlAction` suggestion for RCS. Note that a plugin and a channel are different things:
+`slack` under `user_plugins` is an account the agent reads, and the Slack channel is a person
+talking to the agent in Slack.
+
 ### Sentry and Google Calendar plugins, and plugins each user connects in the chat
 
 The plugin catalog has `sentry` and `google_calendar`. `agent.yaml` names `user_plugins`

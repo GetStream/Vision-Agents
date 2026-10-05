@@ -1,0 +1,38 @@
+name: mcp_plugins
+description: Reads the team's issues and your own calendar and files, and makes 3D renders with Blender.
+mode: text
+llm: llm-fast
+# The company's accounts: connected once each, on the dashboard, for every conversation.
+plugins:
+  - sentry
+  - github
+  - linear
+  - hubspot
+  - salesforce
+# Each person's own: the agent asks for one in the chat the first time it needs it.
+user_plugins:
+  - google_calendar
+  - google_drive
+  - google_docs
+  - calendly
+  - calcom
+  - slack
+# Any other MCP server, by its URL. The router opens it for every conversation, with no
+# login, and offers its tools as tablejourney__<tool>.
+mcp_servers:
+  - name: tablejourney
+    url: https://tablejourney.com/mcp
+# Blender for the render skill, in the router's Daytona sandbox.
+sandbox: daytona
+sandbox_options:
+  # bpy is Blender as a Python module, for Python 3.13. The libraries are the X and GL
+  # ones its wheel links against that a slim Debian does not have.
+  setup:
+    - >-
+      apt-get update && apt-get install -y --no-install-recommends
+      libgl1 libx11-6 libxext6 libxfixes3 libxi6 libxkbcommon0 libxrender1
+      libxxf86vm1 libsm6 libice6 libxt6 && rm -rf /var/lib/apt/lists/*
+    - pip install --no-cache-dir bpy==5.2.2
+  timeout: 5m
+  cpu: 2
+  memory_gb: 4

@@ -46,6 +46,15 @@ type client struct {
 	// session is the Mcp-Session-Id the server gave at initialize, sent back on every
 	// request after it (MCP 2025-03-26, Streamable HTTP, «Session Management»).
 	session string
+	// version is sent as MCP-Protocol-Version by a client that skips initialize, as an
+	// MCP 2.0 one does.
+	version string
+	// instructions are what the server said at initialize about using its tools.
+	instructions string
+}
+
+type initializeResult struct {
+	Instructions string `json:"instructions"`
 }
 
 type rpcRequest struct {
@@ -63,8 +72,9 @@ type rpcResponse struct {
 }
 
 type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
 }
 
 type toolsListResult struct {
@@ -127,7 +137,7 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 		http:     transport,
 		nextID:   1,
 	}
-	_, err := opened.call(ctx, "initialize", map[string]any{
+	raw, err := opened.call(ctx, "initialize", map[string]any{
 		"protocolVersion": "2025-03-26",
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]string{"name": "vision-agents", "version": "0"},
@@ -135,10 +145,14 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 	if err != nil {
 		return nil, nil, err
 	}
+	var initialized initializeResult
+	if json.Unmarshal(raw, &initialized) == nil {
+		opened.instructions = strings.TrimSpace(initialized.Instructions)
+	}
 	if err := opened.notify(ctx, "notifications/initialized", nil); err != nil {
 		return nil, nil, err
 	}
-	raw, err := opened.call(ctx, "tools/list", map[string]any{})
+	raw, err = opened.call(ctx, "tools/list", map[string]any{})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -147,6 +161,20 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 		return nil, nil, fmt.Errorf("plugins: tools/list: %w", err)
 	}
 	return opened, listed.Tools, nil
+}
+
+// Instructions are what the server opened for pluginID said at initialize about using its
+// tools, or "" when it said nothing or is not open.
+func (r *Runtime) Instructions(pluginID string) string {
+	if r == nil {
+		return ""
+	}
+	for _, opened := range r.clients {
+		if opened.pluginID == pluginID {
+			return opened.instructions
+		}
+	}
+	return ""
 }
 
 // Owns reports whether this runtime runs the named tool.
@@ -231,6 +259,9 @@ func (c *client) call(ctx context.Context, method string, params any) (json.RawM
 		return nil, fmt.Errorf("plugins: %s: %w", method, err)
 	}
 	if response.Error != nil {
+		if len(response.Error.Data) > 0 {
+			return nil, fmt.Errorf("plugins: %s: %s %s", method, response.Error.Message, response.Error.Data)
+		}
 		return nil, fmt.Errorf("plugins: %s: %s", method, response.Error.Message)
 	}
 	return response.Result, nil
@@ -257,6 +288,9 @@ func (c *client) roundTrip(ctx context.Context, body []byte) ([]byte, error) {
 	}
 	if c.session != "" {
 		request.Header.Set(sessionHeader, c.session)
+	}
+	if c.version != "" {
+		request.Header.Set("MCP-Protocol-Version", c.version)
 	}
 	response, err := c.http.Do(request)
 	if err != nil {

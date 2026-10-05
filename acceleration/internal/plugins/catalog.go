@@ -8,7 +8,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed plugins.yaml
+// The logos are our own plain marks, not the vendors' artwork, so a deployment that has
+// licensed the real thing replaces a file and changes nothing else.
+//
+//go:embed plugins.yaml logos
 var catalogFS embed.FS
 
 // Plugin is one hosted MCP server the dashboard may attach to an agent.
@@ -19,6 +22,8 @@ type Plugin struct {
 	Description string `yaml:"description"`
 	URL         string `yaml:"url"`
 	Auth        string `yaml:"auth"`
+	// Logo is the file under logos/ this plugin is drawn with.
+	Logo string `yaml:"logo"`
 	// InstanceRequired means the URL is a template that needs a shop or org hostname.
 	InstanceRequired bool   `yaml:"instance_required"`
 	InstanceHint     string `yaml:"instance_hint"`
@@ -62,9 +67,37 @@ func loadCatalog() ([]Plugin, error) {
 		if _, duplicate := seen[plugin.ID]; duplicate {
 			return nil, fmt.Errorf("plugins: %s is declared twice", plugin.ID)
 		}
+		// Read now rather than when a card is drawn, so a misnamed file is a router that
+		// will not start rather than a login nobody can see the plugin on.
+		if _, err := catalogFS.ReadFile(logoFile(plugin.Logo)); err != nil {
+			return nil, fmt.Errorf("plugins: %s has no logo: %w", plugin.ID, err)
+		}
 		seen[plugin.ID] = struct{}{}
 	}
 	return file.Plugins, nil
+}
+
+func logoFile(name string) string {
+	return "logos/" + name
+}
+
+// LogoPath is where a plugin's logo is served, which is what an authorization attachment
+// points its thumbnail at.
+func LogoPath(id string) string {
+	return "/v1/agents/plugins/" + id + "/logo"
+}
+
+// Logo is the SVG a catalog plugin is drawn with.
+func Logo(id string) ([]byte, bool) {
+	plugin, ok := Lookup(id)
+	if !ok {
+		return nil, false
+	}
+	raw, err := catalogFS.ReadFile(logoFile(plugin.Logo))
+	if err != nil {
+		return nil, false
+	}
+	return raw, true
 }
 
 // Catalog is the built-in set, in the order they are declared.

@@ -27,7 +27,7 @@ func (s *ConfigsSuite) SetupTest() {
 func (s *ConfigsSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
 	created := s.createConfig(map[string]any{
 		"name": "support", "llm": "llm-flow", "tts": "en-low-latency", "voice": "aurora",
-		"subagent": "llm-flow", "instructions": "be brief", "skills": []string{"think", "refund"},
+		"thinking_llm": "llm-flow", "instructions": "be brief", "skills": []string{"think", "refund"},
 		"keyterms":            []string{"Vision Agents", "Stream"},
 		"knowledge_namespace": "handbook", "sandbox": "daytona",
 		"tags": map[string]string{"project": "support"},
@@ -39,6 +39,7 @@ func (s *ConfigsSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
 	s.Equal("llm-flow", value(read.Llm))
+	s.Equal("llm-flow", value(read.ThinkingLlm))
 	s.Equal("aurora", value(read.Voice))
 	s.Equal([]string{"think", "refund"}, value(read.Skills))
 	s.Equal([]string{"Vision Agents", "Stream"}, value(read.Keyterms))
@@ -62,6 +63,24 @@ func (s *ConfigsSuite) TestAConfigWithANegativeSpeedIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "speed")
+}
+
+func (s *ConfigsSuite) TestATextAgentNamingAThinkingLlmIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "analyst", "mode": "text", "thinking_llm": "llm-thinking"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "thinking_llm")
+}
+
+func (s *ConfigsSuite) TestSwitchingAnAgentToTextDropsItsThinkingLlm() {
+	created := s.createConfig(map[string]any{"name": "support", "thinking_llm": "llm-thinking"})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"mode": "text"}, &patched))
+	s.Equal(AgentModeText, patched.Mode)
+	s.Nil(patched.ThinkingLlm)
 }
 
 func (s *ConfigsSuite) TestPatchingASpeedKeepsTheVoice() {
@@ -183,6 +202,50 @@ func (s *ConfigsSuite) TestAnEmptySetupCommandIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "setup")
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersTheMCPServersItNamesByURL() {
+	created := s.createConfig(map[string]any{"name": "concierge", "mcp_servers": []map[string]any{
+		{"name": "tablejourney", "url": "https://tablejourney.com/mcp"},
+	}})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(read.McpServers))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"mcp_servers": []map[string]any{}}, &patched))
+	s.Nil(patched.McpServers)
+}
+
+func (s *ConfigsSuite) TestAnMCPServerThatCannotBeNamedOrReachedSafelyIsRefused() {
+	for _, refused := range []struct {
+		server  map[string]any
+		failure string
+	}{
+		{map[string]any{"name": "tablejourney", "url": "http://tablejourney.com/mcp"}, "https"},
+		{map[string]any{"name": "slack", "url": "https://mcp.slack.example/mcp"}, "catalog"},
+		{map[string]any{"name": "table__journey", "url": "https://tablejourney.com/mcp"}, "__"},
+		{map[string]any{"name": "TableJourney", "url": "https://tablejourney.com/mcp"}, "name"},
+	} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": "concierge", "mcp_servers": []map[string]any{refused.server}})
+
+		s.Equal(http.StatusBadRequest, status, refused.server)
+		s.Contains(failure, refused.failure)
+	}
+}
+
+func (s *ConfigsSuite) TestTwoMCPServersWithOneNameAreRefused() {
+	server := map[string]any{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "concierge", "mcp_servers": []map[string]any{server, server}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "twice")
 }
 
 func (s *ConfigsSuite) TestAConfigNamingASandboxNobodyRunsIsRefused() {

@@ -197,7 +197,7 @@ class TestDefineAgent:
             "name": "docs-agent",
             "instructions": "Answer from the docs.",
             "llm": "llm-fast",
-            "subagent": "llm-smart",
+            "thinking_llm": "llm-smart",
             "skills": [EXPLAIN],
             "knowledge": "docs",
         }
@@ -211,7 +211,7 @@ class TestDefineAgent:
 
         assert config.name == "docs-agent"
         stored = router.configs[config.id]
-        assert stored["subagent"] == "llm-smart"
+        assert stored["thinking_llm"] == "llm-smart"
         assert stored["skills"] == ["explain"]
         assert stored["knowledge_namespace"] == "docs"
 
@@ -229,7 +229,7 @@ class TestDefineAgent:
     ) -> None:
         config = await stream.define_agent(
             name="visual-agent",
-            subagent="vlm",
+            thinking_llm="vlm",
             video_source="roboflow_streaming",
             video_max_frames=2,
             skills=[
@@ -244,7 +244,7 @@ class TestDefineAgent:
             customer_id="acme",
         )
 
-        assert config.subagent == "vlm"
+        assert config.thinking_llm == "vlm"
         assert config.video.to_dict() == {
             "source": "roboflow_streaming",
             "max_frames": 2,
@@ -276,7 +276,7 @@ class TestDefineAgent:
     async def test_an_agent_that_delegates_nothing_needs_no_skills(
         self, router: Router
     ):
-        config = await self.define(router, skills=None, subagent="")
+        config = await self.define(router, skills=None, thinking_llm="")
 
         assert router.skills == {}
         assert "skills" not in router.configs[config.id]
@@ -516,9 +516,9 @@ class TestSyncAgent:
     ):
         (support_dir / "agent.yaml").write_text(
             "name: support\n"
-            "mode: text\n"
+            "mode: voice\n"
             "llm: llm-fast\n"
-            "subagent: llm-thinking\n"
+            "thinking_llm: llm-thinking\n"
             "stt: stt-fast\n"
             "tts: tts-fast\n"
             "voice: nova\n"
@@ -538,9 +538,9 @@ class TestSyncAgent:
         )
 
         stored = router.configs[result.config.id]
-        assert stored["mode"] == "text"
+        assert stored["mode"] == "voice"
         assert stored["llm"] == "llm-fast"
-        assert stored["subagent"] == "llm-thinking"
+        assert stored["thinking_llm"] == "llm-thinking"
         assert stored["stt"] == "stt-fast"
         assert stored["tts"] == "tts-fast"
         assert stored["voice"] == "nova"
@@ -590,6 +590,22 @@ class TestSyncAgent:
             "memory_gb": 4,
             "disk_gb": 0,
         }
+
+    async def test_the_mcp_servers_named_by_url_are_sent(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nmcp_servers:\n"
+            "  - name: tablejourney\n    url: https://tablejourney.com/mcp\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["mcp_servers"] == [
+            {"name": "tablejourney", "url": "https://tablejourney.com/mcp"}
+        ]
 
     async def test_sts_can_be_selected_and_cleared(self, router: Router, support_dir):
         for target in ("openai/gpt-realtime-2", ""):

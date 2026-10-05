@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -22,9 +24,23 @@ func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (
 	found := plugins.Search(value(request.Q.ptr()))
 	listed := make([]Plugin, 0, len(found))
 	for _, plugin := range found {
-		listed = append(listed, pluginOf(plugin))
+		listed = append(listed, pluginOf(plugin, s.auth().LogoURL(plugin.ID)))
 	}
 	return &listPluginsResponse{Body: listed}, nil
+}
+
+// servePluginLogo is the unauthenticated image a card draws a plugin with. It is open for
+// the same reason the callback is: whoever renders the card, a chat client or a browser,
+// has no credential of this API's to send with an <img>.
+func (s *Server) servePluginLogo(w http.ResponseWriter, r *http.Request) {
+	raw, ok := plugins.Logo(r.PathValue("plugin_id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, unknownPlugin)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	_, _ = w.Write(raw)
 }
 
 // listConfigPlugins returns the catalog as this agent has it: the app's logins with their
@@ -56,7 +72,7 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 			continue
 		}
 		held[plugin.ID] = true
-		listed = append(listed, pluginConnectionOf(plugin, conn))
+		listed = append(listed, pluginConnectionOf(plugin, conn, s.auth().LogoURL(plugin.ID)))
 	}
 	for _, id := range config.Plugins {
 		plugin, ok := plugins.Lookup(id)
@@ -64,7 +80,9 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 			continue
 		}
 		held[id] = true
-		listed = append(listed, pluginConnectionOf(plugin, store.PluginConnection{Status: string(PluginConnectionStatusNotConnected)}))
+		listed = append(listed, pluginConnectionOf(plugin,
+			store.PluginConnection{Status: string(PluginConnectionStatusNotConnected)},
+			s.auth().LogoURL(plugin.ID)))
 	}
 	return &listConfigPluginsResponse{Body: listed}, nil
 }
@@ -138,7 +156,31 @@ func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPlugin
 	if err := s.store.RemoveConfigPlugin(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
 		return nil, err
 	}
+	s.pluginEvents.Changed(customerID, request.Id)
 	return nil, nil
+}
+
+// receivePluginEvent is the unauthenticated callback a plugin's server delivers events to.
+// The token in the path names the subscription, and the signature is checked against its
+// secret, so it is the server that subscription was made with or nobody.
+func (s *Server) receivePluginEvent(w http.ResponseWriter, r *http.Request) {
+	if s.pluginEvents == nil {
+		writeError(w, http.StatusGone, "this deployment subscribes to no plugin events")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, plugins.MaxEventBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(body) > plugins.MaxEventBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "a delivery is at most 256 KiB")
+		return
+	}
+	reply := s.pluginEvents.Receive(r.Context(), r.PathValue("token"), r.Header, body)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(reply.Status)
+	_ = json.NewEncoder(w).Encode(reply.Body)
 }
 
 // finishPluginLogin is the unauthenticated callback the provider redirects to.
@@ -194,6 +236,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// An end user connected their own account from a conversation: there is no editor to
 	// go back to, and the config already names the plugin for every user.
+	s.pluginEvents.Changed(conn.CustomerID, conn.ConfigID)
 	if conn.UserID != "" {
 		plugin, _ := plugins.Lookup(conn.PluginID)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -221,12 +264,13 @@ func (s *Server) auth() *plugins.Auth {
 	}
 }
 
-func pluginOf(plugin plugins.Plugin) Plugin {
+func pluginOf(plugin plugins.Plugin, logoURL string) Plugin {
 	rendered := Plugin{
 		Id:          plugin.ID,
 		Name:        plugin.Name,
 		Category:    plugin.Category,
 		Description: plugin.Description,
+		LogoUrl:     logoURL,
 	}
 	if plugin.InstanceRequired {
 		required := true
@@ -236,11 +280,12 @@ func pluginOf(plugin plugins.Plugin) Plugin {
 	return rendered
 }
 
-func pluginConnectionOf(plugin plugins.Plugin, conn store.PluginConnection) PluginConnection {
+func pluginConnectionOf(plugin plugins.Plugin, conn store.PluginConnection, logoURL string) PluginConnection {
 	rendered := PluginConnection{
 		PluginId: plugin.ID,
 		Name:     plugin.Name,
 		Status:   PluginConnectionStatus(conn.Status),
+		LogoUrl:  logoURL,
 	}
 	rendered.Category = optional(plugin.Category)
 	rendered.Description = optional(plugin.Description)
@@ -346,6 +391,7 @@ type Plugin struct {
 	Id               string  `json:"id"`
 	InstanceHint     *string `json:"instance_hint,omitempty"`
 	InstanceRequired *bool   `json:"instance_required,omitempty"`
+	LogoUrl          string  `json:"logo_url" readOnly:"true" doc:"Where this deployment serves the plugin's logo, as an SVG needing no credential."`
 	Name             string  `json:"name"`
 }
 
@@ -361,6 +407,7 @@ type PluginConnection struct {
 	InstanceHint     *string                `json:"instance_hint,omitempty"`
 	InstanceRequired *bool                  `json:"instance_required,omitempty"`
 	InstanceUrl      *string                `json:"instance_url,omitempty"`
+	LogoUrl          string                 `json:"logo_url" readOnly:"true" doc:"Where this deployment serves the plugin's logo, as an SVG needing no credential."`
 	Name             string                 `json:"name"`
 	PluginId         string                 `json:"plugin_id"`
 	Status           PluginConnectionStatus `json:"status" enum:"pending,connected,failed,not_connected"`
@@ -401,6 +448,34 @@ func (e PluginConnectionStatus) Valid() bool {
 // AuthorizePluginRequest is the AuthorizePluginRequest schema.
 type AuthorizePluginRequest struct {
 	InstanceUrl *string `json:"instance_url,omitempty" doc:"The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL."`
+}
+
+// PluginEvent is one MCP event an agent subscribes to on a plugin it names.
+type PluginEvent struct {
+	Plugin       string          `json:"plugin" minLength:"1" doc:"A catalog plugin the config names under plugins or user_plugins."`
+	Event        string          `json:"event" minLength:"1" doc:"The event's name, as the server's events/list gives it, such as comment.created."`
+	Arguments    *map[string]any `json:"arguments,omitempty" doc:"The event's filters, as its inputSchema describes them."`
+	Instructions *string         `json:"instructions,omitempty" doc:"What the agent does with the event when it arrives, added to its instructions for that conversation."`
+}
+
+func (*PluginEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One MCP event an agent subscribes to on a plugin it names. Each event " +
+		"that arrives opens a text conversation from the config, as whoever's login it came " +
+		"through, with the event's data as the first thing said to it."
+	return schema
+}
+
+// McpServer is an MCP server outside the catalog that an agent reaches by its URL.
+type McpServer struct {
+	Name string `json:"name" minLength:"1" maxLength:"32" pattern:"^[a-z][a-z0-9_-]*$" doc:"What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id."`
+	Url  string `json:"url" minLength:"1" maxLength:"2048" doc:"Its Streamable HTTP endpoint, over https."`
+}
+
+func (*McpServer) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "An MCP server the plugin catalog does not have. Every session opens " +
+		"it at the start, with no login, and offers its tools to the model; the instructions " +
+		"the server gives are added to the agent's own."
+	return schema
 }
 
 // PluginAuthorization is the PluginAuthorization schema.

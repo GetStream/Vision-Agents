@@ -47,7 +47,7 @@ func newBackend(t *testing.T) *backend {
 		stored := acceleration.AgentConfig{
 			Id: "config-1", Name: request.Name, Instructions: request.Instructions,
 			KnowledgeNamespace: request.KnowledgeNamespace, Skills: request.Skills,
-			Subagent: request.Subagent, Tags: request.Tags,
+			ThinkingLlm: request.ThinkingLlm, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		router.configs = append(router.configs, stored)
@@ -112,7 +112,7 @@ func newBackend(t *testing.T) *backend {
 		router.syncs = append(router.syncs, request)
 		stored := acceleration.AgentConfig{
 			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
-			Subagent: request.Subagent, Llm: request.Llm, Tags: request.Tags,
+			ThinkingLlm: request.ThinkingLlm, Llm: request.Llm, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		if request.Knowledge != nil || request.KnowledgeUrls != nil {
@@ -380,6 +380,27 @@ sandbox_options:
 	}
 }
 
+func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `mcp_servers:
+  - name: tablejourney
+    url: https://tablejourney.com/mcp
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	servers := router.syncs[0].McpServers
+	if servers == nil || len(*servers) != 1 || (*servers)[0].Name != "tablejourney" || (*servers)[0].Url != "https://tablejourney.com/mcp" {
+		t.Errorf("the MCP servers went as %+v", servers)
+	}
+}
+
 func TestSyncSaysNothingOfTheSandboxWhenTheDeclarationDoesNot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "analyst")
 	write(t, root, "agent.yaml", "sandbox: daytona\n")
@@ -517,8 +538,8 @@ func TestAgentYAMLNamesTheHarnessAndSandboxTheConfigIsStoredWith(t *testing.T) {
 	if synced.Sandbox == nil || *synced.Sandbox != "daytona" {
 		t.Errorf("the sandbox was stored as %v", synced.Sandbox)
 	}
-	if synced.Subagent == nil || *synced.Subagent != "openai/gpt-5.6-sol" {
-		t.Errorf("the subagent was stored as %v", synced.Subagent)
+	if synced.ThinkingLlm == nil || *synced.ThinkingLlm != "openai/gpt-5.6-sol" {
+		t.Errorf("the thinking llm was stored as %v", synced.ThinkingLlm)
 	}
 }
 

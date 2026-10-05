@@ -9,6 +9,8 @@ from .providers import (
     GoogleRBMProvider,
     LinqProvider,
     SlackProvider,
+    TeamsProvider,
+    TelnyxProvider,
     TwilioProvider,
     WhatsAppProvider,
 )
@@ -37,9 +39,11 @@ class ProviderRegistry:
             if providers is not None
             else [
                 SlackProvider(),
+                TeamsProvider(),
                 WhatsAppProvider(),
                 GoogleRBMProvider(),
                 TwilioProvider(),
+                TelnyxProvider(),
                 LinqProvider(),
             ]
         ):

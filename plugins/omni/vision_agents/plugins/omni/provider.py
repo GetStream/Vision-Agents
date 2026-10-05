@@ -14,9 +14,11 @@ class Provider:
     """
 
     SLACK = "slack"
+    TEAMS = "teams"
     WHATSAPP = "whatsapp"
     GOOGLE_RBM = "google_rbm"
     TWILIO = "twilio"
+    TELNYX = "telnyx"
     LINQ = "linq"
 
 

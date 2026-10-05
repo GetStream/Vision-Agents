@@ -158,13 +158,13 @@ describe("Agent", () => {
 
     const synced = router.requestsTo("POST", "/v1/agents/sync")[0]?.body as Schemas["SyncAgentRequest"];
     assert.equal(synced.harness, "default");
-    assert.equal(synced.subagent, "llm-slow");
+    assert.equal(synced.thinking_llm, "llm-slow");
     assert.equal(synced.sandbox, "daytona");
     assert.deepEqual(synced.skills, [
       { name: "think", description: "Think", instructions: "Work it out.", config_id: "" },
     ]);
     const body = requested() as Record<string, unknown>;
-    for (const key of ["harness", "subagent", "sandbox", "skills", "tasks"]) {
+    for (const key of ["harness", "thinking_llm", "sandbox", "skills", "tasks"]) {
       assert.equal(key in body, false, `${key} went on the session`);
     }
   });

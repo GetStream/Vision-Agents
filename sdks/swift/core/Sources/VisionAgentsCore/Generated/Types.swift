@@ -16,14 +16,12 @@ internal protocol APIProtocol: Sendable {
     /// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
     /// It returns once the agent is in the call, so a session that comes back is one that is already listening. Tools declared here are the caller's own: the model asks for them over the events socket and waits for the caller to answer.
     ///
-    ///
     /// - Remark: HTTP `POST /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)`.
     func createSession(_ input: Operations.CreateSession.Input) async throws -> Operations.CreateSession.Output
     /// One session
     ///
     /// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-    ///
     ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
@@ -55,14 +53,12 @@ internal protocol APIProtocol: Sendable {
     /// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
     /// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
     ///
-    ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/fork`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/fork/post(forkSession)`.
     func forkSession(_ input: Operations.ForkSession.Input) async throws -> Operations.ForkSession.Output
     /// The turns the agent took in a session
     ///
     /// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
-    ///
     ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)`.
@@ -71,7 +67,6 @@ internal protocol APIProtocol: Sendable {
     ///
     /// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
     /// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/responses`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)`.
@@ -82,7 +77,6 @@ internal protocol APIProtocol: Sendable {
     /// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
     /// Nothing is returned for an incognito session, which has no items to return.
     ///
-    ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses/items`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)`.
     func listResponseItems(_ input: Operations.ListResponseItems.Input) async throws -> Operations.ListResponseItems.Output
@@ -90,7 +84,6 @@ internal protocol APIProtocol: Sendable {
     ///
     /// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
     /// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/rewind`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)`.
@@ -123,7 +116,6 @@ internal protocol APIProtocol: Sendable {
     ///
     /// The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
     ///
-    ///
     /// - Remark: HTTP `POST /v1/search`.
     /// - Remark: Generated from `#/paths//v1/search/post(search)`.
     func search(_ input: Operations.Search.Input) async throws -> Operations.Search.Output
@@ -135,7 +127,6 @@ extension APIProtocol {
     ///
     /// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
     /// It returns once the agent is in the call, so a session that comes back is one that is already listening. Tools declared here are the caller's own: the model asks for them over the events socket and waits for the caller to answer.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)`.
@@ -151,7 +142,6 @@ extension APIProtocol {
     /// One session
     ///
     /// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
-    ///
     ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
@@ -209,7 +199,6 @@ extension APIProtocol {
     /// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
     /// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
     ///
-    ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/fork`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/fork/post(forkSession)`.
     internal func forkSession(
@@ -226,7 +215,6 @@ extension APIProtocol {
     /// The turns the agent took in a session
     ///
     /// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
-    ///
     ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)`.
@@ -245,7 +233,6 @@ extension APIProtocol {
     ///
     /// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
     /// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/responses`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)`.
@@ -266,7 +253,6 @@ extension APIProtocol {
     /// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
     /// Nothing is returned for an incognito session, which has no items to return.
     ///
-    ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses/items`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)`.
     internal func listResponseItems(
@@ -284,7 +270,6 @@ extension APIProtocol {
     ///
     /// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
     /// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/rewind`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)`.
@@ -342,7 +327,6 @@ extension APIProtocol {
     /// Answer a question out of what is true now
     ///
     /// The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/search`.
     /// - Remark: Generated from `#/paths//v1/search/post(search)`.

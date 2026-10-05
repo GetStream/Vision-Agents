@@ -1591,17 +1591,19 @@ type AgentConfig struct {
 	Guardrail *string        `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness  `json:"harness,omitempty"`
-	Id                 string    `json:"id"`
-	Instructions       *string   `json:"instructions,omitempty"`
-	Keyterms           *[]string `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
-	Llm                *string   `json:"llm,omitempty"`
+	Harness            *Harness     `json:"harness,omitempty"`
+	Id                 string       `json:"id"`
+	Instructions       *string      `json:"instructions,omitempty"`
+	Keyterms           *[]string    `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string      `json:"knowledge_namespace,omitempty"`
+	Llm                *string      `json:"llm,omitempty"`
+	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
-	Mode    AgentMode `json:"mode"`
-	Name    string    `json:"name"`
-	Plugins *[]string `json:"plugins,omitempty"`
+	Mode         AgentMode      `json:"mode"`
+	Name         string         `json:"name"`
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	Plugins      *[]string      `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -1613,13 +1615,13 @@ type AgentConfig struct {
 	Speed          *float64        `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
-	Sts      *string `json:"sts,omitempty"`
-	Stt      *string `json:"stt,omitempty"`
-	Subagent *string `json:"subagent,omitempty"`
+	Sts *string `json:"sts,omitempty"`
+	Stt *string `json:"stt,omitempty"`
 
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
 	SyncHash     *string            `json:"sync_hash,omitempty"`
 	Tags         *map[string]string `json:"tags,omitempty"`
+	ThinkingLlm  *string            `json:"thinking_llm,omitempty"`
 	Tts          *string            `json:"tts,omitempty"`
 	UpdatedAt    time.Time          `json:"updated_at"`
 	UserPlugins  *[]string          `json:"user_plugins,omitempty"`
@@ -1638,18 +1640,20 @@ type AgentConfigPatch struct {
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness  `json:"harness,omitempty"`
-	Instructions       *string   `json:"instructions,omitempty"`
-	Keyterms           *[]string `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
-	Llm                *string   `json:"llm,omitempty"`
+	Harness            *Harness     `json:"harness,omitempty"`
+	Instructions       *string      `json:"instructions,omitempty"`
+	Keyterms           *[]string    `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string      `json:"knowledge_namespace,omitempty"`
+	Llm                *string      `json:"llm,omitempty"`
+	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
-	Name    *string   `json:"name,omitempty"`
-	Plugins *[]string `json:"plugins,omitempty"`
+	Name         *string        `json:"name,omitempty"`
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	Plugins      *[]string      `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -1660,14 +1664,16 @@ type AgentConfigPatch struct {
 	Skills         *[]string       `json:"skills,omitempty"`
 
 	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
-	Speed       *float64           `json:"speed,omitempty"`
-	Sts         *string            `json:"sts,omitempty"`
-	Stt         *string            `json:"stt,omitempty"`
-	Subagent    *string            `json:"subagent,omitempty"`
-	Tags        *map[string]string `json:"tags,omitempty"`
-	Tts         *string            `json:"tts,omitempty"`
-	UserPlugins *[]string          `json:"user_plugins,omitempty"`
-	Video       *SessionVideo      `json:"video,omitempty"`
+	Speed *float64           `json:"speed,omitempty"`
+	Sts   *string            `json:"sts,omitempty"`
+	Stt   *string            `json:"stt,omitempty"`
+	Tags  *map[string]string `json:"tags,omitempty"`
+
+	// ThinkingLlm Only a voice agent names one. Switching an agent to text drops it.
+	ThinkingLlm *string       `json:"thinking_llm,omitempty"`
+	Tts         *string       `json:"tts,omitempty"`
+	UserPlugins *[]string     `json:"user_plugins,omitempty"`
+	Video       *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -1696,11 +1702,17 @@ type AgentConfigRequest struct {
 	// Llm The model holding the conversation.
 	Llm *string `json:"llm,omitempty"`
 
+	// McpServers MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>.
+	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
 	Name string `json:"name"`
+
+	// PluginEvents MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
 	// Plugins Hosted MCP servers this agent may reach, named from the built-in catalog.
 	Plugins *[]string `json:"plugins,omitempty"`
@@ -1728,12 +1740,12 @@ type AgentConfigRequest struct {
 	// Stt A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
 	Stt *string `json:"stt,omitempty"`
 
-	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
-	Subagent *string `json:"subagent,omitempty"`
-
 	// Tags Cost labels, carried onto every request a session using it makes.
 	Tags *map[string]string `json:"tags,omitempty"`
-	Tts  *string            `json:"tts,omitempty"`
+
+	// ThinkingLlm The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model.
+	ThinkingLlm *string `json:"thinking_llm,omitempty"`
+	Tts         *string `json:"tts,omitempty"`
 
 	// UserPlugins Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
 	UserPlugins *[]string     `json:"user_plugins,omitempty"`
@@ -1981,16 +1993,16 @@ type Call struct {
 	// SttUsed The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
 	SttUsed *string `json:"stt_used,omitempty"`
 
-	// Subagent The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered.
-	Subagent *string `json:"subagent,omitempty"`
-
-	// SubagentUsed The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
-	SubagentUsed *string `json:"subagent_used,omitempty"`
-
 	// Summary What a model made of the call, written once it was over.
-	Summary  *string            `json:"summary,omitempty"`
-	Tags     *map[string]string `json:"tags,omitempty"`
-	ToNumber *string            `json:"to_number,omitempty"`
+	Summary *string            `json:"summary,omitempty"`
+	Tags    *map[string]string `json:"tags,omitempty"`
+
+	// ThinkingLlm The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too.
+	ThinkingLlm *string `json:"thinking_llm,omitempty"`
+
+	// ThinkingLlmUsed The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
+	ThinkingLlmUsed *string `json:"thinking_llm_used,omitempty"`
+	ToNumber        *string `json:"to_number,omitempty"`
 
 	// Tts The voice target, on the same terms as stt.
 	Tts *string `json:"tts,omitempty"`
@@ -2992,6 +3004,15 @@ type LlmOptionsReasoningEffort string
 // LlmOptionsVerbosity defines model for LlmOptions.Verbosity.
 type LlmOptionsVerbosity string
 
+// McpServer An MCP server the plugin catalog does not have. Every session opens it at the start, with no login, and offers its tools to the model; the instructions the server gives are added to the agent's own.
+type McpServer struct {
+	// Name What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
+	Name string `json:"name"`
+
+	// Url Its Streamable HTTP endpoint, over https.
+	Url string `json:"url"`
+}
+
 // MessageContent defines model for MessageContent.
 type MessageContent struct {
 	union json.RawMessage
@@ -3160,7 +3181,10 @@ type Plugin struct {
 	Id               string  `json:"id"`
 	InstanceHint     *string `json:"instance_hint,omitempty"`
 	InstanceRequired *bool   `json:"instance_required,omitempty"`
-	Name             string  `json:"name"`
+
+	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential.
+	LogoUrl *string `json:"logo_url,omitempty"`
+	Name    string  `json:"name"`
 }
 
 // PluginAuthorization defines model for PluginAuthorization.
@@ -3171,18 +3195,36 @@ type PluginAuthorization struct {
 
 // PluginConnection A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish.
 type PluginConnection struct {
-	Category         *string                `json:"category,omitempty"`
-	Description      *string                `json:"description,omitempty"`
-	InstanceHint     *string                `json:"instance_hint,omitempty"`
-	InstanceRequired *bool                  `json:"instance_required,omitempty"`
-	InstanceUrl      *string                `json:"instance_url,omitempty"`
-	Name             string                 `json:"name"`
-	PluginId         string                 `json:"plugin_id"`
-	Status           PluginConnectionStatus `json:"status"`
+	Category         *string `json:"category,omitempty"`
+	Description      *string `json:"description,omitempty"`
+	InstanceHint     *string `json:"instance_hint,omitempty"`
+	InstanceRequired *bool   `json:"instance_required,omitempty"`
+	InstanceUrl      *string `json:"instance_url,omitempty"`
+
+	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential.
+	LogoUrl  *string                `json:"logo_url,omitempty"`
+	Name     string                 `json:"name"`
+	PluginId string                 `json:"plugin_id"`
+	Status   PluginConnectionStatus `json:"status"`
 }
 
 // PluginConnectionStatus defines model for PluginConnection.Status.
 type PluginConnectionStatus string
+
+// PluginEvent One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
+type PluginEvent struct {
+	// Arguments The event's filters, as its inputSchema describes them.
+	Arguments *map[string]interface{} `json:"arguments,omitempty"`
+
+	// Event The event's name, as the server's events/list gives it, such as comment.created.
+	Event string `json:"event"`
+
+	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Plugin A catalog plugin the config names under plugins or user_plugins.
+	Plugin string `json:"plugin"`
+}
 
 // Policy What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
 type Policy struct {
@@ -3579,12 +3621,12 @@ type Session struct {
 	// Stt The provider and model transcribing, once somebody has been heard.
 	Stt *string `json:"stt,omitempty"`
 
-	// Subagent The provider and model delegated work runs on.
-	Subagent *string `json:"subagent,omitempty"`
-
 	// Text The conversation is held in writing rather than on a call.
-	Text  *bool   `json:"text,omitempty"`
-	Title *string `json:"title,omitempty"`
+	Text *bool `json:"text,omitempty"`
+
+	// ThinkingLlm The provider and model delegated work runs on.
+	ThinkingLlm *string `json:"thinking_llm,omitempty"`
+	Title       *string `json:"title,omitempty"`
 
 	// Tts The provider and model speaking.
 	Tts    *string       `json:"tts,omitempty"`
@@ -4256,12 +4298,18 @@ type SyncAgentRequest struct {
 	KnowledgeUrls *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty"`
 	Llm           *string                    `json:"llm,omitempty"`
 
+	// McpServers MCP servers outside the plugin catalog, opened by their URL with no login.
+	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is also the directory's name.
-	Name    string    `json:"name"`
-	Plugins *[]string `json:"plugins,omitempty"`
+	Name string `json:"name"`
+
+	// PluginEvents MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	Plugins      *[]string      `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -4278,11 +4326,13 @@ type SyncAgentRequest struct {
 	Speed *float64 `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
-	Sts      *string            `json:"sts,omitempty"`
-	Stt      *string            `json:"stt,omitempty"`
-	Subagent *string            `json:"subagent,omitempty"`
-	Tags     *map[string]string `json:"tags,omitempty"`
-	Tts      *string            `json:"tts,omitempty"`
+	Sts  *string            `json:"sts,omitempty"`
+	Stt  *string            `json:"stt,omitempty"`
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// ThinkingLlm Only a voice agent names one: a text agent runs everything on its llm.
+	ThinkingLlm *string `json:"thinking_llm,omitempty"`
+	Tts         *string `json:"tts,omitempty"`
 
 	// UserPlugins Plugins each end user connects with their own account, from the conversation, the first time the agent needs one.
 	UserPlugins *[]string     `json:"user_plugins,omitempty"`
@@ -5972,6 +6022,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
 	PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReceivePluginEvent Receive a plugin's MCP event
+	//
+	// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+	//
+	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+	ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPluginLogo A plugin's logo
+	//
+	// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+	//
+	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+	GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateSessionWithBody Join a call as a voice agent
 	//
@@ -8112,6 +8176,40 @@ func (c *Client) ListPlugins(ctx context.Context, params *ListPluginsParams, req
 // Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
 func (c *Client) PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPluginOAuthCallbackRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceivePluginEvent Receive a plugin's MCP event
+//
+// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+//
+// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceivePluginEventRequest(c.Server, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPluginLogo A plugin's logo
+//
+// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+//
+// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPluginLogoRequest(c.Server, pluginId)
 	if err != nil {
 		return nil, err
 	}
@@ -12670,6 +12768,74 @@ func NewPluginOAuthCallbackRequest(server string, params *PluginOAuthCallbackPar
 	return req, nil
 }
 
+// NewReceivePluginEventRequest constructs an http.Request for the ReceivePluginEvent method
+func NewReceivePluginEventRequest(server string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/plugins/events/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetPluginLogoRequest constructs an http.Request for the GetPluginLogo method
+func NewGetPluginLogoRequest(server string, pluginId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "plugin_id", pluginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/plugins/%s/logo", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateSessionRequest calls the generic CreateSession builder with application/json body
 func NewCreateSessionRequest(server string, body CreateSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -17108,6 +17274,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
 	PluginOAuthCallbackWithResponse(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*PluginOAuthCallbackResponse, error)
+
+	// ReceivePluginEventWithResponse Receive a plugin's MCP event
+	//
+	// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+	ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error)
+
+	// GetPluginLogoWithResponse A plugin's logo
+	//
+	// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+	GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error)
 
 	// CreateSessionWithBodyWithResponse Join a call as a voice agent
 	//
@@ -21589,6 +21773,81 @@ func (r PluginOAuthCallbackResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PluginOAuthCallbackResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReceivePluginEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceivePluginEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceivePluginEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceivePluginEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceivePluginEventResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPluginLogoResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetPluginLogoResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPluginLogoResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPluginLogoResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPluginLogoResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPluginLogoResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -28592,6 +28851,36 @@ func (c *ClientWithResponses) PluginOAuthCallbackWithResponse(ctx context.Contex
 	return ParsePluginOAuthCallbackResponse(rsp)
 }
 
+// ReceivePluginEventWithResponse Receive a plugin's MCP event
+//
+// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+func (c *ClientWithResponses) ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error) {
+	rsp, err := c.ReceivePluginEvent(ctx, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceivePluginEventResponse(rsp)
+}
+
+// GetPluginLogoWithResponse A plugin's logo
+//
+// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error) {
+	rsp, err := c.GetPluginLogo(ctx, pluginId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPluginLogoResponse(rsp)
+}
+
 // CreateSessionWithBodyWithResponse Join a call as a voice agent
 //
 // The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -33090,6 +33379,48 @@ func ParsePluginOAuthCallbackResponse(rsp *http.Response) (*PluginOAuthCallbackR
 	response := &PluginOAuthCallbackResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseReceivePluginEventResponse parses an HTTP response from a ReceivePluginEventWithResponse call
+func ParseReceivePluginEventResponse(rsp *http.Response) (*ReceivePluginEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceivePluginEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetPluginLogoResponse parses an HTTP response from a GetPluginLogoWithResponse call
+func ParseGetPluginLogoResponse(rsp *http.Response) (*GetPluginLogoResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPluginLogoResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	}
 
 	return response, nil

@@ -103,6 +103,15 @@ class SandboxSettings:
 
 
 @dataclass
+class MCPServerSettings:
+    """An MCP server outside the plugin catalog, which the router opens by its URL."""
+
+    name: str
+    """What its tools are prefixed with, as `<name>__<tool>`."""
+    url: str
+
+
+@dataclass
 class Settings:
     """What `agent.yaml` declares.
 
@@ -122,7 +131,8 @@ class Settings:
     """The voice's rate of delivery, 1 being its own. Zero leaves it there."""
     llm: str = ""
     harness: str = ""
-    subagent: str = ""
+    thinking_llm: str = ""
+    """The model a voice agent hands its skills to. A text agent runs on its llm alone."""
     search: str = ""
     greeting: str = ""
     sandbox: str = ""
@@ -132,6 +142,8 @@ class Settings:
     """Catalog MCP servers the app connects once, on the dashboard, for every session."""
     user_plugins: list[str] = field(default_factory=list)
     """Catalog MCP servers each end user connects with their own account, in the chat."""
+    mcp_servers: list[MCPServerSettings] = field(default_factory=list)
+    """MCP servers outside the catalog, opened by the router with no login."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -360,8 +372,8 @@ def _declare(path: Path) -> Settings:
             settings.llm = _word(value)
         elif field_name == "harness":
             settings.harness = _word(value)
-        elif field_name == "subagent":
-            settings.subagent = _word(value)
+        elif field_name == "thinking_llm":
+            settings.thinking_llm = _word(value)
         elif field_name == "search":
             settings.search = _word(value)
         elif field_name == "greeting":
@@ -374,6 +386,8 @@ def _declare(path: Path) -> Settings:
             settings.plugins = _terms(path, field_name, value)
         elif field_name == "user_plugins":
             settings.user_plugins = _terms(path, field_name, value)
+        elif field_name == "mcp_servers":
+            settings.mcp_servers = _mcp_servers(path, value)
         elif field_name == "keyterms":
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":
@@ -443,6 +457,24 @@ def _dispatch(path: Path, value: object) -> dict[str, str]:
     if extra:
         raise ValueError(f"{path} unknown dispatch setting: {sorted(extra)[0]}")
     return {str(key): _word(item) for key, item in value.items() if _word(item)}
+
+
+def _mcp_servers(path: Path, value: object) -> list[MCPServerSettings]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{path} should give mcp_servers as a list")
+    servers = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"{path} should give each of mcp_servers as a mapping")
+        extra = set(item) - {"name", "url"}
+        if extra:
+            raise ValueError(f"{path} unknown mcp_servers setting: {sorted(extra)[0]}")
+        servers.append(
+            MCPServerSettings(name=_word(item.get("name")), url=_word(item.get("url")))
+        )
+    return servers
 
 
 def _sandbox_options(path: Path, value: object) -> SandboxSettings:

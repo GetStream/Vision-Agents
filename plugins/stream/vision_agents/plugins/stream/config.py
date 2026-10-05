@@ -25,6 +25,7 @@ from ._generated.models import (
     Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
+    McpServer,
     SandboxOptions,
     SimulationDeclaration,
     SimulationDeclarationMode,
@@ -172,7 +173,7 @@ async def define_agent(
     name: str,
     instructions: str = "",
     llm: str = "",
-    subagent: str = "",
+    thinking_llm: str = "",
     stt: str = "",
     tts: str = "",
     voice: str = "",
@@ -199,7 +200,8 @@ async def define_agent(
         name: What the config is called, which is also how it is found again.
         instructions: The system prompt.
         llm: The model that answers.
-        subagent: The model delegated work runs on.
+        thinking_llm: The model a voice agent hands its skills to. Only for a voice
+            agent: a text agent runs everything on its llm.
         video_source: Source used by skills that capture video.
         video_max_frames: Number of retained frames to capture, from 1 to 8.
         stt: The model that transcribes, for a config a call will use.
@@ -228,8 +230,8 @@ async def define_agent(
         wanted.instructions = instructions
     if llm:
         wanted.llm = llm
-    if subagent:
-        wanted.subagent = subagent
+    if thinking_llm:
+        wanted.thinking_llm = thinking_llm
     if video_source is not None or video_max_frames is not None:
         wanted.video = SessionVideo()
         if video_source is not None:
@@ -331,8 +333,8 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.llm = settings.llm
     if settings.harness:
         body.harness = Harness(settings.harness)
-    if settings.subagent:
-        body.subagent = settings.subagent
+    if settings.thinking_llm:
+        body.thinking_llm = settings.thinking_llm
     if settings.video_max_frames:
         body.video = SessionVideo(
             source=settings.video_source, max_frames=settings.video_max_frames
@@ -353,6 +355,11 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.plugins = settings.plugins
     if settings.user_plugins:
         body.user_plugins = settings.user_plugins
+    if settings.mcp_servers:
+        body.mcp_servers = [
+            McpServer(name=server.name, url=server.url)
+            for server in settings.mcp_servers
+        ]
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:

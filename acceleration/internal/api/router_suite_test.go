@@ -5,10 +5,12 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -46,6 +48,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
@@ -161,6 +165,12 @@ type RouterSuite struct {
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
 
+	// pluginMCP is where every plugin's MCP server is reached, for a suite about plugin
+	// events to set before it starts the harness. Nil reaches the real ones.
+	pluginMCP *httptest.Server
+	// events subscribes configs to their plugins' events.
+	events *pluginevents.Service
+
 	utils testUtils
 	data  testData
 }
@@ -235,6 +245,8 @@ func (s *RouterSuite) SetupSuite() {
 	listener := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(listener, logger)
 	sessions := s.sessionManager(streams, directory, logger)
+	public := &plugins.Auth{}
+	s.events = s.pluginEvents(sessions, public, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
 	s.modalities = map[routing.Modality]routing.Inspector{
@@ -261,6 +273,7 @@ func (s *RouterSuite) SetupSuite() {
 		Phone:         s.telephony(logger),
 		Campaigns:     s.campaigns(sessions, logger),
 		Simulations:   s.simulations(sessions, streams, logger),
+		PluginEvents:  s.events,
 		Knowledge:     s.knowledgeWriter(),
 		KnowledgeURLs: s.pages(redisAddr),
 		Voices:        s.voiceService(),
@@ -277,8 +290,30 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	listener.Config.Handler = server.Handler()
 	listener.Start()
+	public.PublicURL = listener.URL
 	s.server = listener
 	s.T().Cleanup(s.server.Close)
+}
+
+// pluginEvents subscribes against pluginMCP, whatever host a catalog plugin names, so a
+// suite's own server stands in for Sentry's.
+func (s *RouterSuite) pluginEvents(sessions *session.Manager, public *plugins.Auth, logger *slog.Logger) *pluginevents.Service {
+	var transport *http.Client
+	if s.pluginMCP != nil {
+		address := s.pluginMCP.Listener.Addr().String()
+		transport = &http.Client{Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, address)
+			},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the suite's own server
+		}}
+	}
+	service, err := pluginevents.New(pluginevents.Options{
+		Store: s.store, Sessions: sessions, Auth: public, Transport: transport, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(service.Close)
+	return service
 }
 
 // routers builds every modality against stubs that answer in process. What a real vendor

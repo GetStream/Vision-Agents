@@ -884,6 +884,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/plugins/{plugin_id}/logo": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A plugin's logo
+         * @description The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+         */
+        readonly get: operations["getPluginLogo"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/plugins/callback": {
         readonly parameters: {
             readonly query?: never;
@@ -898,6 +918,26 @@ export type paths = {
         readonly get: operations["pluginOAuthCallback"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/plugins/events/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a plugin's MCP event
+         * @description Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+         */
+        readonly post: operations["receivePluginEvent"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2329,8 +2369,10 @@ export type components = {
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
             readonly llm?: string;
+            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
+            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
@@ -2341,12 +2383,12 @@ export type components = {
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;
-            readonly subagent?: string;
             /** @description Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory. */
             readonly sync_hash?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            readonly thinking_llm?: string;
             readonly tts?: string;
             /** Format: date-time */
             readonly updated_at: string;
@@ -2366,9 +2408,11 @@ export type components = {
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
             readonly llm?: string;
+            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name?: string;
+            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
@@ -2381,10 +2425,11 @@ export type components = {
             readonly speed?: number;
             readonly sts?: string;
             readonly stt?: string;
-            readonly subagent?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description Only a voice agent names one. Switching an agent to text drops it. */
+            readonly thinking_llm?: string;
             readonly tts?: string;
             readonly user_plugins?: readonly string[];
             readonly video?: components["schemas"]["SessionVideo"];
@@ -2405,9 +2450,13 @@ export type components = {
             readonly knowledge_namespace?: string;
             /** @description The model holding the conversation. */
             readonly llm?: string;
+            /** @description MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>. */
+            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name: string;
+            /** @description MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through. */
+            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
             /** @description Hosted MCP servers this agent may reach, named from the built-in catalog. */
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
@@ -2426,12 +2475,12 @@ export type components = {
             readonly sts?: string;
             /** @description A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it. */
             readonly stt?: string;
-            /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
-            readonly subagent?: string;
             /** @description Cost labels, carried onto every request a session using it makes. */
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model. */
+            readonly thinking_llm?: string;
             readonly tts?: string;
             /** @description Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one. */
             readonly user_plugins?: readonly string[];
@@ -2644,15 +2693,15 @@ export type components = {
             readonly stt?: string;
             /** @description The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over. */
             readonly stt_used?: string;
-            /** @description The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. */
-            readonly subagent?: string;
-            /** @description The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached. */
-            readonly subagent_used?: string;
             /** @description What a model made of the call, written once it was over. */
             readonly summary?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too. */
+            readonly thinking_llm?: string;
+            /** @description The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached. */
+            readonly thinking_llm_used?: string;
             readonly to_number?: string;
             /** @description The voice target, on the same terms as stt. */
             readonly tts?: string;
@@ -3543,6 +3592,13 @@ export type components = {
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
         };
+        /** @description An MCP server the plugin catalog does not have. Every session opens it at the start, with no login, and offers its tools to the model; the instructions the server gives are added to the agent's own. */
+        readonly McpServer: {
+            /** @description What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id. */
+            readonly name: string;
+            /** @description Its Streamable HTTP endpoint, over https. */
+            readonly url: string;
+        };
         readonly MessageContent: string | readonly components["schemas"]["ContentPart"][];
         /**
          * @description What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
@@ -3694,6 +3750,8 @@ export type components = {
             readonly id: string;
             readonly instance_hint?: string;
             readonly instance_required?: boolean;
+            /** @description Where this deployment serves the plugin's logo, as an SVG needing no credential. */
+            readonly logo_url: string;
             readonly name: string;
         };
         readonly PluginAuthorization: {
@@ -3707,10 +3765,25 @@ export type components = {
             readonly instance_hint?: string;
             readonly instance_required?: boolean;
             readonly instance_url?: string;
+            /** @description Where this deployment serves the plugin's logo, as an SVG needing no credential. */
+            readonly logo_url: string;
             readonly name: string;
             readonly plugin_id: string;
             /** @enum {string} */
             readonly status: "pending" | "connected" | "failed" | "not_connected";
+        };
+        /** @description One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it. */
+        readonly PluginEvent: {
+            /** @description The event's filters, as its inputSchema describes them. */
+            readonly arguments?: {
+                readonly [key: string]: unknown;
+            };
+            /** @description The event's name, as the server's events/list gives it, such as comment.created. */
+            readonly event: string;
+            /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
+            readonly instructions?: string;
+            /** @description A catalog plugin the config names under plugins or user_plugins. */
+            readonly plugin: string;
         };
         /** @description What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. */
         readonly Policy: {
@@ -4057,10 +4130,10 @@ export type components = {
             readonly sts?: string;
             /** @description The provider and model transcribing, once somebody has been heard. */
             readonly stt?: string;
-            /** @description The provider and model delegated work runs on. */
-            readonly subagent?: string;
             /** @description The conversation is held in writing rather than on a call. */
             readonly text?: boolean;
+            /** @description The provider and model delegated work runs on. */
+            readonly thinking_llm?: string;
             readonly title?: string;
             /** @description The provider and model speaking. */
             readonly tts?: string;
@@ -4658,9 +4731,13 @@ export type components = {
             /** @description The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both. */
             readonly knowledge_urls?: readonly components["schemas"]["KnowledgeUrlDeclaration"][];
             readonly llm?: string;
+            /** @description MCP servers outside the plugin catalog, opened by their URL with no login. */
+            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is also the directory's name. */
             readonly name: string;
+            /** @description MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives. */
+            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
             readonly plugins?: readonly string[];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
@@ -4676,10 +4753,11 @@ export type components = {
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;
-            readonly subagent?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description Only a voice agent names one: a text agent runs everything on its llm. */
+            readonly thinking_llm?: string;
             readonly tts?: string;
             /** @description Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. */
             readonly user_plugins?: readonly string[];
@@ -7152,6 +7230,30 @@ export interface operations {
             };
         };
     };
+    readonly getPluginLogo: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description A built-in catalog id such as slack or linear. */
+                readonly plugin_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The logo */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "image/svg+xml": string;
+                };
+            };
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
     readonly pluginOAuthCallback: {
         readonly parameters: {
             readonly query?: {
@@ -7167,6 +7269,54 @@ export interface operations {
         readonly responses: {
             /** @description The browser is sent back to the agent editor */
             readonly 302: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly receivePluginEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A verification's challenge, echoed, or an event already taken */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is taken, and a conversation is opening for it */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not signed with the subscription's secret */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description There is no such subscription any more; stop delivering to it */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is over 256 KiB */
+            readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

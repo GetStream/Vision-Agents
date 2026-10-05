@@ -133,6 +133,7 @@ from .llm_options_format import LlmOptionsFormat
 from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
+from .mcp_server import McpServer
 from .modality import Modality
 from .model_call_timing import ModelCallTiming
 from .model_overwrites import ModelOverwrites
@@ -154,6 +155,8 @@ from .plugin import Plugin
 from .plugin_authorization import PluginAuthorization
 from .plugin_connection import PluginConnection
 from .plugin_connection_status import PluginConnectionStatus
+from .plugin_event import PluginEvent
+from .plugin_event_arguments import PluginEventArguments
 from .policy import Policy
 from .policy_tags import PolicyTags
 from .prepare_voice_request import PrepareVoiceRequest
@@ -413,6 +416,7 @@ __all__ = (
     "LlmOptionsMetadata",
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
+    "McpServer",
     "Modality",
     "ModelCallTiming",
     "ModelOverwrites",
@@ -434,6 +438,8 @@ __all__ = (
     "PluginAuthorization",
     "PluginConnection",
     "PluginConnectionStatus",
+    "PluginEvent",
+    "PluginEventArguments",
     "Policy",
     "PolicyTags",
     "PrepareVoiceRequest",

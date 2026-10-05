@@ -47,6 +47,25 @@ func (s *PluginsSuite) TestTheCatalogIsFilteredByWhatItIsFor() {
 	s.NotContains(named(scheduling), "slack")
 }
 
+func (s *PluginsSuite) TestEveryCatalogPluginHasALogoAnythingCanDraw() {
+	// Whatever renders the card, a chat client or a browser, has no credential of ours to
+	// put on an <img>, so the logo has to be served to a caller that sends none.
+	for _, plugin := range s.catalog("") {
+		s.Require().NotEmpty(plugin.LogoUrl, plugin.Id)
+
+		status, body := s.unauthenticatedClient.call(http.MethodGet, plugins.LogoPath(plugin.Id), nil)
+
+		s.Equal(http.StatusOK, status, plugin.Id)
+		s.Contains(string(body), "<svg", plugin.Id)
+	}
+}
+
+func (s *PluginsSuite) TestAPluginNobodyHasHasNoLogo() {
+	status, _ := s.unauthenticatedClient.call(http.MethodGet, plugins.LogoPath("carrier-pigeon"), nil)
+
+	s.Equal(http.StatusNotFound, status)
+}
+
 func (s *PluginsSuite) TestAPluginOnAHostOfItsOwnSaysSoInTheCatalog() {
 	shopify := s.catalog("shopify")
 

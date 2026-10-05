@@ -231,11 +231,19 @@ func (a *Auth) DashboardRedirect(configID string) string {
 }
 
 func (a *Auth) callbackURL() string {
-	base := strings.TrimRight(a.PublicURL, "/")
-	if base == "" {
-		base = "http://localhost:8080"
+	return a.base() + CallbackPath
+}
+
+// LogoURL is where this deployment serves a plugin's logo, for a card to draw it.
+func (a *Auth) LogoURL(pluginID string) string {
+	return a.base() + LogoPath(pluginID)
+}
+
+func (a *Auth) base() string {
+	if base := strings.TrimRight(a.PublicURL, "/"); base != "" {
+		return base
 	}
-	return base + CallbackPath
+	return "http://localhost:8080"
 }
 
 func (a *Auth) client() *http.Client {
@@ -264,13 +272,23 @@ func (a *Auth) discoverResource(ctx context.Context, transport *http.Client, end
 	return protectedResource{}, nil
 }
 
+// discoverServer reads the authorization server's metadata: RFC 8414 first, then OpenID
+// Connect discovery, which is all GitHub publishes for github.com/login/oauth.
 func (a *Auth) discoverServer(ctx context.Context, transport *http.Client, issuer string) (authServer, error) {
-	var meta authServer
-	wellKnown := strings.TrimRight(issuer, "/") + "/.well-known/oauth-authorization-server"
-	if err := getJSON(ctx, transport, wellKnown, &meta); err != nil {
-		return authServer{}, fmt.Errorf("plugins: oauth discovery: %w", err)
+	base := strings.TrimRight(issuer, "/")
+	var failure error
+	for _, wellKnown := range []string{
+		base + "/.well-known/oauth-authorization-server",
+		base + "/.well-known/openid-configuration",
+	} {
+		var meta authServer
+		if err := getJSON(ctx, transport, wellKnown, &meta); err != nil {
+			failure = err
+			continue
+		}
+		return meta, nil
 	}
-	return meta, nil
+	return authServer{}, fmt.Errorf("plugins: oauth discovery: %w", failure)
 }
 
 func (a *Auth) register(ctx context.Context, transport *http.Client, endpoint string) (registration, error) {

@@ -51,6 +51,49 @@ func (s *OAuthSuite) TestStartAuthorizeUsesDiscoveryAndDCR() {
 	s.Equal("http://auth.example/token", pending.TokenEndpoint)
 }
 
+// GitHub publishes no RFC 8414 metadata for github.com/login/oauth, only OpenID Connect
+// discovery, so a provider that has one and not the other has to be followed too.
+func (s *OAuthSuite) TestStartAuthorizeFallsBackToOpenIDDiscovery() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	})
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
+			TokenEndpoint:         "https://github.com/login/oauth/access_token",
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	auth := &Auth{HTTP: server.Client(), PublicURL: "http://router.example"}
+	plugin := Plugin{ID: "github", Name: "GitHub", URL: server.URL + "/mcp", Scopes: []string{"repo"}}
+	// No registration endpoint and no env client, so the login says what is missing
+	// rather than reaching GitHub's authorize page without a client.
+	_, err := auth.StartAuthorize(context.Background(), plugin, "")
+	s.ErrorContains(err, "GITHUB_MCP_CLIENT_ID")
+
+	s.T().Setenv("GITHUB_MCP_CLIENT_ID", "gh-app")
+	pending, err := auth.StartAuthorize(context.Background(), plugin, "")
+	s.Require().NoError(err)
+	s.Equal("https://github.com/login/oauth/access_token", pending.TokenEndpoint)
+	s.Contains(pending.AuthorizeURL, "https://github.com/login/oauth/authorize?")
+	s.Contains(pending.AuthorizeURL, "client_id=gh-app")
+	s.Contains(pending.AuthorizeURL, "scope=repo")
+}
+
+func (s *OAuthSuite) TestADiscoveryMissWithNeitherDocumentIsReported() {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	auth := &Auth{HTTP: server.Client(), PublicURL: "http://router.example"}
+	_, err := auth.StartAuthorize(context.Background(),
+		Plugin{ID: "carrier-pigeon", Name: "Pigeon", URL: server.URL + "/mcp"}, "")
+
+	s.ErrorContains(err, "oauth discovery")
+}
+
 func (s *OAuthSuite) TestExchangeStoresTheAccessToken() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {

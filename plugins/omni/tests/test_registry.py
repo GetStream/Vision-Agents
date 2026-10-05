@@ -43,18 +43,22 @@ class TestProviderRegistry:
             name: registry.get(name).channels
             for name in (
                 Provider.SLACK,
+                Provider.TEAMS,
                 Provider.WHATSAPP,
                 Provider.GOOGLE_RBM,
                 Provider.TWILIO,
+                Provider.TELNYX,
                 Provider.LINQ,
             )
         }
 
         assert carried == {
             "slack": {Channel.SLACK},
+            "teams": {Channel.TEAMS},
             "whatsapp": {Channel.WHATSAPP},
             "google_rbm": {Channel.RCS},
             "twilio": {Channel.SMS, Channel.WHATSAPP, Channel.RCS},
+            "telnyx": {Channel.SMS},
             "linq": {Channel.IMESSAGE, Channel.RCS, Channel.SMS},
         }
 

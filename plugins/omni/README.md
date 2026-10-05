@@ -1,6 +1,6 @@
 # Omni Plugin
 
-Slack, WhatsApp, RCS, SMS and iMessage messages as Stream Chat messages, so an agent
+Slack, Teams, WhatsApp, RCS, SMS and iMessage messages as Stream Chat messages, so an agent
 answers every channel from one Stream channel per conversation.
 
 A channel can be carried by more than one provider. Each provider reads its webhook bodies
@@ -11,9 +11,11 @@ message records the provider it came through.
 | Provider     | Channels              | `parse` reads                                | `render` bodies are sent to                          |
 | ------------ | --------------------- | -------------------------------------------- | ---------------------------------------------------- |
 | `slack`      | Slack                 | Events API `event_callback`                  | `chat.postMessage`                                   |
+| `teams`      | Teams                 | Bot Framework `message` activity             | `POST {serviceUrl}/v3/conversations/{id}/activities` |
 | `whatsapp`   | WhatsApp              | Cloud API webhook                            | `POST /{phone-number-id}/messages`                   |
 | `google_rbm` | RCS                   | Google RBM webhook or Pub/Sub push           | `POST /v1/phones/{phone}/agentMessages?messageId=…`  |
 | `twilio`     | SMS, WhatsApp, RCS    | Twilio incoming message webhook form         | `POST /2010-04-01/Accounts/{sid}/Messages.json` form |
+| `telnyx`     | SMS                   | Telnyx `message.received` webhook            | `POST /v2/messages`                                  |
 | `linq`       | iMessage, RCS, SMS    | Linq v3 webhook, version `2026-02-03`        | `POST /api/partner/v3/chats/{chat_id}/messages`      |
 
 ## Installation

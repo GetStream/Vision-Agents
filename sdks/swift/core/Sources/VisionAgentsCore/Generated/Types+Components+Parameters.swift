@@ -11,26 +11,5 @@ import struct Foundation.Date
 #endif
 extension Components {
     /// Types generated from the `#/components/parameters` section of the OpenAPI document.
-    internal enum Parameters {
-        /// The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
-        ///
-        /// - Remark: Generated from `#/components/parameters/Cursor`.
-        internal typealias Cursor = Swift.String
-        /// Up to 1000. Omitted is 200.
-        ///
-        /// - Remark: Generated from `#/components/parameters/ItemLimit`.
-        internal typealias ItemLimit = Swift.Int
-        /// Narrow to one turn's items. Omitted is every turn in the session.
-        ///
-        /// - Remark: Generated from `#/components/parameters/ResponseIDFilter`.
-        internal typealias ResponseIDFilter = Swift.String
-        /// The session, as returned when it was created.
-        ///
-        /// - Remark: Generated from `#/components/parameters/SessionID`.
-        internal typealias SessionID = Swift.String
-        /// Up to 200. Omitted is 25.
-        ///
-        /// - Remark: Generated from `#/components/parameters/SessionLimit`.
-        internal typealias SessionLimit = Swift.Int
-    }
+    internal enum Parameters {}
 }

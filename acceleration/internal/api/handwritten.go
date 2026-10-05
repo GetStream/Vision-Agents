@@ -225,6 +225,45 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "getPluginLogo",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/plugins/{plugin_id}/logo",
+		Summary:     "A plugin's logo",
+		Description: "The image a card uses to show which plugin it is asking about, as an SVG. The path " +
+			"is unauthenticated because what draws it is an `<img>` in a chat client or a browser, " +
+			"which has no credential of this API's to send, and because the catalog is the same " +
+			"built-in list for every customer, so there is nothing of anybody's here.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "plugin_id", In: "path", Description: "A built-in catalog id such as slack or linear.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The logo", Content: map[string]*huma.MediaType{"image/svg+xml": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+			"404": {Ref: "#/components/responses/NotFound"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receivePluginEvent",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/plugins/events/{token}",
+		Summary:     "Receive a plugin's MCP event",
+		Description: "Where a plugin's MCP server delivers the events an agent subscribed to, signed " +
+			"with Standard Webhooks. The path is unauthenticated because the server is not a " +
+			"customer: the token names the subscription and its secret signs each delivery. A " +
+			"verification is answered with its challenge, and an event opens a text conversation.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "A verification's challenge, echoed, or an event already taken"},
+			"202": {Description: "The event is taken, and a conversation is opening for it"},
+			"401": {Description: "The delivery is not signed with the subscription's secret"},
+			"410": {Description: "There is no such subscription any more; stop delivering to it"},
+			"413": {Description: "The delivery is over 256 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "listAgentLogs",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/logs",

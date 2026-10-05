@@ -1608,10 +1608,11 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.Require().ErrorContains(err, "memory is unavailable")
 }
 
-func (s *SessionSuite) TestTextSessionDoesNotAcquireAnImplicitSubagent() {
+func (s *SessionSuite) TestTextSessionThinksOnItsOwnModel() {
 	s.thinks = true
 	s.manages()
-	created := s.writes(Spec{})
-	s.Empty(created.Spec().SubagentTarget)
-	s.Empty(row(created).Subagent)
+	created := s.writes(Spec{SubagentTarget: defaultSubagentTarget})
+	s.Equal(created.Spec().LLMTarget, created.Spec().SubagentTarget)
+	s.NotEqual(defaultSubagentTarget, row(created).Subagent)
+	s.Equal(created.Spec().LLMTarget, row(created).Subagent)
 }

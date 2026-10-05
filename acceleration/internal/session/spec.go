@@ -176,6 +176,11 @@ type Spec struct {
 	// UserPlugins are hosted MCP servers the caller reaches with their own account, named
 	// from the catalog. A session with no caller is offered none of them.
 	UserPlugins []string
+	// MCPServers are MCP servers outside the catalog, opened by their URL with no login.
+	MCPServers []store.MCPServer
+	// ServerInstructions are what those servers said at initialize about using their
+	// tools, added after Instructions. The session fills it in once they are open.
+	ServerInstructions string
 	// KnowledgeNamespace is what the agent may look things up in. Empty means it knows
 	// only what it was told.
 	KnowledgeNamespace string
@@ -263,6 +268,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
 		UserPlugins:        config.UserPlugins,
+		MCPServers:         config.MCPServers,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
 		KnowledgeNamespace: config.KnowledgeNamespace,
@@ -359,6 +365,11 @@ func (s *Spec) Normalize() error {
 	if s.LLMTarget == "" && !s.Native() {
 		s.LLMTarget = defaultLLMTarget
 	}
+	// A text session runs on one model. Nobody is waiting on a voice while it thinks, so
+	// the skills it hands over run on the model holding the conversation.
+	if s.Text {
+		s.SubagentTarget = s.LLMTarget
+	}
 	if s.ControllerTarget == "" && !s.Native() {
 		s.ControllerTarget = defaultControllerTarget
 	}
@@ -447,13 +458,17 @@ func (s Spec) LLMOverwrites() options.LLM {
 // prompt is what the agent is told to be. An agent that placed the call is told how to get
 // through whatever answers, ahead of whatever it was told to do once it has.
 func (s Spec) prompt() string {
-	if !s.Navigating {
-		return s.Instructions
+	var parts []string
+	if s.Navigating {
+		parts = append(parts, agent.NavigatingInstructions)
 	}
-	if s.Instructions == "" {
-		return agent.NavigatingInstructions
+	if s.Instructions != "" {
+		parts = append(parts, s.Instructions)
 	}
-	return agent.NavigatingInstructions + "\n\n" + s.Instructions
+	if s.ServerInstructions != "" {
+		parts = append(parts, s.ServerInstructions)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // duplex is how the agent listens and talks at the same time.

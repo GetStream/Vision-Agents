@@ -18,7 +18,7 @@ type AgentConfigPatch struct {
 	Voice              *string            `json:"voice,omitempty"`
 	Speed              *float64           `json:"speed,omitempty" minimum:"0" doc:"The voice's rate of delivery, 1 being its own. Zero leaves it there."`
 	Llm                *string            `json:"llm,omitempty"`
-	Subagent           *string            `json:"subagent,omitempty"`
+	ThinkingLlm        *string            `json:"thinking_llm,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
 	Search             *string            `json:"search,omitempty"`
 	Instructions       *string            `json:"instructions,omitempty"`
 	Greeting           *string            `json:"greeting,omitempty"`
@@ -26,6 +26,8 @@ type AgentConfigPatch struct {
 	Skills             *[]string          `json:"skills,omitempty"`
 	Plugins            *[]string          `json:"plugins,omitempty"`
 	UserPlugins        *[]string          `json:"user_plugins,omitempty"`
+	PluginEvents       *[]PluginEvent     `json:"plugin_events,omitempty" maxItems:"32"`
+	McpServers         *[]McpServer       `json:"mcp_servers,omitempty" maxItems:"16"`
 	Keyterms           *[]string          `json:"keyterms,omitempty"`
 	VisibleTools       *[]string          `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
 	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
@@ -136,7 +138,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Voice = override(config.Voice, patch.Voice)
 	config.Speed = override(config.Speed, patch.Speed)
 	config.LLM = override(config.LLM, patch.Llm)
-	config.Subagent = override(config.Subagent, patch.Subagent)
+	config.Subagent = override(config.Subagent, patch.ThinkingLlm)
 	config.Search = override(config.Search, patch.Search)
 	config.Instructions = override(config.Instructions, patch.Instructions)
 	config.Greeting = override(config.Greeting, patch.Greeting)
@@ -144,6 +146,12 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Skills = override(config.Skills, patch.Skills)
 	config.Plugins = override(config.Plugins, patch.Plugins)
 	config.UserPlugins = override(config.UserPlugins, patch.UserPlugins)
+	if patch.PluginEvents != nil {
+		config.PluginEvents = pluginEventsOf(patch.PluginEvents)
+	}
+	if patch.McpServers != nil {
+		config.MCPServers = mcpServersOf(patch.McpServers)
+	}
 	if patch.Keyterms != nil {
 		config.Keyterms = keytermsOf(patch.Keyterms)
 	}
@@ -164,6 +172,15 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		config.VideoSource = override(config.VideoSource, patch.Video.Source)
 		config.VideoMaxFrames = override(config.VideoMaxFrames, patch.Video.MaxFrames)
 	}
+	if message, ok := textThinkingComplaint(&config, patch.ThinkingLlm); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := pluginEventsComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := mcpServersComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 	// The config no longer matches the directory last synced onto it, so the next sync of
 	// that directory writes it again rather than finding nothing changed.
 	config.SyncHash = ""
@@ -171,5 +188,6 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
+	s.pluginEvents.Changed(customerID, config.ID)
 	return &agentConfigResponse{Body: agentConfigOf(config)}, nil
 }

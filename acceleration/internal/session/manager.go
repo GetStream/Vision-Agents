@@ -374,6 +374,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 	mcp, pluginTools := attachPlugins(ctx, spec, m.options.Store, m.logger)
 	tools = append(tools, pluginTools...)
+	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
+	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
 	if mcp != nil {
 		runner = &pluginRunner{mcp: mcp, next: runner}

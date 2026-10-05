@@ -20,6 +20,7 @@ class Plugin:
         category (str):
         description (str):
         id (str):
+        logo_url (str): Where this deployment serves the plugin's logo, as an SVG needing no credential.
         name (str):
         instance_hint (str | Unset):
         instance_required (bool | Unset):
@@ -28,6 +29,7 @@ class Plugin:
     category: str
     description: str
     id: str
+    logo_url: str
     name: str
     instance_hint: str | Unset = UNSET
     instance_required: bool | Unset = UNSET
@@ -39,6 +41,8 @@ class Plugin:
         description = self.description
 
         id = self.id
+
+        logo_url = self.logo_url
 
         name = self.name
 
@@ -53,6 +57,7 @@ class Plugin:
                 "category": category,
                 "description": description,
                 "id": id,
+                "logo_url": logo_url,
                 "name": name,
             }
         )
@@ -72,6 +77,8 @@ class Plugin:
 
         id = d.pop("id")
 
+        logo_url = d.pop("logo_url")
+
         name = d.pop("name")
 
         instance_hint = d.pop("instance_hint", UNSET)
@@ -82,6 +89,7 @@ class Plugin:
             category=category,
             description=description,
             id=id,
+            logo_url=logo_url,
             name=name,
             instance_hint=instance_hint,
             instance_required=instance_required,

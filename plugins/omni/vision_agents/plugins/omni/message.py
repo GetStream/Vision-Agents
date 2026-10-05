@@ -10,6 +10,7 @@ class Channel(str, Enum):
     """Where a message is written and read."""
 
     SLACK = "slack"
+    TEAMS = "teams"
     WHATSAPP = "whatsapp"
     RCS = "rcs"
     SMS = "sms"

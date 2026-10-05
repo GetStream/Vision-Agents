@@ -293,6 +293,26 @@ func TestTheDeclarationSaysWhoConnectsEachPlugin(t *testing.T) {
 	}
 }
 
+func TestTheDeclarationSaysWhichPluginEventsTheAgentTakes(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nplugins: [sentry]\nplugin_events:\n"+
+		"  - plugin: sentry\n    event: issue.created\n    arguments:\n      project: web\n"+
+		"    instructions: Triage it.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := folder.Settings.PluginEvents
+	if len(events) != 1 {
+		t.Fatalf("the plugin events read as %+v", events)
+	}
+	if events[0].Plugin != "sentry" || events[0].Event != "issue.created" ||
+		events[0].Arguments["project"] != "web" || events[0].Instructions != "Triage it." {
+		t.Errorf("the plugin event read as %+v", events[0])
+	}
+}
+
 func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 	for _, declaration := range []string{
 		"name: jean\nlmm: openai/gpt-5.6\n",
@@ -301,6 +321,7 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 		"sandbox_options:\n  timeout: soon\n",
 		"sandbox_options:\n  memory: 4\n",
 		"keyterms: Vision Agents\n",
+		"plugin_events:\n  - plugin: sentry\n    name: issue.created\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", declaration)

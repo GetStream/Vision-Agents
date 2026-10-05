@@ -107,38 +107,38 @@ func (e AgentMode) Valid() bool {
 
 // Call is the Call schema.
 type Call struct {
-	AgentId      string             `json:"agent_id" doc:"Which agent ran it, and where its transcript is kept."`
-	CallId       string             `json:"call_id"`
-	CampaignId   *string            `json:"campaign_id,omitempty"`
-	ConfigId     *string            `json:"config_id,omitempty"`
-	ContactId    *string            `json:"contact_id,omitempty"`
-	Direction    CallDirection      `json:"direction" enum:"inbound,outbound"`
-	EndedAt      *time.Time         `json:"ended_at,omitempty" doc:"Absent while the call is still running."`
-	FromNumber   *string            `json:"from_number,omitempty"`
-	Id           string             `json:"id" doc:"The session that ran the call, which is what it is held by."`
-	Instructions *string            `json:"instructions,omitempty" doc:"What the agent was told to be on this call."`
-	Llm          *string            `json:"llm,omitempty" doc:"The target that held the conversation."`
-	LlmUsed      *string            `json:"llm_used,omitempty" doc:"The provider/model that held the conversation."`
-	Mode         *SessionMode       `json:"mode,omitempty"`
-	ReviewNotes  *string            `json:"review_notes,omitempty"`
-	ReviewScore  *int               `json:"review_score,omitempty" doc:"How well the agent handled it, from 1 to 5."`
-	Skills       *[]string          `json:"skills,omitempty" doc:"What the fast model could hand to the subagent. The instructions behind each name are in the skill registry."`
-	StartedAt    time.Time          `json:"started_at"`
-	Sts          *string            `json:"sts,omitempty" doc:"The speech-to-speech target, for a native call, on the same terms as stt."`
-	StsUsed      *string            `json:"sts_used,omitempty" doc:"The provider/model that held a native call, on the same terms as stt_used."`
-	Stt          *string            `json:"stt,omitempty" doc:"The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows."`
-	SttUsed      *string            `json:"stt_used,omitempty" doc:"The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over."`
-	Subagent     *string            `json:"subagent,omitempty" doc:"The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered."`
-	SubagentUsed *string            `json:"subagent_used,omitempty" doc:"The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached."`
-	Summary      *string            `json:"summary,omitempty" doc:"What a model made of the call, written once it was over."`
-	Tags         *map[string]string `json:"tags,omitempty"`
-	ToNumber     *string            `json:"to_number,omitempty"`
-	Tts          *string            `json:"tts,omitempty" doc:"The voice target, on the same terms as stt."`
-	TtsUsed      *string            `json:"tts_used,omitempty" doc:"The provider/model that spoke, on the same terms as stt_used."`
-	Usage        *CallUsage         `json:"usage,omitempty"`
-	UserId       *string            `json:"user_id,omitempty" doc:"Who the agent spoke to, as the client's own token named them. Empty for a call the customer's backend opened, and for telephony, where the number is the name."`
-	Voice        *string            `json:"voice,omitempty" doc:"The voice the call asked for, in the provider's own terms. Empty means the provider's default."`
-	VoiceUsed    *string            `json:"voice_used,omitempty" doc:"The voice that spoke, which is the provider's default when none was asked for. Known only while the call is running."`
+	AgentId         string             `json:"agent_id" doc:"Which agent ran it, and where its transcript is kept."`
+	CallId          string             `json:"call_id"`
+	CampaignId      *string            `json:"campaign_id,omitempty"`
+	ConfigId        *string            `json:"config_id,omitempty"`
+	ContactId       *string            `json:"contact_id,omitempty"`
+	Direction       CallDirection      `json:"direction" enum:"inbound,outbound"`
+	EndedAt         *time.Time         `json:"ended_at,omitempty" doc:"Absent while the call is still running."`
+	FromNumber      *string            `json:"from_number,omitempty"`
+	Id              string             `json:"id" doc:"The session that ran the call, which is what it is held by."`
+	Instructions    *string            `json:"instructions,omitempty" doc:"What the agent was told to be on this call."`
+	Llm             *string            `json:"llm,omitempty" doc:"The target that held the conversation."`
+	LlmUsed         *string            `json:"llm_used,omitempty" doc:"The provider/model that held the conversation."`
+	Mode            *SessionMode       `json:"mode,omitempty"`
+	ReviewNotes     *string            `json:"review_notes,omitempty"`
+	ReviewScore     *int               `json:"review_score,omitempty" doc:"How well the agent handled it, from 1 to 5."`
+	Skills          *[]string          `json:"skills,omitempty" doc:"What the fast model could hand to the subagent. The instructions behind each name are in the skill registry."`
+	StartedAt       time.Time          `json:"started_at"`
+	Sts             *string            `json:"sts,omitempty" doc:"The speech-to-speech target, for a native call, on the same terms as stt."`
+	StsUsed         *string            `json:"sts_used,omitempty" doc:"The provider/model that held a native call, on the same terms as stt_used."`
+	Stt             *string            `json:"stt,omitempty" doc:"The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows."`
+	SttUsed         *string            `json:"stt_used,omitempty" doc:"The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over."`
+	ThinkingLlm     *string            `json:"thinking_llm,omitempty" doc:"The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too."`
+	ThinkingLlmUsed *string            `json:"thinking_llm_used,omitempty" doc:"The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached."`
+	Summary         *string            `json:"summary,omitempty" doc:"What a model made of the call, written once it was over."`
+	Tags            *map[string]string `json:"tags,omitempty"`
+	ToNumber        *string            `json:"to_number,omitempty"`
+	Tts             *string            `json:"tts,omitempty" doc:"The voice target, on the same terms as stt."`
+	TtsUsed         *string            `json:"tts_used,omitempty" doc:"The provider/model that spoke, on the same terms as stt_used."`
+	Usage           *CallUsage         `json:"usage,omitempty"`
+	UserId          *string            `json:"user_id,omitempty" doc:"Who the agent spoke to, as the client's own token named them. Empty for a call the customer's backend opened, and for telephony, where the number is the name."`
+	Voice           *string            `json:"voice,omitempty" doc:"The voice the call asked for, in the provider's own terms. Empty means the provider's default."`
+	VoiceUsed       *string            `json:"voice_used,omitempty" doc:"The voice that spoke, which is the provider's default when none was asked for. Known only while the call is running."`
 }
 
 func (*Call) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -730,7 +730,7 @@ type Session struct {
 	State            SessionState            `json:"state"`
 	Sts              *string                 `json:"sts,omitempty" doc:"The provider and model holding a native conversation, once routing has picked one."`
 	Stt              *string                 `json:"stt,omitempty" doc:"The provider and model transcribing, once somebody has been heard."`
-	Subagent         *string                 `json:"subagent,omitempty" doc:"The provider and model delegated work runs on."`
+	ThinkingLlm      *string                 `json:"thinking_llm,omitempty" doc:"The provider and model delegated work runs on."`
 	Text             *bool                   `json:"text,omitempty" doc:"The conversation is held in writing rather than on a call."`
 	Title            *string                 `json:"title,omitempty"`
 	Tts              *string                 `json:"tts,omitempty" doc:"The provider and model speaking."`

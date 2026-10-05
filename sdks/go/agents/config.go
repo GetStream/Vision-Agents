@@ -38,7 +38,7 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	setString(&wanted.Instructions, a.options.Instructions)
 	setString(&wanted.Guardrail, a.options.Guardrail)
 	harness, subagent, sandbox := a.options.Harness.stored()
-	wanted.Harness, wanted.Subagent, wanted.Sandbox = harness, subagent, sandbox
+	wanted.Harness, wanted.ThinkingLlm, wanted.Sandbox = harness, subagent, sandbox
 	if len(a.options.CostTracking) > 0 {
 		tags := a.options.CostTracking
 		wanted.Tags = &tags
@@ -116,7 +116,7 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 		body.Harness = harness
 	}
 	if subagent != nil {
-		body.Subagent = subagent
+		body.ThinkingLlm = subagent
 	}
 	if sandbox != nil {
 		body.Sandbox = sandbox
@@ -176,7 +176,7 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 			body.Dispatch.Text = &setting
 		}
 	}
-	setString(&body.Subagent, settings.Subagent)
+	setString(&body.ThinkingLlm, settings.ThinkingLLM)
 	setString(&body.Search, settings.Search)
 	setString(&body.Greeting, settings.Greeting)
 	if settings.Sandbox != "" {
@@ -196,6 +196,28 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	}
 	if len(settings.UserPlugins) > 0 {
 		body.UserPlugins = &settings.UserPlugins
+	}
+	if len(settings.PluginEvents) > 0 {
+		events := make([]acceleration.PluginEvent, 0, len(settings.PluginEvents))
+		for _, event := range settings.PluginEvents {
+			declared := acceleration.PluginEvent{Plugin: event.Plugin, Event: event.Event}
+			if len(event.Arguments) > 0 {
+				arguments := event.Arguments
+				declared.Arguments = &arguments
+			}
+			if event.Instructions != "" {
+				declared.Instructions = &event.Instructions
+			}
+			events = append(events, declared)
+		}
+		body.PluginEvents = &events
+	}
+	if len(settings.MCPServers) > 0 {
+		servers := make([]acceleration.McpServer, 0, len(settings.MCPServers))
+		for _, server := range settings.MCPServers {
+			servers = append(servers, acceleration.McpServer{Name: server.Name, Url: server.URL})
+		}
+		body.McpServers = &servers
 	}
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms

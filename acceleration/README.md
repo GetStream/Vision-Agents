@@ -734,8 +734,10 @@ skills are offered by name and description only, and their instructions are read
 when one is used, so an edit reaches the next use rather than the next session.
 
 The harness is agent config, never session config: `harness` (only `default` today),
-`subagent`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
-`createSession` does not take them. A client that wants a sandbox of its own declares it as a
+`thinking_llm`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
+`createSession` does not take them. Only a voice agent names a `thinking_llm`: a text agent
+runs everything, skills included, on its `llm`, and a config that gives one a thinking model
+is refused. A client that wants a sandbox of its own declares it as a
 tool instead.
 
 - **The model asks for help mid-sentence.** It writes `<ask skill="think">…</ask>` into its

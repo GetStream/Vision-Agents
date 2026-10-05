@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from ..models.agent_dispatch import AgentDispatch
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
+    from ..models.mcp_server import McpServer
+    from ..models.plugin_event import PluginEvent
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
     from ..models.simulation_declaration import SimulationDeclaration
@@ -49,9 +51,13 @@ class SyncAgentRequest:
             knowledge_urls (list[KnowledgeUrlDeclaration] | Unset): The pages the directory's knowledge/urls.yaml declares.
                 They are subscribed to in the same knowledge base as the files, so one lookup covers both.
             llm (str | Unset):
+            mcp_servers (list[McpServer] | Unset): MCP servers outside the plugin catalog, opened by their URL with no
+                login.
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
                 speech target and a session created from it needs no call to join.
+            plugin_events (list[PluginEvent] | Unset): MCP events the agent subscribes to on its plugins, each opening a
+                text conversation when it arrives.
             plugins (list[str] | Unset):
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
@@ -67,8 +73,8 @@ class SyncAgentRequest:
             sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.
                 Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
             stt (str | Unset):
-            subagent (str | Unset):
             tags (SyncAgentRequestTags | Unset):
+            thinking_llm (str | Unset): Only a voice agent names one: a text agent runs everything on its llm.
             tts (str | Unset):
             user_plugins (list[str] | Unset): Plugins each end user connects with their own account, from the conversation,
                 the first time the agent needs one.
@@ -87,7 +93,9 @@ class SyncAgentRequest:
     knowledge: list[KnowledgeDocument] | Unset = UNSET
     knowledge_urls: list[KnowledgeUrlDeclaration] | Unset = UNSET
     llm: str | Unset = UNSET
+    mcp_servers: list[McpServer] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
+    plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
@@ -97,8 +105,8 @@ class SyncAgentRequest:
     speed: float | Unset = UNSET
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
-    subagent: str | Unset = UNSET
     tags: SyncAgentRequestTags | Unset = UNSET
+    thinking_llm: str | Unset = UNSET
     tts: str | Unset = UNSET
     user_plugins: list[str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
@@ -144,9 +152,23 @@ class SyncAgentRequest:
 
         llm = self.llm
 
+        mcp_servers: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.mcp_servers, Unset):
+            mcp_servers = []
+            for mcp_servers_item_data in self.mcp_servers:
+                mcp_servers_item = mcp_servers_item_data.to_dict()
+                mcp_servers.append(mcp_servers_item)
+
         mode: str | Unset = UNSET
         if not isinstance(self.mode, Unset):
             mode = self.mode.value
+
+        plugin_events: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.plugin_events, Unset):
+            plugin_events = []
+            for plugin_events_item_data in self.plugin_events:
+                plugin_events_item = plugin_events_item_data.to_dict()
+                plugin_events.append(plugin_events_item)
 
         plugins: list[str] | Unset = UNSET
         if not isinstance(self.plugins, Unset):
@@ -182,11 +204,11 @@ class SyncAgentRequest:
 
         stt = self.stt
 
-        subagent = self.subagent
-
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
+
+        thinking_llm = self.thinking_llm
 
         tts = self.tts
 
@@ -226,8 +248,12 @@ class SyncAgentRequest:
             field_dict["knowledge_urls"] = knowledge_urls
         if llm is not UNSET:
             field_dict["llm"] = llm
+        if mcp_servers is not UNSET:
+            field_dict["mcp_servers"] = mcp_servers
         if mode is not UNSET:
             field_dict["mode"] = mode
+        if plugin_events is not UNSET:
+            field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
         if sandbox is not UNSET:
@@ -246,10 +272,10 @@ class SyncAgentRequest:
             field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
-        if subagent is not UNSET:
-            field_dict["subagent"] = subagent
         if tags is not UNSET:
             field_dict["tags"] = tags
+        if thinking_llm is not UNSET:
+            field_dict["thinking_llm"] = thinking_llm
         if tts is not UNSET:
             field_dict["tts"] = tts
         if user_plugins is not UNSET:
@@ -268,6 +294,8 @@ class SyncAgentRequest:
         from ..models.knowledge_url_declaration import (
             KnowledgeUrlDeclaration,
         )
+        from ..models.mcp_server import McpServer
+        from ..models.plugin_event import PluginEvent
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
         from ..models.simulation_declaration import (
@@ -327,12 +355,30 @@ class SyncAgentRequest:
 
         llm = d.pop("llm", UNSET)
 
+        _mcp_servers = d.pop("mcp_servers", UNSET)
+        mcp_servers: list[McpServer] | Unset = UNSET
+        if _mcp_servers is not UNSET:
+            mcp_servers = []
+            for mcp_servers_item_data in _mcp_servers:
+                mcp_servers_item = McpServer.from_dict(mcp_servers_item_data)
+
+                mcp_servers.append(mcp_servers_item)
+
         _mode = d.pop("mode", UNSET)
         mode: AgentMode | Unset
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
             mode = AgentMode(_mode)
+
+        _plugin_events = d.pop("plugin_events", UNSET)
+        plugin_events: list[PluginEvent] | Unset = UNSET
+        if _plugin_events is not UNSET:
+            plugin_events = []
+            for plugin_events_item_data in _plugin_events:
+                plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
+
+                plugin_events.append(plugin_events_item)
 
         plugins = cast(list[str], d.pop("plugins", UNSET))
 
@@ -378,14 +424,14 @@ class SyncAgentRequest:
 
         stt = d.pop("stt", UNSET)
 
-        subagent = d.pop("subagent", UNSET)
-
         _tags = d.pop("tags", UNSET)
         tags: SyncAgentRequestTags | Unset
         if isinstance(_tags, Unset):
             tags = UNSET
         else:
             tags = SyncAgentRequestTags.from_dict(_tags)
+
+        thinking_llm = d.pop("thinking_llm", UNSET)
 
         tts = d.pop("tts", UNSET)
 
@@ -412,7 +458,9 @@ class SyncAgentRequest:
             knowledge=knowledge,
             knowledge_urls=knowledge_urls,
             llm=llm,
+            mcp_servers=mcp_servers,
             mode=mode,
+            plugin_events=plugin_events,
             plugins=plugins,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
@@ -422,8 +470,8 @@ class SyncAgentRequest:
             speed=speed,
             sts=sts,
             stt=stt,
-            subagent=subagent,
             tags=tags,
+            thinking_llm=thinking_llm,
             tts=tts,
             user_plugins=user_plugins,
             video=video,

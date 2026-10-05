@@ -47,9 +47,10 @@ The agent's transcripts, conversation and events all work as they do locally, be
 events the backend sends back are recorded into the same places.
 
 The harness (the subagent, its sandbox and its skills) is agent config, never session
-config: declare `subagent:`, `sandbox:` and `skills/` in the agent's directory, or pass
-`subagent=` and `vm=` to `define_agent`. `sandbox: daytona` gives the subagent somewhere to
-run code it writes, and needs `DAYTONA_API_KEY` on the backend.
+config: declare `thinking_llm:`, `sandbox:` and `skills/` in the agent's directory, or pass
+`thinking_llm=` and `vm=` to `define_agent`. `sandbox: daytona` gives the subagent somewhere to
+run code it writes, and needs `DAYTONA_API_KEY` on the backend. Only a voice agent names a
+`thinking_llm`: a text agent runs everything, skills included, on its `llm`.
 
 ## An agent as a directory
 
@@ -71,7 +72,7 @@ name: customer_support
 description: Support for a subscription business.
 mode: voice
 llm: llm-fast
-subagent: llm-thinking
+thinking_llm: llm-thinking
 stt: stt-fast
 tts: tts-fast
 voice: aurora
@@ -124,7 +125,7 @@ config = await stream.define_agent(
     name="docs-agent",
     instructions="Answer questions about the documentation.",
     llm="llm-fast",
-    subagent="llm-smart",
+    thinking_llm="llm-smart",
     skills=[Skill(name="explain", description="...", instructions="...")],
     knowledge="docs",
 )
@@ -325,7 +326,7 @@ Keep the conversation on `llm-fast` and put the subagent on a model that can see
 
 ```yaml
 llm: llm-fast
-subagent: vlm
+thinking_llm: vlm
 video:
   max_frames: 1
 ```

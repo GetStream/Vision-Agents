@@ -19,6 +19,7 @@ class PluginConnection:
     logged into yet is not_connected, which is what a dashboard reminds the app to finish.
 
         Attributes:
+            logo_url (str): Where this deployment serves the plugin's logo, as an SVG needing no credential.
             name (str):
             plugin_id (str):
             status (PluginConnectionStatus):
@@ -29,6 +30,7 @@ class PluginConnection:
             instance_url (str | Unset):
     """
 
+    logo_url: str
     name: str
     plugin_id: str
     status: PluginConnectionStatus
@@ -40,6 +42,8 @@ class PluginConnection:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        logo_url = self.logo_url
+
         name = self.name
 
         plugin_id = self.plugin_id
@@ -60,6 +64,7 @@ class PluginConnection:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "logo_url": logo_url,
                 "name": name,
                 "plugin_id": plugin_id,
                 "status": status,
@@ -81,6 +86,8 @@ class PluginConnection:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
+        logo_url = d.pop("logo_url")
+
         name = d.pop("name")
 
         plugin_id = d.pop("plugin_id")
@@ -98,6 +105,7 @@ class PluginConnection:
         instance_url = d.pop("instance_url", UNSET)
 
         plugin_connection = cls(
+            logo_url=logo_url,
             name=name,
             plugin_id=plugin_id,
             status=status,

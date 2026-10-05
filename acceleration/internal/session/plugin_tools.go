@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,37 +18,38 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// attachPlugins opens the MCP servers this config is logged into and returns their tools.
-// A server that will not start is skipped so a broken Slack login does not refuse the call.
+// attachPlugins opens the MCP servers this config is logged into, and the ones it names by
+// URL, and returns their tools. A server that will not start is skipped so a broken Slack
+// login does not refuse the call.
 func attachPlugins(ctx context.Context, spec Spec, db *store.Store, logger *slog.Logger) (*plugins.Runtime, []harness.Tool) {
-	if db == nil || spec.ConfigID == "" {
-		return nil, nil
-	}
-	conns, err := db.ConnectedPlugins(ctx, spec.CustomerID, spec.ConfigID)
-	if err != nil {
-		logger.Warn("not loading plugin connections", "config", spec.ConfigID, "error", err)
-		return nil, nil
-	}
-	if len(conns) == 0 {
-		return nil, nil
-	}
-
-	wanted := make([]plugins.Connection, 0, len(conns))
-	for _, conn := range conns {
-		plugin, ok := plugins.Lookup(conn.PluginID)
-		if !ok {
-			continue
-		}
-		endpoint, err := plugin.Endpoint(conn.InstanceURL)
+	var wanted []plugins.Connection
+	if db != nil && spec.ConfigID != "" {
+		conns, err := db.ConnectedPlugins(ctx, spec.CustomerID, spec.ConfigID)
 		if err != nil {
-			logger.Warn("plugin has no endpoint", "plugin", conn.PluginID, "error", err)
-			continue
+			logger.Warn("not loading plugin connections", "config", spec.ConfigID, "error", err)
 		}
-		wanted = append(wanted, plugins.Connection{
-			PluginID:    conn.PluginID,
-			Endpoint:    endpoint,
-			AccessToken: freshToken(ctx, db, &conn, logger),
-		})
+		for _, conn := range conns {
+			plugin, ok := plugins.Lookup(conn.PluginID)
+			if !ok {
+				continue
+			}
+			endpoint, err := plugin.Endpoint(conn.InstanceURL)
+			if err != nil {
+				logger.Warn("plugin has no endpoint", "plugin", conn.PluginID, "error", err)
+				continue
+			}
+			wanted = append(wanted, plugins.Connection{
+				PluginID:    conn.PluginID,
+				Endpoint:    endpoint,
+				AccessToken: FreshToken(ctx, db, &conn, logger),
+			})
+		}
+	}
+	for _, server := range spec.MCPServers {
+		wanted = append(wanted, plugins.Connection{PluginID: server.Name, Endpoint: server.URL})
+	}
+	if len(wanted) == 0 {
+		return nil, nil
 	}
 
 	runtime, tools, failures := plugins.Open(ctx, wanted, nil)
@@ -57,9 +59,32 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, logger *slog
 	return runtime, tools
 }
 
-// freshToken is a login's access token, renewed first when it is about to expire. A
+// serverInstructionsLimit caps what one server named by URL adds to the agent's
+// instructions, since nobody vetted how much it says.
+const serverInstructionsLimit = 4000
+
+// serverInstructions are what the servers a config names by URL said about using their
+// tools, for the agent's instructions. Catalog plugins are left out: their tools are
+// described well enough to use without.
+func serverInstructions(servers []store.MCPServer, mcp *plugins.Runtime) string {
+	var said []string
+	for _, server := range servers {
+		text := mcp.Instructions(server.Name)
+		if text == "" {
+			continue
+		}
+		if len(text) > serverInstructionsLimit {
+			text = strings.ToValidUTF8(text[:serverInstructionsLimit], "")
+		}
+		said = append(said, fmt.Sprintf("The %s tools (%s) come with these instructions from their server:\n\n%s",
+			server.Name, plugins.Prefix(server.Name, "*"), text))
+	}
+	return strings.Join(said, "\n\n")
+}
+
+// FreshToken is a login's access token, renewed first when it is about to expire. A
 // renewal that fails keeps the old one, which the server is then the judge of.
-func freshToken(ctx context.Context, db *store.Store, conn *store.PluginConnection, logger *slog.Logger) string {
+func FreshToken(ctx context.Context, db *store.Store, conn *store.PluginConnection, logger *slog.Logger) string {
 	if conn.ExpiresAt == nil || time.Until(*conn.ExpiresAt) >= time.Minute || conn.RefreshToken == "" {
 		return conn.AccessToken
 	}
@@ -213,7 +238,7 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 	runtime, tools, failures := plugins.Open(ctx, []plugins.Connection{{
 		PluginID:    plugin.ID,
 		Endpoint:    endpoint,
-		AccessToken: freshToken(ctx, r.db, &conn, r.logger),
+		AccessToken: FreshToken(ctx, r.db, &conn, r.logger),
 	}}, nil)
 	if runtime == nil {
 		return nil, nil, "", errors.Join(failures...)
@@ -247,7 +272,7 @@ func (r *userPluginRunner) authorize(ctx context.Context, plugin plugins.Plugin)
 		return "", err
 	}
 	r.logger.Info("asked an end user to connect a plugin", "plugin", plugin.ID, "config", r.configID)
-	return plugins.AuthorizationResult(plugin, pending.AuthorizeURL), nil
+	return plugins.AuthorizationResult(plugin, pending.AuthorizeURL, r.auth.LogoURL(plugin.ID)), nil
 }
 
 // Close drops every MCP session the caller opened.

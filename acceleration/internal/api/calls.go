@@ -461,7 +461,7 @@ func callOf(call store.Call) Call {
 	rendered.Tts = optional(call.TTS)
 	rendered.Sts = optional(call.STS)
 	rendered.Llm = optional(call.LLM)
-	rendered.Subagent = optional(call.Subagent)
+	rendered.ThinkingLlm = optional(call.Subagent)
 	rendered.Voice = optional(call.Voice)
 	mode := SessionModeCascade
 	if call.STS != "" {
@@ -499,7 +499,7 @@ func (s *Server) attachUsed(ctx context.Context, customerID string, call store.C
 			rendered.Tts = optional(spec.TTSTarget)
 			rendered.Llm = optional(spec.LLMTarget)
 			rendered.Sts = optional(spec.STSTarget)
-			rendered.Subagent = optional(spec.SubagentTarget)
+			rendered.ThinkingLlm = optional(spec.SubagentTarget)
 			asked, voiceUsed := found.Voice()
 			rendered.Voice = optional(asked)
 			rendered.VoiceUsed = optional(voiceUsed)
@@ -509,7 +509,7 @@ func (s *Server) attachUsed(ctx context.Context, customerID string, call store.C
 			rendered.SttUsed = optional(stt)
 			rendered.LlmUsed = optional(llm)
 			rendered.TtsUsed = optional(tts)
-			rendered.SubagentUsed = optional(subagent)
+			rendered.ThinkingLlmUsed = optional(subagent)
 			rendered.StsUsed = optional(found.Speech())
 		}
 	}
@@ -531,14 +531,14 @@ func (s *Server) attachUsed(ctx context.Context, customerID string, call store.C
 		rendered.TtsUsed = firstUsed(rendered.TtsUsed, matchUsed(value(rendered.Tts), namesOf(used, "tts"), s.candidateNames(ctx, routing.TTS, value(rendered.Tts))))
 		rendered.LlmUsed = firstUsed(rendered.LlmUsed, matchUsed(value(rendered.Llm), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.Llm))))
 	}
-	rendered.SubagentUsed = firstUsed(rendered.SubagentUsed, matchUsed(value(rendered.Subagent), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.Subagent))))
+	rendered.ThinkingLlmUsed = firstUsed(rendered.ThinkingLlmUsed, matchUsed(value(rendered.ThinkingLlm), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.ThinkingLlm))))
 }
 
 func filledUsed(call *Call) bool {
 	if value(call.Sts) != "" {
-		return call.StsUsed != nil && (value(call.Subagent) == "" || call.SubagentUsed != nil)
+		return call.StsUsed != nil && (value(call.ThinkingLlm) == "" || call.ThinkingLlmUsed != nil)
 	}
-	return call.SttUsed != nil && call.TtsUsed != nil && call.LlmUsed != nil && call.SubagentUsed != nil
+	return call.SttUsed != nil && call.TtsUsed != nil && call.LlmUsed != nil && call.ThinkingLlmUsed != nil
 }
 
 func firstUsed(existing *string, used string) *string {

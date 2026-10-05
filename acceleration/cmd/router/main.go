@@ -42,6 +42,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
@@ -685,6 +686,23 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer campaigns.Close()
 	}
 
+	// A plugin event opens a conversation and is subscribed to from a row, so events need
+	// both. Elsewhere a config's plugin_events are stored and nothing subscribes to them.
+	var events *pluginevents.Service
+	if pgStore != nil && sessions != nil {
+		events, err = pluginevents.New(pluginevents.Options{
+			Store:    pgStore,
+			Sessions: sessions,
+			Auth:     &plugins.Auth{PublicURL: settings.PublicURL, DashboardURL: settings.DashboardURL},
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		events.Start()
+		defer events.Close()
+	}
+
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
 	// where all three are configured. Elsewhere a simulation can be written down but the
 	// path that runs it says why it cannot.
@@ -798,6 +816,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Transcripts:    transcripts,
 		Campaigns:      campaigns,
 		Simulations:    simulations,
+		PluginEvents:   events,
 		Dispatch:       workers,
 		Quota:          limiter,
 		Policies:       policies,

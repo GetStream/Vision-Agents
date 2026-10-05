@@ -98,6 +98,7 @@ class RemoteEvent:
             sees the reply.
         url: What the user opens to connect an account, for `authorization_required`,
             whose `text` says what it connects.
+        image_url: The plugin's logo, for `authorization_required`, to show on the button.
     """
 
     type: RemoteEventType
@@ -112,6 +113,7 @@ class RemoteEvent:
     error: str = ""
     files: list[RemoteFile] = field(default_factory=list)
     url: str = ""
+    image_url: str = ""
 
 
 @dataclass

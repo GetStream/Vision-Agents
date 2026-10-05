@@ -149,28 +149,53 @@ type Settings struct {
 	STT         string `yaml:"stt"`
 	TTS         string `yaml:"tts"`
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
-	STS      *string `yaml:"sts"`
-	Voice    string  `yaml:"voice"`
-	Speed    float64 `yaml:"speed"`
-	LLM      string  `yaml:"llm"`
-	Harness  string  `yaml:"harness"`
-	Subagent string  `yaml:"subagent"`
-	Search   string  `yaml:"search"`
-	Greeting string  `yaml:"greeting"`
-	Sandbox  string  `yaml:"sandbox"`
+	STS     *string `yaml:"sts"`
+	Voice   string  `yaml:"voice"`
+	Speed   float64 `yaml:"speed"`
+	LLM     string  `yaml:"llm"`
+	Harness string  `yaml:"harness"`
+	// ThinkingLLM is the model a voice agent hands its skills to. A text agent runs on its
+	// llm alone, and the router refuses one that names it.
+	ThinkingLLM string `yaml:"thinking_llm"`
+	Search      string `yaml:"search"`
+	Greeting    string `yaml:"greeting"`
+	Sandbox     string `yaml:"sandbox"`
 	// SandboxOptions is how the sandbox is built and how long code may run in it.
 	SandboxOptions *SandboxSettings `yaml:"sandbox_options"`
 	Plugins        []string         `yaml:"plugins"`
 	// UserPlugins are the plugins each end user connects with their own account, in the
 	// conversation, rather than the app once for everybody.
-	UserPlugins []string          `yaml:"user_plugins"`
-	Keyterms    []string          `yaml:"keyterms"`
-	Tags        map[string]string `yaml:"tags"`
-	Video       *VideoSettings    `yaml:"video"`
-	Dispatch    *DispatchSettings `yaml:"dispatch"`
+	UserPlugins []string `yaml:"user_plugins"`
+	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
+	// a text conversation when it arrives.
+	PluginEvents []PluginEventSettings `yaml:"plugin_events"`
+	// MCPServers are MCP servers outside the plugin catalog, which the router opens by
+	// their URL with no login.
+	MCPServers []MCPServerSettings `yaml:"mcp_servers"`
+	Keyterms   []string            `yaml:"keyterms"`
+	Tags       map[string]string   `yaml:"tags"`
+	Video      *VideoSettings      `yaml:"video"`
+	Dispatch   *DispatchSettings   `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
+}
+
+// PluginEventSettings is one MCP event the agent subscribes to on a plugin it names.
+type PluginEventSettings struct {
+	Plugin string `yaml:"plugin"`
+	Event  string `yaml:"event"`
+	// Arguments are the event's filters, as its inputSchema describes them.
+	Arguments map[string]any `yaml:"arguments"`
+	// Instructions say what the agent does with the event when it arrives.
+	Instructions string `yaml:"instructions"`
+}
+
+// MCPServerSettings is an MCP server outside the plugin catalog. Name prefixes its tools,
+// as <name>__<tool>.
+type MCPServerSettings struct {
+	Name string `yaml:"name"`
+	URL  string `yaml:"url"`
 }
 
 // VideoSettings is which video a skill that captures it sees.

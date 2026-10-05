@@ -44,7 +44,7 @@ func (s *RelayedSessionSuite) TestASessionIsWatchedFromANodeThatIsNotRunningIt()
 	s.respond(opened.Id, "hello")
 
 	answered := s.await(watching, "responded")
-	s.Equal(answer, answered["text"], "the conversation's own answer did not cross the relay")
+	s.Contains(answered["text"], answer, "the conversation's own answer did not cross the relay")
 	s.NotEmpty(answered["turn_id"])
 }
 

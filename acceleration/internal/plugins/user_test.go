@@ -12,6 +12,7 @@ import (
 type UserSuite struct {
 	suite.Suite
 	calendar Plugin
+	logo     string
 }
 
 func TestUserSuite(t *testing.T) {
@@ -22,6 +23,7 @@ func (s *UserSuite) SetupTest() {
 	calendar, ok := Lookup("google_calendar")
 	s.Require().True(ok)
 	s.calendar = calendar
+	s.logo = (&Auth{PublicURL: "https://router.example"}).LogoURL(calendar.ID)
 }
 
 func (s *UserSuite) TestEachUserPluginIsOfferedAsTwoToolsWhoseNamesNeedNoLogin() {
@@ -36,7 +38,7 @@ func (s *UserSuite) TestEachUserPluginIsOfferedAsTwoToolsWhoseNamesNeedNoLogin()
 }
 
 func (s *UserSuite) TestTheResultAskingForALoginIsReadBackAsTheAttachment() {
-	result := AuthorizationResult(s.calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=abc&scope=x")
+	result := AuthorizationResult(s.calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=abc&scope=x", s.logo)
 
 	found, ok := RequestedAuthorization("google_calendar__list_tools", result)
 
@@ -46,6 +48,9 @@ func (s *UserSuite) TestTheResultAskingForALoginIsReadBackAsTheAttachment() {
 		PluginID:     "google_calendar",
 		Title:        "Connect Google Calendar",
 		AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth?state=abc&scope=x",
+		Text:         s.calendar.Description,
+		ThumbURL:     s.logo,
+		TitleLink:    "https://accounts.google.com/o/oauth2/v2/auth?state=abc&scope=x",
 	}, found)
 	var read struct {
 		Message string `json:"message"`
@@ -55,7 +60,7 @@ func (s *UserSuite) TestTheResultAskingForALoginIsReadBackAsTheAttachment() {
 }
 
 func (s *UserSuite) TestOnlyThePluginsOwnToolMayAskForItsLogin() {
-	result := AuthorizationResult(s.calendar, "https://accounts.google.com/auth")
+	result := AuthorizationResult(s.calendar, "https://accounts.google.com/auth", s.logo)
 
 	for _, tool := range []string{"sentry__list_tools", "weather", "google_calendar"} {
 		_, ok := RequestedAuthorization(tool, result)
@@ -75,6 +80,42 @@ func (s *UserSuite) TestAnythingButExactlyTheResultAsksForNothing() {
 		_, ok := RequestedAuthorization("google_calendar__list_tools", result)
 		s.False(ok, result)
 	}
+}
+
+func (s *UserSuite) TestTheCardMayOnlyShowWhatTheCatalogSaysAboutThatPlugin() {
+	asked := Authorization{
+		Type:         AuthorizationType,
+		PluginID:     "google_calendar",
+		Title:        "Connect Google Calendar",
+		AuthorizeURL: "https://accounts.google.com/auth",
+	}
+	s.True(ValidAuthorization(asked), "the fields a card adds are all optional")
+
+	for name, wrong := range map[string]func(*Authorization){
+		"an image of the server's own choosing": func(a *Authorization) {
+			a.ThumbURL = "https://evil.example/pixel.png"
+		},
+		"another plugin's logo": func(a *Authorization) {
+			a.ThumbURL = "https://router.example" + LogoPath("sentry")
+		},
+		"a logo behind a query it could track with": func(a *Authorization) {
+			a.ThumbURL = "https://router.example" + LogoPath("google_calendar") + "?who=someone"
+		},
+		"a description of its own": func(a *Authorization) {
+			a.Text = "Enter your password to continue."
+		},
+		"a link somewhere other than the login": func(a *Authorization) {
+			a.TitleLink = "https://evil.example/login"
+		},
+	} {
+		refused := asked
+		wrong(&refused)
+		s.False(ValidAuthorization(refused), name)
+	}
+
+	allowed := asked
+	allowed.ThumbURL = (&Auth{PublicURL: "http://localhost:8080"}).LogoURL("google_calendar")
+	s.True(ValidAuthorization(allowed), "a router developed against localhost serves http")
 }
 
 func (s *UserSuite) TestListedToolsAreNamedAsCallToolTakesThem() {

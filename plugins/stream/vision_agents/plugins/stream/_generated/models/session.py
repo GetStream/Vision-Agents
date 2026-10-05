@@ -62,8 +62,8 @@ class Session:
         project_id (str | Unset):
         sts (str | Unset): The provider and model holding a native conversation, once routing has picked one.
         stt (str | Unset): The provider and model transcribing, once somebody has been heard.
-        subagent (str | Unset): The provider and model delegated work runs on.
         text (bool | Unset): The conversation is held in writing rather than on a call.
+        thinking_llm (str | Unset): The provider and model delegated work runs on.
         title (str | Unset):
         tts (str | Unset): The provider and model speaking.
         video (SessionVideo | Unset):
@@ -96,8 +96,8 @@ class Session:
     project_id: str | Unset = UNSET
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
-    subagent: str | Unset = UNSET
     text: bool | Unset = UNSET
+    thinking_llm: str | Unset = UNSET
     title: str | Unset = UNSET
     tts: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
@@ -165,9 +165,9 @@ class Session:
 
         stt = self.stt
 
-        subagent = self.subagent
-
         text = self.text
+
+        thinking_llm = self.thinking_llm
 
         title = self.title
 
@@ -227,10 +227,10 @@ class Session:
             field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
-        if subagent is not UNSET:
-            field_dict["subagent"] = subagent
         if text is not UNSET:
             field_dict["text"] = text
+        if thinking_llm is not UNSET:
+            field_dict["thinking_llm"] = thinking_llm
         if title is not UNSET:
             field_dict["title"] = title
         if tts is not UNSET:
@@ -324,9 +324,9 @@ class Session:
 
         stt = d.pop("stt", UNSET)
 
-        subagent = d.pop("subagent", UNSET)
-
         text = d.pop("text", UNSET)
+
+        thinking_llm = d.pop("thinking_llm", UNSET)
 
         title = d.pop("title", UNSET)
 
@@ -367,8 +367,8 @@ class Session:
             project_id=project_id,
             sts=sts,
             stt=stt,
-            subagent=subagent,
             text=text,
+            thinking_llm=thinking_llm,
             title=title,
             tts=tts,
             video=video,

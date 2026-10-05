@@ -96,10 +96,18 @@ components:
           type: string
         llm:
           type: string
+        mcp_servers:
+          items:
+            $ref: '#/components/schemas/McpServer'
+          type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
         name:
           type: string
+        plugin_events:
+          items:
+            $ref: '#/components/schemas/PluginEvent'
+          type: array
         plugins:
           items:
             type: string
@@ -122,8 +130,6 @@ components:
           type: string
         stt:
           type: string
-        subagent:
-          type: string
         sync_hash:
           description: Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
           type: string
@@ -131,6 +137,8 @@ components:
           additionalProperties:
             type: string
           type: object
+        thinking_llm:
+          type: string
         tts:
           type: string
         updated_at:
@@ -178,12 +186,22 @@ components:
           type: string
         llm:
           type: string
+        mcp_servers:
+          items:
+            $ref: '#/components/schemas/McpServer'
+          maxItems: 16
+          type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
         name:
           description: What the config is called, which is unique among the customer's own.
           minLength: 1
           type: string
+        plugin_events:
+          items:
+            $ref: '#/components/schemas/PluginEvent'
+          maxItems: 32
+          type: array
         plugins:
           items:
             type: string
@@ -207,12 +225,13 @@ components:
           type: string
         stt:
           type: string
-        subagent:
-          type: string
         tags:
           additionalProperties:
             type: string
           type: object
+        thinking_llm:
+          description: Only a voice agent names one. Switching an agent to text drops it.
+          type: string
         tts:
           type: string
         user_plugins:
@@ -254,11 +273,23 @@ components:
         llm:
           description: The model holding the conversation.
           type: string
+        mcp_servers:
+          description: MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>.
+          items:
+            $ref: '#/components/schemas/McpServer'
+          maxItems: 16
+          type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
         name:
           description: What the config is called, which is unique among the customer's own.
           type: string
+        plugin_events:
+          description: MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+          items:
+            $ref: '#/components/schemas/PluginEvent'
+          maxItems: 32
+          type: array
         plugins:
           description: Hosted MCP servers this agent may reach, named from the built-in catalog.
           items:
@@ -288,14 +319,14 @@ components:
         stt:
           description: A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
           type: string
-        subagent:
-          description: The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
-          type: string
         tags:
           additionalProperties:
             type: string
           description: Cost labels, carried onto every request a session using it makes.
           type: object
+        thinking_llm:
+          description: 'The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model.'
+          type: string
         tts:
           type: string
         user_plugins:
@@ -690,12 +721,6 @@ components:
         stt_used:
           description: The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
           type: string
-        subagent:
-          description: The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered.
-          type: string
-        subagent_used:
-          description: The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
-          type: string
         summary:
           description: What a model made of the call, written once it was over.
           type: string
@@ -703,6 +728,12 @@ components:
           additionalProperties:
             type: string
           type: object
+        thinking_llm:
+          description: The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too.
+          type: string
+        thinking_llm_used:
+          description: The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
+          type: string
         to_number:
           type: string
         tts:
@@ -2172,6 +2203,24 @@ components:
             - high
           type: string
       type: object
+    McpServer:
+      description: An MCP server the plugin catalog does not have. Every session opens it at the start, with no login, and offers its tools to the model; the instructions the server gives are added to the agent's own.
+      properties:
+        name:
+          description: What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
+          maxLength: 32
+          minLength: 1
+          pattern: ^[a-z][a-z0-9_-]*$
+          type: string
+        url:
+          description: Its Streamable HTTP endpoint, over https.
+          maxLength: 2048
+          minLength: 1
+          type: string
+      required:
+        - name
+        - url
+      type: object
     MessageContent:
       oneOf:
         - type: string
@@ -2459,12 +2508,17 @@ components:
           type: string
         instance_required:
           type: boolean
+        logo_url:
+          description: Where this deployment serves the plugin's logo, as an SVG needing no credential.
+          readOnly: true
+          type: string
         name:
           type: string
       required:
         - category
         - description
         - id
+        - logo_url
         - name
       type: object
     PluginAuthorization:
@@ -2488,6 +2542,10 @@ components:
           type: boolean
         instance_url:
           type: string
+        logo_url:
+          description: Where this deployment serves the plugin's logo, as an SVG needing no credential.
+          readOnly: true
+          type: string
         name:
           type: string
         plugin_id:
@@ -2500,9 +2558,32 @@ components:
             - not_connected
           type: string
       required:
+        - logo_url
         - name
         - plugin_id
         - status
+      type: object
+    PluginEvent:
+      description: One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
+      properties:
+        arguments:
+          additionalProperties: {}
+          description: The event's filters, as its inputSchema describes them.
+          type: object
+        event:
+          description: The event's name, as the server's events/list gives it, such as comment.created.
+          minLength: 1
+          type: string
+        instructions:
+          description: What the agent does with the event when it arrives, added to its instructions for that conversation.
+          type: string
+        plugin:
+          description: A catalog plugin the config names under plugins or user_plugins.
+          minLength: 1
+          type: string
+      required:
+        - plugin
+        - event
       type: object
     Policy:
       description: What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
@@ -3029,12 +3110,12 @@ components:
         stt:
           description: The provider and model transcribing, once somebody has been heard.
           type: string
-        subagent:
-          description: The provider and model delegated work runs on.
-          type: string
         text:
           description: The conversation is held in writing rather than on a call.
           type: boolean
+        thinking_llm:
+          description: The provider and model delegated work runs on.
+          type: string
         title:
           type: string
         tts:
@@ -4025,11 +4106,23 @@ components:
           type: array
         llm:
           type: string
+        mcp_servers:
+          description: MCP servers outside the plugin catalog, opened by their URL with no login.
+          items:
+            $ref: '#/components/schemas/McpServer'
+          maxItems: 16
+          type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
         name:
           description: What the config is called, which is also the directory's name.
           type: string
+        plugin_events:
+          description: MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+          items:
+            $ref: '#/components/schemas/PluginEvent'
+          maxItems: 32
+          type: array
         plugins:
           items:
             type: string
@@ -4059,12 +4152,13 @@ components:
           type: string
         stt:
           type: string
-        subagent:
-          type: string
         tags:
           additionalProperties:
             type: string
           type: object
+        thinking_llm:
+          description: 'Only a voice agent names one: a text agent runs everything on its llm.'
+          type: string
         tts:
           type: string
         user_plugins:
@@ -6927,6 +7021,28 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: Internal Server Error
       summary: The hosted MCP servers an agent may attach
+  /v1/agents/plugins/{plugin_id}/logo:
+    get:
+      description: The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+      operationId: getPluginLogo
+      parameters:
+        - description: A built-in catalog id such as slack or linear.
+          in: path
+          name: plugin_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            image/svg+xml:
+              schema:
+                type: string
+          description: The logo
+        "404":
+          $ref: '#/components/responses/NotFound'
+      security: []
+      summary: A plugin's logo
   /v1/agents/plugins/callback:
     get:
       description: The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
@@ -6949,6 +7065,29 @@ paths:
           description: The browser is sent back to the agent editor
       security: []
       summary: Finish a plugin login
+  /v1/agents/plugins/events/{token}:
+    post:
+      description: 'Where a plugin''s MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.'
+      operationId: receivePluginEvent
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: A verification's challenge, echoed, or an event already taken
+        "202":
+          description: The event is taken, and a conversation is opening for it
+        "401":
+          description: The delivery is not signed with the subscription's secret
+        "410":
+          description: There is no such subscription any more; stop delivering to it
+        "413":
+          description: The delivery is over 256 KiB
+      security: []
+      summary: Receive a plugin's MCP event
   /v1/agents/sessions:
     post:
       description: |-

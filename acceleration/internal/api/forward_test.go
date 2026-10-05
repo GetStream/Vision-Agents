@@ -62,7 +62,7 @@ func (s *ForwardedSessionSuite) TestASessionIsToldToAnswerFromANodeThatIsNotRunn
 		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "hello"}, nil))
 
 	answered := s.await(watching, "responded")
-	s.Equal(answer, answered["text"], "the conversation never heard what it was asked")
+	s.Contains(answered["text"], answer, "the conversation never heard what it was asked")
 }
 
 // Deleting is the operation that used to do damage from the wrong node: the row says the

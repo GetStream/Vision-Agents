@@ -578,7 +578,7 @@ func sessionOf(found *session.Session) Session {
 		rendered.Tts = &voice
 	}
 	if think != "" {
-		rendered.Subagent = &think
+		rendered.ThinkingLlm = &think
 	}
 	if speech := found.Speech(); speech != "" {
 		rendered.Sts = &speech

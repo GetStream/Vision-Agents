@@ -345,6 +345,12 @@ type AgentConfig struct {
 	// UserPlugins names catalog plugins each end user connects with their own account, from
 	// the conversation, when the model first needs one.
 	UserPlugins []string `bun:"user_plugins,type:jsonb"`
+	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
+	// a conversation of its own when it arrives.
+	PluginEvents []PluginEvent `bun:"plugin_events,type:jsonb"`
+	// MCPServers are MCP servers outside the catalog that the agent's sessions open by
+	// their URL, with no login.
+	MCPServers []MCPServer `bun:"mcp_servers,type:jsonb"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
@@ -519,6 +525,64 @@ type PluginConnection struct {
 	CodeVerifier  string     `bun:"code_verifier,notnull"`
 	ClientID      string     `bun:"client_id,notnull"`
 	TokenEndpoint string     `bun:"token_endpoint,notnull"`
+	CreatedAt     time.Time  `bun:"created_at,notnull"`
+	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
+	DeletedAt     *time.Time `bun:"deleted_at"`
+}
+
+// PluginEvent is one MCP event an agent config subscribes to on a plugin it names.
+// MCPServer is an MCP server an agent reaches by its URL rather than from the catalog.
+type MCPServer struct {
+	// Name prefixes its tools, as a plugin's id does.
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+type PluginEvent struct {
+	Plugin string `json:"plugin"`
+	Event  string `json:"event"`
+	// Arguments are the event's filters, as its inputSchema describes them.
+	Arguments map[string]any `json:"arguments,omitempty"`
+	// Instructions say what the agent does with the event when it arrives.
+	Instructions string `json:"instructions,omitempty"`
+}
+
+// How far a plugin event subscription has got.
+const (
+	// PluginEventPending means the server has not yet accepted it.
+	PluginEventPending = "pending"
+	// PluginEventActive means the server accepted it and delivers to its callback.
+	PluginEventActive = "active"
+	// PluginEventFailed means the server refused it, and Error says why.
+	PluginEventFailed = "failed"
+)
+
+// PluginEventSubscription is one declared event subscribed to with one login: the app's
+// own, or one end user's.
+type PluginEventSubscription struct {
+	bun.BaseModel `bun:"table:agent_plugin_event_subscriptions,alias:apes"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	ConfigID   string `bun:"config_id,notnull"`
+	PluginID   string `bun:"plugin_id,notnull"`
+	// UserID is whose login subscribed. Empty is the app's own.
+	UserID    string         `bun:"user_id,notnull"`
+	Event     string         `bun:"event,notnull"`
+	Arguments map[string]any `bun:"arguments,type:jsonb,notnull"`
+	// Key is the event and its arguments as canonical JSON, hashed, so the same filters
+	// in another key order are the same subscription.
+	Key string `bun:"key,notnull"`
+	// Token is the callback's path segment and Secret what deliveries to it are signed with.
+	Token  string `bun:"token,notnull"`
+	Secret string `bun:"secret,notnull"`
+	// RemoteID is the id the server gave the subscription.
+	RemoteID string `bun:"remote_id,notnull"`
+	// RefreshBefore is when the server stops delivering unless subscribed to again. Nil
+	// is a subscription that does not expire.
+	RefreshBefore *time.Time `bun:"refresh_before"`
+	Status        string     `bun:"status,notnull"`
+	Error         string     `bun:"error,notnull"`
 	CreatedAt     time.Time  `bun:"created_at,notnull"`
 	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
 	DeletedAt     *time.Time `bun:"deleted_at"`

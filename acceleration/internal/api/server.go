@@ -41,6 +41,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
@@ -136,6 +137,10 @@ type Options struct {
 	// how it went. Absent without sessions or model routing, in which case a simulation
 	// can be written down but not run.
 	Simulations *simulation.Runner
+	// PluginEvents subscribes agents to their plugins' MCP events and answers deliveries.
+	// Absent without a database or sessions, in which case a config's plugin_events are
+	// stored but nothing subscribes to them.
+	PluginEvents *pluginevents.Service
 	// Knowledge fills the bases a config's knowledge_namespace has an agent read from.
 	// Absent when the deployment has no knowledge provider, in which case there is nothing
 	// to fill and the path says so.
@@ -230,6 +235,7 @@ type Server struct {
 	publicURL     string
 	dashboardURL  string
 	oauth         *plugins.Auth
+	pluginEvents  *pluginevents.Service
 	authenticator auth.Authenticator
 	authMode      auth.Mode
 	dataRetention time.Duration
@@ -350,8 +356,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			PublicURL:    options.PublicURL,
 			DashboardURL: options.DashboardURL,
 		},
-		popularity: newPopularity(options.Store, logger),
-		logger:     logger,
+		pluginEvents: options.PluginEvents,
+		popularity:   newPopularity(options.Store, logger),
+		logger:       logger,
 	}
 	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
@@ -398,6 +405,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
+	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
+	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	s.newAPI(mux)
 	var handler http.Handler = mux
 	// Sentry is outermost so it sees panics from every middleware below it, not

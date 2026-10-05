@@ -69,6 +69,37 @@ func (s *MCPSuite) TestOpenListsPrefixedToolsAndCallReturnsText() {
 	runtime.Close()
 }
 
+func (s *MCPSuite) TestAServerOpenedWithoutALoginKeepsWhatItSaidAtInitialize() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.Empty(r.Header.Get("Authorization"))
+		var body rpcRequest
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&body))
+		switch body.Method {
+		case "initialize":
+			writeRPC(w, body.ID, map[string]any{
+				"protocolVersion": "2025-03-26",
+				"instructions":    "  Keep booking links whole.  ",
+			})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			writeRPC(w, body.ID, toolsListResult{Tools: []mcpTool{{Name: "search_places"}}})
+		}
+	}))
+	defer server.Close()
+
+	runtime, tools, failures := Open(context.Background(), []Connection{{
+		PluginID: "tablejourney",
+		Endpoint: server.URL,
+	}}, server.Client())
+
+	s.Empty(failures)
+	s.Require().Len(tools, 1)
+	s.Equal("tablejourney__search_places", tools[0].Name)
+	s.Equal("Keep booking links whole.", runtime.Instructions("tablejourney"))
+	s.Empty(runtime.Instructions("slack"))
+}
+
 func (s *MCPSuite) TestAServerThatWillNotStartIsSkipped() {
 	runtime, tools, failures := Open(context.Background(), []Connection{{
 		PluginID: "slack",

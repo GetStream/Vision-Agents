@@ -30,7 +30,6 @@ extension Components {
             internal var sessionId: Swift.String
             /// cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/AgentResponse/status`.
             internal enum StatusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                 case running = "running"
@@ -39,7 +38,6 @@ extension Components {
                 case cancelled = "cancelled"
             }
             /// cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/AgentResponse/status`.
             internal var status: Components.Schemas.AgentResponse.StatusPayload
@@ -98,21 +96,19 @@ extension Components {
             internal var kind: Components.Schemas.AgentResponseItem.KindPayload
             /// The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/AgentResponseItem/ordinal`.
             internal var ordinal: Swift.Int
             /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/AgentResponseItem/payload`.
             internal struct PayloadPayload: Codable, Hashable, Sendable {
                 /// A container of undocumented properties.
-                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                internal var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
                 /// Creates a new `PayloadPayload`.
                 ///
                 /// - Parameters:
                 ///   - additionalProperties: A container of undocumented properties.
-                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                internal init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
                     self.additionalProperties = additionalProperties
                 }
                 internal init(from decoder: any Swift.Decoder) throws {
@@ -123,7 +119,6 @@ extension Components {
                 }
             }
             /// Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/AgentResponseItem/payload`.
             internal var payload: Components.Schemas.AgentResponseItem.PayloadPayload?
@@ -252,7 +247,6 @@ extension Components {
             internal var text: Swift.String
             /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/videos`.
             internal var videos: [Components.Schemas.VideoSource]?
             /// Creates a new `CreateResponseRequest`.
@@ -284,7 +278,6 @@ extension Components {
         internal struct CreateSessionRequest: Codable, Hashable, Sendable {
             /// The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/agent`.
             internal var agent: Swift.String?
             /// Keys transcripts and statistics. Empty means the call id.
@@ -303,7 +296,6 @@ extension Components {
             internal var callType: Swift.String?
             /// An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/config_id`.
             internal var configId: Swift.String?
             /// Older history was omitted from the model context.
@@ -316,16 +308,15 @@ extension Components {
             internal var conversationId: Swift.String?
             /// Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/custom`.
             internal struct CustomPayload: Codable, Hashable, Sendable {
                 /// A container of undocumented properties.
-                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                internal var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
                 /// Creates a new `CustomPayload`.
                 ///
                 /// - Parameters:
                 ///   - additionalProperties: A container of undocumented properties.
-                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                internal init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
                     self.additionalProperties = additionalProperties
                 }
                 internal init(from decoder: any Swift.Decoder) throws {
@@ -337,7 +328,6 @@ extension Components {
             }
             /// Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/custom`.
             internal var custom: Components.Schemas.CreateSessionRequest.CustomPayload?
             /// A longer note about the conversation, searched alongside the title.
@@ -346,23 +336,19 @@ extension Components {
             internal var description: Swift.String?
             /// Said on joining without going through the model. Empty means the agent waits to be spoken to.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/greeting`.
             internal var greeting: Swift.String?
             /// The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/id`.
             internal var id: Swift.String?
             /// Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/incognito`.
             internal var incognito: Swift.Bool?
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/instructions`.
             internal var instructions: Swift.String?
             /// Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/keyterms`.
             internal var keyterms: [Swift.String]?
@@ -372,7 +358,6 @@ extension Components {
             internal var languages: [Swift.String]?
             /// A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/llm`.
             internal var llm: Swift.String?
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/max_tokens`.
@@ -381,13 +366,11 @@ extension Components {
             internal var memory: Components.Schemas.SessionMemory?
             /// How sure the transcriber must be before the agent answers rather than checks what was meant.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/min_confidence`.
             internal var minConfidence: Swift.Double?
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/model_overwrites`.
             internal var modelOverwrites: Components.Schemas.ModelOverwrites?
             /// The agent placed this call, so let recordings finish and answer their menus.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/navigating`.
             internal var navigating: Swift.Bool?
@@ -395,21 +378,17 @@ extension Components {
             internal var phone: Components.Schemas.SessionPhone?
             /// What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/project_id`.
             internal var projectId: Swift.String?
             /// Omit it and the config decides, or search-fast when there is no config.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/search`.
             internal var search: Swift.String?
             /// A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sts`.
             internal var sts: Swift.String?
             /// Omit it and the config decides, or en-low-latency when there is no config.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/stt`.
             internal var stt: Swift.String?
@@ -439,11 +418,9 @@ extension Components {
             internal var tags: Components.Schemas.CreateSessionRequest.TagsPayload?
             /// Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/text`.
             internal var text: Swift.Bool?
             /// What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/title`.
             internal var title: Swift.String?
@@ -454,7 +431,6 @@ extension Components {
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tools`.
             internal var tools: [Components.Schemas.SessionTool]?
             /// Omit it and the config decides, or en-low-latency when there is no config.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tts`.
             internal var tts: Swift.String?
@@ -706,13 +682,11 @@ extension Components {
         }
         /// Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
         ///
-        ///
         /// - Remark: Generated from `#/components/schemas/ForkSessionRequest`.
         internal struct ForkSessionRequest: Codable, Hashable, Sendable {
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/agent`.
             internal var agent: Swift.String?
             /// The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/call_id`.
             internal var callId: Swift.String?
@@ -721,12 +695,12 @@ extension Components {
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/custom`.
             internal struct CustomPayload: Codable, Hashable, Sendable {
                 /// A container of undocumented properties.
-                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                internal var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
                 /// Creates a new `CustomPayload`.
                 ///
                 /// - Parameters:
                 ///   - additionalProperties: A container of undocumented properties.
-                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                internal init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
                     self.additionalProperties = additionalProperties
                 }
                 internal init(from decoder: any Swift.Decoder) throws {
@@ -742,13 +716,11 @@ extension Components {
             internal var description: Swift.String?
             /// Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/incognito`.
             internal var incognito: Swift.Bool?
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/instructions`.
             internal var instructions: Swift.String?
             /// Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/messages`.
             internal var messages: Swift.Bool?
@@ -757,7 +729,6 @@ extension Components {
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/project_id`.
             internal var projectId: Swift.String?
             /// Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/response_id`.
             internal var responseId: Swift.String?
@@ -854,7 +825,6 @@ extension Components {
         /// What to change about the models for one session, over whatever its agent config decided.
         /// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
         ///
-        ///
         /// - Remark: Generated from `#/components/schemas/ModelOverwrites`.
         internal struct ModelOverwrites: Codable, Hashable, Sendable {
             /// A provider/model or a capability shortcut, in place of the config's.
@@ -869,18 +839,15 @@ extension Components {
             internal var search: Swift.String?
             /// A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/ModelOverwrites/sts`.
             internal var sts: Swift.String?
             /// - Remark: Generated from `#/components/schemas/ModelOverwrites/stt`.
             internal var stt: Swift.String?
             /// How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/ModelOverwrites/temperature`.
             internal var temperature: Swift.Double?
             /// How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/ModelOverwrites/thinking`.
             internal enum ThinkingPayload: String, Codable, Hashable, Sendable, CaseIterable {
@@ -891,7 +858,6 @@ extension Components {
                 case high = "high"
             }
             /// How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/ModelOverwrites/thinking`.
             internal var thinking: Components.Schemas.ModelOverwrites.ThinkingPayload?
@@ -975,7 +941,6 @@ extension Components {
         internal struct SearchAnswer: Codable, Hashable, Sendable {
             /// The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/SearchAnswer/answer`.
             internal var answer: Swift.String?
             /// - Remark: Generated from `#/components/schemas/SearchAnswer/model`.
@@ -1013,7 +978,6 @@ extension Components {
         }
         /// How much work a search is worth. instant answers from the index in a few hundred milliseconds; deep crawls and reasons over what it finds and can take tens of seconds. Providers offer different ladders, so each one maps these four onto its own.
         ///
-        ///
         /// - Remark: Generated from `#/components/schemas/SearchDepth`.
         internal enum SearchDepth: String, Codable, Hashable, Sendable, CaseIterable {
             case instant = "instant"
@@ -1026,7 +990,6 @@ extension Components {
         /// - Remark: Generated from `#/components/schemas/SearchOptions`.
         internal struct SearchOptions: Codable, Hashable, Sendable {
             /// The kind of source to prefer - news, papers, company, github - for the providers that classify their index.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/SearchOptions/category`.
             internal var category: Swift.String?
@@ -1058,21 +1021,19 @@ extension Components {
             internal var location: Swift.String?
             /// How stale a cached page may be. Zero forces a live crawl, which is slower and costs more.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/SearchOptions/max_age_hours`.
             internal var maxAgeHours: Swift.Int?
             /// A JSON schema the answer must fit, for the providers that can be asked to structure what they found.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/SearchOptions/output_schema`.
             internal struct OutputSchemaPayload: Codable, Hashable, Sendable {
                 /// A container of undocumented properties.
-                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                internal var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
                 /// Creates a new `OutputSchemaPayload`.
                 ///
                 /// - Parameters:
                 ///   - additionalProperties: A container of undocumented properties.
-                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                internal init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
                     self.additionalProperties = additionalProperties
                 }
                 internal init(from decoder: any Swift.Decoder) throws {
@@ -1084,11 +1045,9 @@ extension Components {
             }
             /// A JSON schema the answer must fit, for the providers that can be asked to structure what they found.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/SearchOptions/output_schema`.
             internal var outputSchema: Components.Schemas.SearchOptions.OutputSchemaPayload?
             /// A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/SearchOptions/providers`.
             internal var providers: [Swift.String]?
@@ -1156,7 +1115,6 @@ extension Components {
         /// - Remark: Generated from `#/components/schemas/SearchRequest`.
         internal struct SearchRequest: Codable, Hashable, Sendable {
             /// A stored router config to take the options from. Anything named here as well overrides that one field of it.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/SearchRequest/config_id`.
             internal var configId: Swift.String?
@@ -1254,7 +1212,6 @@ extension Components {
         internal struct Session: Codable, Hashable, Sendable {
             /// The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/Session/agent`.
             internal var agent: Swift.String?
             /// - Remark: Generated from `#/components/schemas/Session/agent_id`.
@@ -1286,12 +1243,12 @@ extension Components {
             /// - Remark: Generated from `#/components/schemas/Session/custom`.
             internal struct CustomPayload: Codable, Hashable, Sendable {
                 /// A container of undocumented properties.
-                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                internal var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
                 /// Creates a new `CustomPayload`.
                 ///
                 /// - Parameters:
                 ///   - additionalProperties: A container of undocumented properties.
-                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                internal init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
                     self.additionalProperties = additionalProperties
                 }
                 internal init(from decoder: any Swift.Decoder) throws {
@@ -1313,13 +1270,11 @@ extension Components {
             internal var id: Swift.String
             /// Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/Session/incognito`.
             internal var incognito: Swift.Bool?
             /// - Remark: Generated from `#/components/schemas/Session/instructions`.
             internal var instructions: Swift.String?
             /// When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/Session/last_response_at`.
             internal var lastResponseAt: Foundation.Date?
@@ -1345,14 +1300,14 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/stt`.
             internal var stt: Swift.String?
-            /// The provider and model delegated work runs on.
-            ///
-            /// - Remark: Generated from `#/components/schemas/Session/subagent`.
-            internal var subagent: Swift.String?
             /// The conversation is held in writing rather than on a call.
             ///
             /// - Remark: Generated from `#/components/schemas/Session/text`.
             internal var text: Swift.Bool?
+            /// The provider and model delegated work runs on.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/thinking_llm`.
+            internal var thinkingLlm: Swift.String?
             /// - Remark: Generated from `#/components/schemas/Session/title`.
             internal var title: Swift.String?
             /// The provider and model speaking.
@@ -1364,7 +1319,6 @@ extension Components {
             /// - Remark: Generated from `#/components/schemas/Session/video`.
             internal var video: Components.Schemas.SessionVideo?
             /// The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/Session/voice`.
             internal var voice: Swift.String?
@@ -1395,8 +1349,8 @@ extension Components {
             ///   - state:
             ///   - sts: The provider and model holding a native conversation, once routing has picked one.
             ///   - stt: The provider and model transcribing, once somebody has been heard.
-            ///   - subagent: The provider and model delegated work runs on.
             ///   - text: The conversation is held in writing rather than on a call.
+            ///   - thinkingLlm: The provider and model delegated work runs on.
             ///   - title:
             ///   - tts: The provider and model speaking.
             ///   - userId:
@@ -1427,8 +1381,8 @@ extension Components {
                 state: Components.Schemas.SessionState,
                 sts: Swift.String? = nil,
                 stt: Swift.String? = nil,
-                subagent: Swift.String? = nil,
                 text: Swift.Bool? = nil,
+                thinkingLlm: Swift.String? = nil,
                 title: Swift.String? = nil,
                 tts: Swift.String? = nil,
                 userId: Swift.String,
@@ -1459,8 +1413,8 @@ extension Components {
                 self.state = state
                 self.sts = sts
                 self.stt = stt
-                self.subagent = subagent
                 self.text = text
+                self.thinkingLlm = thinkingLlm
                 self.title = title
                 self.tts = tts
                 self.userId = userId
@@ -1492,8 +1446,8 @@ extension Components {
                 case state
                 case sts
                 case stt
-                case subagent
                 case text
+                case thinkingLlm = "thinking_llm"
                 case title
                 case tts
                 case userId = "user_id"
@@ -1598,7 +1552,6 @@ extension Components {
         }
         /// Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
         ///
-        ///
         /// - Remark: Generated from `#/components/schemas/SessionMemory`.
         internal struct SessionMemory: Codable, Hashable, Sendable {
             /// Separates two deployments sharing one memory account.
@@ -1606,7 +1559,6 @@ extension Components {
             /// - Remark: Generated from `#/components/schemas/SessionMemory/app_id`.
             internal var appId: Swift.String?
             /// The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/SessionMemory/filter`.
             internal struct FilterPayload: Codable, Hashable, Sendable {
@@ -1627,7 +1579,6 @@ extension Components {
                 }
             }
             /// The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/SessionMemory/filter`.
             internal var filter: Components.Schemas.SessionMemory.FilterPayload?
@@ -1658,7 +1609,6 @@ extension Components {
         }
         /// How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.
         ///
-        ///
         /// - Remark: Generated from `#/components/schemas/SessionModality`.
         internal enum SessionModality: String, Codable, Hashable, Sendable, CaseIterable {
             case text = "text"
@@ -1666,7 +1616,6 @@ extension Components {
             case video = "video"
         }
         /// How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
-        ///
         ///
         /// - Remark: Generated from `#/components/schemas/SessionMode`.
         internal enum SessionMode: String, Codable, Hashable, Sendable, CaseIterable {
@@ -1718,7 +1667,6 @@ extension Components {
             /// - Remark: Generated from `#/components/schemas/SessionPhone/vendor`.
             internal var vendor: Swift.String?
             /// The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/SessionPhone/vendor_call_id`.
             internal var vendorCallId: Swift.String?
@@ -1871,21 +1819,19 @@ extension Components {
         }
         /// One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
         ///
-        ///
         /// - Remark: Generated from `#/components/schemas/SessionTool`.
         internal struct SessionTool: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/SessionTool/approval`.
+            internal var approval: Components.Schemas.SessionToolApproval?
             /// What the model is told the tool does, which is the whole of how it decides when to reach for one.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/SessionTool/description`.
             internal var description: Swift.String
             /// What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment.
             ///
-            ///
             /// - Remark: Generated from `#/components/schemas/SessionTool/display_title`.
             internal var displayTitle: Swift.String?
             /// Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/SessionTool/executor`.
             internal enum ExecutorPayload: String, Codable, Hashable, Sendable, CaseIterable {
@@ -1893,7 +1839,6 @@ extension Components {
                 case client = "client"
             }
             /// Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/SessionTool/executor`.
             internal var executor: Components.Schemas.SessionTool.ExecutorPayload?
@@ -1904,12 +1849,12 @@ extension Components {
             /// - Remark: Generated from `#/components/schemas/SessionTool/parameters`.
             internal struct ParametersPayload: Codable, Hashable, Sendable {
                 /// A container of undocumented properties.
-                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                internal var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
                 /// Creates a new `ParametersPayload`.
                 ///
                 /// - Parameters:
                 ///   - additionalProperties: A container of undocumented properties.
-                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                internal init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
                     self.additionalProperties = additionalProperties
                 }
                 internal init(from decoder: any Swift.Decoder) throws {
@@ -1926,18 +1871,21 @@ extension Components {
             /// Creates a new `SessionTool`.
             ///
             /// - Parameters:
+            ///   - approval:
             ///   - description: What the model is told the tool does, which is the whole of how it decides when to reach for one.
             ///   - displayTitle: What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment.
             ///   - executor: Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
             ///   - name:
             ///   - parameters: A JSON Schema object describing the arguments.
             internal init(
+                approval: Components.Schemas.SessionToolApproval? = nil,
                 description: Swift.String,
                 displayTitle: Swift.String? = nil,
                 executor: Components.Schemas.SessionTool.ExecutorPayload? = nil,
                 name: Swift.String,
                 parameters: Components.Schemas.SessionTool.ParametersPayload? = nil
             ) {
+                self.approval = approval
                 self.description = description
                 self.displayTitle = displayTitle
                 self.executor = executor
@@ -1945,11 +1893,65 @@ extension Components {
                 self.parameters = parameters
             }
             internal enum CodingKeys: String, CodingKey {
+                case approval
                 case description
                 case displayTitle = "display_title"
                 case executor
                 case name
                 case parameters
+            }
+        }
+        /// Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question.
+        ///
+        /// - Remark: Generated from `#/components/schemas/SessionToolApproval`.
+        internal struct SessionToolApproval: Codable, Hashable, Sendable {
+            /// The label of the button that allows the call.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionToolApproval/allow_title`.
+            internal var allowTitle: Swift.String?
+            /// The label of the button that declines it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionToolApproval/decline_title`.
+            internal var declineTitle: Swift.String?
+            /// What allowing it shares or does, such as "Only your city is shared."
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionToolApproval/message`.
+            internal var message: Swift.String?
+            /// The argument, a string, in which the model says why it wants this call. Its text (at most 160 characters) is shown as the approval's reason, so it is visible to every channel member even for a server tool.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionToolApproval/reason_argument`.
+            internal var reasonArgument: Swift.String?
+            /// The question, such as "Share your location?".
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionToolApproval/title`.
+            internal var title: Swift.String
+            /// Creates a new `SessionToolApproval`.
+            ///
+            /// - Parameters:
+            ///   - allowTitle: The label of the button that allows the call.
+            ///   - declineTitle: The label of the button that declines it.
+            ///   - message: What allowing it shares or does, such as "Only your city is shared."
+            ///   - reasonArgument: The argument, a string, in which the model says why it wants this call. Its text (at most 160 characters) is shown as the approval's reason, so it is visible to every channel member even for a server tool.
+            ///   - title: The question, such as "Share your location?".
+            internal init(
+                allowTitle: Swift.String? = nil,
+                declineTitle: Swift.String? = nil,
+                message: Swift.String? = nil,
+                reasonArgument: Swift.String? = nil,
+                title: Swift.String
+            ) {
+                self.allowTitle = allowTitle
+                self.declineTitle = declineTitle
+                self.message = message
+                self.reasonArgument = reasonArgument
+                self.title = title
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case allowTitle = "allow_title"
+                case declineTitle = "decline_title"
+                case message
+                case reasonArgument = "reason_argument"
+                case title
             }
         }
         /// - Remark: Generated from `#/components/schemas/SessionVideo`.
@@ -2148,7 +2150,6 @@ extension Components {
             /// - Remark: Generated from `#/components/schemas/VideoSource/max_frames`.
             internal var maxFrames: Swift.Int?
             /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
-            ///
             ///
             /// - Remark: Generated from `#/components/schemas/VideoSource/url`.
             internal var url: Swift.String

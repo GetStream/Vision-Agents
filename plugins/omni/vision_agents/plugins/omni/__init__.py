@@ -1,4 +1,4 @@
-"""Slack, WhatsApp, RCS, SMS and iMessage messages as Stream Chat messages."""
+"""Slack, Teams, WhatsApp, RCS, SMS and iMessage messages as Stream Chat messages."""
 
 from .message import AttachmentKind, Channel, OmniAttachment, OmniMessage
 from .provider import OmniProvider, Provider
@@ -6,6 +6,8 @@ from .providers import (
     GoogleRBMProvider,
     LinqProvider,
     SlackProvider,
+    TeamsProvider,
+    TelnyxProvider,
     TwilioProvider,
     WhatsAppProvider,
 )
@@ -30,6 +32,8 @@ __all__ = [
     "Provider",
     "ProviderRegistry",
     "SlackProvider",
+    "TeamsProvider",
+    "TelnyxProvider",
     "TwilioProvider",
     "UnknownProviderError",
     "WhatsAppProvider",

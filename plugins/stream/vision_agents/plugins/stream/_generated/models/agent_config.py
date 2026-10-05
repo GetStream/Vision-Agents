@@ -16,6 +16,8 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_config_tags import AgentConfigTags
     from ..models.agent_dispatch import AgentDispatch
+    from ..models.mcp_server import McpServer
+    from ..models.plugin_event import PluginEvent
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
 
@@ -45,6 +47,8 @@ class AgentConfig:
         keyterms (list[str] | Unset):
         knowledge_namespace (str | Unset):
         llm (str | Unset):
+        mcp_servers (list[McpServer] | Unset):
+        plugin_events (list[PluginEvent] | Unset):
         plugins (list[str] | Unset):
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
@@ -57,10 +61,10 @@ class AgentConfig:
         sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.
             Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
         stt (str | Unset):
-        subagent (str | Unset):
         sync_hash (str | Unset): Fingerprint of the last directory synced onto this config. Empty if it was never synced
             from a directory.
         tags (AgentConfigTags | Unset):
+        thinking_llm (str | Unset):
         tts (str | Unset):
         user_plugins (list[str] | Unset):
         video (SessionVideo | Unset):
@@ -81,6 +85,8 @@ class AgentConfig:
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     llm: str | Unset = UNSET
+    mcp_servers: list[McpServer] | Unset = UNSET
+    plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
@@ -89,9 +95,9 @@ class AgentConfig:
     speed: float | Unset = UNSET
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
-    subagent: str | Unset = UNSET
     sync_hash: str | Unset = UNSET
     tags: AgentConfigTags | Unset = UNSET
+    thinking_llm: str | Unset = UNSET
     tts: str | Unset = UNSET
     user_plugins: list[str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
@@ -132,6 +138,20 @@ class AgentConfig:
 
         llm = self.llm
 
+        mcp_servers: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.mcp_servers, Unset):
+            mcp_servers = []
+            for mcp_servers_item_data in self.mcp_servers:
+                mcp_servers_item = mcp_servers_item_data.to_dict()
+                mcp_servers.append(mcp_servers_item)
+
+        plugin_events: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.plugin_events, Unset):
+            plugin_events = []
+            for plugin_events_item_data in self.plugin_events:
+                plugin_events_item = plugin_events_item_data.to_dict()
+                plugin_events.append(plugin_events_item)
+
         plugins: list[str] | Unset = UNSET
         if not isinstance(self.plugins, Unset):
             plugins = self.plugins
@@ -156,13 +176,13 @@ class AgentConfig:
 
         stt = self.stt
 
-        subagent = self.subagent
-
         sync_hash = self.sync_hash
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
+
+        thinking_llm = self.thinking_llm
 
         tts = self.tts
 
@@ -207,6 +227,10 @@ class AgentConfig:
             field_dict["knowledge_namespace"] = knowledge_namespace
         if llm is not UNSET:
             field_dict["llm"] = llm
+        if mcp_servers is not UNSET:
+            field_dict["mcp_servers"] = mcp_servers
+        if plugin_events is not UNSET:
+            field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
         if sandbox is not UNSET:
@@ -223,12 +247,12 @@ class AgentConfig:
             field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
-        if subagent is not UNSET:
-            field_dict["subagent"] = subagent
         if sync_hash is not UNSET:
             field_dict["sync_hash"] = sync_hash
         if tags is not UNSET:
             field_dict["tags"] = tags
+        if thinking_llm is not UNSET:
+            field_dict["thinking_llm"] = thinking_llm
         if tts is not UNSET:
             field_dict["tts"] = tts
         if user_plugins is not UNSET:
@@ -246,6 +270,8 @@ class AgentConfig:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_config_tags import AgentConfigTags
         from ..models.agent_dispatch import AgentDispatch
+        from ..models.mcp_server import McpServer
+        from ..models.plugin_event import PluginEvent
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
 
@@ -286,6 +312,24 @@ class AgentConfig:
 
         llm = d.pop("llm", UNSET)
 
+        _mcp_servers = d.pop("mcp_servers", UNSET)
+        mcp_servers: list[McpServer] | Unset = UNSET
+        if _mcp_servers is not UNSET:
+            mcp_servers = []
+            for mcp_servers_item_data in _mcp_servers:
+                mcp_servers_item = McpServer.from_dict(mcp_servers_item_data)
+
+                mcp_servers.append(mcp_servers_item)
+
+        _plugin_events = d.pop("plugin_events", UNSET)
+        plugin_events: list[PluginEvent] | Unset = UNSET
+        if _plugin_events is not UNSET:
+            plugin_events = []
+            for plugin_events_item_data in _plugin_events:
+                plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
+
+                plugin_events.append(plugin_events_item)
+
         plugins = cast(list[str], d.pop("plugins", UNSET))
 
         _sandbox = d.pop("sandbox", UNSET)
@@ -312,8 +356,6 @@ class AgentConfig:
 
         stt = d.pop("stt", UNSET)
 
-        subagent = d.pop("subagent", UNSET)
-
         sync_hash = d.pop("sync_hash", UNSET)
 
         _tags = d.pop("tags", UNSET)
@@ -322,6 +364,8 @@ class AgentConfig:
             tags = UNSET
         else:
             tags = AgentConfigTags.from_dict(_tags)
+
+        thinking_llm = d.pop("thinking_llm", UNSET)
 
         tts = d.pop("tts", UNSET)
 
@@ -352,6 +396,8 @@ class AgentConfig:
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             llm=llm,
+            mcp_servers=mcp_servers,
+            plugin_events=plugin_events,
             plugins=plugins,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
@@ -360,9 +406,9 @@ class AgentConfig:
             speed=speed,
             sts=sts,
             stt=stt,
-            subagent=subagent,
             sync_hash=sync_hash,
             tags=tags,
+            thinking_llm=thinking_llm,
             tts=tts,
             user_plugins=user_plugins,
             video=video,

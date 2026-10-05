@@ -32,11 +32,20 @@ const maxAuthorizeURL = 2048
 
 // Authorization asks an end user to connect a plugin. It reaches Chat as an attachment of
 // AuthorizationType, which a client renders as a button opening AuthorizeURL.
+//
+// Everything after AuthorizeURL is a standard Chat attachment field, so a client that has
+// no renderer for AuthorizationType still shows a card with the plugin's logo, what it is
+// for and a link to the login rather than an empty bubble. They are the three Chat keeps
+// as an attachment's own on a partial update, next to the type and the title; author_name
+// is not one of them, and the title already names the plugin.
 type Authorization struct {
 	Type         string `json:"type"`
 	PluginID     string `json:"plugin_id"`
 	Title        string `json:"title"`
 	AuthorizeURL string `json:"authorize_url"`
+	Text         string `json:"text,omitempty"`
+	ThumbURL     string `json:"thumb_url,omitempty"`
+	TitleLink    string `json:"title_link,omitempty"`
 }
 
 // UserTools are the tools an agent is offered for the plugins its end users connect.
@@ -77,7 +86,8 @@ func UserTools(ids []string) []harness.Tool {
 
 // AuthorizationResult is what a user plugin's tool answers while the user has not logged
 // in. The model reads the message; the conversation turns the attachment into a Chat one.
-func AuthorizationResult(plugin Plugin, authorizeURL string) string {
+// logoURL is where this deployment serves the plugin's logo, which Auth.LogoURL gives.
+func AuthorizationResult(plugin Plugin, authorizeURL, logoURL string) string {
 	raw, _ := json.Marshal(struct {
 		Status     string        `json:"status"`
 		Message    string        `json:"message"`
@@ -91,6 +101,9 @@ func AuthorizationResult(plugin Plugin, authorizeURL string) string {
 			PluginID:     plugin.ID,
 			Title:        "Connect " + plugin.Name,
 			AuthorizeURL: authorizeURL,
+			Text:         plugin.Description,
+			ThumbURL:     logoURL,
+			TitleLink:    authorizeURL,
 		},
 	})
 	return string(raw)
@@ -126,16 +139,41 @@ func RequestedAuthorization(tool, result string) (Authorization, bool) {
 
 // ValidAuthorization reports whether an authorization names a catalog plugin, a short title
 // and an https URL to open.
+//
+// Everything the card shows besides the title and that URL has to be what the catalog says
+// for the plugin named, so a server answering through one plugin's own tool cannot describe
+// itself as another's, and cannot put an image of its choosing in somebody's conversation.
 func ValidAuthorization(found Authorization) bool {
 	if found.Type != AuthorizationType || found.Title == "" || !utf8.ValidString(found.Title) ||
 		utf8.RuneCountInString(found.Title) > 200 || len(found.AuthorizeURL) > maxAuthorizeURL {
 		return false
 	}
-	if _, ok := Lookup(found.PluginID); !ok {
+	plugin, ok := Lookup(found.PluginID)
+	if !ok {
+		return false
+	}
+	if found.Text != "" && found.Text != plugin.Description {
+		return false
+	}
+	if found.TitleLink != "" && found.TitleLink != found.AuthorizeURL {
+		return false
+	}
+	if found.ThumbURL != "" && !ownLogo(found.ThumbURL, plugin.ID) {
 		return false
 	}
 	parsed, err := url.Parse(found.AuthorizeURL)
 	return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil
+}
+
+// ownLogo reports whether a thumbnail is this deployment serving that plugin's own logo.
+// The host is whatever public_url is, which this package is not told, so the path is what
+// is checked. http is allowed because a router developed against localhost serves one.
+func ownLogo(raw, pluginID string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" {
+		return false
+	}
+	return (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Path == LogoPath(pluginID)
 }
 
 // ListedTools is what a user plugin's list_tools answers once the user is connected.

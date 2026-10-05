@@ -388,7 +388,8 @@ func (s *DisplaySuite) TestALoginAPluginAsksForIsAttachedToTheReplyAndRestored()
 	s.Require().NoError(err)
 	calendar, ok := plugins.Lookup("google_calendar")
 	s.Require().True(ok)
-	asking := plugins.AuthorizationResult(calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=s1")
+	logo := (&plugins.Auth{PublicURL: "https://router.example"}).LogoURL(calendar.ID)
+	asking := plugins.AuthorizationResult(calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=s1", logo)
 
 	// Shown whether or not the tool's steps are: nobody can finish a login they never see.
 	c.Observe(agent.ToolStarted{ID: "list", Tool: "google_calendar__list_tools", StartedAt: time.Now().UTC()})
@@ -413,6 +414,11 @@ func (s *DisplaySuite) TestALoginAPluginAsksForIsAttachedToTheReplyAndRestored()
 		"plugin_id":     "google_calendar",
 		"authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
 	}, button["custom"])
+	// Chat's own fields, so a client that has never heard of this type still shows a card
+	// with the plugin's logo, what it is for and a link somebody can press.
+	s.Equal(calendar.Description, button["text"])
+	s.Equal(logo, button["thumb_url"])
+	s.Equal("https://accounts.google.com/o/oauth2/v2/auth?state=s1", button["title_link"])
 	c.Release()
 	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "on_call", c.CID(), "", "employee")
 	s.Require().NoError(err)
@@ -420,6 +426,9 @@ func (s *DisplaySuite) TestALoginAPluginAsksForIsAttachedToTheReplyAndRestored()
 	s.Equal([]plugins.Authorization{{
 		Type: plugins.AuthorizationType, PluginID: "google_calendar", Title: "Connect Google Calendar",
 		AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
+		Text:         calendar.Description,
+		ThumbURL:     logo,
+		TitleLink:    "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
 	}}, page.Messages[1].Authorizations)
 }
 

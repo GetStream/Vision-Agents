@@ -12,19 +12,24 @@ def write(root: Path, name: str, content: str) -> None:
 
 class TestFolder:
     def test_a_skill_that_captures_video_round_trips(self, tmp_path):
-        write(tmp_path, "agent.yaml", "name: vision\nsubagent: vlm\n")
+        write(tmp_path, "agent.yaml", "name: vision\nthinking_llm: vlm\n")
         write(
             tmp_path,
             "skills/vision.md",
             "---\nname: vision\ncapture_video: true\ndescription: inspect images\n---\nDescribe the evidence.",
         )
         folder = load(tmp_path)
-        assert folder.settings.subagent == "vlm"
+        assert folder.settings.thinking_llm == "vlm"
         assert folder.skills[0].capture_video
 
     def test_named_subagents_are_refused(self, tmp_path):
         write(tmp_path, "agent.yaml", "name: vision\nsubagents:\n  vision: vlm\n")
         with pytest.raises(ValueError, match="subagents"):
+            load(tmp_path)
+
+    def test_the_old_subagent_key_is_refused(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nsubagent: vlm\n")
+        with pytest.raises(ValueError, match="subagent"):
             load(tmp_path)
 
     def test_a_directory_is_read_as_instructions_skills_and_knowledge(
@@ -87,9 +92,9 @@ class TestFolder:
             root,
             "agent.yaml",
             "name: jean\n"
-            "mode: text\n"
+            "mode: voice\n"
             "llm: llm-fast\n"
-            "subagent: llm-thinking\n"
+            "thinking_llm: llm-thinking\n"
             "sandbox: daytona\n"
             "greeting: Hello.\n"
             "keyterms:\n  - Vision Agents\n  - ''\n"
@@ -98,9 +103,9 @@ class TestFolder:
 
         settings = load(root).settings
 
-        assert settings.mode == "text"
+        assert settings.mode == "voice"
         assert settings.llm == "llm-fast"
-        assert settings.subagent == "llm-thinking"
+        assert settings.thinking_llm == "llm-thinking"
         assert settings.sandbox == "daytona"
         assert settings.greeting == "Hello."
         assert settings.keyterms == ["Vision Agents"]

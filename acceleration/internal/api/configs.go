@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -73,9 +76,19 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	}
 
 	config := storedConfig(*request.Body, customerID)
+	if message, ok := textThinkingComplaint(&config, request.Body.ThinkingLlm); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := pluginEventsComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := mcpServersComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
+	s.pluginEvents.Changed(customerID, config.ID)
 	return &createAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
 
@@ -118,11 +131,21 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	}
 
 	config := storedConfig(*request.Body, customerID)
+	if message, ok := textThinkingComplaint(&config, request.Body.ThinkingLlm); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := pluginEventsComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := mcpServersComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
+	s.pluginEvents.Changed(customerID, config.ID)
 	return &updateAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
 
@@ -298,6 +321,21 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	return dispatchComplaint(request.Dispatch)
 }
 
+// textThinkingComplaint refuses a thinking model on a text agent, which runs everything on
+// its llm, and drops the one a voice agent kept when it became a text one. It reads the
+// config as it will be stored, since a patch or a sync can change the mode without naming
+// a thinking model.
+func textThinkingComplaint(config *store.AgentConfig, asked *string) (string, bool) {
+	if config.Mode != store.AgentModeText {
+		return "", true
+	}
+	if value(asked) != "" {
+		return "thinking_llm is only for voice agents: a text agent runs everything, skills included, on its llm", false
+	}
+	config.Subagent = ""
+	return "", true
+}
+
 // dispatchComplaint reports a dispatch setting that is neither enabled nor disabled.
 func dispatchComplaint(asked *AgentDispatch) (string, bool) {
 	if asked == nil {
@@ -455,6 +493,103 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 	}
 }
 
+// pluginEventsComplaint reports what is wrong with the events a config subscribes to, if
+// anything. It reads the config as it will be stored, since whether an event's plugin is
+// named depends on plugins and user_plugins as well.
+func pluginEventsComplaint(config store.AgentConfig) (string, bool) {
+	for _, event := range config.PluginEvents {
+		if _, ok := plugins.Lookup(event.Plugin); !ok {
+			return fmt.Sprintf("plugin_events: no plugin called %q", event.Plugin), false
+		}
+		if !slices.Contains(config.Plugins, event.Plugin) && !slices.Contains(config.UserPlugins, event.Plugin) {
+			return fmt.Sprintf("plugin_events: %s is named under neither plugins nor user_plugins", event.Plugin), false
+		}
+		if event.Event == "" {
+			return fmt.Sprintf("plugin_events: a %s event needs a name", event.Plugin), false
+		}
+	}
+	return "", true
+}
+
+// mcpServersComplaint reports what is wrong with the MCP servers a config names, if
+// anything. A name prefixes the server's tools the way a plugin's id does, so it may not be
+// one, nor hold the separator that splits a tool's name from it.
+func mcpServersComplaint(config store.AgentConfig) (string, bool) {
+	seen := map[string]bool{}
+	for _, server := range config.MCPServers {
+		if strings.Contains(server.Name, plugins.PrefixSeparator) {
+			return fmt.Sprintf("mcp_servers: %s may not contain %s", server.Name, plugins.PrefixSeparator), false
+		}
+		if _, ok := plugins.Lookup(server.Name); ok {
+			return fmt.Sprintf("mcp_servers: %s is a catalog plugin; name it under plugins instead", server.Name), false
+		}
+		if seen[server.Name] {
+			return fmt.Sprintf("mcp_servers: %s is named twice", server.Name), false
+		}
+		seen[server.Name] = true
+		endpoint, err := url.Parse(server.URL)
+		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" {
+			return fmt.Sprintf("mcp_servers: %s needs an https url", server.Name), false
+		}
+	}
+	return "", true
+}
+
+// mcpServersOf reads the MCP servers a caller named.
+func mcpServersOf(servers *[]McpServer) []store.MCPServer {
+	read := []store.MCPServer{}
+	for _, server := range value(servers) {
+		read = append(read, store.MCPServer{
+			Name: strings.TrimSpace(server.Name),
+			URL:  strings.TrimSpace(server.Url),
+		})
+	}
+	return read
+}
+
+// renderedMCPServers is a config's MCP servers as the API shows them, or nothing for none.
+func renderedMCPServers(servers []store.MCPServer) *[]McpServer {
+	if len(servers) == 0 {
+		return nil
+	}
+	rendered := make([]McpServer, 0, len(servers))
+	for _, server := range servers {
+		rendered = append(rendered, McpServer{Name: server.Name, Url: server.URL})
+	}
+	return &rendered
+}
+
+// pluginEventsOf reads the events a caller subscribed the config to.
+func pluginEventsOf(events *[]PluginEvent) []store.PluginEvent {
+	read := []store.PluginEvent{}
+	for _, event := range value(events) {
+		read = append(read, store.PluginEvent{
+			Plugin:       strings.TrimSpace(event.Plugin),
+			Event:        strings.TrimSpace(event.Event),
+			Arguments:    value(event.Arguments),
+			Instructions: strings.TrimSpace(value(event.Instructions)),
+		})
+	}
+	return read
+}
+
+// renderedPluginEvents is a config's events as the API shows them, or nothing for none.
+func renderedPluginEvents(events []store.PluginEvent) *[]PluginEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	rendered := make([]PluginEvent, 0, len(events))
+	for _, event := range events {
+		shown := PluginEvent{Plugin: event.Plugin, Event: event.Event, Instructions: optional(event.Instructions)}
+		if len(event.Arguments) > 0 {
+			arguments := event.Arguments
+			shown.Arguments = &arguments
+		}
+		rendered = append(rendered, shown)
+	}
+	return &rendered
+}
+
 // sandboxOf reads the sandbox a caller sent, which is optional. An unknown one is refused
 // rather than dropped, since a config that quietly runs no code is hard to tell from one
 // whose subagent simply chose not to.
@@ -523,7 +658,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Voice:              value(request.Voice),
 		Speed:              value(request.Speed),
 		LLM:                value(request.Llm),
-		Subagent:           value(request.Subagent),
+		Subagent:           value(request.ThinkingLlm),
 		Search:             value(request.Search),
 		Instructions:       value(request.Instructions),
 		Greeting:           value(request.Greeting),
@@ -542,6 +677,8 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.UserPlugins != nil {
 		config.UserPlugins = *request.UserPlugins
 	}
+	config.PluginEvents = pluginEventsOf(request.PluginEvents)
+	config.MCPServers = mcpServersOf(request.McpServers)
 	config.Keyterms = keytermsOf(request.Keyterms)
 	if request.VisibleTools != nil {
 		config.VisibleTools = *request.VisibleTools
@@ -589,7 +726,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		rendered.Speed = &speed
 	}
 	rendered.Llm = optional(config.LLM)
-	rendered.Subagent = optional(config.Subagent)
+	rendered.ThinkingLlm = optional(config.Subagent)
 	frames := config.VideoMaxFrames
 	if frames == 0 {
 		frames = 1
@@ -623,6 +760,8 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		named := config.UserPlugins
 		rendered.UserPlugins = &named
 	}
+	rendered.PluginEvents = renderedPluginEvents(config.PluginEvents)
+	rendered.McpServers = renderedMCPServers(config.MCPServers)
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms
 		rendered.Keyterms = &keyterms
@@ -855,6 +994,8 @@ type AgentConfigRequest struct {
 	Mode               *AgentMode         `json:"mode,omitempty"`
 	Name               string             `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Plugins            *[]string          `json:"plugins,omitempty" doc:"Hosted MCP servers this agent may reach, named from the built-in catalog."`
+	PluginEvents       *[]PluginEvent     `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
+	McpServers         *[]McpServer       `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
 	SandboxOptions     *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Search             *string            `json:"search,omitempty" doc:"What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way."`
@@ -862,8 +1003,8 @@ type AgentConfigRequest struct {
 	Speed              *float64           `json:"speed,omitempty" doc:"Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused." minimum:"0" example:"0.9"`
 	Sts                *string            `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Stt                *string            `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
-	Subagent           *string            `json:"subagent,omitempty" doc:"The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing."`
 	Tags               *map[string]string `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes."`
+	ThinkingLlm        *string            `json:"thinking_llm,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model."`
 	Tts                *string            `json:"tts,omitempty"`
 	UserPlugins        *[]string          `json:"user_plugins,omitempty" doc:"Hosted MCP servers each end user connects with their own account, named from the built-in catalog. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
 	Video              *SessionVideo      `json:"video,omitempty"`
@@ -886,6 +1027,8 @@ type AgentConfig struct {
 	Mode               AgentMode          `json:"mode"`
 	Name               string             `json:"name"`
 	Plugins            *[]string          `json:"plugins,omitempty"`
+	PluginEvents       *[]PluginEvent     `json:"plugin_events,omitempty"`
+	McpServers         *[]McpServer       `json:"mcp_servers,omitempty"`
 	Sandbox            *Sandbox           `json:"sandbox,omitempty"`
 	SandboxOptions     *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Search             *string            `json:"search,omitempty"`
@@ -893,9 +1036,9 @@ type AgentConfig struct {
 	Speed              *float64           `json:"speed,omitempty"`
 	Sts                *string            `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Stt                *string            `json:"stt,omitempty"`
-	Subagent           *string            `json:"subagent,omitempty"`
 	SyncHash           *string            `json:"sync_hash,omitempty" doc:"Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory."`
 	Tags               *map[string]string `json:"tags,omitempty"`
+	ThinkingLlm        *string            `json:"thinking_llm,omitempty"`
 	Tts                *string            `json:"tts,omitempty"`
 	UpdatedAt          time.Time          `json:"updated_at"`
 	UserPlugins        *[]string          `json:"user_plugins,omitempty"`

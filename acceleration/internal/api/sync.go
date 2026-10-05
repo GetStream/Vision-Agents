@@ -33,11 +33,13 @@ type SyncAgentRequest struct {
 	Speed         *float64                   `json:"speed,omitempty" minimum:"0" doc:"The voice's rate of delivery, 1 being its own. Zero leaves it there."`
 	Llm           *string                    `json:"llm,omitempty"`
 	Video         *SessionVideo              `json:"video,omitempty"`
-	Subagent      *string                    `json:"subagent,omitempty"`
+	ThinkingLlm   *string                    `json:"thinking_llm,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
 	Search        *string                    `json:"search,omitempty"`
 	Greeting      *string                    `json:"greeting,omitempty"`
 	Plugins       *[]string                  `json:"plugins,omitempty"`
 	UserPlugins   *[]string                  `json:"user_plugins,omitempty" doc:"Plugins each end user connects with their own account, from the conversation, the first time the agent needs one."`
+	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
+	McpServers    *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
 	Keyterms      *[]string                  `json:"keyterms,omitempty"`
 	Sandbox       *Sandbox                   `json:"sandbox,omitempty"`
 	Harness       *Harness                   `json:"harness,omitempty"`
@@ -165,6 +167,20 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if found && existing.SyncHash == hash {
 		return &syncAgentResponse{Body: SyncAgentResult{Unchanged: true, Config: agentConfigOf(existing)}}, nil
 	}
+	config := existing
+	if !found {
+		config = store.AgentConfig{CustomerID: customerID, Name: name}
+	}
+	applySettings(&config, body)
+	if message, ok := textThinkingComplaint(&config, body.ThinkingLlm); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := pluginEventsComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
+	if message, ok := mcpServersComplaint(config); !ok {
+		return nil, huma.Error400BadRequest(message)
+	}
 
 	documents := documentsOf(body.Knowledge)
 	namespace := ""
@@ -206,16 +222,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		named = append(named, strings.TrimSpace(skill.Name))
 	}
 
-	config := existing
-	if !found {
-		config = store.AgentConfig{CustomerID: customerID, Name: name}
-	}
 	config.Instructions = value(body.Instructions)
 	config.Guardrail = value(body.Guardrail)
 	config.Skills = named
 	config.KnowledgeNamespace = namespace
 	config.SyncHash = hash
-	applySettings(&config, body)
 
 	if found {
 		if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
@@ -239,6 +250,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 			return nil, err
 		}
 	}
+	s.pluginEvents.Changed(customerID, config.ID)
 	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config)}}, nil
 }
 
@@ -374,8 +386,8 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Llm != nil {
 		config.LLM = *body.Llm
 	}
-	if body.Subagent != nil {
-		config.Subagent = *body.Subagent
+	if body.ThinkingLlm != nil {
+		config.Subagent = *body.ThinkingLlm
 	}
 	if body.Search != nil {
 		config.Search = *body.Search
@@ -388,6 +400,12 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.UserPlugins != nil {
 		config.UserPlugins = *body.UserPlugins
+	}
+	if body.PluginEvents != nil {
+		config.PluginEvents = pluginEventsOf(body.PluginEvents)
+	}
+	if body.McpServers != nil {
+		config.MCPServers = mcpServersOf(body.McpServers)
 	}
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)
