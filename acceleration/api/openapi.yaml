@@ -1818,6 +1818,66 @@ components:
       required:
         - name
       type: object
+    ConnectorOAuthClient:
+      description: 'The OAuth client the app registered with a connector''s provider itself. The secret is write-only: no response carries it.'
+      properties:
+        auth_method:
+          $ref: '#/components/schemas/ConnectorOAuthClientAuthMethod'
+        client_id:
+          type: string
+        connector_id:
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        registration:
+          $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
+          description: 'customer: the app''s own client, which every consent and refresh of the connector''s connections then uses.'
+          readOnly: true
+        updated_at:
+          description: When the client, its secret or its method last changed.
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+        - connector_id
+        - registration
+        - client_id
+        - created_at
+        - updated_at
+      type: object
+    ConnectorOAuthClientAuthMethod:
+      description: 'How the app''s own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.'
+      enum:
+        - none
+        - client_secret_basic
+        - client_secret_post
+      type: string
+    ConnectorOAuthClientRequest:
+      additionalProperties: false
+      description: The OAuth client the app registered with the connector's provider. An unknown field is refused rather than ignored.
+      properties:
+        auth_method:
+          $ref: '#/components/schemas/ConnectorOAuthClientAuthMethod'
+          description: 'Overrides the connector''s own client.auth_method. Left out, the connector''s applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it.'
+        client_id:
+          maxLength: 2048
+          minLength: 1
+          pattern: ^[ -~]+$
+          patternDescription: printable ASCII, RFC 6749 Appendix A.1
+          type: string
+        client_secret:
+          description: Sealed at rest and never returned. Left out for a public client (auth_method none).
+          maxLength: 2048
+          pattern: ^[ -~]+$
+          patternDescription: printable ASCII, RFC 6749 Appendix A.2
+          type: string
+          writeOnly: true
+      required:
+        - client_id
+      type: object
     ConnectorPage:
       properties:
         has_more:
@@ -8109,6 +8169,93 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Read a connector
+  /v1/agents/connectors/{id}/oauth-client:
+    delete:
+      description: |-
+        Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteConnectorOAuthClient
+      parameters:
+        - description: The connector, such as github or custom_crm.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as github or custom_crm.
+            type: string
+      responses:
+        "204":
+          description: The client is removed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Remove the app's own OAuth client for a connector
+    put:
+      description: |-
+        Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: setConnectorOAuthClient
+      parameters:
+        - description: The connector, such as github or custom_crm.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as github or custom_crm.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectorOAuthClientRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorOAuthClient'
+          description: The client was replaced
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorOAuthClient'
+          description: The client was stored
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Set the app's own OAuth client for a connector
   /v1/agents/connectors/oauth/callback:
     get:
       description: 'The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.'

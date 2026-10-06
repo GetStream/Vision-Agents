@@ -495,6 +495,10 @@ error a request failed with and, for a 5xx, the stack where that error entered t
 A 5xx body is now `{"error": "internal error"}` rather than the error's text: quote the
 request id to find the rest in the logs.
 
+### An app can put its own OAuth client for a connector
+
+`PUT /v1/agents/connectors/{id}/oauth-client` (`setConnectorOAuthClient`, server-side only) stores the OAuth client the app registered with the connector's provider: `client_id`, a write-only `client_secret` and an optional `auth_method` (`none`, `client_secret_basic` or `client_secret_post`). It answers 201 when it stores one and 200 when it replaces one, and never returns the secret. Every consent and every refresh of the app's connections to that connector reads it again, so a rotated secret is put once and used from each connection's next refresh. A connector whose `client.registration` does not list `customer`, such as `slack`, answers 400. `DELETE` on the same path removes it. The operator's own client still comes from `<client.env>_MCP_CLIENT_ID` and `_MCP_CLIENT_SECRET`. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
 ### A connection is connected through the provider's consent
 
 `POST /v1/agents/connections/{id}/authorizations` (`createAuthorization`, server-side only) starts the OAuth consent for a connection and answers a `launch_url` and a `handoff_token`. The dashboard opens the launch page in a popup and posts it the token; the browser goes to the provider and comes back to `/v1/agents/connectors/oauth/callback`, which stores the grant and sends the browser to the dashboard with `connection_id` and `status`. The consent must finish in the browser that started it, within 10 minutes, once, and its handoff token works once. A reconnect that comes back with another provider account keeps the old grant and ends as `account_mismatch`. The router needs `ROUTER_PUBLIC_URL` for it, and with an https one it serves its OAuth Client ID Metadata Document at `/.well-known/oauth-client-metadata`. The Go client and the JavaScript types are regenerated; other SDKs follow.

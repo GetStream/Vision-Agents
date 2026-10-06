@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -185,6 +186,13 @@ func (s *Server) createAuthorization(ctx context.Context, request *createAuthori
 	}
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: public + ConnectorCallbackPath})
+	// The client comes from the app's own record or the operator's environment
+	// (ConnectorClients), so a connector that takes the app's own and finds none says where
+	// to put it.
+	if errors.Is(err, oauth2code.ErrNoClient) && slices.Contains(manifest.Client.Registration, core.ClientCustomer) {
+		return nil, invalidRequest(fmt.Sprintf("the provider's consent could not be started: %v; "+
+			"put the app's own OAuth client with PUT /v1/agents/connectors/%s/oauth-client", err, connection.ConnectorID))
+	}
 	if err != nil {
 		// A scheme's error carries no secret (core AGENTS.md, «Secrets never print»), and it
 		// is what the backend needs to fix: a missing client, an unreachable server.

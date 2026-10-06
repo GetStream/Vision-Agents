@@ -29,7 +29,7 @@ func (s *ConnectorResolverSuite) SetupTest() {
 func (s *ConnectorResolverSuite) TestWithConnectorsOffThereIsNoResolver() {
 	sealer, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
-	registry, err := newConnectorRegistry(s.settings)
+	registry, err := newConnectorRegistry(s.settings, nil)
 	s.Require().NoError(err)
 
 	built, err := newConnectorResolver(registry, s.store(), sealer)
@@ -51,7 +51,7 @@ func (s *ConnectorResolverSuite) TestWithConnectorsOnAndADatabaseTheResolverIsBu
 
 func (s *ConnectorResolverSuite) connectorsOn() core.Registry {
 	s.settings.Connectors.Enabled = true
-	registry, err := newConnectorRegistry(s.settings)
+	registry, err := newConnectorRegistry(s.settings, nil)
 	s.Require().NoError(err)
 	return registry
 }
