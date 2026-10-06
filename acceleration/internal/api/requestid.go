@@ -76,8 +76,8 @@ func recordFailure(ctx context.Context, err error, trace string) {
 // huma.NewErrorWithContext. Huma calls it for an error an operation returned that names no
 // status of its own, and for a request that did not validate.
 //
-// The errors are left for withRequestLog. A server error is answered with "internal error"
-// and the request id alone: what failed -- a database or a vendor saying no -- is nothing
+// The errors are left for withRequestLog. A server error is answered as an internal one,
+// saying "something went wrong" and leaving the rest to the request id: what failed -- a database or a vendor saying no -- is nothing
 // the caller can act on, and is what the log is for. Its stack is the one stack.Wrap
 // recorded where the error entered this code base, or, for an error that never was, the
 // stack it reached Huma on, which names the operation but not where inside it.
@@ -102,5 +102,16 @@ func answerFailure(ctx huma.Context, status int, message string, errs ...error) 
 		trace = string(debug.Stack())
 	}
 	recordFailure(ctx.Context(), err, trace)
-	return huma.NewError(status, "internal error")
+	return internalError()
+}
+
+// writeFailure answers a request served by hand that failed in a way that is not the
+// caller's, the way answerFailure answers an operation that did.
+func writeFailure(w http.ResponseWriter, r *http.Request, err error) {
+	trace := stack.Trace(err)
+	if trace == "" {
+		trace = string(debug.Stack())
+	}
+	recordFailure(r.Context(), err, trace)
+	writeError(w, internalError())
 }

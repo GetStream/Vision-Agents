@@ -350,11 +350,6 @@ func (e DispatchSetting) Valid() bool {
 	}
 }
 
-// Error is the Error schema.
-type Error struct {
-	Error string `json:"error"`
-}
-
 // Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 type Harness string
 

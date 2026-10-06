@@ -13,10 +13,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-const (
-	noPolicies     = "policies are not available: no database configured"
-	noOrganization = "this request names no organization: it needs " +
-		"X-Stream-Organization-Id, or an API key belonging to one"
+var (
+	noPolicies     = coded{codeNotConfigured, "policies are not available: no database configured"}
+	noOrganization = coded{codeMissingOrganization, "this request names no organization: it needs " +
+		"X-Stream-Organization-Id, or an API key belonging to one"}
 )
 
 // Policy is what an organization or an app decided about spend, data handling, prompt
@@ -132,14 +132,14 @@ func (s *Server) registerPolicies(api huma.API) {
 func (s *Server) getAppPolicy(ctx context.Context, _ *struct{}) (*policyResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.policies == nil {
-		return nil, huma.Error400BadRequest(noPolicies)
+		return nil, invalidRequest(noPolicies)
 	}
 	policy, err := s.policyOf(ctx, store.ScopeApp, customerID)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &policyResponse{Body: policy}, nil
 }
@@ -148,14 +148,14 @@ func (s *Server) getAppPolicy(ctx context.Context, _ *struct{}) (*policyResponse
 func (s *Server) updateAppPolicy(ctx context.Context, request *policyRequest) (*policyResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.policies == nil {
-		return nil, huma.Error400BadRequest(noPolicies)
+		return nil, invalidRequest(noPolicies)
 	}
 	policy, err := s.savePolicy(ctx, store.ScopeApp, customerID, request.Body)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &policyResponse{Body: policy}, nil
 }
@@ -163,18 +163,18 @@ func (s *Server) updateAppPolicy(ctx context.Context, request *policyRequest) (*
 // getOrganizationPolicy returns what the calling app's organization decided.
 func (s *Server) getOrganizationPolicy(ctx context.Context, _ *struct{}) (*policyResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.policies == nil {
-		return nil, huma.Error400BadRequest(noPolicies)
+		return nil, invalidRequest(noPolicies)
 	}
 	organizationID := OrganizationFrom(ctx)
 	if organizationID == "" {
-		return nil, huma.Error400BadRequest(noOrganization)
+		return nil, invalidRequest(noOrganization)
 	}
 	policy, err := s.policyOf(ctx, store.ScopeOrganization, organizationID)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &policyResponse{Body: policy}, nil
 }
@@ -182,18 +182,18 @@ func (s *Server) getOrganizationPolicy(ctx context.Context, _ *struct{}) (*polic
 // updateOrganizationPolicy replaces what the calling app's organization decided.
 func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRequest) (*policyResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.policies == nil {
-		return nil, huma.Error400BadRequest(noPolicies)
+		return nil, invalidRequest(noPolicies)
 	}
 	organizationID := OrganizationFrom(ctx)
 	if organizationID == "" {
-		return nil, huma.Error400BadRequest(noOrganization)
+		return nil, invalidRequest(noOrganization)
 	}
 	policy, err := s.savePolicy(ctx, store.ScopeOrganization, organizationID, request.Body)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &policyResponse{Body: policy}, nil
 }

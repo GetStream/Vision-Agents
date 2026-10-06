@@ -19,27 +19,27 @@ import (
 func (s *Server) search(ctx context.Context, request *searchRequest) (*searchResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.streams == nil || s.streams.Search == nil {
-		return nil, huma.Error404NotFound("this deployment does not route search")
+		return nil, notFound("this deployment does not route search")
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if strings.TrimSpace(request.Body.Query) == "" {
-		return nil, huma.Error400BadRequest("there is nothing to look for")
+		return nil, invalidRequest("there is nothing to look for")
 	}
 
 	config, err := s.routerOptions(ctx, customerID, value(request.Body.ConfigId))
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	held := config.Search.Merge(searchOptionsOf(request.Body.Options))
 
 	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	session, err := s.streams.Search.Start(ctx, searchrouter.Request{
@@ -50,7 +50,7 @@ func (s *Server) search(ctx context.Context, request *searchRequest) (*searchRes
 		Options:       held,
 	})
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	defer session.Close()
 
@@ -66,7 +66,7 @@ func (s *Server) search(ctx context.Context, request *searchRequest) (*searchRes
 		OutputSchema:   held.OutputSchema,
 	})
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	results := make([]SearchResult, 0, len(found.Documents))

@@ -62,38 +62,38 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 	if s.streamSecret == "" {
 		// Refusing is the only safe answer: without the secret there is no way to tell
 		// Stream from anyone who found the URL, and this path starts agents.
-		http.Error(w, "message events are not configured", http.StatusNotFound)
+		writeError(w, notFound("message events are not configured"))
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "could not read that message event", http.StatusBadRequest)
+		writeError(w, invalidRequest("could not read that message event"))
 		return
 	}
 	// Deliveries may be compressed, and the signature is over what is inside.
 	payload, err := getstream.GunzipPayload(body)
 	if err != nil {
 		s.logger.Warn("rejected a message event", "error", err)
-		http.Error(w, "that is not a message event from Stream", http.StatusUnauthorized)
+		writeError(w, unauthenticated("that is not a message event from Stream"))
 		return
 	}
 	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.streamSecret) {
 		s.logger.Warn("rejected a message event with a bad signature", "bytes", len(payload))
-		http.Error(w, "that is not a message event from Stream", http.StatusUnauthorized)
+		writeError(w, unauthenticated("that is not a message event from Stream"))
 		return
 	}
 
 	eventType := getstream.GetEventType(payload)
 	if eventType == "" {
-		http.Error(w, "could not read that message event", http.StatusBadRequest)
+		writeError(w, invalidRequest("could not read that message event"))
 		return
 	}
 
 	if eventType == getstream.EventTypeMessageNew {
 		var event messageEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			http.Error(w, "could not read that message event", http.StatusBadRequest)
+			writeError(w, invalidRequest("could not read that message event"))
 			return
 		}
 		s.routeArrivingMessage(r, body, event)

@@ -756,7 +756,7 @@ func (s *RouterSuite) useFixture(name string) {
 // useApp points the clients at an app, each as a new caller of its kind.
 func (s *RouterSuite) useApp(app testApp) {
 	s.app = app
-	s.unauthenticatedClient = &testClient{suite: s, header: http.Header{}, kind: unauthenticated}
+	s.unauthenticatedClient = &testClient{suite: s, header: http.Header{}, kind: noCredential}
 	s.anonymousClient = s.data.createAnonymous()
 	s.guestClient = s.data.createGuest()
 	s.client = s.data.createUser()
@@ -866,11 +866,11 @@ func (c *testClient) call(method, path string, body any) (int, []byte) {
 // as the status.
 func (c *testClient) failure(method, path string, body any) (int, string) {
 	status, payload := c.call(method, path, body)
-	var answered Error
-	if err := json.Unmarshal(payload, &answered); err != nil {
+	var answered ErrorResponse
+	if err := json.Unmarshal(payload, &answered); err != nil || answered.Error.Message == "" {
 		return status, string(payload)
 	}
-	return status, answered.Error
+	return status, answered.Error.Message
 }
 
 // watch opens a socket, with the client's credentials in the query string as well as in

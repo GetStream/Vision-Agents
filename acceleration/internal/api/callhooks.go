@@ -59,31 +59,31 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	if s.streamSecret == "" {
 		// Refusing is the only safe answer: without the secret there is no way to tell
 		// Stream from anyone who found the URL, and this path starts agents.
-		http.Error(w, "call events are not configured", http.StatusNotFound)
+		writeError(w, notFound("call events are not configured"))
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "could not read that call event", http.StatusBadRequest)
+		writeError(w, invalidRequest("could not read that call event"))
 		return
 	}
 	// Deliveries may be compressed, and the signature is over what is inside.
 	payload, err := getstream.GunzipPayload(body)
 	if err != nil {
 		s.logger.Warn("rejected a call event", "error", err)
-		http.Error(w, "that is not a call event from Stream", http.StatusUnauthorized)
+		writeError(w, unauthenticated("that is not a call event from Stream"))
 		return
 	}
 	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.streamSecret) {
 		s.logger.Warn("rejected a call event with a bad signature", "bytes", len(payload))
-		http.Error(w, "that is not a call event from Stream", http.StatusUnauthorized)
+		writeError(w, unauthenticated("that is not a call event from Stream"))
 		return
 	}
 
 	eventType := getstream.GetEventType(payload)
 	if eventType == "" {
-		http.Error(w, "could not read that call event", http.StatusBadRequest)
+		writeError(w, invalidRequest("could not read that call event"))
 		return
 	}
 
@@ -91,7 +91,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	case getstream.EventTypeCallSessionStarted:
 		var event callEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			http.Error(w, "could not read that call event", http.StatusBadRequest)
+			writeError(w, invalidRequest("could not read that call event"))
 			return
 		}
 		s.dispatchArrivingCall(r, event)
@@ -99,7 +99,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	case getstream.EventTypeCallSessionEnded:
 		var event callEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			http.Error(w, "could not read that call event", http.StatusBadRequest)
+			writeError(w, invalidRequest("could not read that call event"))
 			return
 		}
 		s.releaseEndedCall(r, event)

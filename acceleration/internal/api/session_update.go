@@ -78,26 +78,23 @@ func (s *Server) registerSessionUpdate(api huma.API) {
 func (s *Server) updateSession(ctx context.Context, request *updateSessionRequest) (*sessionResponse, error) {
 	found, failure := s.storedOrLiveSession(ctx, request.ID)
 	if failure == nil && found.Live != nil && !canReadSession(ctx, found.Live.Spec()) {
-		failure = &lookupFailure{status: notFound, message: unknownSession}
+		failure = notFound(unknownSession)
 	}
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 
 	body := request.Body
 	settings, moving := settingsOf(body)
 	if (moving || body.Instructions != nil) && !ServerSideFrom(ctx) {
-		return nil, huma.Error403Forbidden("a device may only change a session's title, " +
+		return nil, forbidden("a device may only change a session's title, " +
 			"description and custom; its instructions, models and voice are changed server-side")
 	}
 	labels := session.Labels{Title: body.Title, Description: body.Description, Custom: body.Custom}
 
 	if found.Live == nil {
 		if moving || body.Instructions != nil {
-			return nil, huma.Error400BadRequest(
+			return nil, invalidRequest(
 				"the session has ended, so only its title, description and custom can change")
 		}
 		row := *found.Stored
@@ -114,7 +111,7 @@ func (s *Server) updateSession(ctx context.Context, request *updateSessionReques
 	live := found.Live
 	if moving {
 		if err := live.SetSettings(ctx, settings); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, invalidRequest(err.Error())
 		}
 	}
 	if body.Instructions != nil {

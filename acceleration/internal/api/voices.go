@@ -13,13 +13,13 @@ import (
 )
 
 // noVoices is what the voice paths say on a deployment that cannot hold a recording.
-const noVoices = "voices of your own are not available: this deployment has no object storage configured"
+var noVoices = coded{codeNotConfigured, "voices of your own are not available: this deployment has no object storage configured"}
 
 // noLibrary is what the library path says where no provider publishes a catalogue here.
-const noLibrary = "no speech provider configured here publishes a voice library, so a voice is whatever id the provider knows it by"
+var noLibrary = coded{codeNotConfigured, "no speech provider configured here publishes a voice library, so a voice is whatever id the provider knows it by"}
 
 // unknownVoice is what a caller is told about a voice that is not theirs, or not there.
-const unknownVoice = "there is no such voice"
+var unknownVoice = coded{codeVoiceNotFound, "there is no such voice"}
 
 // previewLine is what a voice says when the caller did not choose a line.
 const previewLine = "Hi there! This is how I will sound when I answer your calls."
@@ -28,10 +28,10 @@ const previewLine = "Hi there! This is how I will sound when I answer your calls
 func (s *Server) listVoices(ctx context.Context, _ *listVoicesRequest) (*listVoicesResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.voices == nil {
-		return nil, huma.Error400BadRequest(noVoices)
+		return nil, invalidRequest(noVoices)
 	}
 
 	stored, err := s.store.CustomerVoices(ctx, customerID)
@@ -54,21 +54,21 @@ func (s *Server) listVoices(ctx context.Context, _ *listVoicesRequest) (*listVoi
 func (s *Server) createVoice(ctx context.Context, request *createVoiceRequest) (*createVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.voices == nil {
-		return nil, huma.Error400BadRequest(noVoices)
+		return nil, invalidRequest(noVoices)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if strings.TrimSpace(request.Body.Name) == "" {
-		return nil, huma.Error400BadRequest("a voice needs a name")
+		return nil, invalidRequest("a voice needs a name")
 	}
 
 	voice, err := s.voices.Create(ctx, customerID, request.Body.Name, text(request.Body.Description))
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	described, err := s.describeVoice(ctx, voice)
@@ -82,15 +82,15 @@ func (s *Server) createVoice(ctx context.Context, request *createVoiceRequest) (
 func (s *Server) getVoice(ctx context.Context, request *getVoiceRequest) (*getVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.voices == nil {
-		return nil, huma.Error400BadRequest(noVoices)
+		return nil, invalidRequest(noVoices)
 	}
 
 	voice, err := s.configs.Voice(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownVoice)
+		return nil, notFound(unknownVoice)
 	}
 
 	described, err := s.describeVoice(ctx, voice)
@@ -104,16 +104,16 @@ func (s *Server) getVoice(ctx context.Context, request *getVoiceRequest) (*getVo
 func (s *Server) updateVoice(ctx context.Context, request *updateVoiceRequest) (*updateVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.voices == nil {
-		return nil, huma.Error400BadRequest(noVoices)
+		return nil, invalidRequest(noVoices)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if strings.TrimSpace(request.Body.Name) == "" {
-		return nil, huma.Error400BadRequest("a voice needs a name")
+		return nil, invalidRequest("a voice needs a name")
 	}
 
 	voice := store.Voice{
@@ -124,9 +124,9 @@ func (s *Server) updateVoice(ctx context.Context, request *updateVoiceRequest) (
 	}
 	if err := s.configs.UpdateVoice(ctx, &voice); err != nil {
 		if errors.Is(err, store.ErrNoVoice) {
-			return nil, huma.Error404NotFound(unknownVoice)
+			return nil, notFound(unknownVoice)
 		}
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	described, err := s.describeVoice(ctx, voice)
@@ -140,17 +140,17 @@ func (s *Server) updateVoice(ctx context.Context, request *updateVoiceRequest) (
 func (s *Server) deleteVoice(ctx context.Context, request *deleteVoiceRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.voices == nil {
-		return nil, huma.Error400BadRequest(noVoices)
+		return nil, invalidRequest(noVoices)
 	}
 
 	if err := s.voices.Delete(ctx, customerID, request.Id); err != nil {
 		if errors.Is(err, store.ErrNoVoice) {
-			return nil, huma.Error404NotFound(unknownVoice)
+			return nil, notFound(unknownVoice)
 		}
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return nil, nil
 }
@@ -159,13 +159,13 @@ func (s *Server) deleteVoice(ctx context.Context, request *deleteVoiceRequest) (
 func (s *Server) addVoiceSample(ctx context.Context, request *addVoiceSampleRequest) (*addVoiceSampleResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.voices == nil {
-		return nil, huma.Error400BadRequest(noVoices)
+		return nil, invalidRequest(noVoices)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	sample := voices.Sample{
@@ -176,9 +176,9 @@ func (s *Server) addVoiceSample(ctx context.Context, request *addVoiceSampleRequ
 	}
 	if err := s.voices.AddSample(ctx, customerID, request.Id, sample); err != nil {
 		if errors.Is(err, store.ErrNoVoice) {
-			return nil, huma.Error404NotFound(unknownVoice)
+			return nil, notFound(unknownVoice)
 		}
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	voice, err := s.configs.Voice(ctx, customerID, request.Id)
@@ -196,10 +196,10 @@ func (s *Server) addVoiceSample(ctx context.Context, request *addVoiceSampleRequ
 func (s *Server) prepareVoice(ctx context.Context, request *prepareVoiceRequest) (*prepareVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.voices == nil {
-		return nil, huma.Error400BadRequest(noVoices)
+		return nil, invalidRequest(noVoices)
 	}
 
 	var providers []string
@@ -209,9 +209,9 @@ func (s *Server) prepareVoice(ctx context.Context, request *prepareVoiceRequest)
 
 	if err := s.voices.Prepare(ctx, customerID, request.Id, providers); err != nil {
 		if errors.Is(err, store.ErrNoVoice) {
-			return nil, huma.Error404NotFound(unknownVoice)
+			return nil, notFound(unknownVoice)
 		}
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	voice, err := s.configs.Voice(ctx, customerID, request.Id)
@@ -228,10 +228,10 @@ func (s *Server) prepareVoice(ctx context.Context, request *prepareVoiceRequest)
 // listVoiceProviders reports which providers a voice can be prepared with.
 func (s *Server) listVoiceProviders(ctx context.Context, _ *listVoiceProvidersRequest) (*listVoiceProvidersResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.voices == nil {
-		return nil, huma.Error400BadRequest(noVoices)
+		return nil, invalidRequest(noVoices)
 	}
 	return &listVoiceProvidersResponse{Body: VoiceProviders{Providers: s.voices.Providers()}}, nil
 }
@@ -239,10 +239,10 @@ func (s *Server) listVoiceProviders(ctx context.Context, _ *listVoiceProvidersRe
 // listLibraryVoices returns the voices the speech providers themselves offer.
 func (s *Server) listLibraryVoices(ctx context.Context, request *listLibraryVoicesRequest) (*listLibraryVoicesResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.library == nil {
-		return nil, huma.Error400BadRequest(noLibrary)
+		return nil, invalidRequest(noLibrary)
 	}
 
 	provider := text(request.Provider.ptr())
@@ -250,7 +250,7 @@ func (s *Server) listLibraryVoices(ctx context.Context, request *listLibraryVoic
 	// Some providers answering is enough to fill a picker, so a failure only refuses the
 	// request when it left nothing to show.
 	if len(found) == 0 && err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if err != nil {
 		s.logger.Warn("a voice library could not be read", "error", err)
@@ -290,15 +290,15 @@ func (s *Server) listLibraryVoices(ctx context.Context, request *listLibraryVoic
 // previewLibraryVoice hands back the sample a provider published for one of its voices.
 func (s *Server) previewLibraryVoice(ctx context.Context, request *previewLibraryVoiceRequest) (*previewLibraryVoiceResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.library == nil {
-		return nil, huma.Error400BadRequest(noLibrary)
+		return nil, invalidRequest(noLibrary)
 	}
 
 	spoken, err := s.library.Preview(ctx, request.Provider, request.Voice)
 	if err != nil {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 	return &previewLibraryVoiceResponse{Body: VoicePreview{Provider: request.Provider,
 		ContentType: spoken.ContentType,
@@ -309,16 +309,16 @@ func (s *Server) previewLibraryVoice(ctx context.Context, request *previewLibrar
 func (s *Server) previewVoice(ctx context.Context, request *previewVoiceRequest) (*previewVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.voices == nil {
-		return nil, huma.Error400BadRequest(noVoices)
+		return nil, invalidRequest(noVoices)
 	}
 	if request.Body == nil || strings.TrimSpace(request.Body.Provider) == "" {
-		return nil, huma.Error400BadRequest("name the provider to hear the voice through")
+		return nil, invalidRequest("name the provider to hear the voice through")
 	}
 	if _, err := s.configs.Voice(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error404NotFound(unknownVoice)
+		return nil, notFound(unknownVoice)
 	}
 
 	provider := request.Body.Provider
@@ -328,10 +328,10 @@ func (s *Server) previewVoice(ctx context.Context, request *previewVoiceRequest)
 	}
 	speech, err := s.voices.Speak(ctx, customerID, request.Id, provider, line)
 	if errors.Is(err, store.ErrNoVoice) {
-		return nil, huma.Error400BadRequest("the voice is not ready with " + provider + " yet")
+		return nil, invalidRequest("the voice is not ready with " + provider + " yet")
 	}
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &previewVoiceResponse{Body: VoicePreview{Provider: provider,
 		ContentType: speech.ContentType,

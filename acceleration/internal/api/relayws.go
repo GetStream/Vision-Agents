@@ -139,7 +139,7 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 		ReplayPendingTools: r.URL.Query().Get("replay_pending_tools") == "true",
 	}); err != nil {
 		s.logger.Error("could not ask for a session held elsewhere", "session", id, "error", err)
-		writeError(w, http.StatusServiceUnavailable, "the session could not be reached")
+		writeError(w, unavailable("the session could not be reached"))
 		return
 	}
 
@@ -150,7 +150,7 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 		// No node has it, or the node that has it will not let this caller watch. Both
 		// are answered the way a session that never existed is answered: a refusal would
 		// confirm the id is real.
-		writeError(w, http.StatusNotFound, unknownSession)
+		writeError(w, notFound(unknownSession))
 		return
 	case <-r.Context().Done():
 		return

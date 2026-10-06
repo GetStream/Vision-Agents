@@ -348,7 +348,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -363,7 +363,7 @@ func documentHandWritten(api huma.API) {
 			"200": {Description: "One log with full safe metadata.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[AgentLog](), true, "")}}},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 			"404": {Ref: "#/components/responses/NotFound"},
 		},
 	})
@@ -392,7 +392,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -418,7 +418,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "This deployment has no database to export from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "This deployment has no database to export from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -445,7 +445,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "This deployment has no database to import into.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "This deployment has no database to import into.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -470,8 +470,8 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"410": {Description: "The changes since that cursor are no longer kept, so export again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
-			"503": {Description: "This deployment has no database to read changes from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"410": {Description: "The changes since that cursor are no longer kept, so export again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+			"503": {Description: "This deployment has no database to read changes from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 }

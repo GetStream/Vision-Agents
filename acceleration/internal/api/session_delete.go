@@ -32,10 +32,10 @@ func (s *Server) registerSessionDelete(api huma.API) {
 // deleteSession deletes one of the caller's sessions and what it remembered.
 func (s *Server) deleteSession(ctx context.Context, request *deleteSessionRequest) (*struct{}, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if _, failure := s.storedOrLiveSession(ctx, request.ID); failure != nil {
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	if err := s.sessions.Delete(ctx, request.ID, OwnerFrom(ctx)); err != nil {
 		return nil, err

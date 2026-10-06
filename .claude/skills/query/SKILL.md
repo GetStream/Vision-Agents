@@ -108,7 +108,7 @@ Put the grammar in one package and reuse it; an endpoint only supplies its allow
   `sessionQueryOf`. The cursor carries the sort, so a cursor from one sort is refused by
   another. Start here, and move to a tree only when `$and`, `$or` or `$in` are needed.
 - Parse the body into a tree once, validating against the allow-list as you go. The
-  handler gets a typed tree or a `huma.Error400BadRequest`.
+  handler gets a typed tree or an `invalidRequest` `APIError`.
 - Compile the tree to bun `Where` clauses with bound values. Field names never reach SQL
   as text.
 - Where a list merges rows held in memory with rows in Postgres, like live sessions in

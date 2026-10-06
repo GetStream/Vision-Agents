@@ -21,7 +21,7 @@ import (
 // listPhoneVendors reports every vendor and whether it can be used.
 func (s *Server) listPhoneVendors(ctx context.Context, _ *listPhoneVendorsRequest) (*listPhoneVendorsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.phone == nil {
 		return &listPhoneVendorsResponse{Body: []PhoneVendor{}}, nil
@@ -56,10 +56,10 @@ func (s *Server) listPhoneVendors(ctx context.Context, _ *listPhoneVendorsReques
 // searchPhoneNumbers asks what is for sale, at one vendor or at every usable one.
 func (s *Server) searchPhoneNumbers(ctx context.Context, request *searchPhoneNumbersRequest) (*searchPhoneNumbersResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.phone == nil {
-		return nil, huma.Error400BadRequest(noTelephony().Error)
+		return nil, noTelephony()
 	}
 
 	// Voice is what an agent needs, so it is always required, on top of whatever else
@@ -99,10 +99,10 @@ func (s *Server) searchPhoneNumbers(ctx context.Context, request *searchPhoneNum
 
 	offers, err := s.searchOffers(ctx, request.Vendor.ptr(), search)
 	if errors.Is(err, phone.ErrNotImplemented) {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	result := NumberSearchResult{
@@ -162,16 +162,16 @@ func (s *Server) searchOffers(
 func (s *Server) listPhoneNumbers(ctx context.Context, request *listPhoneNumbersRequest) (*listPhoneNumbersResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.phone == nil {
-		return nil, huma.Error400BadRequest(noTelephony().Error)
+		return nil, noTelephony()
 	}
 
 	includeReleased := request.IncludeReleased.ptr() != nil && *request.IncludeReleased.ptr()
 	held, err := s.phone.Numbers(ctx, customerID, includeReleased)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	numbers := make([]PhoneNumber, 0, len(held))
@@ -185,18 +185,18 @@ func (s *Server) listPhoneNumbers(ctx context.Context, request *listPhoneNumbers
 func (s *Server) buyPhoneNumber(ctx context.Context, request *buyPhoneNumberRequest) (*buyPhoneNumberResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return nil, huma.Error400BadRequest(noTelephony().Error)
+		return nil, noTelephony()
 	}
 
 	tags := phoneTags(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	purchase := phone.Purchase{
@@ -210,10 +210,10 @@ func (s *Server) buyPhoneNumber(ctx context.Context, request *buyPhoneNumberRequ
 
 	bought, err := s.phone.Buy(ctx, purchase)
 	if errors.Is(err, phone.ErrNotImplemented) {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &buyPhoneNumberResponse{Body: phoneNumber(bought)}, nil
 }
@@ -222,18 +222,18 @@ func (s *Server) buyPhoneNumber(ctx context.Context, request *buyPhoneNumberRequ
 func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNumberRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.phone == nil {
-		return nil, huma.Error400BadRequest(noTelephony().Error)
+		return nil, noTelephony()
 	}
 
 	err := s.phone.Release(ctx, customerID, request.E164)
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return nil, nil
 }
@@ -242,10 +242,10 @@ func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNu
 func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumberRequest) (*attachPhoneNumberResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.phone == nil {
-		return nil, huma.Error400BadRequest(noTelephony().Error)
+		return nil, noTelephony()
 	}
 
 	attachment := phone.Attachment{CustomerID: customerID, E164: request.E164}
@@ -263,10 +263,10 @@ func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumb
 
 	attached, err := s.phone.Attach(ctx, attachment)
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	return &attachPhoneNumberResponse{Body: AttachedNumber{TrunkId: attached.TrunkID,
@@ -278,18 +278,18 @@ func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumb
 func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequest) (*placePhoneCallResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return nil, huma.Error400BadRequest(noTelephony().Error)
+		return nil, noTelephony()
 	}
 
 	tags := phoneTags(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	call := phone.CallRequest{
@@ -305,7 +305,7 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	}
 	if request.Body.RingTimeoutSeconds != nil {
 		if *request.Body.RingTimeoutSeconds < 0 {
-			return nil, huma.Error400BadRequest("a call cannot ring for less than no time")
+			return nil, invalidRequest("a call cannot ring for less than no time")
 		}
 		call.RingTimeout = time.Duration(*request.Body.RingTimeoutSeconds) * time.Second
 	}
@@ -321,13 +321,13 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 
 	placed, err := s.phone.Call(ctx, call)
 	if errors.Is(err, dlc.ErrRefused) {
-		return nil, huma.Error403Forbidden(err.Error())
+		return nil, forbidden(err.Error())
 	}
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	return &placePhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
@@ -346,7 +346,7 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 func (s *Server) answerPhoneCall(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if s.phone == nil {
-		http.Error(w, "telephony is not configured", http.StatusNotFound)
+		writeError(w, notFound("telephony is not configured"))
 		return
 	}
 
@@ -355,7 +355,7 @@ func (s *Server) answerPhoneCall(w http.ResponseWriter, r *http.Request) {
 		// The vendor is about to bridge a live call to nowhere, so this is worth a log
 		// line even though there is nobody to return the detail to.
 		s.logger.Error("could not answer a placed call", "error", err)
-		http.Error(w, "that call is not waiting to be answered", http.StatusNotFound)
+		writeError(w, notFound("that call is not waiting to be answered"))
 		return
 	}
 
@@ -369,18 +369,18 @@ func (s *Server) answerPhoneCall(w http.ResponseWriter, r *http.Request) {
 func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCallRequest) (*transferPhoneCallResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return nil, huma.Error400BadRequest(noTelephony().Error)
+		return nil, noTelephony()
 	}
 
 	tags := phoneTags(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	transfer := phone.TransferRequest{
@@ -395,10 +395,10 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 
 	placed, err := s.phone.Transfer(ctx, transfer)
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	return &transferPhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
@@ -408,21 +408,21 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 // pressPhoneDigits presses digits on a call placed from here.
 func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigitsRequest) (*struct{}, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return nil, huma.Error400BadRequest(noTelephony().Error)
+		return nil, noTelephony()
 	}
 
 	err := s.phone.SendDigits(ctx, request.Body.Vendor, request.VendorCallId, request.Body.Digits)
 	if errors.Is(err, phone.ErrNotImplemented) {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return nil, nil
 }
@@ -474,8 +474,8 @@ func phoneTags(tags *map[string]string) routing.Tags {
 	return routing.Tags(*tags)
 }
 
-func noTelephony() Error {
-	return badRequest("phone numbers are not available: no telephony configured")
+func noTelephony() APIError {
+	return invalidRequest(coded{codeNotConfigured, "phone numbers are not available: no telephony configured"})
 }
 
 // registerPhone declares the operations served in phone.go.

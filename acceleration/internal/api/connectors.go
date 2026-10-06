@@ -18,7 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-const noConnectors = "connector definitions are not available: no database configured"
+var noConnectors = coded{codeNotConfigured, "connector definitions are not available: no database configured"}
 
 // mcpSource is both the tool source a custom definition runs and the endpoint role it runs
 // against, as the built-in manifests write them (internal/connectors/providers/slack.yaml
@@ -208,14 +208,14 @@ func (s *Server) registerConnectors(api huma.API) {
 func (s *Server) listConnectors(ctx context.Context, request *listConnectorsRequest) (*listConnectorsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConnectors)
+		return nil, invalidRequest(noConnectors)
 	}
 	cursor, err := decodeCursor[store.ConnectorDefinitionPosition](&request.Cursor)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	found, err := s.store.ListConnectorDefinitions(ctx, customerID, store.ConnectorDefinitionFilter{
 		Text:   strings.TrimSpace(request.Q),
@@ -245,14 +245,14 @@ func (s *Server) listConnectors(ctx context.Context, request *listConnectorsRequ
 func (s *Server) getConnector(ctx context.Context, request *getConnectorRequest) (*connectorResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConnectors)
+		return nil, invalidRequest(noConnectors)
 	}
 	definition, err := s.store.LatestConnectorDefinition(ctx, customerID, request.ID)
 	if errors.Is(err, store.ErrNoConnectorDefinition) {
-		return nil, huma.Error404NotFound("no such connector")
+		return nil, notFound("no such connector")
 	}
 	if err != nil {
 		return nil, err
@@ -264,14 +264,14 @@ func (s *Server) getConnector(ctx context.Context, request *getConnectorRequest)
 func (s *Server) createConnector(ctx context.Context, request *createConnectorRequest) (*connectorResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConnectors)
+		return nil, invalidRequest(noConnectors)
 	}
 	manifest, err := s.customManifest(ctx, request.Body)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	// Every refusal a caller can cause is above, so what the store refuses here is a bug.
 	definition, err := s.store.CreateConnectorDefinition(ctx, customerID, manifest)

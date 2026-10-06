@@ -11,18 +11,18 @@ import (
 func (s *Server) getConversationMessages(ctx context.Context, req *getConversationMessagesRequest) (*getConversationMessagesResponse, error) {
 	owner, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.sessions == nil {
-		return nil, huma.Error400BadRequest(noSessions)
+		return nil, invalidRequest(noSessions)
 	}
 	service, err := s.sessions.Conversations()
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	page, err := service.HistoryForCaller(ctx, owner, req.AgentId, req.Cid, value(req.Before.ptr()), CallerFrom(ctx).UserID)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	b, _ := json.Marshal(page)
 	var result map[string]any
@@ -34,18 +34,18 @@ func (s *Server) getConversationMessages(ctx context.Context, req *getConversati
 func (s *Server) getConversationCommand(ctx context.Context, req *getConversationCommandRequest) (*getConversationCommandResponse, error) {
 	owner, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.sessions == nil {
-		return nil, huma.Error404NotFound(noSessions)
+		return nil, notFound(noSessions)
 	}
 	service, err := s.sessions.Conversations()
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownCommand)
+		return nil, notFound(unknownCommand)
 	}
 	receipt, err := service.CommandForCaller(ctx, owner, req.AgentId, req.Cid, CallerFrom(ctx).UserID, req.CommandId)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownCommand)
+		return nil, notFound(unknownCommand)
 	}
 	return &getConversationCommandResponse{Body: receiptOf(receipt)}, nil
 }

@@ -23,7 +23,7 @@ import (
 
 // noConfigs is what the config and skill paths say on a deployment without a database.
 // They are stored rather than computed, so there is nothing to serve without one.
-const noConfigs = "agent configs are not available: no database configured"
+var noConfigs = coded{codeNotConfigured, "agent configs are not available: no database configured"}
 
 // mcpBrandingTimeout is how long saving a config waits for its MCP servers to describe
 // themselves.
@@ -33,10 +33,10 @@ const mcpBrandingTimeout = 5 * time.Second
 func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigsRequest) (*listAgentConfigsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 
 	// A name is resolved through the index rather than by reading every config and filtering
@@ -69,49 +69,49 @@ func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigs
 func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConfigRequest) (*createAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if message, ok := configComplaint(*request.Body); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 
 	config := storedConfig(*request.Body, customerID)
 	if message, ok := textThinkingComplaint(&config, request.Body.ThinkingLlm); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEventsComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEntriesComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, nil)
 	if !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	config.MCPServers = servers
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	s.pluginEvents.Changed(customerID, config.ID)
 	return &createAgentConfigResponse{Body: agentConfigOf(config)}, nil
@@ -121,15 +121,15 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 func (s *Server) getAgentConfig(ctx context.Context, request *getAgentConfigRequest) (*getAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownConfig)
+		return nil, notFound(unknownConfig)
 	}
 	return &getAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
@@ -138,44 +138,44 @@ func (s *Server) getAgentConfig(ctx context.Context, request *getAgentConfigRequ
 func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConfigRequest) (*updateAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if message, ok := configComplaint(*request.Body); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 
 	existing, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownConfig)
+		return nil, notFound(unknownConfig)
 	}
 	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 
 	config := storedConfig(*request.Body, customerID)
 	if message, ok := textThinkingComplaint(&config, request.Body.ThinkingLlm); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEventsComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEntriesComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, existing.MCPServers)
 	if !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	config.MCPServers = servers
 	config.ID = existing.ID
@@ -187,13 +187,13 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		config.Connectors = existing.Connectors
 	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginAliasComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	s.pluginEvents.Changed(customerID, config.ID)
 	return &updateAgentConfigResponse{Body: agentConfigOf(config)}, nil
@@ -203,14 +203,14 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConfigRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error404NotFound(unknownConfig)
+		return nil, notFound(unknownConfig)
 	}
 	return nil, nil
 }
@@ -220,10 +220,10 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 func (s *Server) listSkills(ctx context.Context, request *listSkillsRequest) (*listSkillsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 
 	stored, err := s.store.CustomerSkills(ctx, customerID, value(request.ConfigId.ptr()))
@@ -242,24 +242,24 @@ func (s *Server) listSkills(ctx context.Context, request *listSkillsRequest) (*l
 func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (*createSkillResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if message, ok := skillComplaint(*request.Body); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
-		return nil, huma.Error400BadRequest(unknownConfig)
+		return nil, invalidRequest(unknownConfig)
 	}
 
 	skill := storedSkill(*request.Body, customerID)
 	if err := s.configs.CreateSkill(ctx, &skill); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &createSkillResponse{Body: skillOf(skill)}, nil
 }
@@ -268,15 +268,15 @@ func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (
 func (s *Server) getSkill(ctx context.Context, request *getSkillRequest) (*getSkillResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 
 	skill, err := s.store.Skill(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownSkill)
+		return nil, notFound(unknownSkill)
 	}
 	return &getSkillResponse{Body: skillOf(skill)}, nil
 }
@@ -285,31 +285,31 @@ func (s *Server) getSkill(ctx context.Context, request *getSkillRequest) (*getSk
 func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (*updateSkillResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if message, ok := skillComplaint(*request.Body); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
-		return nil, huma.Error400BadRequest(unknownConfig)
+		return nil, invalidRequest(unknownConfig)
 	}
 
 	existing, err := s.store.Skill(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownSkill)
+		return nil, notFound(unknownSkill)
 	}
 
 	skill := storedSkill(*request.Body, customerID)
 	skill.ID = existing.ID
 	skill.CreatedAt = existing.CreatedAt
 	if err := s.configs.UpdateSkill(ctx, &skill); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &updateSkillResponse{Body: skillOf(skill)}, nil
 }
@@ -318,23 +318,23 @@ func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (
 func (s *Server) deleteSkill(ctx context.Context, request *deleteSkillRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, invalidRequest(noConfigs)
 	}
 
 	if err := s.configs.DeleteSkill(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error404NotFound(unknownSkill)
+		return nil, notFound(unknownSkill)
 	}
 	return nil, nil
 }
 
 // unknownConfig and unknownSkill are what a caller is told about a resource that is not
 // theirs, which is the same thing they are told about one that never existed.
-const (
-	unknownConfig = "no such agent config"
-	unknownSkill  = "no such skill"
+var (
+	unknownConfig = coded{codeAgentConfigNotFound, "no such agent config"}
+	unknownSkill  = coded{codeSkillNotFound, "no such skill"}
 )
 
 // configComplaint reports what is wrong with an agent config, if anything. Keyterms are

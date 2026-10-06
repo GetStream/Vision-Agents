@@ -76,7 +76,7 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 			s.logger.Info("refused a caller who has spent their day",
 				"method", r.Method, "path", r.URL.Path, "customer", customerID)
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfter(time.Now())))
-			writeError(w, http.StatusTooManyRequests, err.Error())
+			writeError(w, rateLimited(err.Error()))
 			return
 		}
 		next.ServeHTTP(w, r)

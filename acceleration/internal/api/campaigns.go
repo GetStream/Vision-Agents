@@ -13,19 +13,19 @@ import (
 
 // noCampaigns is what the campaign paths say on a deployment that cannot run one. A
 // campaign is a phone call, a conversation and a row, so it needs all three.
-const (
-	noCampaigns     = "campaigns are not available: this deployment has no database, telephony or sessions"
-	unknownCampaign = "no such campaign"
+var (
+	noCampaigns     = coded{codeNotConfigured, "campaigns are not available: this deployment has no database, telephony or sessions"}
+	unknownCampaign = coded{codeCampaignNotFound, "no such campaign"}
 )
 
 // listCampaigns returns the calling customer's campaigns, newest first.
 func (s *Server) listCampaigns(ctx context.Context, _ *listCampaignsRequest) (*listCampaignsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noCampaigns)
+		return nil, invalidRequest(noCampaigns)
 	}
 
 	stored, err := s.store.CustomerCampaigns(ctx, customerID)
@@ -44,28 +44,28 @@ func (s *Server) listCampaigns(ctx context.Context, _ *listCampaignsRequest) (*l
 func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequest) (*createCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noCampaigns)
+		return nil, invalidRequest(noCampaigns)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if strings.TrimSpace(request.Body.Name) == "" {
-		return nil, huma.Error400BadRequest("a campaign needs a name")
+		return nil, invalidRequest("a campaign needs a name")
 	}
 	if request.Body.ConfigId == "" {
-		return nil, huma.Error400BadRequest("a campaign needs an agent config to make its calls with")
+		return nil, invalidRequest("a campaign needs an agent config to make its calls with")
 	}
 	if request.Body.FromNumber == "" {
-		return nil, huma.Error400BadRequest("a campaign needs one of your numbers to call from")
+		return nil, invalidRequest("a campaign needs one of your numbers to call from")
 	}
 
 	// A campaign that names a config nobody has would fail one call at a time, at
 	// whatever hour it was started.
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
-		return nil, huma.Error400BadRequest(unknownConfig)
+		return nil, invalidRequest(unknownConfig)
 	}
 
 	campaign := store.Campaign{
@@ -79,10 +79,10 @@ func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequ
 		campaign.Tags = *request.Body.Tags
 	}
 	if err := routing.Tags(campaign.Tags).Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if err := s.store.CreateCampaign(ctx, &campaign); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &createCampaignResponse{Body: campaignOf(campaign)}, nil
 }
@@ -91,15 +91,15 @@ func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequ
 func (s *Server) getCampaign(ctx context.Context, request *getCampaignRequest) (*getCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noCampaigns)
+		return nil, invalidRequest(noCampaigns)
 	}
 
 	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownCampaign)
+		return nil, notFound(unknownCampaign)
 	}
 	return &getCampaignResponse{Body: campaignOf(campaign)}, nil
 }
@@ -108,15 +108,15 @@ func (s *Server) getCampaign(ctx context.Context, request *getCampaignRequest) (
 func (s *Server) listCampaignContacts(ctx context.Context, request *listCampaignContactsRequest) (*listCampaignContactsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noCampaigns)
+		return nil, invalidRequest(noCampaigns)
 	}
 
 	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownCampaign)
+		return nil, notFound(unknownCampaign)
 	}
 
 	stored, err := s.store.CampaignContacts(ctx, campaign.ID)
@@ -130,24 +130,24 @@ func (s *Server) listCampaignContacts(ctx context.Context, request *listCampaign
 func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignContactsRequest) (*addCampaignContactsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noCampaigns)
+		return nil, invalidRequest(noCampaigns)
 	}
 	if request.Body == nil || len(request.Body.Contacts) == 0 {
-		return nil, huma.Error400BadRequest("there is nobody to add")
+		return nil, invalidRequest("there is nobody to add")
 	}
 
 	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownCampaign)
+		return nil, notFound(unknownCampaign)
 	}
 
 	contacts := make([]store.Contact, 0, len(request.Body.Contacts))
 	for _, wanted := range request.Body.Contacts {
 		if strings.TrimSpace(wanted.ToNumber) == "" {
-			return nil, huma.Error400BadRequest("a contact needs a number to ring")
+			return nil, invalidRequest("a contact needs a number to ring")
 		}
 		contacts = append(contacts, store.Contact{
 			CampaignID:   campaign.ID,
@@ -157,7 +157,7 @@ func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignCo
 	}
 
 	if err := s.store.AddContacts(ctx, contacts); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &addCampaignContactsResponse{Body: contactsOf(contacts)}, nil
 }
@@ -167,17 +167,17 @@ func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignCo
 func (s *Server) startCampaign(ctx context.Context, request *startCampaignRequest) (*startCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil || s.campaigns == nil {
-		return nil, huma.Error400BadRequest(noCampaigns)
+		return nil, invalidRequest(noCampaigns)
 	}
 
 	if _, err := s.store.Campaign(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error404NotFound(unknownCampaign)
+		return nil, notFound(unknownCampaign)
 	}
 	if err := s.campaigns.Start(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
@@ -191,17 +191,17 @@ func (s *Server) startCampaign(ctx context.Context, request *startCampaignReques
 func (s *Server) pauseCampaign(ctx context.Context, request *pauseCampaignRequest) (*pauseCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil || s.campaigns == nil {
-		return nil, huma.Error400BadRequest(noCampaigns)
+		return nil, invalidRequest(noCampaigns)
 	}
 
 	if _, err := s.store.Campaign(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error404NotFound(unknownCampaign)
+		return nil, notFound(unknownCampaign)
 	}
 	if err := s.campaigns.Pause(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	campaign, err := s.store.Campaign(ctx, customerID, request.Id)

@@ -21,11 +21,11 @@ import (
 
 // noRecordings is what the recording paths say on a deployment that does not run them.
 // They are jobs, so they need somewhere to keep one as well as something to route it to.
-const noRecordings = "this deployment does not run recordings"
+var noRecordings = coded{codeNotConfigured, "this deployment does not run recordings"}
 
 // noRecordingStore is what they say without a database. A job whose result nobody could
 // come back for is worse than a refusal.
-const noRecordingStore = "recordings are not available: no database configured"
+var noRecordingStore = coded{codeNotConfigured, "recordings are not available: no database configured"}
 
 // recordingDeadline bounds one job. Transcription runs far faster than real time, but a
 // feature-length recording is still minutes of work, and a job that hangs is a row that
@@ -39,25 +39,25 @@ const callbackTimeout = 30 * time.Second
 func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRecordingRequest) (*transcribeRecordingResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.streams == nil || s.streams.Transcriptions == nil {
-		return nil, huma.Error404NotFound(noRecordings)
+		return nil, notFound(noRecordings)
 	}
 	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
-		return nil, huma.Error400BadRequest(noRecordingStore)
+		return nil, invalidRequest(noRecordingStore)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	config, err := s.routerOptions(ctx, customerID, value(request.Body.ConfigId))
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	held := config.STT.Merge(sttOptionsOf(request.Body.Options))
 	if err := held.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if held.Target == "" {
 		held.Target = recordedTarget(held.Languages)
@@ -81,15 +81,15 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 		FillerWords:     held.Mode == options.ModeVerbatim,
 	}
 	if err := source.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if _, err := stt.Subtitles(stt.Transcription{}, held.Output); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	job := store.Recording{
@@ -102,7 +102,7 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 	}
 	if truthy(request.Body.Inline) {
 		if job.Callback != "" || len(source.Audio) > 8*1024*1024 || source.URL != "" {
-			return nil, huma.Error400BadRequest("inline transcription requires at most 8 MiB of audio and no URL or callback")
+			return nil, invalidRequest("inline transcription requires at most 8 MiB of audio and no URL or callback")
 		}
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
@@ -134,15 +134,15 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 func (s *Server) getTranscription(ctx context.Context, request *getTranscriptionRequest) (*getTranscriptionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noRecordingStore)
+		return nil, invalidRequest(noRecordingStore)
 	}
 
 	job, err := s.store.Recording(ctx, customerID, request.Id)
 	if err != nil || job.Modality != string(Stt) {
-		return nil, huma.Error404NotFound("no such transcription")
+		return nil, notFound("no such transcription")
 	}
 	return &getTranscriptionResponse{Body: transcriptionOf(job)}, nil
 }
@@ -151,24 +151,24 @@ func (s *Server) getTranscription(ctx context.Context, request *getTranscription
 func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest) (*recordSpeechResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.streams == nil || s.streams.Speech == nil {
-		return nil, huma.Error404NotFound(noRecordings)
+		return nil, notFound(noRecordings)
 	}
 	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
-		return nil, huma.Error400BadRequest(noRecordingStore)
+		return nil, invalidRequest(noRecordingStore)
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if strings.TrimSpace(request.Body.Text) == "" {
-		return nil, huma.Error400BadRequest("there is nothing to say")
+		return nil, invalidRequest("there is nothing to say")
 	}
 
 	config, err := s.routerOptions(ctx, customerID, value(request.Body.ConfigId))
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	held := config.TTS.Merge(ttsOptionsOf(request.Body.Options))
 	if held.Target == "" {
@@ -177,7 +177,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 
 	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	job := store.Recording{
@@ -190,7 +190,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 	}
 	if truthy(request.Body.Inline) {
 		if job.Callback != "" || utf8.RuneCountInString(job.Text) > 16000 {
-			return nil, huma.Error400BadRequest("inline speech requires at most 16000 characters and no callback")
+			return nil, invalidRequest("inline speech requires at most 16000 characters and no callback")
 		}
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
@@ -216,15 +216,15 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 func (s *Server) getSpeech(ctx context.Context, request *getSpeechRequest) (*getSpeechResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noRecordingStore)
+		return nil, invalidRequest(noRecordingStore)
 	}
 
 	job, err := s.store.Recording(ctx, customerID, request.Id)
 	if err != nil || job.Modality != string(Tts) {
-		return nil, huma.Error404NotFound("no such speech job")
+		return nil, notFound("no such speech job")
 	}
 	return &getSpeechResponse{Body: speechOf(job)}, nil
 }

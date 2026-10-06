@@ -30,20 +30,20 @@ const defaultCapacity = 4
 func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := CustomerFrom(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "the "+CustomerHeader+" header is required")
+		writeError(w, missingCustomer())
 		return
 	}
 	if s.refuseClientSide(w, r) {
 		return
 	}
 	if s.dispatch == nil {
-		writeError(w, http.StatusNotFound, "this deployment does not dispatch calls")
+		writeError(w, notFound("this deployment does not dispatch calls"))
 		return
 	}
 
 	registration, failure := registrationOf(r)
 	if failure != "" {
-		writeError(w, http.StatusBadRequest, failure)
+		writeError(w, invalidRequest(failure))
 		return
 	}
 

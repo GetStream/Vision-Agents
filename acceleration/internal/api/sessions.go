@@ -19,7 +19,7 @@ import (
 // noSessions is what every session path says on a deployment that only inspects routing.
 // It is a 404 rather than a 501 because the resource genuinely is not there: this router
 // runs no conversations, so it holds no sessions to find.
-const noSessions = "this deployment does not run sessions"
+var noSessions = coded{codeNotConfigured, "this deployment does not run sessions"}
 
 // configFor resolves whichever way the caller addressed the agent.
 //
@@ -27,36 +27,34 @@ const noSessions = "this deployment does not run sessions"
 // though it costs a lookup. Both at once is refused rather than picking one: there is no
 // sensible answer when they disagree, and quietly preferring the id would leave a caller
 // wondering why the name they wrote had no effect.
-func (s *Server) configFor(ctx context.Context, customerID string, configID, name *string) (*store.AgentConfig, *lookupFailure) {
+func (s *Server) configFor(ctx context.Context, customerID string, configID, name *string) (*store.AgentConfig, error) {
 	id, named := value(configID), value(name)
 	switch {
 	case id == "" && named == "":
 		return nil, nil
 	case id != "" && named != "":
-		return nil, &lookupFailure{status: badInput,
-			message: "name an agent by config_id or by agent, not both"}
+		return nil, invalidRequest("name an agent by config_id or by agent, not both")
 	case s.store == nil:
-		return nil, &lookupFailure{status: badInput, message: noConfigs}
+		return nil, invalidRequest(noConfigs)
 	}
 
 	if id != "" {
 		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
-			return nil, &lookupFailure{status: notFound, message: unknownConfig}
+			return nil, notFound(unknownConfig)
 		}
 		return &found, nil
 	}
 
 	found, exists, err := s.configs.AgentConfigByName(ctx, customerID, named)
 	if err != nil {
-		return nil, &lookupFailure{status: badInput, message: err.Error()}
+		return nil, invalidRequest(err.Error())
 	}
 	if !exists {
 		// Refused rather than started unconfigured. A typo in a name would otherwise get a
 		// working session with default instructions, which is far harder to notice than an
 		// error: the agent answers, just not as the agent that was asked for.
-		return nil, &lookupFailure{status: notFound,
-			message: "there is no agent called " + named}
+		return nil, notFound("there is no agent called " + named)
 	}
 	return &found, nil
 }
@@ -65,18 +63,15 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (*forkSessionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, missingCustomer()
 	}
 	if s.sessions == nil {
-		return nil, huma.Error404NotFound(noSessions)
+		return nil, notFound(noSessions)
 	}
 
 	parent, failure := s.storedOrLiveSession(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 
 	body := ForkSessionRequest{}
@@ -88,22 +83,19 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	// asking the same question of a different agent is the reason to fork.
 	config, failure := s.configFor(ctx, customerID, body.ConfigId, body.Agent)
 	if failure != nil {
-		if failure.status == notFound {
-			return nil, huma.Error404NotFound(failure.message)
-		}
-		return nil, huma.Error400BadRequest(failure.message)
+		return nil, failure
 	}
 
 	spec, err := forkSpec(parent, body, config)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	case errors.Is(err, errForkNeedsHistory), errors.Is(err, errNoRecords):
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	case err != nil:
 		return nil, err
 	}
@@ -116,7 +108,7 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 
 	created, err := s.sessions.Create(ctx, spec)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &forkSessionResponse{Body: sessionOf(created)}, nil
 }
@@ -125,12 +117,7 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*getSessionResponse, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		switch failure.status {
-		case unauthorized:
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		default:
-			return nil, huma.Error404NotFound(failure.message)
-		}
+		return nil, failure
 	}
 	return &getSessionResponse{Body: sessionOf(found)}, nil
 }
@@ -139,17 +126,14 @@ func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*g
 func (s *Server) saySession(ctx context.Context, request *saySessionRequest) (*struct{}, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	if request.Body == nil || request.Body.Text == "" {
-		return nil, huma.Error400BadRequest("there is nothing to say")
+		return nil, invalidRequest("there is nothing to say")
 	}
 
 	if err := found.Say(ctx, request.Body.Text); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return nil, nil
 }
@@ -158,22 +142,19 @@ func (s *Server) saySession(ctx context.Context, request *saySessionRequest) (*s
 func (s *Server) respondSession(ctx context.Context, request *respondSessionRequest) (*respondSessionResponse, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	if request.Body == nil || request.Body.Text == "" {
-		return nil, huma.Error400BadRequest("there is nothing to answer")
+		return nil, invalidRequest("there is nothing to answer")
 	}
 
 	if id := value(request.Body.CommandId); id != "" {
 		receipt, _, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId))
 		if errors.Is(err, conversation.ErrCommandConflict) {
-			return nil, huma.Error409Conflict(err.Error())
+			return nil, conflict(err.Error())
 		}
 		if err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, invalidRequest(err.Error())
 		}
 		return &respondSessionResponse{Status: http.StatusOK, Body: &CommandReceipt{
 			CommandId: receipt.CommandID, UserMessageId: receipt.UserMessageID,
@@ -181,7 +162,7 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 		}}, nil
 	}
 	if _, err := found.Respond(ctx, request.Body.Text, nil); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &respondSessionResponse{Status: http.StatusNoContent}, nil
 }
@@ -197,10 +178,7 @@ type respondSessionResponse struct {
 func (s *Server) interruptSession(ctx context.Context, request *interruptSessionRequest) (*struct{}, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 
 	found.Interrupt()
@@ -211,24 +189,21 @@ func (s *Server) interruptSession(ctx context.Context, request *interruptSession
 func (s *Server) rewindSession(ctx context.Context, request *rewindSessionRequest) (*struct{}, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	if request.Body == nil || request.Body.ResponseId == "" {
-		return nil, huma.Error400BadRequest("name the response to carry on from")
+		return nil, invalidRequest("name the response to carry on from")
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noStore)
+		return nil, invalidRequest(noStore)
 	}
 
 	err := found.Rewind(ctx, s.store, request.Body.ResponseId)
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	case errors.Is(err, session.ErrCannotRewind):
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	case err != nil:
 		return nil, err
 	}
@@ -239,15 +214,12 @@ func (s *Server) rewindSession(ctx context.Context, request *rewindSessionReques
 func (s *Server) getSessionCommand(ctx context.Context, request *getSessionCommandRequest) (*getSessionCommandResponse, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 
 	receipt, err := found.Command(request.CommandId)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownCommand)
+		return nil, notFound(unknownCommand)
 	}
 	return &getSessionCommandResponse{Body: receiptOf(receipt)}, nil
 }
@@ -256,20 +228,17 @@ func (s *Server) getSessionCommand(ctx context.Context, request *getSessionComma
 func (s *Server) interruptSessionCommand(ctx context.Context, request *interruptSessionCommandRequest) (*interruptSessionCommandResponse, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 
 	receipt, err := found.InterruptCommand(request.CommandId)
 	if errors.Is(err, conversation.ErrCommandNotFound) {
-		return nil, huma.Error404NotFound(unknownCommand)
+		return nil, notFound(unknownCommand)
 	}
 	if err != nil {
 		// The stop was taken but its durable outcome is not known, so the caller is told
 		// to keep the intent and retry this command id rather than that it stopped.
-		return nil, huma.Error503ServiceUnavailable(err.Error())
+		return nil, unavailable(err.Error())
 	}
 	return &interruptSessionCommandResponse{Body: receiptOf(receipt)}, nil
 }
@@ -289,13 +258,10 @@ func receiptOf(receipt conversation.CommandReceipt) CommandReceipt {
 func (s *Server) setSessionInstructions(ctx context.Context, request *setSessionInstructionsRequest) (*struct{}, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	found.SetInstructions(request.Body.Instructions)
@@ -307,13 +273,10 @@ func (s *Server) setSessionInstructions(ctx context.Context, request *setSession
 func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSettingsRequest) (*setSessionSettingsResponse, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	body := request.Body
@@ -330,46 +293,30 @@ func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSett
 		settings.Verbosity = &verbosity
 	}
 	if err := found.SetSettings(ctx, settings); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &setSessionSettingsResponse{Body: sessionOf(found)}, nil
 }
 
-// lookupStatus says which way finding a session failed.
-type lookupStatus int
-
-const (
-	unauthorized lookupStatus = iota
-	notFound
-	// badInput is a request that could not be understood, as against one that named
-	// something real belonging to somebody else.
-	badInput
-)
-
 // unknownSession is what a caller is told about a session that is not theirs, which is the
 // same thing they are told about one that never existed.
-const unknownSession = "no such session"
+var unknownSession = coded{codeSessionNotFound, "no such session"}
 
 // unknownCommand is what a caller is told about a command this conversation never
 // accepted, which is the same thing they are told about one they may not touch.
-const unknownCommand = "no such command"
-
-type lookupFailure struct {
-	status  lookupStatus
-	message string
-}
+var unknownCommand = coded{codeCommandNotFound, "no such command"}
 
 // session finds a session belonging to the calling customer.
-func (s *Server) session(ctx context.Context, id string) (*session.Session, *lookupFailure) {
+func (s *Server) session(ctx context.Context, id string) (*session.Session, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, &lookupFailure{status: unauthorized}
+		return nil, missingCustomer()
 	}
 	if s.sessions == nil {
-		return nil, &lookupFailure{status: notFound, message: noSessions}
+		return nil, notFound(noSessions)
 	}
 	found, ok := s.sessions.Get(id, OwnerFrom(ctx))
 	if !ok || !canReadSession(ctx, found.Spec()) {
-		return nil, &lookupFailure{status: notFound, message: unknownSession}
+		return nil, notFound(unknownSession)
 	}
 	return found, nil
 }
@@ -382,12 +329,12 @@ func (s *Server) session(ctx context.Context, id string) (*session.Session, *loo
 //
 // A session that ended and one that belongs to somebody else are both reported as not
 // found: a different answer for each would make this a way to discover whose an id is.
-func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Found, *lookupFailure) {
+func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Found, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return session.Found{}, &lookupFailure{status: unauthorized}
+		return session.Found{}, missingCustomer()
 	}
 	if s.sessions == nil {
-		return session.Found{}, &lookupFailure{status: notFound, message: noSessions}
+		return session.Found{}, notFound(noSessions)
 	}
 
 	owner := OwnerFrom(ctx)
@@ -395,19 +342,19 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 		return session.Found{Live: live}, nil
 	}
 	if s.store == nil {
-		return session.Found{}, &lookupFailure{status: notFound, message: unknownSession}
+		return session.Found{}, notFound(unknownSession)
 	}
 
 	row, err := s.store.StoredSession(ctx, owner.CustomerID, id)
 	if err != nil {
-		return session.Found{}, &lookupFailure{status: notFound, message: unknownSession}
+		return session.Found{}, notFound(unknownSession)
 	}
 	// The row carries who opened it, which is what the live path checks through the
 	// manager. Skipping it here would let one of a customer's users read another's.
 	if !owner.Reaches(session.Owner{
 		CustomerID: row.CustomerID, UserID: row.UserID, Kind: auth.Kind(row.CallerKind),
 	}) {
-		return session.Found{}, &lookupFailure{status: notFound, message: unknownSession}
+		return session.Found{}, notFound(unknownSession)
 	}
 	return session.Found{Stored: &row}, nil
 }
@@ -836,7 +783,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 var (
 	errForkNeedsHistory = errors.New(
 		"response_id says where the carried history stops, so it cannot be combined with messages false")
-	errNoRecords = errors.New(noStore)
+	errNoRecords = errors.New(noStore.message)
 )
 
 // recordedHistory is the history a fork reads out of what its parent recorded rather than

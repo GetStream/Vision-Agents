@@ -34,30 +34,30 @@ func readLogCursor(value string) (int64, error) {
 func (s *Server) logFilter(w http.ResponseWriter, r *http.Request) (store.LogFilter, bool) {
 	customer, ok := CustomerFrom(r.Context())
 	if !ok {
-		writeError(w, 401, "customer required")
+		writeError(w, missingCustomer())
 		return store.LogFilter{}, false
 	}
 	if s.refuseClientSide(w, r) {
 		return store.LogFilter{}, false
 	}
 	if s.store == nil {
-		writeError(w, 503, "logging storage unavailable")
+		writeError(w, unavailable("logging storage unavailable"))
 		return store.LogFilter{}, false
 	}
 	q := r.URL.Query()
 	f := store.LogFilter{CustomerID: customer, ConfigID: q.Get("config_id"), SessionID: q.Get("session_id"), UserID: q.Get("user_id"), Search: q.Get("q"), Severity: q.Get("severity"), Limit: 250}
 	if f.Severity != "" && f.Severity != "error" && f.Severity != "info" {
-		writeError(w, 400, "invalid severity")
+		writeError(w, invalidRequest("invalid severity"))
 		return f, false
 	}
 	if len(f.Search) > 256 {
-		writeError(w, 400, "search too long")
+		writeError(w, invalidRequest("search too long"))
 		return f, false
 	}
 	if q.Get("source") != "" {
 		for _, v := range strings.Split(q.Get("source"), ",") {
 			if v != "user" && v != "agent" && v != "tool" && v != "system" {
-				writeError(w, 400, "invalid source")
+				writeError(w, invalidRequest("invalid source"))
 				return f, false
 			}
 			f.Sources = append(f.Sources, v)
@@ -67,20 +67,20 @@ func (s *Server) logFilter(w http.ResponseWriter, r *http.Request) (store.LogFil
 		if q.Get(key) != "" {
 			v, err := time.Parse(time.RFC3339Nano, q.Get(key))
 			if err != nil {
-				writeError(w, 400, "invalid time")
+				writeError(w, invalidRequest("invalid time"))
 				return f, false
 			}
 			*target = v
 		}
 	}
 	if !f.To.IsZero() && !f.From.IsZero() && !f.To.After(f.From) {
-		writeError(w, 400, "invalid time range")
+		writeError(w, invalidRequest("invalid time range"))
 		return f, false
 	}
 	if q.Get("limit") != "" {
 		v, err := strconv.Atoi(q.Get("limit"))
 		if err != nil || v < 1 || v > 250 {
-			writeError(w, 400, "limit must be 1 to 250")
+			writeError(w, invalidRequest("limit must be 1 to 250"))
 			return f, false
 		}
 		f.Limit = v
@@ -99,12 +99,12 @@ func (s *Server) listAgentLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	before, err := readLogCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
-		writeError(w, 400, "invalid cursor")
+		writeError(w, invalidRequest("invalid cursor"))
 		return
 	}
 	high, err := s.store.LogHighWater(r.Context(), f.CustomerID)
 	if err != nil {
-		writeError(w, 503, "log storage unavailable")
+		writeError(w, unavailable("log storage unavailable"))
 		return
 	}
 	f.Before = high + 1
@@ -115,7 +115,7 @@ func (s *Server) listAgentLogs(w http.ResponseWriter, r *http.Request) {
 	f.Limit++
 	rows, err := s.store.AgentLogs(r.Context(), f)
 	if err != nil {
-		writeError(w, 503, "log storage unavailable")
+		writeError(w, unavailable("log storage unavailable"))
 		return
 	}
 	more := len(rows) > limit
@@ -135,16 +135,16 @@ func (s *Server) getAgentLog(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id < 1 {
-		writeError(w, 400, "invalid log id")
+		writeError(w, invalidRequest("invalid log id"))
 		return
 	}
 	entry, err := s.store.AgentLog(r.Context(), f.CustomerID, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, 404, "log not found")
+		writeError(w, notFound("log not found"))
 		return
 	}
 	if err != nil {
-		writeError(w, 503, "log storage unavailable")
+		writeError(w, unavailable("log storage unavailable"))
 		return
 	}
 	logJSON(w, entry)
@@ -160,7 +160,7 @@ func (s *Server) streamAgentLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	after, err := readLogCursor(cursor)
 	if err != nil || cursor == "" {
-		writeError(w, 400, "resume cursor required")
+		writeError(w, invalidRequest("resume cursor required"))
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
