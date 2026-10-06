@@ -11,7 +11,7 @@ Complete   Supplied{api_key, header}: any other key refused; header canonicalize
            -> StoredCredentials{api_key, v1, {header, key}}, empty AccountInfo
 Retrieve   -> AccessCredential{api_key, no expiry, {header, key}}, stored as it is
 Wrap       header: key on a clone of each request; a credential it did not issue fails every request
-Classify   oauth2code.Classify, then a bare 401 -> InvalidGrant
+Classify   oauth2code.ClassifyStatic: oauth2code.Classify, then a bare 401 -> InvalidGrant
 Revoke     -> ErrNotRevocable: nothing sent, the key lives on at the provider
 ```
 

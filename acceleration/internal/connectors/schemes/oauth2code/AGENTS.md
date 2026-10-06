@@ -1,6 +1,6 @@
 # internal/connectors/schemes/oauth2code
 
-The `oauth2_code` scheme: the OAuth 2.0 authorization code grant with PKCE S256 (RFC 6749 §4.1, RFC 7636), one implementation for every provider a manifest describes. `Begin` and `Complete` (part 1, AI-834) acquire the grant; `AccessCredential`, `Wrap`, `Classify` and `Revoke` (part 2, AI-836) renew it, apply it, read what a provider answered and end it. The lock, the checkpoint and the status a connection moves to are the resolver's (T12), not this package's.
+The `oauth2_code` scheme: the OAuth 2.0 authorization code grant with PKCE S256 (RFC 6749 §4.1, RFC 7636), one implementation for every provider a manifest describes. `Begin` and `Complete` (part 1, AI-834) acquire the grant; `Retrieve`, `Wrap`, `Classify` and `Revoke` (part 2, AI-836) renew it, apply it, read what a provider answered and end it. The lock, the checkpoint and the status a connection moves to are the resolver's (T12), not this package's.
 
 ## Flow
 
@@ -31,7 +31,7 @@ Complete(Ref, Manifest, State, Query)
   -> StoredCredentials{Scheme: oauth2_code, Version: 1, Payload: ref, client, endpoints, tokens, expiry,
      refresh expiry, scopes}, AccountInfo
 
-AccessCredential(stored, m)
+Retrieve(stored, m)
   due        expiry known and within refresh.margin (default 1 min, the prototype's); otherwise -> the token, stored as is
   none       no refresh token: still valid -> the token; expired -> InvalidGrant
   refresh    endpoints.refresh or the token endpoint, checkEndpoint; client secret looked up again by payload ref;
@@ -57,6 +57,9 @@ Classify(resp, body, err)
              code is a resource's own error and falls through
   status     503 Transient; other 5xx Uncertain; anything else OK
 
+ClassifyStatic(resp, body, err)  Classify, then a 401 it found nothing in -> InvalidGrant; the Classify of
+                                 api_key, bearer and none, whose credential nothing renews
+
 Wrap(base, AccessCredential) Authorization: Bearer on a clone of each request; no access token -> every request fails
 Revoke(stored, m)           endpoints.revoke or the discovered revocation_endpoint (else ErrNoRevocationEndpoint),
                             RFC 7009 with the refresh token (else the access token); unsupported_token_type ->
@@ -70,9 +73,9 @@ Revoke(stored, m)           endpoints.revoke or the discovered revocation_endpoi
 - **All outbound HTTP goes through `Config.HTTP`.** Discovery, registration, the code exchange, refresh and revocation use it and nothing else. The router passes `egress.NewClient(timeout, nil)`; tests pass the fake provider's `Client()`, because egress refuses loopback by design. Never build a client here, never replace its `Transport` or `CheckRedirect`.
 - **Every authorization server endpoint passes `Config.PublicEndpoint`.** Nil means `egress.ValidatePublicHTTPSURL`. The authorize URL goes to the browser and never through `Config.HTTP`, so this is its only address check; the query is kept on the URL (RFC 6749 §3.1, §3.2) and removed only for the check. Tests that run on loopback pass a checker that lets a loopback IP literal through and nothing else; never pass one that returns nil for everything.
 - **State is the core's to seal.** `BeginOutput.State` holds the PKCE verifier and, for a registered client, its secret; the core seals it into the attempt, whose one-use consumption is the replay guard across replicas. The in-process spent set refuses a replay within one process before its code reaches the provider, where a second redemption would revoke the grant (RFC 6749 §4.1.2).
-- **A preregistered client's secret is never sealed.** It is looked up again at `Complete`, at refresh and at revocation, so a rotated secret lives in one place. `core.Scheme` hands `AccessCredential` and `Revoke` no `ConnectionRef`, so `Complete` keeps the one it ran for in the stored credentials; the core seals them bound to that connection. Only a client this scheme registered keeps its secret in State and StoredCredentials. The sealed client keeps the JSON name `owner` for its `Source`, so payloads stored before the `client.registration` rename still read.
-- **A rotated refresh token is never replayed outside a grace window.** A failure that may have taken effect is `Uncertain`, and `AccessCredential` sends the same refresh token again only when the manifest's `refresh.grace` says the provider still accepts it, once, inside the window. Anything else would be the replay RFC 9700 §4.14.2 revokes a grant for.
-- **A failed `AccessCredential` or `Revoke` is a `*core.OutcomeError`** whose `Outcome` came from `Classify`, and leaves the caller's stored credentials as they were. The exceptions are `Revoke`'s two answers that no retry changes, `ErrNoRevocationEndpoint` and `ErrTokenTypeNotRevocable`. Nothing this package logs or returns names a token or a secret.
+- **A preregistered client's secret is never sealed.** It is looked up again at `Complete`, at refresh and at revocation, so a rotated secret lives in one place. `core.Scheme` hands `Retrieve` and `Revoke` no `ConnectionRef`, so `Complete` keeps the one it ran for in the stored credentials; the core seals them bound to that connection. Only a client this scheme registered keeps its secret in State and StoredCredentials. The sealed client keeps the JSON name `owner` for its `Source`, so payloads stored before the `client.registration` rename still read.
+- **A rotated refresh token is never replayed outside a grace window.** A failure that may have taken effect is `Uncertain`, and `Retrieve` sends the same refresh token again only when the manifest's `refresh.grace` says the provider still accepts it, once, inside the window. Anything else would be the replay RFC 9700 §4.14.2 revokes a grant for.
+- **A failed `Retrieve` or `Revoke` is a `*core.OutcomeError`** whose `Outcome` came from `Classify`, and leaves the caller's stored credentials as they were. The exceptions are `Revoke`'s two answers that no retry changes, `ErrNoRevocationEndpoint` and `ErrTokenTypeNotRevocable`. Nothing this package logs or returns names a token or a secret.
 - **`private_key_jwt` is built, not offered.** `PrivateKeyJWT` (`privatekeyjwt.go`) makes the assertion (OIDC Core §9, RFC 7523 §2.2, §3); `supportedMethods` leaves the method out until a client record can hold a private key (T19).
 - **The redirect URI is bound to the attempt.** `Complete` sends the one `Begin` used (RFC 6749 §4.1.3); `CompleteInput` has none to confuse it with.
 - **Every hardcoded value cites its source** beside it: an RFC section, the CIMD draft (`draft-ietf-oauth-client-id-metadata-document-02`), MCP authorization 2025-11-25, a vendor page when no RFC defines the behaviour (the `claims` challenge is Microsoft's, `invalid_refresh_token`, `internal_error` and `fatal_error` are Slack's), or a line of the prototype `internal/mcp/oauth.go` or `internal/connectors/runtime.go` on `codex/connector-support` at `cf62af0d`.
@@ -80,4 +83,4 @@ Revoke(stored, m)           endpoints.revoke or the discovered revocation_endpoi
 
 ## Tests
 
-From `acceleration/`: `go test -race ./internal/connectors/...`. `oauth2code_test.go` is an outside-package testify suite against `fakeprovider`, with `providers/*.yaml` and `core/testdata/manifests/*.yaml` resolved and their endpoints pointed at the fake. `TestTheSlackManifestBuildsThePrototypesAuthorizeURL` is the golden test for the prototype's Slack authorize URL. `credential_test.go` drives `AccessCredential`, `Wrap`, `Classify` and `Revoke` against the fake's token-endpoint and resource personalities, with the suite's clock; each outcome has one test over a table of answers that mean it. `idtoken_test.go` and `privatekeyjwt_test.go` are inside the package, since the fake issues no id_token and takes no assertion. No mocks (`.claude/skills/go-testing/SKILL.md`).
+From `acceleration/`: `go test -race ./internal/connectors/...`. `oauth2code_test.go` is an outside-package testify suite against `fakeprovider`, with `providers/*.yaml` and `core/testdata/manifests/*.yaml` resolved and their endpoints pointed at the fake. `TestTheSlackManifestBuildsThePrototypesAuthorizeURL` is the golden test for the prototype's Slack authorize URL. `credential_test.go` drives `Retrieve`, `Wrap`, `Classify` and `Revoke` against the fake's token-endpoint and resource personalities, with the suite's clock; each outcome has one test over a table of answers that mean it. `idtoken_test.go` and `privatekeyjwt_test.go` are inside the package, since the fake issues no id_token and takes no assertion. No mocks (`.claude/skills/go-testing/SKILL.md`).

@@ -35,22 +35,13 @@ var empty = []byte(`{}`)
 var errNothingTaken = errors.New("none: the none scheme takes no supplied values")
 
 // Scheme is the none scheme. It holds no state and is safe for concurrent use.
-type Scheme struct {
-	answers *oauth2code.Scheme
-}
+type Scheme struct{}
 
 var _ core.Scheme = (*Scheme)(nil)
 
 // New returns the scheme. It takes no configuration.
 func New() *Scheme {
-	// Classify is oauth2code's, which sends nothing. oauth2code.New requires a client all
-	// the same, so it gets one that refuses every request; with HTTP set it has nothing
-	// else to refuse, so an error here is a change in oauth2code, not in what it was given.
-	answers, err := oauth2code.New(oauth2code.Config{HTTP: &http.Client{Transport: refuse{}}})
-	if err != nil {
-		panic(err)
-	}
-	return &Scheme{answers: answers}
+	return &Scheme{}
 }
 
 // Name is Name.
@@ -86,16 +77,11 @@ func (*Scheme) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundT
 	return base
 }
 
-// Classify is oauth2code's reading of a provider's answer (RFC 6750 section 3 challenges,
-// RFC 9110 statuses, 429), with one more rule: a 401 is InvalidGrant. RFC 9110 section
-// 15.5.2 says the request «lacks valid authentication credentials», which no retry without a
-// credential changes: only a connection with another scheme helps.
-func (s *Scheme) Classify(resp *http.Response, body []byte, err error) core.Outcome {
-	outcome := s.answers.Classify(resp, body, err)
-	if outcome.Kind == core.OutcomeOK && resp != nil && resp.StatusCode == http.StatusUnauthorized {
-		return core.Outcome{Kind: core.OutcomeInvalidGrant}
-	}
-	return outcome
+// Classify is oauth2code.ClassifyStatic: oauth2code's reading of a provider's answer, and a
+// 401 is InvalidGrant, which no retry without a credential changes: only a connection with
+// another scheme helps.
+func (*Scheme) Classify(resp *http.Response, body []byte, err error) core.Outcome {
+	return oauth2code.ClassifyStatic(resp, body, err)
 }
 
 // Revoke sends nothing and returns nil: the provider holds nothing for this connection, so
@@ -113,15 +99,4 @@ func open(stored core.StoredCredentials) error {
 		return errors.New("none: stored credentials payload is not empty")
 	}
 	return nil
-}
-
-type refuse struct{}
-
-func (refuse) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.Body != nil {
-		// net/http's RoundTripper contract: it «must always close the body, including on
-		// errors».
-		_ = r.Body.Close()
-	}
-	return nil, errors.New("none: Classify sends nothing")
 }

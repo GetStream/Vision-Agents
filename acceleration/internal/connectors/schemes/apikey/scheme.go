@@ -50,23 +50,14 @@ var ErrNotRevocable = errors.New("apikey: a static key cannot be revoked from th
 var errNoKey = errors.New("apikey: the credential is not an api_key credential")
 
 // Scheme is the api_key scheme. It holds no state and is safe for concurrent use.
-type Scheme struct {
-	answers *oauth2code.Scheme
-}
+type Scheme struct{}
 
 var _ core.Scheme = (*Scheme)(nil)
 
 // New returns the scheme. It takes no configuration: the header is the connection's, and
 // supplied with the key.
 func New() *Scheme {
-	// Classify is oauth2code's, which sends nothing. oauth2code.New requires a client all
-	// the same, so it gets one that refuses every request; with HTTP set it has nothing
-	// else to refuse, so an error here is a change in oauth2code, not in what it was given.
-	answers, err := oauth2code.New(oauth2code.Config{HTTP: &http.Client{Transport: refuse{}}})
-	if err != nil {
-		panic(err)
-	}
-	return &Scheme{answers: answers}
+	return &Scheme{}
 }
 
 // Name is Name.
@@ -124,16 +115,10 @@ func (*Scheme) Wrap(base http.RoundTripper, c core.AccessCredential) http.RoundT
 	return header{base: base, name: p.Header, value: p.Key}
 }
 
-// Classify is oauth2code's reading of a provider's answer (RFC 6750 section 3 challenges,
-// RFC 9110 statuses, 429), with one more rule: a 401 is InvalidGrant. RFC 9110 section
-// 15.5.2 says the request «lacks valid authentication credentials», and a static key is
-// never renewed, so only a new key helps.
-func (s *Scheme) Classify(resp *http.Response, body []byte, err error) core.Outcome {
-	outcome := s.answers.Classify(resp, body, err)
-	if outcome.Kind == core.OutcomeOK && resp != nil && resp.StatusCode == http.StatusUnauthorized {
-		return core.Outcome{Kind: core.OutcomeInvalidGrant}
-	}
-	return outcome
+// Classify is oauth2code.ClassifyStatic: oauth2code's reading of a provider's answer, and a
+// 401 is InvalidGrant, since a static key is never renewed and only a new key helps.
+func (*Scheme) Classify(resp *http.Response, body []byte, err error) core.Outcome {
+	return oauth2code.ClassifyStatic(resp, body, err)
 }
 
 // Revoke sends nothing and returns ErrNotRevocable: the key lives on at the provider.

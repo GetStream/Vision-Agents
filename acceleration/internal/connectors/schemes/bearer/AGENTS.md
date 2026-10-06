@@ -11,7 +11,7 @@ Complete   Supplied{token}: any other key refused; the token an RFC 6750 b64toke
 Retrieve   -> AccessCredential{bearer, no expiry, {token}}, stored as it is
 Wrap       Authorization: Bearer <token> on a clone of each request; a credential it did not issue
            fails every request
-Classify   oauth2code.Classify, then a bare 401 -> InvalidGrant
+Classify   oauth2code.ClassifyStatic: oauth2code.Classify, then a bare 401 -> InvalidGrant
 Revoke     -> ErrNotRevocable: nothing sent, the token lives on at the provider
 ```
 

@@ -9,7 +9,7 @@ Begin      -> Done
 Complete   Supplied must be empty -> StoredCredentials{none, v1, {}}, empty AccountInfo
 Retrieve   -> AccessCredential{none, no expiry, no secret}, stored as it is
 Wrap       -> base, unchanged, whatever credential it is handed
-Classify   oauth2code.Classify, then a bare 401 -> InvalidGrant
+Classify   oauth2code.ClassifyStatic: oauth2code.Classify, then a bare 401 -> InvalidGrant
 Revoke     -> nil: the provider holds nothing for this connection
 ```
 
