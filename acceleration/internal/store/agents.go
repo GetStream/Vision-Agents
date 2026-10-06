@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -12,7 +13,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// CreateAgentConfig stores a new config and fills in its id and timestamps.
+// CreateAgentConfig stores a new config and fills in its id and timestamps. Each connection
+// it binds as fixed has to be live, and stays locked until the config is stored
+// (lockBoundConnections).
 func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) error {
 	if config.CustomerID == "" {
 		return stack.Wrap(errors.New("store: customer id is required"))
@@ -28,10 +31,19 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 	config.DeletedAt = nil
 	normalizeConfig(config)
 
-	if _, err := s.db.NewInsert().Model(config).Exec(ctx); err != nil {
-		return stack.Wrap(fmt.Errorf("store: create agent config: %w", err))
-	}
-	return nil
+	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		missing, err := lockBoundConnections(ctx, tx, config)
+		if err != nil {
+			return err
+		}
+		if err := refuseUnbindable(missing, nil); err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(config).Exec(ctx); err != nil {
+			return fmt.Errorf("store: create agent config: %w", err)
+		}
+		return nil
+	}))
 }
 
 // configColumns are the columns an update writes: everything about a config except who
@@ -48,7 +60,10 @@ var configColumns = []string{
 }
 
 // UpdateAgentConfig replaces a config a customer holds. Every field is written, so an
-// update is what the config now is rather than what changed about it.
+// update is what the config now is rather than what changed about it. A connection it binds
+// as fixed is locked as CreateAgentConfig locks it, and has to be live unless the stored
+// config binds it already: a forced delete leaves that binding behind on purpose, and a save
+// that keeps it is not a new bind.
 func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) error {
 	if config.CustomerID == "" || config.ID == "" {
 		return stack.Wrap(errors.New("store: a customer and a config id are required"))
@@ -60,21 +75,94 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 	config.UpdatedAt = time.Now().UTC()
 	normalizeConfig(config)
 
-	result, err := s.db.NewUpdate().Model(config).
-		Column(configColumns...).
-		Where("id = ?", config.ID).
+	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		missing, err := lockBoundConnections(ctx, tx, config)
+		if err != nil {
+			return err
+		}
+		var stored AgentConfig
+		if len(missing) > 0 {
+			err := tx.NewSelect().Model(&stored).Column("connectors").
+				Where("id = ?", config.ID).
+				Where("customer_id = ?", config.CustomerID).
+				Where("deleted_at IS NULL").
+				Scan(ctx)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("store: update agent config: %w", err)
+			}
+		}
+		if err := refuseUnbindable(missing, stored.Connectors); err != nil {
+			return err
+		}
+		result, err := tx.NewUpdate().Model(config).
+			Column(configColumns...).
+			Where("id = ?", config.ID).
+			Where("customer_id = ?", config.CustomerID).
+			Where("deleted_at IS NULL").
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: update agent config: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("store: update agent config: %w", err)
+		}
+		if affected == 0 {
+			return unknownAgentConfig(config.ID)
+		}
+		return nil
+	}))
+}
+
+// lockBoundConnections locks each live connection of the config's customer that the config
+// binds as fixed until the transaction ends, and returns the ids it binds that are not live.
+// It makes a bind and an unforced delete (DeleteUnboundConnectorConnection, which locks the
+// connection FOR UPDATE first) wait for each other, so one of them always sees the other:
+//
+//   - A delete that locked the connection first is waited for. Under READ COMMITTED the
+//     locking read then re-checks its WHERE against the row as the delete left it, so a
+//     deleted connection is not returned and the bind is refused
+//     (https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED).
+//   - A delete that comes second waits for this transaction, and then reads the binding it
+//     wrote.
+//
+// FOR KEY SHARE, not FOR SHARE: it conflicts with the delete's FOR UPDATE and not with the
+// FOR NO KEY UPDATE a plain UPDATE of a non-key column takes (table 13.3,
+// https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS), so a config
+// save does not hold up a credential save. The connection is locked before the config row,
+// as in the delete, so the two never wait on each other in a cycle.
+func lockBoundConnections(ctx context.Context, tx bun.Tx, config *AgentConfig) ([]string, error) {
+	var bound []string
+	for _, binding := range config.Connectors {
+		if binding.Connection.Type == "fixed" && !slices.Contains(bound, binding.Connection.ConnectionID) {
+			bound = append(bound, binding.Connection.ConnectionID)
+		}
+	}
+	if len(bound) == 0 {
+		return nil, nil
+	}
+	var live []string
+	err := tx.NewSelect().Model((*ConnectorConnection)(nil)).Column("id").
 		Where("customer_id = ?", config.CustomerID).
+		Where("id IN (?)", bun.In(bound)).
 		Where("deleted_at IS NULL").
-		Exec(ctx)
+		For("KEY SHARE").
+		Scan(ctx, &live)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: update agent config: %w", err))
+		return nil, fmt.Errorf("store: lock bound connector connections: %w", err)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: update agent config: %w", err))
-	}
-	if affected == 0 {
-		return unknownAgentConfig(config.ID)
+	return slices.DeleteFunc(bound, func(id string) bool { return slices.Contains(live, id) }), nil
+}
+
+// refuseUnbindable refuses a fixed binding to a connection that is not live, unless kept, the
+// bindings stored before this write, has it already.
+func refuseUnbindable(missing []string, kept []ConnectorBinding) error {
+	for _, id := range missing {
+		if !slices.ContainsFunc(kept, func(binding ConnectorBinding) bool {
+			return binding.Connection.Type == "fixed" && binding.Connection.ConnectionID == id
+		}) {
+			return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
+		}
 	}
 	return nil
 }
