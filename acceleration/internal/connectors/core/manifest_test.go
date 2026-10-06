@@ -459,6 +459,16 @@ func (s *ManifestSuite) TestAnUnknownCaptureSourceIsRejected() {
 	s.ErrorContains(err, `capture[0].from: "header" is not one of [token_response id_token callback_query]`)
 }
 
+func (s *ManifestSuite) TestTheSourcesReachTheResolvedManifest() {
+	m, err := ParseManifest(minimal("endpoints:\n  mcp: https://mcp.example.com/mcp\nsources:\n  - kind: mcp\n    endpoint: mcp\n"))
+	s.Require().NoError(err)
+
+	resolved, err := m.Resolve("oauth2_code", nil, nil)
+
+	s.Require().NoError(err)
+	s.Equal([]SourceRule{{Kind: "mcp", Endpoint: "mcp"}}, resolved.Sources)
+}
+
 func (s *ManifestSuite) TestAnUnknownClientAuthMethodIsRejected() {
 	_, err := ParseManifest(minimal("client:\n  auth_method: client_secret_jwt\n"))
 	s.ErrorContains(err, `client.auth_method: "client_secret_jwt" is not one of`)

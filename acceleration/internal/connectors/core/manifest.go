@@ -592,6 +592,7 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Re
 		Capture:         slices.Clone(m.Capture),
 		Refresh:         m.Refresh,
 		RateLimit:       m.RateLimit,
+		Sources:         slices.Clone(m.Sources),
 	}, nil
 }
 

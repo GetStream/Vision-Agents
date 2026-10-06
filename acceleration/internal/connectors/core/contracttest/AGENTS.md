@@ -1,6 +1,21 @@
 # internal/connectors/core/contracttest
 
-The suites every adapter of one kind runs, so what the core relies on is proved once and checked for each adapter. `SchemeContract` (`scheme.go`) is the one for `core.Scheme`. It is test code: import it only from `_test.go` files.
+The suites every adapter of one kind runs, so what the core relies on is proved once and checked for each adapter. `SchemeContract` (`scheme.go`) is the one for `core.Scheme`, `SourceContract` (`source.go`) the one for `core.ToolSource`. It is test code: import it only from `_test.go` files.
+
+## What `SourceContract` proves
+
+The subject runs a provider offering three tools: `ToolEcho` (`{"text": string}`, answers the text), `ToolLarge` (answers more than `core.MaxResultBytes` of two-byte characters) and `ToolBroken` (reports an error whose only content is an image). `ChangeSchema` gives `ToolEcho` another input schema. The contract learns the name each tool is offered under from a toolset granting it alone, so it assumes nothing about how a source names tools.
+
+| Test | What holds for every tool source |
+| --- | --- |
+| `TestDiscoverGivesTheSameDigestForTheSameSchema`, `TestAChangedSchemaHasAnotherDigest` | A digest is stable for one schema and moves with it |
+| `TestOnlyTheGrantedToolsAreOffered`, `TestAnUngrantedToolIsNeverDispatched` | `Open` offers exactly the granted tools; a call to another never reaches the provider |
+| `TestAToolWhoseSchemaChangedSinceItWasGrantedIsHidden` | A grant pins the schema: after a change the tool is neither offered nor called |
+| `TestArgumentsTheSchemaRefusesNeverReachTheProvider`, `TestAGrantedToolAnswers` | Arguments are checked against the schema before anything is sent |
+| `TestAResultOverTheCapIsCutWithTheMarker` | A long result fits `core.MaxResultBytes`, ends with `core.TruncatedMarker` and is valid UTF-8 |
+| `TestAnErrorWithNoTextIsStillAnError` | A tool's own failure is a `*core.ToolError`, even with no text |
+
+A new source adopts it with one test function, as `sources/mcp/source_test.go` (`TestMCPSourceContract`) does.
 
 ## What `SchemeContract` proves
 
