@@ -243,6 +243,27 @@ func (c *cadence) Active() (stt.Participant, time.Time, bool) {
 
 func (c *cadence) Ready() <-chan candidate { return c.ready }
 
+func (c *cadence) matchesCandidate(ready candidate) bool {
+	_, ok := c.candidateSnapshot(ready)
+	return ok
+}
+
+func (c *cadence) candidateSnapshot(ready candidate) (candidate, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	current, ok := c.speakers[ready.Participant.ID]
+	if !ok || current.candidateID != ready.ID || strings.TrimSpace(current.text) != ready.Text {
+		return candidate{}, false
+	}
+	ready.Participant = current.participant
+	ready.Speaker = current.speaker
+	ready.Language = current.language
+	ready.Confidence = current.confidence
+	ready.STTLatencyMs = current.latencyMs
+	ready.RevisedAt = current.revisedAt
+	return ready, true
+}
+
 func (c *cadence) Forget(participant stt.Participant) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

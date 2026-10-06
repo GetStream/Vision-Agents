@@ -119,8 +119,9 @@ type Stream struct {
 	APISecret string `koanf:"api_secret"`
 }
 
-// EOT is an optional acoustic endpointing gate for settled cascade turns.
+// EOT is the optional acoustic endpoint scorer for settled cascade turns.
 type EOT struct {
+	Mode        string  `koanf:"mode"`
 	Endpoint    string  `koanf:"endpoint"`
 	IDTokenFile string  `koanf:"id_token_file"`
 	Threshold   float64 `koanf:"threshold"`
@@ -148,6 +149,7 @@ var variables = map[string]string{
 	"data_move.retention": "ROUTER_DATA_MOVE_RETENTION",
 	"stream.api_key":      "STREAM_API_KEY",
 	"stream.api_secret":   "STREAM_API_SECRET",
+	"eot.mode":            "ROUTER_EOT_MODE",
 	"eot.endpoint":        "ROUTER_EOT_URL",
 	"eot.id_token_file":   "ROUTER_EOT_ID_TOKEN_FILE",
 	"eot.threshold":       "ROUTER_EOT_THRESHOLD",
@@ -170,7 +172,7 @@ func Defaults() Config {
 		// so it should only be reached by somebody making a few enormous requests.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 500_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		EOT:       EOT{Threshold: 0.5},
+		EOT:       EOT{Mode: "gate", Threshold: 0.5},
 	}
 }
 
@@ -271,6 +273,9 @@ func (c Config) validate() error {
 	if c.DataMove.Retention < 0 {
 		return fmt.Errorf("config: data_move.retention cannot be negative, got %s", c.DataMove.Retention)
 	}
+	if c.EOT.Mode != "gate" && c.EOT.Mode != "primary" {
+		return fmt.Errorf("config: eot.mode must be gate or primary, got %q", c.EOT.Mode)
+	}
 	if math.IsNaN(c.EOT.Threshold) || math.IsInf(c.EOT.Threshold, 0) ||
 		c.EOT.Threshold < 0 || c.EOT.Threshold > 1 {
 		return fmt.Errorf("config: eot.threshold must be between 0 and 1, got %v", c.EOT.Threshold)
@@ -304,6 +309,7 @@ func (c Config) export() error {
 		"stream.api_key":              c.Stream.APIKey,
 		"stream.api_secret":           c.Stream.APISecret,
 		"eot.endpoint":                c.EOT.Endpoint,
+		"eot.mode":                    c.EOT.Mode,
 		"eot.id_token_file":           c.EOT.IDTokenFile,
 		"eot.threshold":               fmt.Sprint(c.EOT.Threshold),
 		"data_move.retention":         c.DataMove.Retention.String(),

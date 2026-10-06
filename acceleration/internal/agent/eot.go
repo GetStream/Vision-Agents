@@ -32,9 +32,20 @@ const (
 	eotGateLimit   = 500 * time.Millisecond
 )
 
+// EOTMode determines whether an acoustic score gates the semantic flow controller or
+// answers eligible quiet-floor completion candidates directly.
+type EOTMode string
+
+const (
+	EOTModeGate    EOTMode = "gate"
+	EOTModePrimary EOTMode = "primary"
+)
+
+func (mode EOTMode) valid() bool { return mode == EOTModeGate || mode == EOTModePrimary }
+
 // EOTClient asks the optional acoustic service whether a settled voice candidate has
-// reached an endpoint. It only supplies a score; the flow controller still decides what
-// the agent should say.
+// reached an endpoint. The configured EOT mode decides whether the score gates or resolves
+// eligible quiet-floor candidates.
 type EOTClient struct {
 	endpoint  *url.URL
 	audience  string

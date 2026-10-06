@@ -141,9 +141,10 @@ type Options struct {
 	Duplex         DuplexOptions
 	VideoSource    string
 	VideoMaxFrames int
-	// EOT is an optional raw acoustic endpoint score for settled quiet voice candidates.
-	// It never replaces the flow controller's semantic ruling.
-	EOT          *EOTClient
+	// EOT is an optional raw acoustic endpoint score for settled voice candidates.
+	EOT *EOTClient
+	// EOTMode selects whether EOT gates or directly resolves eligible quiet-floor turns.
+	EOTMode      EOTMode
 	EOTThreshold float64
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
@@ -383,6 +384,12 @@ type Agent struct {
 
 // New validates the options and returns an Agent. It opens nothing; Join does that.
 func New(options Options) (*Agent, error) {
+	if options.EOTMode == "" {
+		options.EOTMode = EOTModeGate
+	}
+	if !options.EOTMode.valid() {
+		return nil, errors.New("agent: EOT mode must be gate or primary")
+	}
 	native := options.STSTarget != ""
 	if native && options.STS == nil {
 		return nil, errors.New("agent: an sts router is required")

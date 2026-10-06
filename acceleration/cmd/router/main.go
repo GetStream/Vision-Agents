@@ -809,7 +809,8 @@ func buildSessions(
 			logger.Warn("acoustic endpoint gate is disabled", "reason", "invalid configuration")
 		} else {
 			eotClient = client
-			logger.Info("acoustic endpoint gate is configured", "threshold", settings.EOT.Threshold)
+			logger.Info("acoustic endpoint is configured", "mode", settings.EOT.Mode,
+				"threshold", settings.EOT.Threshold)
 		}
 	}
 
@@ -819,6 +820,7 @@ func buildSessions(
 		TTS:          streams.TTS,
 		STS:          streams.STS,
 		EOT:          eotClient,
+		EOTMode:      agent.EOTMode(settings.EOT.Mode),
 		EOTThreshold: settings.EOT.Threshold,
 		Memory:       remembering,
 		Knowledge:    reading,

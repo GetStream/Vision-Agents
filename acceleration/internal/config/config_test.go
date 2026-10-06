@@ -67,16 +67,29 @@ func (s *ConfigSuite) TestAcousticEndpointConfigIsOptionalAndEnvironmentBacked()
 	defaults, _, err := Load("")
 	s.Require().NoError(err)
 	s.Empty(defaults.EOT.Endpoint)
+	s.Equal("gate", defaults.EOT.Mode)
 	s.Equal(0.5, defaults.EOT.Threshold)
 
+	s.T().Setenv("ROUTER_EOT_MODE", "primary")
 	s.T().Setenv("ROUTER_EOT_URL", "https://eot.example.run.app")
 	s.T().Setenv("ROUTER_EOT_ID_TOKEN_FILE", "/run/secrets/eot-id-token")
 	s.T().Setenv("ROUTER_EOT_THRESHOLD", "0.72")
 	configured, _, err := Load("")
 	s.Require().NoError(err)
+	s.Equal("primary", configured.EOT.Mode)
 	s.Equal("https://eot.example.run.app", configured.EOT.Endpoint)
 	s.Equal("/run/secrets/eot-id-token", configured.EOT.IDTokenFile)
 	s.Equal(0.72, configured.EOT.Threshold)
+}
+
+func (s *ConfigSuite) TestEOTModeMustBeGateOrPrimary() {
+	for _, mode := range []string{"semantic", "PRIMARY"} {
+		s.T().Setenv("ROUTER_EOT_MODE", mode)
+		_, _, err := Load("")
+		s.ErrorContains(err, "eot.mode")
+		s.T().Setenv("ROUTER_EOT_MODE", "")
+		s.Require().NoError(os.Unsetenv("ROUTER_EOT_MODE"))
+	}
 }
 
 func (s *ConfigSuite) TestAcousticThresholdMustBeFiniteAndInRange() {
