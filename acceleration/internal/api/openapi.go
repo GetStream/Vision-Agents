@@ -122,6 +122,7 @@ func init() {
 		}
 		return &apiError{status: status, Message: message}
 	}
+	huma.NewErrorWithContext = answerFailure
 }
 
 // apiError is how a Huma operation reports a failure, in the {"error": "..."} shape the
