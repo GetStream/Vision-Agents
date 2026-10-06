@@ -40,6 +40,24 @@ One word, one meaning, in code, docs and API alike. A name follows the Go auth l
 - **No YAML anchors or aliases.** `ParseManifest` refuses them, so a manifest a customer uploads cannot expand one node into many.
 - **Manifest enums are closed and say where their values come from.** A new `from`, `auth_method`, `per`, `alg`, separator or hook point is a change to `manifest.go` with its source beside it, and fixtures in `testdata/manifests/` follow the same rule per field. Scheme and source names are not enums here: they are registry names, checked by whoever holds the `Registry`.
 
+## Verifier
+
+`Verifier.Verify(r, body, m)` (`signal.go`) checks one inbound provider request and returns a `VerifiedEvent`. The events endpoint (T26) acts on it; the channel bridge (AI-866) reads its messages.
+
+| Term | What it is | In code | Reader |
+| --- | --- | --- | --- |
+| verified event | Everything one verified request says | `VerifiedEvent` | the events endpoint |
+| signal | What happened to the grants of one account: revoked, uninstalled, rotated | `VerifiedEvent.Signals`, `Signal` | `Resolver.Invalidate` |
+| inbound message | One message a person sent on an external thread | `VerifiedEvent.Messages`, `InboundMessage` | the channel bridge |
+| provider unit | The customer's own unit at the provider that received a message: a workspace, a team, a bot, a business phone number | `InboundMessage.ProviderUnitID` | the bridge maps it to a connection |
+| thread key | The id of one external thread within one provider unit, built by the verifier, never parsed | `InboundMessage.ThreadKey` | the bridge maps it to a thread channel |
+| challenge | The value a handshake request asks the endpoint to send back | `VerifiedEvent.Challenge` | the endpoint answers 200 `text/plain` with it |
+
+- **An error means nothing happens.** A request that fails verification returns an error and the endpoint acts on no part of it. A verified request the verifier has no mapping for returns a zero `VerifiedEvent`, not an error.
+- **Slices, not single values.** One revocation event can name several tokens, and one delivery can batch several messages, so `Signals` and `Messages` are slices. A handshake sets only `Challenge`.
+- **The raw body is bytes.** `body` is read once, before anything parses it, because a signature covers those exact bytes. `InboundMessage.Raw` is that body unchanged, shared by every message of a batch, and `[]byte`, not `json.RawMessage`, because some providers post a form.
+- **Ids stay the provider's.** A `Signal` names an account and an `InboundMessage` names a provider unit, a thread key and an author, all as the provider sends them. Mapping them to a connection, a thread channel or a Stream Chat user is the reader's job, not the verifier's.
+
 ## Tests
 
 From `acceleration/`: `go test ./internal/connectors/...`. `testdata/manifests/` holds the 12 stress-test manifests and `testdata/recorded/` their synthetic token responses and callbacks; never put a real token there. Testify suites, no mocks (`.claude/skills/go-testing/SKILL.md`). The guard tests parse this package's source with `go/parser`, so a provider name fails before anything uses it.
